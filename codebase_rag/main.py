@@ -1,6 +1,5 @@
 import asyncio
 import argparse
-import os
 from .config import settings
 from .services.graph_db import memgraph_service
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -27,7 +26,10 @@ async def main(target_repo_path: str = None):
     # 3. Create the main agent, injecting the tools
     rag_agent = create_rag_orchestrator(tools=[query_tool, code_tool])
     
-    # 4. Start the main loop
+    # 4. Initialize message history for conversation memory
+    message_history = []
+    
+    # 5. Start the main loop with conversation memory
     while True:
         try:
             user_input = await asyncio.to_thread(input, "\nAsk a question: ")
@@ -36,9 +38,13 @@ async def main(target_repo_path: str = None):
             if not user_input.strip():
                 continue
             
-            response = await rag_agent.run(user_input)
+            # Run with message history to maintain conversation memory
+            response = await rag_agent.run(user_input, message_history=message_history)
             logger.info(f"\nFinal Answer:\n{response.output}")
             logger.info("\n" + "="*70)
+            
+            # Update message history with new messages from this run
+            message_history.extend(response.new_messages())
 
         except KeyboardInterrupt:
             break
