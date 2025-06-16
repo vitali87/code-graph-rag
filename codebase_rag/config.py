@@ -9,7 +9,7 @@ class AppConfig:
     """Application Configuration"""
     MEMGRAPH_HOST = os.getenv("MEMGRAPH_HOST", "localhost")
     MEMGRAPH_PORT = int(os.getenv("MEMGRAPH_PORT", 7687))
-    GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-1.5-pro-preview-0514")
+    GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-06-05")
     
     # Repository path for code retrieval
     TARGET_REPO_PATH = os.getenv("TARGET_REPO_PATH", ".")
