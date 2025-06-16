@@ -306,8 +306,7 @@ class RepositoryParser:
         relative_path = filepath.relative_to(self.repo_path)
         relative_parent_dir = relative_path.parent
         
-        # --- FIX 1: SIMPLIFIED AND MORE ROBUST MODULE QN CALCULATION ---
-        # Determine module qualified name more cleanly.
+
         if filepath.name == "__init__.py":
             module_qn = parent_package_qn or self.project_name
         else:
@@ -318,7 +317,6 @@ class RepositoryParser:
 
         self.ingestor.ensure_node("Module", {"qualified_name": module_qn, "name": filepath.name, "path": str(relative_path)})
         
-        # --- FIX 2: RESTORED MODULE-TO-FOLDER RELATIONSHIP ---
         if parent_package_qn:
             # Connect Module to its parent Package
             self.ingestor.ensure_relationship(("Package", "qualified_name", parent_package_qn), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
@@ -343,9 +341,7 @@ class RepositoryParser:
         for node in ast.walk(tree):
             if not hasattr(node, "scope"): continue
 
-            # --- FIX 3: THE PRIMARY BUG FIX ---
-            # The qualified name of the node is its PARENT's QN + its own simple name.
-            # node.scope holds the parent's scope.
+
             parent_type, parent_qn = node.scope
             
             if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
