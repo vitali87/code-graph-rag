@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 import mgclient
 import toml
+from loguru import logger
 
 # --- Configuration ---
 MEMGRAPH_HOST = "localhost"
@@ -54,16 +55,16 @@ class MemgraphIngestor:
         self.conn: Optional[mgclient.Connection] = None
 
     def __enter__(self):
-        print(f"Connecting to Memgraph at {self._host}:{self._port}...")
+        logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
         self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
-        print("Successfully connected to Memgraph.")
+        logger.info("Successfully connected to Memgraph.")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.conn:
             self.conn.close()
-            print("\nDisconnected from Memgraph.")
+            logger.info("\nDisconnected from Memgraph.")
 
     def _execute_query(self, query: str, params: Optional[dict[str, Any]] = None) -> None:
         if not self.conn:
@@ -76,20 +77,20 @@ class MemgraphIngestor:
             cursor.execute(query, params)
         except Exception as e:
             if "already exists" not in str(e).lower() and "constraint" not in str(e).lower():
-                print(f"!!! Cypher Error: {e}")
-                print(f"    Query: {query}")
-                print(f"    Params: {params}")
+                logger.error(f"!!! Cypher Error: {e}")
+                logger.error(f"    Query: {query}")
+                logger.error(f"    Params: {params}")
         finally:
             if cursor:
                 cursor.close()
 
     def clean_database(self) -> None:
-        print("--- Cleaning database... ---")
+        logger.info("--- Cleaning database... ---")
         self._execute_query("MATCH (n) DETACH DELETE n;")
-        print("--- Database cleaned. ---")
+        logger.info("--- Database cleaned. ---")
 
     def ensure_constraints(self) -> None:
-        print("Ensuring constraints...")
+        logger.info("Ensuring constraints...")
         constraints = {
             "Project": "name", "Package": "qualified_name", "Folder": "path",
             "Module": "qualified_name", "Class": "qualified_name", "Function": "qualified_name",
@@ -97,7 +98,7 @@ class MemgraphIngestor:
         }
         for label, prop in constraints.items():
             self._execute_query(f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;")
-        print("Constraints checked/created.")
+        logger.info("Constraints checked/created.")
 
     def ensure_node(self, label: str, properties: dict[str, Any]) -> None:
         prop_str = ", ".join([f"n.{key} = ${key}" for key in properties])
@@ -143,12 +144,12 @@ class RepositoryParser:
     def run(self) -> None:
         """Orchestrates the two-pass parsing and ingestion process."""
         self.ingestor.ensure_node("Project", {"name": self.project_name})
-        print(f"Ensuring Project: {self.project_name}")
+        logger.info(f"Ensuring Project: {self.project_name}")
 
-        print("--- Pass 1: Identifying Packages and Folders ---")
+        logger.info("--- Pass 1: Identifying Packages and Folders ---")
         self._identify_structure()
 
-        print("\n--- Pass 2: Processing Files and Python Modules ---")
+        logger.info("\n--- Pass 2: Processing Files and Python Modules ---")
         self._process_files()
 
     def _identify_structure(self) -> None:
@@ -162,7 +163,7 @@ class RepositoryParser:
                 package_qn_parts = [self.project_name] + list(relative_root.parts)
                 package_qn = ".".join(filter(None, package_qn_parts))
                 self.structural_elements[relative_root] = package_qn
-                print(f"  Identified Package: {package_qn}")
+                logger.info(f"  Identified Package: {package_qn}")
 
                 self.ingestor.ensure_node("Package", {
                     "qualified_name": package_qn, "name": root.name, "path": str(relative_root)
@@ -176,7 +177,7 @@ class RepositoryParser:
             
             elif root != self.repo_path:
                 self.structural_elements[relative_root] = None
-                print(f"  Identified Folder: '{relative_root}'")
+                logger.info(f"  Identified Folder: '{relative_root}'")
                 self.ingestor.ensure_node("Folder", {"path": str(relative_root), "name": root.name})
                 parent_path = relative_root.parent
                 if (parent_package_qn := self.structural_elements.get(parent_path)) and isinstance(parent_package_qn, str):
@@ -237,15 +238,15 @@ class RepositoryParser:
         else:
             self.ingestor.ensure_relationship(("Project", "name", self.project_name), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
 
-        print(f"  Successfully merged/created Module: {module_qn}. Parsing AST...")
+        logger.info(f"  Successfully merged/created Module: {module_qn}. Parsing AST...")
         try:
             source_code = filepath.read_text(encoding="utf-8")
             tree = ast.parse(source_code, filename=str(filepath))
             visitor = CodeVisitor(module_qn)
             visitor.visit(tree)
-            print(f"    AST parsed for {module_qn}. Walking nodes...")
+            logger.info(f"    AST parsed for {module_qn}. Walking nodes...")
         except Exception as e:
-            print(f"    Error parsing AST for {filepath}: {e}")
+            logger.error(f"    Error parsing AST for {filepath}: {e}")
             return
             
         for node in ast.walk(tree):
@@ -257,7 +258,7 @@ class RepositoryParser:
                 node_qn = f"{parent_qn}.{node.name}"
 
                 if isinstance(node, ast.ClassDef):
-                    print(f"      Found ClassDef: name='{node.name}', qn='{node_qn}'")
+                    logger.info(f"      Found ClassDef: name='{node.name}', qn='{node_qn}'")
                     self.ingestor.ensure_node("Class", {"qualified_name": node_qn, "name": node.name})
                     self.ingestor.ensure_relationship(("Module", "qualified_name", parent_qn), "DEFINES", ("Class", "qualified_name", node_qn))
 
@@ -265,17 +266,17 @@ class RepositoryParser:
                     is_async = isinstance(node, ast.AsyncFunctionDef)
                     
                     if parent_type == "class":
-                        print(f"      Found Method: name='{node.name}', qn='{node_qn}' (async: {is_async})")
+                        logger.info(f"      Found Method: name='{node.name}', qn='{node_qn}' (async: {is_async})")
                         self.ingestor.ensure_node("Method", {"qualified_name": node_qn, "name": node.name})
                         self.ingestor.ensure_relationship(("Class", "qualified_name", parent_qn), "DEFINES_METHOD", ("Method", "qualified_name", node_qn))
                     elif parent_type == "module":
-                        print(f"      Found Function: name='{node.name}', qn='{node_qn}' (async: {is_async})")
+                        logger.info(f"      Found Function: name='{node.name}', qn='{node_qn}' (async: {is_async})")
                         self.ingestor.ensure_node("Function", {"qualified_name": node_qn, "name": node.name})
                         self.ingestor.ensure_relationship(("Module", "qualified_name", parent_qn), "DEFINES", ("Function", "qualified_name", node_qn))
 
     def _parse_pyproject_toml(self, filepath: Path) -> None:
         """Parses a pyproject.toml file for dependencies, supporting multiple formats."""
-        print(f"  Parsing pyproject.toml: {filepath}")
+        logger.info(f"  Parsing pyproject.toml: {filepath}")
         try:
             data = toml.load(filepath)
             dependencies = {}
@@ -288,7 +289,7 @@ class RepositoryParser:
             
             for dep_name, dep_spec in dependencies.items():
                 if dep_name.lower() == "python": continue
-                print(f"    Found dependency: {dep_name} (spec: {dep_spec})")
+                logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
                 
                 self.ingestor.ensure_node("ExternalPackage", {"name": dep_name, "version_spec": str(dep_spec)})
                 
@@ -299,72 +300,7 @@ class RepositoryParser:
                     properties={"version_spec": str(dep_spec)}
                 )
         except Exception as e:
-            print(f"    Error parsing {filepath}: {e}")
-# In class RepositoryParser:
-    def _parse_python_module(self, filepath: Path, parent_package_qn: Optional[str]) -> None:
-        """Parses a single Python file to extract module, class, and function info."""
-        relative_path = filepath.relative_to(self.repo_path)
-        relative_parent_dir = relative_path.parent
-        
-
-        if filepath.name == "__init__.py":
-            module_qn = parent_package_qn or self.project_name
-        else:
-            # The base QN is either the parent package QN or a QN derived from the folder path.
-            qn_parts = [self.project_name] + list(filter(None, relative_parent_dir.parts))
-            base_qn = parent_package_qn or ".".join(qn_parts)
-            module_qn = f"{base_qn}.{filepath.stem}"
-
-        self.ingestor.ensure_node("Module", {"qualified_name": module_qn, "name": filepath.name, "path": str(relative_path)})
-        
-        if parent_package_qn:
-            # Connect Module to its parent Package
-            self.ingestor.ensure_relationship(("Package", "qualified_name", parent_package_qn), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
-        elif relative_parent_dir != Path("."):
-            # Connect Module to its parent Folder if it's not a package
-            self.ingestor.ensure_relationship(("Folder", "path", str(relative_parent_dir)), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
-        else:
-            # Connect Module directly to the Project (root-level modules)
-            self.ingestor.ensure_relationship(("Project", "name", self.project_name), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
-
-        print(f"  Successfully merged/created Module: {module_qn}. Parsing AST...")
-        try:
-            source_code = filepath.read_text(encoding="utf-8")
-            tree = ast.parse(source_code, filename=str(filepath))
-            visitor = CodeVisitor(module_qn)
-            visitor.visit(tree)
-            print(f"    AST parsed for {module_qn}. Walking nodes...")
-        except Exception as e:
-            print(f"    Error parsing AST for {filepath}: {e}")
-            return
-            
-        for node in ast.walk(tree):
-            if not hasattr(node, "scope"): continue
-
-
-            parent_type, parent_qn = node.scope
-            
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                # Calculate the node's own, correct qualified name.
-                node_qn = f"{parent_qn}.{node.name}"
-
-                if isinstance(node, ast.ClassDef):
-                    print(f"      Found ClassDef: name='{node.name}', qn='{node_qn}'")
-                    self.ingestor.ensure_node("Class", {"qualified_name": node_qn, "name": node.name})
-                    # The parent of a class defined at the module-level is the Module itself.
-                    self.ingestor.ensure_relationship(("Module", "qualified_name", parent_qn), "DEFINES", ("Class", "qualified_name", node_qn))
-
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    is_async = isinstance(node, ast.AsyncFunctionDef)
-                    
-                    if parent_type == "class":
-                        print(f"      Found Method: name='{node.name}', qn='{node_qn}' (async: {is_async})")
-                        self.ingestor.ensure_node("Method", {"qualified_name": node_qn, "name": node.name})
-                        self.ingestor.ensure_relationship(("Class", "qualified_name", parent_qn), "DEFINES_METHOD", ("Method", "qualified_name", node_qn))
-                    elif parent_type == "module":
-                        print(f"      Found Function: name='{node.name}', qn='{node_qn}' (async: {is_async})")
-                        self.ingestor.ensure_node("Function", {"qualified_name": node_qn, "name": node.name})
-                        self.ingestor.ensure_relationship(("Module", "qualified_name", parent_qn), "DEFINES", ("Function", "qualified_name", node_qn))
+            logger.error(f"    Error parsing {filepath}: {e}")
 
 # --- Main Execution ---
 def main() -> None:
@@ -378,7 +314,7 @@ def main() -> None:
 
     repo_path = Path(args.repo_path)
     if not repo_path.is_dir():
-        print(f"!!! ERROR: Repository path '{repo_path}' does not exist or is not a directory.")
+        logger.error(f"!!! ERROR: Repository path '{repo_path}' does not exist or is not a directory.")
         return
 
     try:
@@ -390,11 +326,11 @@ def main() -> None:
             parser = RepositoryParser(str(repo_path), ingestor)
             parser.run()
     except Exception as e:
-        print(f"!!! An unexpected error occurred in main: {e}")
+        logger.error(f"!!! An unexpected error occurred in main: {e}")
         import traceback
         traceback.print_exc()
 
-    print("\nFinished processing repository.")
+    logger.info("\nFinished processing repository.")
 
 if __name__ == "__main__":
     main()

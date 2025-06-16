@@ -4,6 +4,7 @@ from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from ..config import settings
 from ..prompts import TEXT_TO_CYPHER_SYSTEM_PROMPT, RAG_ORCHESTRATOR_SYSTEM_PROMPT
+from loguru import logger
 
 class LLMGenerationError(Exception):
     """Custom exception for LLM generation failures."""
@@ -35,17 +36,17 @@ class CypherGenerator:
             raise LLMGenerationError(f"Failed to initialize CypherGenerator: {e}")
 
     async def generate(self, natural_language_query: str) -> str:
-        print(f"  [CypherGenerator] Generating query for: '{natural_language_query}'")
+        logger.info(f"  [CypherGenerator] Generating query for: '{natural_language_query}'")
         try:
             result = await self.agent.run(natural_language_query)
             if not isinstance(result.output, str) or "MATCH" not in result.output.upper():
                 raise LLMGenerationError(f"LLM did not generate a valid query. Output: {result.output}")
             
             query = _clean_cypher_response(result.output)
-            print(f"  [CypherGenerator] Generated Cypher: {query}")
+            logger.info(f"  [CypherGenerator] Generated Cypher: {query}")
             return query
         except Exception as e:
-            print(f"  [CypherGenerator] Error: {e}")
+            logger.error(f"  [CypherGenerator] Error: {e}")
             raise LLMGenerationError(f"Cypher generation failed: {e}")
 
 

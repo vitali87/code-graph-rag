@@ -3,12 +3,13 @@ from .config import settings
 from .services.graph_db import memgraph_service
 from .services.llm import CypherGenerator, create_rag_orchestrator
 from .tools.codebase_query import create_query_tool
+from loguru import logger
 
 async def main():
     """Initializes services and runs the main application loop."""
-    print(f"Codebase RAG CLI - Using Model: {settings.GEMINI_MODEL_ID}")
-    print("Ask questions about your codebase graph. Type 'exit' or 'quit' to end.")
-    print("-" * 50)
+    logger.info(f"Codebase RAG CLI - Using Model: {settings.GEMINI_MODEL_ID}")
+    logger.info("Ask questions about your codebase graph. Type 'exit' or 'quit' to end.")
+    logger.info("-" * 50)
 
     # 1. Initialize services
     cypher_generator = CypherGenerator()
@@ -29,23 +30,23 @@ async def main():
                 continue
             
             response = await rag_agent.run(user_input)
-            print(f"\nFinal Answer:\n{response.output}")
-            print("\n" + "="*70)
+            logger.info(f"\nFinal Answer:\n{response.output}")
+            logger.info("\n" + "="*70)
 
         except KeyboardInterrupt:
             break
         except Exception as e:
-            print(f"\nAn unexpected error occurred: {e}")
+            logger.error(f"\nAn unexpected error occurred: {e}")
 
-    print("\nExiting...")
+    logger.info("\nExiting...")
 
 def start():
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nApplication terminated by user.")
+        logger.error("\nApplication terminated by user.")
     except ValueError as e: # Catch config errors from startup
-        print(f"Startup Error: {e}")
+        logger.error(f"Startup Error: {e}")
 
 
 if __name__ == "__main__":

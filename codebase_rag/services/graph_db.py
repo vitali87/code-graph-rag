@@ -2,6 +2,7 @@
 import mgclient
 from typing import List, Dict, Any
 from ..config import settings
+from loguru import logger
 
 class GraphQueryError(Exception):
     """Custom exception for graph query failures."""
@@ -12,7 +13,7 @@ class MemgraphService:
     def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
-        print(f"MemgraphService configured for {host}:{port}")
+        logger.info(f"MemgraphService configured for {host}:{port}")
 
     def execute_query(self, query: str) -> List[Dict[str, Any]]:
         """Executes a Cypher query and returns the results."""
@@ -23,7 +24,7 @@ class MemgraphService:
             conn = mgclient.connect(host=self.host, port=self.port)
             try:
                 cursor = conn.cursor()
-                print(f"  [MemgraphService] Executing: {query}")
+                logger.info(f"  [MemgraphService] Executing: {query}")
                 cursor.execute(query)
                 
                 if not cursor.description:
@@ -31,12 +32,12 @@ class MemgraphService:
                 
                 column_names = [desc.name for desc in cursor.description]
                 results = [dict(zip(column_names, row)) for row in cursor.fetchall()]
-                print(f"  [MemgraphService] Found {len(results)} results.")
+                logger.info(f"  [MemgraphService] Found {len(results)} results.")
                 return results
             finally:
                 conn.close()
         except Exception as e:
-            print(f"  [MemgraphService] Error: {e}")
+            logger.error(f"  [MemgraphService] Error: {e}")
             raise GraphQueryError(f"Failed to execute query: {e}")
 
 # A single, reusable instance for the application

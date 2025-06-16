@@ -3,6 +3,7 @@ from pydantic_ai import Tool, RunContext
 from ..schemas import GraphData
 from ..services.graph_db import MemgraphService, GraphQueryError
 from ..services.llm import CypherGenerator, LLMGenerationError
+from loguru import logger
 
 def create_query_tool(
     db_service: MemgraphService, 
@@ -21,7 +22,7 @@ def create_query_tool(
         into a Cypher query, executes it against the Memgraph database, and returns
         the structured results.
         """
-        print(f"[Tool:QueryGraph] Received NL query: '{natural_language_query}'")
+        logger.info(f"[Tool:QueryGraph] Received NL query: '{natural_language_query}'")
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
             results = db_service.execute_query(cypher_query)
