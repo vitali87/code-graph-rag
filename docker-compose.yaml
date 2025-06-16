@@ -1,0 +1,13 @@
+version: "3"
+services:
+  memgraph:
+    image: memgraph/memgraph-mage
+    ports:
+      - "7687:7687"
+      - "7444:7444"
+  lab:
+    image: memgraph/lab
+    ports:
+      - "3000:3000"
+    environment:
+      QUICK_CONNECT_MG_HOST: memgraph
