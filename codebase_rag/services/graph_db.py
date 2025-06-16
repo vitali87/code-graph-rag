@@ -1,6 +1,6 @@
 # codebase_rag/services/graph_db.py
 import mgclient
-from typing import List, Dict, Any
+from typing import List, Any
 from ..config import settings
 from loguru import logger
 
@@ -15,7 +15,7 @@ class MemgraphService:
         self.port = port
         logger.info(f"MemgraphService configured for {host}:{port}")
 
-    def execute_query(self, query: str) -> List[Dict[str, Any]]:
+    def execute_query(self, query: str) -> List[dict[str, Any]]:
         """Executes a Cypher query and returns the results."""
         if not query:
             raise GraphQueryError("Query cannot be empty.")

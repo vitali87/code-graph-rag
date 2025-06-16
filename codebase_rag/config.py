@@ -11,6 +11,9 @@ class AppConfig:
     MEMGRAPH_PORT = int(os.getenv("MEMGRAPH_PORT", 7687))
     GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-1.5-pro-preview-0514")
     
+    # Repository path for code retrieval
+    TARGET_REPO_PATH = os.getenv("TARGET_REPO_PATH", ".")
+    
     # It's good practice to fail early if a required key is missing.
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     if not GEMINI_API_KEY:
