@@ -1,3 +1,5 @@
+![Graph-Code Logo](logo.png)
+
 # Graph-Code: A Graph-Based RAG System for Python Codebases
 
 A sophisticated Retrieval-Augmented Generation (RAG) system that analyzes Python repositories, builds knowledge graphs, and enables natural language querying of codebase structure and relationships.
