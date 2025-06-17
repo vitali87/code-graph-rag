@@ -5,14 +5,14 @@
 </picture>
 
 <p>
-  <a href="https://github.com/your-org/your-repo/stargazers">
-    <img src="https://img.shields.io/github/stars/your-org/your-repo?style=social" alt="GitHub stars" />
+  <a href="https://github.com/vitali87/code-graph-rag/stargazers">
+    <img src="https://img.shields.io/github.com/vitali87/code-graph-rag?style=social" alt="GitHub stars" />
   </a>
-  <a href="https://github.com/your-org/your-repo/network/members">
-    <img src="https://img.shields.io/github/forks/your-org/your-repo?style=social" alt="GitHub forks" />
+  <a href="https://github.com/vitali87/code-graph-rag/network/members">
+    <img src="https://img.shields.io/github.com/vitali87/code-graph-rag?style=social" alt="GitHub forks" />
   </a>
-  <a href="https://github.com/your-org/your-repo/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/your-org/your-repo" alt="License" />
+  <a href="https://github.com/vitali87/code-graph-rag/blob/main/LICENSE">
+    <img src="https://img.shields.io/github.com/vitali87/code-graph-rag" alt="License" />
   </a>
 </p>
 
