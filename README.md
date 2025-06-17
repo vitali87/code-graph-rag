@@ -6,15 +6,16 @@
 
 <p>
   <a href="https://github.com/vitali87/code-graph-rag/stargazers">
-    <img src="https://img.shields.io/github.com/vitali87/code-graph-rag?style=social" alt="GitHub stars" />
+    <img src="https://img.shields.io/github/stars/vitali87/code-graph-rag?style=social" alt="GitHub stars" />
   </a>
   <a href="https://github.com/vitali87/code-graph-rag/network/members">
-    <img src="https://img.shields.io/github.com/vitali87/code-graph-rag?style=social" alt="GitHub forks" />
+    <img src="https://img.shields.io/github/forks/vitali87/code-graph-rag?style=social" alt="GitHub forks" />
   </a>
   <a href="https://github.com/vitali87/code-graph-rag/blob/main/LICENSE">
-    <img src="https://img.shields.io/github.com/vitali87/code-graph-rag" alt="License" />
+    <img src="https://img.shields.io/github/license/vitali87/code-graph-rag" alt="License" />
   </a>
 </p>
+
 
 # Graph-Code: A Graph-Based RAG System for Python Codebases
 
