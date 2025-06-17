@@ -4,6 +4,18 @@
   <img src="assets/logo-dark.png" alt="Graph-Code Logo" width="480" style="display: block;">
 </picture>
 
+<p>
+  <a href="https://github.com/your-org/your-repo/stargazers">
+    <img src="https://img.shields.io/github/stars/your-org/your-repo?style=social" alt="GitHub stars" />
+  </a>
+  <a href="https://github.com/your-org/your-repo/network/members">
+    <img src="https://img.shields.io/github/forks/your-org/your-repo?style=social" alt="GitHub forks" />
+  </a>
+  <a href="https://github.com/your-org/your-repo/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/your-org/your-repo" alt="License" />
+  </a>
+</p>
+
 # Graph-Code: A Graph-Based RAG System for Python Codebases
 
 A sophisticated Retrieval-Augmented Generation (RAG) system that analyzes Python repositories, builds knowledge graphs, and enables natural language querying of codebase structure and relationships.
