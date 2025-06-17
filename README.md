@@ -1,4 +1,10 @@
-![Graph-Code Logo](logo.png)
+<div align="center">
+  <picture>
+    <source srcset="assets/logo-dark.png" media="(prefers-color-scheme: dark)">
+    <source srcset="assets/logo-light.png" media="(prefers-color-scheme: light)">
+    <img src="assets/logo-dark.png" alt="Graph-Code Logo" width="300">
+  </picture>
+</div>
 
 # Graph-Code: A Graph-Based RAG System for Python Codebases
 
