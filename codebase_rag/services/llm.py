@@ -1,9 +1,12 @@
 # codebase_rag/services/llm.py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from ..config import settings
-from ..prompts import TEXT_TO_CYPHER_SYSTEM_PROMPT, RAG_ORCHESTRATOR_SYSTEM_PROMPT
+from ..prompts import (
+    GEMINI_LITE_CYPHER_SYSTEM_PROMPT, 
+    RAG_ORCHESTRATOR_SYSTEM_PROMPT
+)
 from loguru import logger
 
 class LLMGenerationError(Exception):
@@ -24,12 +27,12 @@ class CypherGenerator:
     def __init__(self):
         try:
             llm = GeminiModel(
-                settings.GEMINI_MODEL_ID,
+                "gemini-2.5-flash-lite-preview-06-17",
                 provider=GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)
             )
             self.agent = Agent(
                 model=llm,
-                system_prompt=TEXT_TO_CYPHER_SYSTEM_PROMPT,
+                system_prompt=GEMINI_LITE_CYPHER_SYSTEM_PROMPT,
                 output_type=str
             )
         except Exception as e:
@@ -50,7 +53,7 @@ class CypherGenerator:
             raise LLMGenerationError(f"Cypher generation failed: {e}")
 
 
-def create_rag_orchestrator(tools: list) -> Agent:
+def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
         llm = GeminiModel(
@@ -62,6 +65,6 @@ def create_rag_orchestrator(tools: list) -> Agent:
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
             debug_mode=True
-        )
+        )  # type: ignore
     except Exception as e:
         raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}")
