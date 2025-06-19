@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import sys
 from .config import settings
 from .services.graph_db import memgraph_service
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -11,6 +12,13 @@ from loguru import logger
 
 async def main(target_repo_path: str = None):
     """Initializes services and runs the main application loop."""
+    
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
+    )
+    
     repo_path = target_repo_path or settings.TARGET_REPO_PATH
     logger.info(f"Codebase RAG CLI - Using Model: {settings.GEMINI_MODEL_ID}")
     logger.info(f"Target Repository: {repo_path}")

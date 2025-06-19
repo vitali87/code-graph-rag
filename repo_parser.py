@@ -18,7 +18,18 @@ from loguru import logger
 MEMGRAPH_HOST = "localhost"
 MEMGRAPH_PORT = 7687
 
-# --- AST Helper ---
+def _get_decorator_name(decorator: ast.expr) -> Optional[str]:
+    """Recursively unwraps decorator nodes to get their name."""
+    if isinstance(decorator, ast.Name):
+        return decorator.id
+    if isinstance(decorator, ast.Attribute):
+        # Handles chained attributes like 'app.task' -> 'task'
+        return decorator.attr
+    if isinstance(decorator, ast.Call):
+        # Handles decorators with arguments, e.g., @app.task(retries=3)
+        return _get_decorator_name(decorator.func)
+    return None
+
 class CodeVisitor(ast.NodeVisitor):
     """
     A visitor that traverses the AST, decorating each node with its parent and
@@ -220,7 +231,6 @@ class RepositoryParser:
         relative_path = filepath.relative_to(self.repo_path)
         relative_parent_dir = relative_path.parent
         
-        # Determine module qualified name more cleanly.
         if filepath.name == "__init__.py":
             module_qn = parent_package_qn or self.project_name
         else:
@@ -230,13 +240,10 @@ class RepositoryParser:
 
         self.ingestor.ensure_node("Module", {"qualified_name": module_qn, "name": filepath.name, "path": str(relative_path)})
         
-        # Connect Module to its parent container
-        if parent_package_qn:
-            self.ingestor.ensure_relationship(("Package", "qualified_name", parent_package_qn), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
-        elif relative_parent_dir != Path("."):
-            self.ingestor.ensure_relationship(("Folder", "path", str(relative_parent_dir)), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
-        else:
-            self.ingestor.ensure_relationship(("Project", "name", self.project_name), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
+        container_label, container_key, container_val = ("Package", "qualified_name", parent_package_qn) if parent_package_qn else \
+                                                        ("Folder", "path", str(relative_parent_dir)) if relative_parent_dir != Path('.') else \
+                                                        ("Project", "name", self.project_name)
+        self.ingestor.ensure_relationship((container_label, container_key, container_val), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
 
         logger.info(f"  Successfully merged/created Module: {module_qn}. Parsing AST...")
         try:
@@ -257,23 +264,26 @@ class RepositoryParser:
             if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 node_qn = f"{parent_qn}.{node.name}"
 
+                decorators = []
+                if hasattr(node, 'decorator_list'):
+                    decorators = [name for d in node.decorator_list if (name := _get_decorator_name(d)) is not None]
+
                 if isinstance(node, ast.ClassDef):
-                    logger.info(f"      Found ClassDef: name='{node.name}', qn='{node_qn}'")
-                    self.ingestor.ensure_node("Class", {"qualified_name": node_qn, "name": node.name})
+                    logger.info(f"      Found ClassDef: name='{node.name}', qn='{node_qn}', decorators={decorators}")
+                    self.ingestor.ensure_node("Class", {"qualified_name": node_qn, "name": node.name, "decorators": decorators})
                     self.ingestor.ensure_relationship(("Module", "qualified_name", parent_qn), "DEFINES", ("Class", "qualified_name", node_qn))
 
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     is_async = isinstance(node, ast.AsyncFunctionDef)
                     
                     if parent_type == "class":
-                        logger.info(f"      Found Method: name='{node.name}', qn='{node_qn}' (async: {is_async})")
-                        self.ingestor.ensure_node("Method", {"qualified_name": node_qn, "name": node.name})
+                        logger.info(f"      Found Method: name='{node.name}', qn='{node_qn}', async: {is_async}, decorators={decorators}")
+                        self.ingestor.ensure_node("Method", {"qualified_name": node_qn, "name": node.name, "decorators": decorators})
                         self.ingestor.ensure_relationship(("Class", "qualified_name", parent_qn), "DEFINES_METHOD", ("Method", "qualified_name", node_qn))
                     elif parent_type == "module":
-                        logger.info(f"      Found Function: name='{node.name}', qn='{node_qn}' (async: {is_async})")
-                        self.ingestor.ensure_node("Function", {"qualified_name": node_qn, "name": node.name})
+                        logger.info(f"      Found Function: name='{node.name}', qn='{node_qn}', async: {is_async}, decorators={decorators}")
+                        self.ingestor.ensure_node("Function", {"qualified_name": node_qn, "name": node.name, "decorators": decorators})
                         self.ingestor.ensure_relationship(("Module", "qualified_name", parent_qn), "DEFINES", ("Function", "qualified_name", node_qn))
-
     def _parse_pyproject_toml(self, filepath: Path) -> None:
         """Parses a pyproject.toml file for dependencies, supporting multiple formats."""
         logger.info(f"  Parsing pyproject.toml: {filepath}")
