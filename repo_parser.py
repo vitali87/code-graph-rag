@@ -568,6 +568,10 @@ class RepositoryParser:
 # --- Main Execution ---
 def main() -> None:
     """Main function to parse arguments and orchestrate the repository processing."""
+    # Use environment variables as the primary source of configuration
+    default_host = os.getenv("MEMGRAPH_HOST", "localhost")
+    default_port = int(os.getenv("MEMGRAPH_PORT", 7687))
+
     parser = argparse.ArgumentParser(
         description="Parse a Python repository and ingest its structure into Memgraph."
     )
@@ -576,14 +580,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--host",
-        default=MEMGRAPH_HOST,
-        help=f"Memgraph host (default: {MEMGRAPH_HOST})",
+        default=default_host,
+        help=f"Memgraph host (default: {default_host}, or from MEMGRAPH_HOST env var)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=MEMGRAPH_PORT,
-        help=f"Memgraph port (default: {MEMGRAPH_PORT})",
+        default=default_port,
+        help=f"Memgraph port (default: {default_port}, or from MEMGRAPH_PORT env var)",
     )
     parser.add_argument(
         "--clean",
