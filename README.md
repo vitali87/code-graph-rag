@@ -1,10 +1,11 @@
-<picture style="margin-top: -10px; margin-bottom: -20px;">
-  <source srcset="assets/logo-dark.png" media="(prefers-color-scheme: dark)">
-  <source srcset="assets/logo-light.png" media="(prefers-color-scheme: light)">
-  <img src="assets/logo-dark.png" alt="Graph-Code Logo" width="480" style="display: block;">
-</picture>
+<div align="center">
+  <picture>
+    <source srcset="assets/logo-dark.png" media="(prefers-color-scheme: dark)">
+    <source srcset="assets/logo-light.png" media="(prefers-color-scheme: light)">
+    <img src="assets/logo-dark.png" alt="Graph-Code Logo" width="480">
+  </picture>
 
-<p>
+  <p>
   <a href="https://github.com/vitali87/code-graph-rag/stargazers">
     <img src="https://img.shields.io/github/stars/vitali87/code-graph-rag?style=social" alt="GitHub stars" />
   </a>
@@ -15,11 +16,15 @@
     <img src="https://img.shields.io/github/license/vitali87/code-graph-rag" alt="License" />
   </a>
 </p>
-
+</div>
 
 # Graph-Code: A Graph-Based RAG System for Python Codebases
 
 A sophisticated Retrieval-Augmented Generation (RAG) system that analyzes Python repositories, builds knowledge graphs, and enables natural language querying of codebase structure and relationships.
+
+<div align="center">
+  <img src="https://github.com/ChawlaAvi/code-graph-rag/blob/main/assets/code-rag-demo.gif" alt="ag-ui Logo" style="max-width: 20px; height: auto;" />
+</div>
 
 ## 🚀 Features
 
