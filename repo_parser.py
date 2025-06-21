@@ -14,7 +14,6 @@ import mgclient
 import toml
 from loguru import logger
 
-# --- Configuration ---
 MEMGRAPH_HOST = "localhost"
 MEMGRAPH_PORT = 7687
 
@@ -62,7 +61,6 @@ class CodeVisitor(ast.NodeVisitor):
             self.scope_stack.pop()
 
 
-# --- Database Interaction ---
 class MemgraphIngestor:
     """Handles all communication and query execution with the Memgraph database."""
 
@@ -128,7 +126,6 @@ class MemgraphIngestor:
             batch_query = f"UNWIND $batch AS row\n{query}"
             cursor.execute(batch_query, {"batch": params_list})
         except Exception as e:
-            # Avoid logging errors for existing constraints
             if "already exists" not in str(e).lower():
                 logger.error(f"!!! Batch Cypher Error: {e}")
                 # logger.error(f"    Query: {batch_query}") # Can be noisy
@@ -193,7 +190,6 @@ class MemgraphIngestor:
             if not props_list:
                 continue
 
-            # Assume first property is the unique identifier
             id_key = next(iter(props_list[0]))
             prop_keys = list(props_list[0].keys())
 
@@ -250,7 +246,6 @@ class MemgraphIngestor:
         logger.info("--- Flushing complete. ---")
 
 
-# --- Repository Parsing Logic ---
 class RepositoryParser:
     """Parses a Python repository and uses an ingestor to save the data."""
 
@@ -565,10 +560,8 @@ class RepositoryParser:
             logger.error(f"    Error parsing {filepath}: {e}")
 
 
-# --- Main Execution ---
 def main() -> None:
     """Main function to parse arguments and orchestrate the repository processing."""
-    # Use environment variables as the primary source of configuration
     default_host = os.getenv("MEMGRAPH_HOST", "localhost")
     default_port = int(os.getenv("MEMGRAPH_PORT", 7687))
 

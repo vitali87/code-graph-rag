@@ -1,17 +1,16 @@
-# codebase_rag/services/llm.py
 from pydantic_ai import Agent, Tool
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from ..config import settings
-from ..prompts import (
-    GEMINI_LITE_CYPHER_SYSTEM_PROMPT, 
-    RAG_ORCHESTRATOR_SYSTEM_PROMPT
-)
+from ..prompts import GEMINI_LITE_CYPHER_SYSTEM_PROMPT, RAG_ORCHESTRATOR_SYSTEM_PROMPT
 from loguru import logger
+
 
 class LLMGenerationError(Exception):
     """Custom exception for LLM generation failures."""
+
     pass
+
 
 def _clean_cypher_response(response_text: str) -> str:
     """Utility to clean up common LLM formatting artifacts from a Cypher query."""
@@ -22,35 +21,46 @@ def _clean_cypher_response(response_text: str) -> str:
         query += ";"
     return query
 
+
 class CypherGenerator:
     """Generates Cypher queries from natural language."""
+
     def __init__(self):
         try:
             llm = GeminiModel(
-                "gemini-2.5-flash-lite-preview-06-17",
-                provider=GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)
+                settings.MODEL_CYPHER_ID,
+                provider=GoogleGLAProvider(api_key=settings.GEMINI_API_KEY),
             )
             self.agent = Agent(
                 model=llm,
                 system_prompt=GEMINI_LITE_CYPHER_SYSTEM_PROMPT,
-                output_type=str
+                output_type=str,
             )
         except Exception as e:
-            raise LLMGenerationError(f"Failed to initialize CypherGenerator: {e}")
+            raise LLMGenerationError(
+                f"Failed to initialize CypherGenerator: {e}"
+            ) from e
 
     async def generate(self, natural_language_query: str) -> str:
-        logger.info(f"  [CypherGenerator] Generating query for: '{natural_language_query}'")
+        logger.info(
+            f"  [CypherGenerator] Generating query for: '{natural_language_query}'"
+        )
         try:
             result = await self.agent.run(natural_language_query)
-            if not isinstance(result.output, str) or "MATCH" not in result.output.upper():
-                raise LLMGenerationError(f"LLM did not generate a valid query. Output: {result.output}")
-            
+            if (
+                not isinstance(result.output, str)
+                or "MATCH" not in result.output.upper()
+            ):
+                raise LLMGenerationError(
+                    f"LLM did not generate a valid query. Output: {result.output}"
+                )
+
             query = _clean_cypher_response(result.output)
             logger.info(f"  [CypherGenerator] Generated Cypher: {query}")
             return query
         except Exception as e:
             logger.error(f"  [CypherGenerator] Error: {e}")
-            raise LLMGenerationError(f"Cypher generation failed: {e}")
+            raise LLMGenerationError(f"Cypher generation failed: {e}") from e
 
 
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
@@ -58,13 +68,13 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     try:
         llm = GeminiModel(
             settings.GEMINI_MODEL_ID,
-            provider=GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)
+            provider=GoogleGLAProvider(api_key=settings.GEMINI_API_KEY),
         )
         return Agent(
             model=llm,
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
-            debug_mode=True
+            debug_mode=True,
         )  # type: ignore
     except Exception as e:
-        raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}")
+        raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e
