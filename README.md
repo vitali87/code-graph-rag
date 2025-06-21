@@ -78,7 +78,8 @@ cp .env.example .env
 Required environment variables:
 ```env
 GEMINI_API_KEY=your-api-key
-GEMINI_MODEL_ID=gemeini-model-handle
+GEMINI_MODEL_ID=gemini-2.5-pro
+MODEL_CYPHER_ID=gemini-2.5-flash-lite-preview-06-17
 MEMGRAPH_HOST=localhost
 MEMGRAPH_PORT=7687
 ```
@@ -145,7 +146,8 @@ Configuration is managed through environment variables and the `config.py` file:
 ```python
 MEMGRAPH_HOST = "localhost"
 MEMGRAPH_PORT = 7687
-GEMINI_MODEL_ID = "gemini-2.5-pro-preview-06-05"
+GEMINI_MODEL_ID = "gemini-2.5-pro"  # Main RAG orchestrator model
+MODEL_CYPHER_ID = "gemini-2.5-flash-lite-preview-06-17"  # Cypher generation model
 TARGET_REPO_PATH = "."
 GEMINI_API_KEY = "required"
 ```
