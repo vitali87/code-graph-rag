@@ -152,10 +152,6 @@ TARGET_REPO_PATH = "."
 GEMINI_API_KEY = "required"
 ```
 
-### Model Configuration
-- **GEMINI_MODEL_ID**: Used for the main RAG orchestrator (general conversations)
-- **MODEL_CYPHER_ID**: Used specifically for Cypher query generation (optimized for database queries)
-
 ## 🏃‍♂️ Development
 
 ### Project Structure
