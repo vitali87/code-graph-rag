@@ -206,3 +206,7 @@ For issues or questions:
 2. Verify Memgraph connection
 3. Ensure all environment variables are set
 4. Review the graph schema matches your expectations
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=vitali87/code-graph-rag&type=Date)](https://www.star-history.com/#vitali87/code-graph-rag&Date)
