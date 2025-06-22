@@ -80,7 +80,31 @@ def start():
     parser.add_argument(
         "--repo-path", help="Path to the target repository for code retrieval"
     )
+    parser.add_argument(
+        "--update-graph",
+        action="store_true",
+        help="Update the knowledge graph by parsing the repository",
+    )
     args = parser.parse_args()
+
+    # If update-graph flag is provided, run graph updater instead of RAG CLI
+    if args.update_graph:
+        from pathlib import Path
+        from .graph_updater import GraphUpdater, MemgraphIngestor
+
+        repo_path = Path(args.repo_path or settings.TARGET_REPO_PATH)
+        logger.info(f"Updating knowledge graph for: {repo_path}")
+
+        with MemgraphIngestor(
+            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+        ) as ingestor:
+            ingestor.clean_database()
+            ingestor.ensure_constraints()
+            updater = GraphUpdater(ingestor, repo_path)
+            updater.run()
+
+        logger.info("Graph update completed!")
+        return
 
     try:
         asyncio.run(main(target_repo_path=args.repo_path))

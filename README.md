@@ -118,20 +118,6 @@ Parse and ingest a multi-language repository into the knowledge graph:
 python -m codebase_rag.main --repo-path /path/to/your/repo --update-graph
 ```
 
-Or use the standalone graph updater:
-```bash
-python -c "
-from codebase_rag.graph_updater import GraphUpdater, MemgraphIngestor
-from pathlib import Path
-
-with MemgraphIngestor('localhost', 7687) as ingestor:
-    ingestor.clean_database()  # Optional: clear existing data
-    ingestor.ensure_constraints()
-    updater = GraphUpdater(ingestor, Path('/path/to/your/repo'))
-    updater.run()
-"
-```
-
 **Supported Languages**: The system automatically detects and processes files based on extensions:
 - **Python**: `.py` files
 - **JavaScript**: `.js`, `.jsx` files
