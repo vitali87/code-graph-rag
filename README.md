@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source srcset="assets/logo-dark.png" media="(prefers-color-scheme: dark)">
-    <source srcset="assets/logo-light.png" media="(prefers-color-scheme: light)">
+    <source srcset="assets/logo-dark-any.png" media="(prefers-color-scheme: dark)">
+    <source srcset="assets/logo-light-any.png" media="(prefers-color-scheme: light)">
     <img src="assets/logo-dark.png" alt="Graph-Code Logo" width="480">
   </picture>
 
@@ -20,7 +20,7 @@
 
 # Graph-Code: A Multi-Language Graph-Based RAG System
 
-A sophisticated Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships.
+An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships.
 
 <div align="center">
   <img src="https://github.com/ChawlaAvi/code-graph-rag/blob/main/assets/code-rag-demo.gif" alt="ag-ui Logo" style="max-width: 20px; height: auto;" />
@@ -42,7 +42,7 @@ A sophisticated Retrieval-Augmented Generation (RAG) system that analyzes multi-
 
 The system consists of two main components:
 
-1. **Graph Updater** (`codebase_rag/graph_updater.py`): Multi-language Tree-sitter based parser that analyzes codebases and ingests data into Memgraph
+1. **Multi-language Parser**: Tree-sitter based parsing system that analyzes codebases and ingests data into Memgraph
 2. **RAG System** (`codebase_rag/`): Interactive CLI for querying the stored knowledge graph
 
 ### Core Components
@@ -65,8 +65,8 @@ The system consists of two main components:
 
 1. **Clone the repository**:
 ```bash
-git clone <repository-url>
-cd graph-code
+git clone https://github.com/vitali87/code-graph-rag.git
+cd code-graph-rag
 ```
 
 2. **Install dependencies**:
@@ -193,7 +193,7 @@ GEMINI_API_KEY = "required"
 
 ### Project Structure
 ```
-graph-code/
+code-graph-rag/
 ├── codebase_rag/              # RAG system package
 │   ├── main.py                # CLI entry point
 │   ├── config.py              # Configuration management
@@ -234,10 +234,10 @@ graph-code/
 
 ### Language-Specific Features
 
-**Python**: Full support including nested functions, methods, classes, and package structure
-**JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions
-**Rust**: Functions, structs, enums, impl blocks, and associated functions
-**Go**: Functions, methods, type declarations, and struct definitions
+- **Python**: Full support including nested functions, methods, classes, and package structure
+- **JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions
+- **Rust**: Functions, structs, enums, impl blocks, and associated functions
+- **Go**: Functions, methods, type declarations, and struct definitions
 
 ### Installation Options
 
