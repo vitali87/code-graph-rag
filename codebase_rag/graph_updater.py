@@ -407,31 +407,100 @@ class GraphUpdater:
         captures = self.queries["functions"].captures(root_node)
         if "function" in captures:
             for func_node in captures["function"]:
-                # Only process top-level functions (direct children of module/program)
-                if (
-                    func_node.parent
-                    and func_node.parent.type in self.lang_config.module_node_types
-                ):
-                    name_node = func_node.child_by_field_name("name")
-                    if not name_node:
-                        continue
-                    func_name = name_node.text.decode("utf8")
-                    func_qn = f"{parent_qn}.{func_name}"
-                    props = {
-                        "qualified_name": func_qn,
-                        "name": func_name,
-                        "decorators": [],
-                        "start_line": func_node.start_point[0] + 1,
-                        "end_line": func_node.end_point[0] + 1,
-                        "docstring": self._get_docstring(func_node),
-                    }
-                    logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
-                    self.ingestor.ensure_node_batch("Function", props)
-                    self.ingestor.ensure_relationship_batch(
-                        ("Module", "qualified_name", parent_qn),
-                        "DEFINES",
-                        ("Function", "qualified_name", func_qn),
+                # Get the function name
+                name_node = func_node.child_by_field_name("name")
+                if not name_node:
+                    continue
+                func_name = name_node.text.decode("utf8")
+
+                # Build qualified name based on nesting context
+                func_qn = self._build_nested_qualified_name(
+                    func_node, parent_qn, func_name
+                )
+
+                # Skip if this is a method (will be handled by class processing) or if qn is None
+                if func_qn is None or self._is_method(func_node):
+                    continue
+
+                props = {
+                    "qualified_name": func_qn,
+                    "name": func_name,
+                    "decorators": [],
+                    "start_line": func_node.start_point[0] + 1,
+                    "end_line": func_node.end_point[0] + 1,
+                    "docstring": self._get_docstring(func_node),
+                }
+                logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
+                self.ingestor.ensure_node_batch("Function", props)
+
+                # Link to the appropriate parent (Module for top-level, Function for nested)
+                parent_type, parent_key = self._determine_function_parent(
+                    func_node, parent_qn
+                )
+                self.ingestor.ensure_relationship_batch(
+                    (parent_type, "qualified_name", parent_key),
+                    "DEFINES",
+                    ("Function", "qualified_name", func_qn),
+                )
+
+    def _build_nested_qualified_name(
+        self, func_node, module_qn: str, func_name: str
+    ) -> str:
+        """Build qualified name for nested functions by traversing parent hierarchy."""
+        path_parts = []
+        current = func_node.parent
+
+        # Traverse up the AST to build the nesting hierarchy
+        while current and current.type != "module":
+            if current.type in self.lang_config.function_node_types:
+                # Parent is a function - get its name
+                name_node = current.child_by_field_name("name")
+                if name_node:
+                    path_parts.append(name_node.text.decode("utf8"))
+            elif current.type in self.lang_config.class_node_types:
+                # Parent is a class - this is a method, not a nested function
+                return None  # Will be handled as method
+            current = current.parent
+
+        # Reverse to get correct order (innermost to outermost)
+        path_parts.reverse()
+
+        # Build the qualified name: module.parent_func.nested_func
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
+        else:
+            return f"{module_qn}.{func_name}"
+
+    def _is_method(self, func_node) -> bool:
+        """Check if a function is actually a method (inside a class)."""
+        current = func_node.parent
+        while current and current.type != "module":
+            if current.type in self.lang_config.class_node_types:
+                return True
+            current = current.parent
+        return False
+
+    def _determine_function_parent(self, func_node, module_qn: str) -> tuple[str, str]:
+        """Determine the parent entity for linking relationships."""
+        current = func_node.parent
+
+        # Look for immediate parent function
+        while current and current.type != "module":
+            if current.type in self.lang_config.function_node_types:
+                name_node = current.child_by_field_name("name")
+                if name_node:
+                    parent_func_name = name_node.text.decode("utf8")
+                    # Build parent function's qualified name
+                    parent_qn = self._build_nested_qualified_name(
+                        current, module_qn, parent_func_name
                     )
+                    if parent_qn:
+                        return "Function", parent_qn
+                break
+            current = current.parent
+
+        # Default to module parent
+        return "Module", module_qn
 
     def _ingest_classes_and_methods(self, root_node, parent_qn: str):
         class_captures = self.queries["classes"].captures(root_node)
