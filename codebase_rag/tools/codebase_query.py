@@ -30,17 +30,11 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
 
-            # Use the ingestor's query method
-            results = []
-            cursor = ingestor.conn.cursor()
-            cursor.execute(cypher_query)
-            if cursor.description:
-                column_names = [desc.name for desc in cursor.description]
-                results = [dict(zip(column_names, row)) for row in cursor.fetchall()]
+            # Use the ingestor's public interface instead of accessing .conn
+            results = ingestor.fetch_all(cypher_query)
 
             summary = f"Successfully retrieved {len(results)} item(s) from the graph."
             return GraphData(query_used=cypher_query, results=results, summary=summary)
-
         except LLMGenerationError as e:
             return GraphData(
                 query_used="N/A",

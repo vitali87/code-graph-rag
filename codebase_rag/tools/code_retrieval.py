@@ -25,14 +25,8 @@ class CodeRetriever:
         """
         params = {"qn": qualified_name}
         try:
-            # Use the ingestor's query method, which is _execute_query
-            # but we need to get results back. Let's make a temp cursor.
-            cursor = self.ingestor.conn.cursor()
-            cursor.execute(query, params)
-            results = []
-            if cursor.description:
-                column_names = [desc.name for desc in cursor.description]
-                results = [dict(zip(column_names, row)) for row in cursor.fetchall()]
+            # Use the ingestor's public interface
+            results = self.ingestor.fetch_all(query, params)
 
             if not results:
                 return CodeSnippet(
