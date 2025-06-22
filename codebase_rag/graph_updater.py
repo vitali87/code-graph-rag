@@ -34,6 +34,16 @@ try:
 except ImportError:
     go_language_so = None
 
+try:
+    from tree_sitter_scala import language as scala_language_so
+except ImportError:
+    scala_language_so = None
+
+try:
+    from tree_sitter_java import language as java_language_so
+except ImportError:
+    java_language_so = None
+
 from .language_config import (
     get_language_config,
     get_language_config_by_name,
@@ -47,6 +57,8 @@ LANGUAGE_LIBRARIES = {
     "typescript": typescript_language_so,
     "rust": rust_language_so,
     "go": go_language_so,
+    "scala": scala_language_so,
+    "java": java_language_so,
 }
 
 

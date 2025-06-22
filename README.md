@@ -87,21 +87,16 @@ This installs Tree-sitter grammars for:
 - **TypeScript** (.ts, .tsx)
 - **Rust** (.rs)
 - **Go** (.go)
+- **Scala** (.scala, .sc)
+- **Java** (.java)
 
 3. **Set up environment variables**:
 ```bash
 cp .env.example .env
-# Edit .env with your configuration
+# Edit .env with your Gemini API key
 ```
 
-Required environment variables:
-```env
-GEMINI_API_KEY=your-api-key
-GEMINI_MODEL_ID=gemini-2.5-pro
-MODEL_CYPHER_ID=gemini-2.5-flash-lite-preview-06-17
-MEMGRAPH_HOST=localhost
-MEMGRAPH_PORT=7687
-```
+> **Note**: Only `GEMINI_API_KEY` is required. Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
 4. **Start Memgraph database**:
 ```bash
@@ -169,6 +164,8 @@ The knowledge graph uses the following node types and relationships:
 - **JavaScript/TypeScript**: `function_declaration`, `arrow_function`, `class_declaration`
 - **Rust**: `function_item`, `struct_item`, `enum_item`, `impl_item`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
+- **Scala**: `function_definition`, `class_definition`, `object_definition`, `trait_definition`
+- **Java**: `method_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`
 
 ### Relationships
 - `CONTAINS_PACKAGE/MODULE/FILE/FOLDER`: Hierarchical containment
@@ -178,16 +175,7 @@ The knowledge graph uses the following node types and relationships:
 
 ## 🔧 Configuration
 
-Configuration is managed through environment variables and the `config.py` file:
-
-```python
-MEMGRAPH_HOST = "localhost"
-MEMGRAPH_PORT = 7687
-GEMINI_MODEL_ID = "gemini-2.5-pro"  # Main RAG orchestrator model
-MODEL_CYPHER_ID = "gemini-2.5-flash-lite-preview-06-17"  # Cypher generation model
-TARGET_REPO_PATH = "."
-GEMINI_API_KEY = "required"
-```
+Configuration is managed through environment variables in `.env` file. The system will fail early with a clear error if `GEMINI_API_KEY` is not set.
 
 ## 🏃‍♂️ Development
 
@@ -231,13 +219,17 @@ code-graph-rag/
 | TypeScript | `.ts`, `.tsx` | ✅        | ✅              | ✅      | -                |
 | Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                |
 | Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                |
+| Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations |
+| Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations |
 
 ### Language-Specific Features
 
 - **Python**: Full support including nested functions, methods, classes, and package structure
-- **JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions
+- **JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions  
 - **Rust**: Functions, structs, enums, impl blocks, and associated functions
 - **Go**: Functions, methods, type declarations, and struct definitions
+- **Scala**: Functions, methods, classes, objects, traits, case classes, and Scala 3 syntax
+- **Java**: Methods, constructors, classes, interfaces, enums, and annotation types
 
 ### Installation Options
 
@@ -249,7 +241,7 @@ uv sync
 uv sync --extra treesitter-full
 
 # Individual language support (if needed)
-uv add tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-rust tree-sitter-go
+uv add tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-rust tree-sitter-go tree-sitter-scala tree-sitter-java
 ```
 
 ### Language Configuration

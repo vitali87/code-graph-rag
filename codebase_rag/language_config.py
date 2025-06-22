@@ -72,6 +72,38 @@ LANGUAGE_CONFIGS = {
         class_node_types=["type_declaration"],  # Go structs
         module_node_types=["source_file"],
     ),
+    "scala": LanguageConfig(
+        name="scala",
+        file_extensions=[".scala", ".sc"],
+        function_node_types=[
+            "function_definition",
+            "function_declaration",
+        ],
+        class_node_types=[
+            "class_definition",
+            "object_definition",
+            "trait_definition",
+            "case_class_definition",
+        ],
+        module_node_types=["compilation_unit"],
+        package_indicators=[],  # Scala uses package declarations
+    ),
+    "java": LanguageConfig(
+        name="java",
+        file_extensions=[".java"],
+        function_node_types=[
+            "method_declaration",
+            "constructor_declaration",
+        ],
+        class_node_types=[
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "annotation_type_declaration",
+        ],
+        module_node_types=["program"],
+        package_indicators=[],  # Java uses package declarations
+    ),
 }
 
 
