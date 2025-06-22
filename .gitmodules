@@ -1,0 +1,3 @@
+[submodule "grammars/tree-sitter-python"]
+	path = grammars/tree-sitter-python
+	url = https://github.com/tree-sitter/tree-sitter-python
