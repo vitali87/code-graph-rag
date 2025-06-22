@@ -114,8 +114,15 @@ docker-compose up -d
 
 Parse and ingest a multi-language repository into the knowledge graph:
 
+**For the first repository (clean start):**
 ```bash
-python -m codebase_rag.main --repo-path /path/to/your/repo --update-graph
+python -m codebase_rag.main --repo-path /path/to/repo1 --update-graph --clean
+```
+
+**For additional repositories (preserve existing data):**
+```bash
+python -m codebase_rag.main --repo-path /path/to/repo2 --update-graph
+python -m codebase_rag.main --repo-path /path/to/repo3 --update-graph
 ```
 
 **Supported Languages**: The system automatically detects and processes files based on extensions:

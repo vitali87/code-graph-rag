@@ -85,6 +85,11 @@ def start():
         action="store_true",
         help="Update the knowledge graph by parsing the repository",
     )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Clean the database before updating (use when adding first repo)",
+    )
     args = parser.parse_args()
 
     # If update-graph flag is provided, run graph updater instead of RAG CLI
@@ -98,7 +103,9 @@ def start():
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
         ) as ingestor:
-            ingestor.clean_database()
+            if args.clean:
+                logger.info("Cleaning database...")
+                ingestor.clean_database()
             ingestor.ensure_constraints()
             updater = GraphUpdater(ingestor, repo_path)
             updater.run()
