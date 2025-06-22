@@ -10,6 +10,7 @@ dependencies = [
     "pymgclient>=1.4.0",
     "python-dotenv>=1.1.0",
     "toml>=0.10.2",
+    "tree-sitter-python>=0.23.6",
     "tree-sitter>=0.24.0",
     "watchdog>=6.0.0",
 ]
