@@ -20,7 +20,7 @@ except ImportError:
     javascript_language_so = None
 
 try:
-    from tree_sitter_typescript import language as typescript_language_so
+    from tree_sitter_typescript import language_typescript as typescript_language_so
 except ImportError:
     typescript_language_so = None
 
@@ -144,7 +144,7 @@ class MemgraphIngestor:
                 self._execute_query(
                     f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
                 )
-            except:  # Fails if constraint exists, which is fine
+            except Exception:
                 pass
         logger.info("Constraints checked/created.")
 
