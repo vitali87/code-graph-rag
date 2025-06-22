@@ -7,11 +7,47 @@ from typing import Any, Optional, Dict
 import mgclient
 from loguru import logger
 from tree_sitter import Language, Parser, Node
-from tree_sitter_python import (
-    language as python_language_so,
+
+# Import available Tree-sitter languages
+try:
+    from tree_sitter_python import language as python_language_so
+except ImportError:
+    python_language_so = None
+
+try:
+    from tree_sitter_javascript import language as javascript_language_so
+except ImportError:
+    javascript_language_so = None
+
+try:
+    from tree_sitter_typescript import language as typescript_language_so
+except ImportError:
+    typescript_language_so = None
+
+try:
+    from tree_sitter_rust import language as rust_language_so
+except ImportError:
+    rust_language_so = None
+
+try:
+    from tree_sitter_go import language as go_language_so
+except ImportError:
+    go_language_so = None
+
+from .language_config import (
+    get_language_config,
+    get_language_config_by_name,
+    LanguageConfig,
 )
 
-from .language_config import get_language_config, LanguageConfig
+# Language library mapping
+LANGUAGE_LIBRARIES = {
+    "python": python_language_so,
+    "javascript": javascript_language_so,
+    "typescript": typescript_language_so,
+    "rust": rust_language_so,
+    "go": go_language_so,
+}
 
 
 class MemgraphIngestor:
@@ -200,34 +236,67 @@ class GraphUpdater:
             ".eggs",
         }
 
-        self.parser = Parser()
-        self.language = Language(python_language_so())
-        self.parser.language = self.language
-        logger.success("Successfully loaded Python grammar.")
+        # Initialize parsers and queries for all available languages
+        self.parsers: Dict[str, Parser] = {}
+        self.languages: Dict[str, Language] = {}
+        self.queries: Dict[str, Dict[str, Any]] = {}
 
-        self._compile_queries()
+        self._initialize_languages()
 
-    def _compile_queries(self):
-        """Compiles all Tree-sitter queries for efficiency based on language config."""
-        # For now, using Python config - will be configurable later
+    def _initialize_languages(self):
+        """Initialize Tree-sitter parsers for all available languages."""
         from .language_config import LANGUAGE_CONFIGS
 
-        self.lang_config = LANGUAGE_CONFIGS["python"]
+        available_languages = []
 
-        # Build queries dynamically based on language configuration
+        for lang_name, lang_config in LANGUAGE_CONFIGS.items():
+            lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
+            if lang_lib is not None:
+                try:
+                    # Create parser and language for this language
+                    parser = Parser()
+                    language = Language(lang_lib())
+                    parser.language = language
+
+                    self.parsers[lang_name] = parser
+                    self.languages[lang_name] = language
+
+                    # Compile queries for this language
+                    self._compile_queries_for_language(lang_name, lang_config, language)
+
+                    available_languages.append(lang_name)
+                    logger.success(f"Successfully loaded {lang_name} grammar.")
+
+                except Exception as e:
+                    logger.warning(f"Failed to load {lang_name} grammar: {e}")
+            else:
+                logger.debug(f"Tree-sitter library for {lang_name} not available.")
+
+        if not available_languages:
+            raise RuntimeError(
+                "No Tree-sitter languages available. Please install tree-sitter language packages."
+            )
+
+        logger.info(f"Initialized parsers for: {', '.join(available_languages)}")
+
+    def _compile_queries_for_language(
+        self, lang_name: str, lang_config: LanguageConfig, language: Language
+    ):
+        """Compile Tree-sitter queries for a specific language."""
         function_patterns = " ".join(
             [
                 f"({node_type}) @function"
-                for node_type in self.lang_config.function_node_types
+                for node_type in lang_config.function_node_types
             ]
         )
         class_patterns = " ".join(
-            [f"({node_type}) @class" for node_type in self.lang_config.class_node_types]
+            [f"({node_type}) @class" for node_type in lang_config.class_node_types]
         )
 
-        self.queries = {
-            "functions": self.language.query(function_patterns),
-            "classes": self.language.query(class_patterns),
+        self.queries[lang_name] = {
+            "functions": language.query(function_patterns),
+            "classes": language.query(class_patterns),
+            "config": lang_config,
         }
 
     def run(self) -> None:
@@ -254,7 +323,22 @@ class GraphUpdater:
             parent_rel_path = relative_root.parent
             parent_container_qn = self.structural_elements.get(parent_rel_path)
 
-            if (root / "__init__.py").exists():
+            # Check if this directory is a package for any supported language
+            is_package = False
+            package_indicators = set()
+
+            # Collect package indicators from all language configs
+            for lang_name, lang_queries in self.queries.items():
+                lang_config = lang_queries["config"]
+                package_indicators.update(lang_config.package_indicators)
+
+            # Check if any package indicator exists
+            for indicator in package_indicators:
+                if (root / indicator).exists():
+                    is_package = True
+                    break
+
+            if is_package:
                 package_qn = ".".join([self.project_name] + list(relative_root.parts))
                 self.structural_elements[relative_root] = package_qn
                 logger.info(f"  Identified Package: {package_qn}")
@@ -334,8 +418,10 @@ class GraphUpdater:
                     ("File", "path", relative_filepath),
                 )
 
-                if file_name.endswith(".py"):
-                    self.parse_and_ingest_file(filepath)
+                # Check if this file type is supported
+                lang_config = get_language_config(filepath.suffix)
+                if lang_config and lang_config.name in self.parsers:
+                    self.parse_and_ingest_file(filepath, lang_config.name)
                 elif file_name == "pyproject.toml":
                     self._parse_dependencies(filepath)
 
@@ -352,14 +438,15 @@ class GraphUpdater:
             return first_statement.children[0].text.decode("utf-8").strip("'\" \n")
         return None
 
-    def parse_and_ingest_file(self, file_path: Path):
+    def parse_and_ingest_file(self, file_path: Path, language: str):
         relative_path = file_path.relative_to(self.repo_path)
         relative_path_str = str(relative_path)
-        logger.info(f"Parsing: {relative_path_str}")
+        logger.info(f"Parsing {language}: {relative_path_str}")
 
         try:
             source_bytes = file_path.read_bytes()
-            tree = self.parser.parse(source_bytes)
+            parser = self.parsers[language]
+            tree = parser.parse(source_bytes)
             root_node = tree.root_node
 
             module_qn = ".".join(
@@ -397,14 +484,17 @@ class GraphUpdater:
                 ("Module", "qualified_name", module_qn),
             )
 
-            self._ingest_top_level_functions(root_node, module_qn)
-            self._ingest_classes_and_methods(root_node, module_qn)
+            self._ingest_top_level_functions(root_node, module_qn, language)
+            self._ingest_classes_and_methods(root_node, module_qn, language)
 
         except Exception as e:
             logger.error(f"Failed to parse or ingest {file_path}: {e}", exc_info=True)
 
-    def _ingest_top_level_functions(self, root_node, parent_qn: str):
-        captures = self.queries["functions"].captures(root_node)
+    def _ingest_top_level_functions(self, root_node, parent_qn: str, language: str):
+        lang_queries = self.queries[language]
+        lang_config = lang_queries["config"]
+
+        captures = lang_queries["functions"].captures(root_node)
         if "function" in captures:
             for func_node in captures["function"]:
                 # Get the function name
@@ -415,11 +505,11 @@ class GraphUpdater:
 
                 # Build qualified name based on nesting context
                 func_qn = self._build_nested_qualified_name(
-                    func_node, parent_qn, func_name
+                    func_node, parent_qn, func_name, lang_config
                 )
 
                 # Skip if this is a method (will be handled by class processing) or if qn is None
-                if func_qn is None or self._is_method(func_node):
+                if func_qn is None or self._is_method(func_node, lang_config):
                     continue
 
                 props = {
@@ -435,7 +525,7 @@ class GraphUpdater:
 
                 # Link to the appropriate parent (Module for top-level, Function for nested)
                 parent_type, parent_key = self._determine_function_parent(
-                    func_node, parent_qn
+                    func_node, parent_qn, lang_config
                 )
                 self.ingestor.ensure_relationship_batch(
                     (parent_type, "qualified_name", parent_key),
@@ -444,20 +534,20 @@ class GraphUpdater:
                 )
 
     def _build_nested_qualified_name(
-        self, func_node, module_qn: str, func_name: str
+        self, func_node, module_qn: str, func_name: str, lang_config: LanguageConfig
     ) -> str:
         """Build qualified name for nested functions by traversing parent hierarchy."""
         path_parts = []
         current = func_node.parent
 
         # Traverse up the AST to build the nesting hierarchy
-        while current and current.type != "module":
-            if current.type in self.lang_config.function_node_types:
+        while current and current.type not in lang_config.module_node_types:
+            if current.type in lang_config.function_node_types:
                 # Parent is a function - get its name
                 name_node = current.child_by_field_name("name")
                 if name_node:
                     path_parts.append(name_node.text.decode("utf8"))
-            elif current.type in self.lang_config.class_node_types:
+            elif current.type in lang_config.class_node_types:
                 # Parent is a class - this is a method, not a nested function
                 return None  # Will be handled as method
             current = current.parent
@@ -471,28 +561,30 @@ class GraphUpdater:
         else:
             return f"{module_qn}.{func_name}"
 
-    def _is_method(self, func_node) -> bool:
+    def _is_method(self, func_node, lang_config: LanguageConfig) -> bool:
         """Check if a function is actually a method (inside a class)."""
         current = func_node.parent
-        while current and current.type != "module":
-            if current.type in self.lang_config.class_node_types:
+        while current and current.type not in lang_config.module_node_types:
+            if current.type in lang_config.class_node_types:
                 return True
             current = current.parent
         return False
 
-    def _determine_function_parent(self, func_node, module_qn: str) -> tuple[str, str]:
+    def _determine_function_parent(
+        self, func_node, module_qn: str, lang_config: LanguageConfig
+    ) -> tuple[str, str]:
         """Determine the parent entity for linking relationships."""
         current = func_node.parent
 
         # Look for immediate parent function
-        while current and current.type != "module":
-            if current.type in self.lang_config.function_node_types:
+        while current and current.type not in lang_config.module_node_types:
+            if current.type in lang_config.function_node_types:
                 name_node = current.child_by_field_name("name")
                 if name_node:
                     parent_func_name = name_node.text.decode("utf8")
                     # Build parent function's qualified name
                     parent_qn = self._build_nested_qualified_name(
-                        current, module_qn, parent_func_name
+                        current, module_qn, parent_func_name, lang_config
                     )
                     if parent_qn:
                         return "Function", parent_qn
@@ -502,8 +594,11 @@ class GraphUpdater:
         # Default to module parent
         return "Module", module_qn
 
-    def _ingest_classes_and_methods(self, root_node, parent_qn: str):
-        class_captures = self.queries["classes"].captures(root_node)
+    def _ingest_classes_and_methods(self, root_node, parent_qn: str, language: str):
+        lang_queries = self.queries[language]
+        lang_config = lang_queries["config"]
+
+        class_captures = lang_queries["classes"].captures(root_node)
         if "class" in class_captures:
             for class_node in class_captures["class"]:
                 name_node = class_node.child_by_field_name("name")
@@ -529,7 +624,7 @@ class GraphUpdater:
                 body_node = class_node.child_by_field_name("body")
                 if not body_node:
                     continue
-                method_captures = self.queries["functions"].captures(body_node)
+                method_captures = lang_queries["functions"].captures(body_node)
                 if "function" in method_captures:
                     for method_node in method_captures["function"]:
                         method_name_node = method_node.child_by_field_name("name")
