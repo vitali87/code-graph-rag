@@ -9,6 +9,8 @@ class AppConfig:
 
     MEMGRAPH_HOST = os.getenv("MEMGRAPH_HOST", "localhost")
     MEMGRAPH_PORT = int(os.getenv("MEMGRAPH_PORT", 7687))
+    MEMGRAPH_HTTP_PORT = int(os.getenv("MEMGRAPH_HTTP_PORT", 7444))
+    LAB_PORT = int(os.getenv("LAB_PORT", 3000))
     GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-06-05")
     MODEL_CYPHER_ID = os.getenv(
         "MODEL_CYPHER_ID", "gemini-2.5-flash-lite-preview-06-17"
