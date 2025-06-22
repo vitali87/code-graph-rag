@@ -1,5 +1,6 @@
 import os
 import platform
+import toml
 from pathlib import Path
 from typing import Any, Optional, Dict
 
@@ -185,6 +186,17 @@ class GraphUpdater:
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = repo_path.name
+        self.structural_elements: Dict[Path, Optional[str]] = {}
+        self.ignore_dirs = {
+            ".git",
+            "venv",
+            ".venv",
+            "__pycache__",
+            "node_modules",
+            "build",
+            "dist",
+            ".eggs",
+        }
 
         self.parser = Parser()
         self.language = Language(python_language_so())
@@ -203,43 +215,148 @@ class GraphUpdater:
             "methods": self.language.query(
                 "(function_definition name: (identifier) @name) @def"
             ),
-            "docstrings": self.language.query(
-                """(
-                    (function_definition body: (block (expression_statement (string) @docstring)))
-                    (class_definition body: (block (expression_statement (string) @docstring)))
-                )"""
-            ),
         }
+
+    def run(self) -> None:
+        """Orchestrates the two-pass parsing and ingestion process."""
+        self.ingestor.ensure_node_batch("Project", {"name": self.project_name})
+        logger.info(f"Ensuring Project: {self.project_name}")
+
+        logger.info("--- Pass 1: Identifying Packages and Folders ---")
+        self._identify_structure()
+
+        logger.info("\n--- Pass 2: Processing Files and Python Modules ---")
+        self._process_files()
+
+        logger.info("\n--- Analysis complete. Flushing all data to database... ---")
+        self.ingestor.flush_all()
+
+    def _identify_structure(self) -> None:
+        """First pass: Walks the directory to find all packages and folders."""
+        for root_str, dirs, _ in os.walk(self.repo_path, topdown=True):
+            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
+            root = Path(root_str)
+            relative_root = root.relative_to(self.repo_path)
+
+            parent_rel_path = relative_root.parent
+            parent_container_qn = self.structural_elements.get(parent_rel_path)
+
+            if (root / "__init__.py").exists():
+                package_qn = ".".join([self.project_name] + list(relative_root.parts))
+                self.structural_elements[relative_root] = package_qn
+                logger.info(f"  Identified Package: {package_qn}")
+                self.ingestor.ensure_node_batch(
+                    "Package",
+                    {
+                        "qualified_name": package_qn,
+                        "name": root.name,
+                        "path": str(relative_root),
+                    },
+                )
+                parent_label, parent_key, parent_val = (
+                    ("Project", "name", self.project_name)
+                    if parent_rel_path == Path(".")
+                    else ("Package", "qualified_name", parent_container_qn)
+                )
+                self.ingestor.ensure_relationship_batch(
+                    (parent_label, parent_key, parent_val),
+                    "CONTAINS_PACKAGE",
+                    ("Package", "qualified_name", package_qn),
+                )
+            elif root != self.repo_path:
+                self.structural_elements[relative_root] = None  # Mark as folder
+                logger.info(f"  Identified Folder: '{relative_root}'")
+                self.ingestor.ensure_node_batch(
+                    "Folder", {"path": str(relative_root), "name": root.name}
+                )
+                parent_label, parent_key, parent_val = (
+                    ("Project", "name", self.project_name)
+                    if parent_rel_path == Path(".")
+                    else (
+                        ("Package", "qualified_name", parent_container_qn)
+                        if parent_container_qn
+                        else ("Folder", "path", str(parent_rel_path))
+                    )
+                )
+                self.ingestor.ensure_relationship_batch(
+                    (parent_label, parent_key, parent_val),
+                    "CONTAINS_FOLDER",
+                    ("Folder", "path", str(relative_root)),
+                )
+
+    def _process_files(self) -> None:
+        """Second pass: Walks the directory again to process all files."""
+        for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
+            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
+            root = Path(root_str)
+            relative_root = root.relative_to(self.repo_path)
+            parent_container_qn = self.structural_elements.get(relative_root)
+
+            parent_label, parent_key, parent_val = (
+                ("Package", "qualified_name", parent_container_qn)
+                if parent_container_qn
+                else (
+                    ("Folder", "path", str(relative_root))
+                    if relative_root != Path(".")
+                    else ("Project", "name", self.project_name)
+                )
+            )
+
+            for file_name in files:
+                filepath = root / file_name
+                relative_filepath = str(filepath.relative_to(self.repo_path))
+
+                # Create generic File node for all files
+                self.ingestor.ensure_node_batch(
+                    "File",
+                    {
+                        "path": relative_filepath,
+                        "name": file_name,
+                        "extension": filepath.suffix,
+                    },
+                )
+                self.ingestor.ensure_relationship_batch(
+                    (parent_label, parent_key, parent_val),
+                    "CONTAINS_FILE",
+                    ("File", "path", relative_filepath),
+                )
+
+                if file_name.endswith(".py"):
+                    self.parse_and_ingest_file(filepath)
+                elif file_name == "pyproject.toml":
+                    self._parse_dependencies(filepath)
 
     def _get_docstring(self, node: Node) -> Optional[str]:
         """Extracts the docstring from a function or class node's body."""
         body_node = node.child_by_field_name("body")
         if not body_node or not body_node.children:
             return None
-
-        # A docstring must be the first statement in the body
         first_statement = body_node.children[0]
         if (
             first_statement.type == "expression_statement"
             and first_statement.children[0].type == "string"
         ):
-            # Clean up quotes ("""...""") and indentation
             return first_statement.children[0].text.decode("utf-8").strip("'\" \n")
         return None
 
     def parse_and_ingest_file(self, file_path: Path):
-        relative_path_str = str(file_path.relative_to(self.repo_path))
+        relative_path = file_path.relative_to(self.repo_path)
+        relative_path_str = str(relative_path)
         logger.info(f"Parsing: {relative_path_str}")
-
-        if not file_path.name.endswith(".py"):
-            return
 
         try:
             source_bytes = file_path.read_bytes()
             tree = self.parser.parse(source_bytes)
             root_node = tree.root_node
 
-            module_qn = relative_path_str.replace(os.sep, ".").removesuffix(".py")
+            module_qn = ".".join(
+                [self.project_name] + list(relative_path.with_suffix("").parts)
+            )
+            if file_path.name == "__init__.py":
+                module_qn = ".".join(
+                    [self.project_name] + list(relative_path.parent.parts)
+                )
+
             self.ingestor.ensure_node_batch(
                 "Module",
                 {
@@ -247,6 +364,24 @@ class GraphUpdater:
                     "name": file_path.name,
                     "path": relative_path_str,
                 },
+            )
+
+            # Link Module to its parent Package/Folder
+            parent_rel_path = relative_path.parent
+            parent_container_qn = self.structural_elements.get(parent_rel_path)
+            parent_label, parent_key, parent_val = (
+                ("Package", "qualified_name", parent_container_qn)
+                if parent_container_qn
+                else (
+                    ("Folder", "path", str(parent_rel_path))
+                    if parent_rel_path != Path(".")
+                    else ("Project", "name", self.project_name)
+                )
+            )
+            self.ingestor.ensure_relationship_batch(
+                (parent_label, parent_key, parent_val),
+                "CONTAINS_MODULE",
+                ("Module", "qualified_name", module_qn),
             )
 
             self._ingest_top_level_functions(root_node, module_qn)
@@ -257,16 +392,14 @@ class GraphUpdater:
 
     def _ingest_top_level_functions(self, root_node, parent_qn: str):
         captures = self.queries["top_level_functions"].captures(root_node)
-        for capture_tuple in captures:
-            node, capture_name = capture_tuple[0], capture_tuple[1]
-            if capture_name == "def":
+        for capture in captures:
+            node, capture_name = capture[0], capture[1]
+            if capture_name == "def" and hasattr(node, "child_by_field_name"):
                 name_node = node.child_by_field_name("name")
                 if not name_node:
                     continue
-
                 func_name = name_node.text.decode("utf8")
                 func_qn = f"{parent_qn}.{func_name}"
-
                 props = {
                     "qualified_name": func_qn,
                     "name": func_name,
@@ -275,7 +408,6 @@ class GraphUpdater:
                     "end_line": node.end_point[0] + 1,
                     "docstring": self._get_docstring(node),
                 }
-
                 logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
                 self.ingestor.ensure_node_batch("Function", props)
                 self.ingestor.ensure_relationship_batch(
@@ -286,20 +418,15 @@ class GraphUpdater:
 
     def _ingest_classes_and_methods(self, root_node, parent_qn: str):
         class_captures = self.queries["classes"].captures(root_node)
-        class_nodes = [
-            node
-            for node, name in [(cap[0], cap[1]) for cap in class_captures]
-            if name == "class"
-        ]
-
-        for class_node in class_nodes:
+        for capture in class_captures:
+            class_node, _ = capture[0], capture[1]
+            if not hasattr(class_node, "child_by_field_name"):
+                continue
             name_node = class_node.child_by_field_name("name")
             if not name_node:
                 continue
-
             class_name = name_node.text.decode("utf8")
             class_qn = f"{parent_qn}.{class_name}"
-
             class_props = {
                 "qualified_name": class_qn,
                 "name": class_name,
@@ -308,7 +435,6 @@ class GraphUpdater:
                 "end_line": class_node.end_point[0] + 1,
                 "docstring": self._get_docstring(class_node),
             }
-
             logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
             self.ingestor.ensure_node_batch("Class", class_props)
             self.ingestor.ensure_relationship_batch(
@@ -316,21 +442,19 @@ class GraphUpdater:
                 "DEFINES",
                 ("Class", "qualified_name", class_qn),
             )
-
             body_node = class_node.child_by_field_name("body")
             if not body_node:
                 continue
-
             method_captures = self.queries["methods"].captures(body_node)
-            for capture_tuple in method_captures:
-                method_node, _ = capture_tuple[0], capture_tuple[1]
+            for capture in method_captures:
+                method_node, _ = capture[0], capture[1]
+                if not hasattr(method_node, "child_by_field_name"):
+                    continue
                 method_name_node = method_node.child_by_field_name("name")
                 if not method_name_node:
                     continue
-
                 method_name = method_name_node.text.decode("utf8")
                 method_qn = f"{class_qn}.{method_name}"
-
                 method_props = {
                     "qualified_name": method_qn,
                     "name": method_name,
@@ -339,7 +463,6 @@ class GraphUpdater:
                     "end_line": method_node.end_point[0] + 1,
                     "docstring": self._get_docstring(method_node),
                 }
-
                 logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
                 self.ingestor.ensure_node_batch("Method", method_props)
                 self.ingestor.ensure_relationship_batch(
@@ -347,3 +470,28 @@ class GraphUpdater:
                     "DEFINES_METHOD",
                     ("Method", "qualified_name", method_qn),
                 )
+
+    def _parse_dependencies(self, filepath: Path) -> None:
+        """Parses a pyproject.toml file for dependencies."""
+        logger.info(f"  Parsing pyproject.toml: {filepath}")
+        try:
+            data = toml.load(filepath)
+            # Support both Poetry and standard PEP 621 dependencies
+            deps = (data.get("tool", {}).get("poetry", {}).get("dependencies", {})) or {
+                dep.split(">=")[0].split("==")[0].strip(): dep
+                for dep in data.get("project", {}).get("dependencies", [])
+            }
+
+            for dep_name, dep_spec in deps.items():
+                if dep_name.lower() == "python":
+                    continue
+                logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
+                self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
+                self.ingestor.ensure_relationship_batch(
+                    ("Project", "name", self.project_name),
+                    "DEPENDS_ON_EXTERNAL",
+                    ("ExternalPackage", "name", dep_name),
+                    properties={"version_spec": str(dep_spec)},
+                )
+        except Exception as e:
+            logger.error(f"    Error parsing {filepath}: {e}")
