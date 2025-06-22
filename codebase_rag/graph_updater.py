@@ -11,6 +11,8 @@ from tree_sitter_python import (
     language as python_language_so,
 )
 
+from .language_config import get_language_config, LanguageConfig
+
 
 class MemgraphIngestor:
     """Handles all communication and query execution with the Memgraph database."""
@@ -206,15 +208,26 @@ class GraphUpdater:
         self._compile_queries()
 
     def _compile_queries(self):
-        """Compiles all Tree-sitter queries for efficiency."""
+        """Compiles all Tree-sitter queries for efficiency based on language config."""
+        # For now, using Python config - will be configurable later
+        from .language_config import LANGUAGE_CONFIGS
+
+        self.lang_config = LANGUAGE_CONFIGS["python"]
+
+        # Build queries dynamically based on language configuration
+        function_patterns = " ".join(
+            [
+                f"({node_type}) @function"
+                for node_type in self.lang_config.function_node_types
+            ]
+        )
+        class_patterns = " ".join(
+            [f"({node_type}) @class" for node_type in self.lang_config.class_node_types]
+        )
+
         self.queries = {
-            "top_level_functions": self.language.query(
-                "(module (function_definition name: (identifier) @name) @def)"
-            ),
-            "classes": self.language.query("(class_definition) @class"),
-            "methods": self.language.query(
-                "(function_definition name: (identifier) @name) @def"
-            ),
+            "functions": self.language.query(function_patterns),
+            "classes": self.language.query(class_patterns),
         }
 
     def run(self) -> None:
@@ -391,85 +404,87 @@ class GraphUpdater:
             logger.error(f"Failed to parse or ingest {file_path}: {e}", exc_info=True)
 
     def _ingest_top_level_functions(self, root_node, parent_qn: str):
-        captures = self.queries["top_level_functions"].captures(root_node)
-        for capture in captures:
-            node, capture_name = capture[0], capture[1]
-            if capture_name == "def" and hasattr(node, "child_by_field_name"):
-                name_node = node.child_by_field_name("name")
-                if not name_node:
-                    continue
-                func_name = name_node.text.decode("utf8")
-                func_qn = f"{parent_qn}.{func_name}"
-                props = {
-                    "qualified_name": func_qn,
-                    "name": func_name,
-                    "decorators": [],
-                    "start_line": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
-                    "docstring": self._get_docstring(node),
-                }
-                logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
-                self.ingestor.ensure_node_batch("Function", props)
-                self.ingestor.ensure_relationship_batch(
-                    ("Module", "qualified_name", parent_qn),
-                    "DEFINES",
-                    ("Function", "qualified_name", func_qn),
-                )
+        captures = self.queries["functions"].captures(root_node)
+        if "function" in captures:
+            for func_node in captures["function"]:
+                # Only process top-level functions (direct children of module/program)
+                if (
+                    func_node.parent
+                    and func_node.parent.type in self.lang_config.module_node_types
+                ):
+                    name_node = func_node.child_by_field_name("name")
+                    if not name_node:
+                        continue
+                    func_name = name_node.text.decode("utf8")
+                    func_qn = f"{parent_qn}.{func_name}"
+                    props = {
+                        "qualified_name": func_qn,
+                        "name": func_name,
+                        "decorators": [],
+                        "start_line": func_node.start_point[0] + 1,
+                        "end_line": func_node.end_point[0] + 1,
+                        "docstring": self._get_docstring(func_node),
+                    }
+                    logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
+                    self.ingestor.ensure_node_batch("Function", props)
+                    self.ingestor.ensure_relationship_batch(
+                        ("Module", "qualified_name", parent_qn),
+                        "DEFINES",
+                        ("Function", "qualified_name", func_qn),
+                    )
 
     def _ingest_classes_and_methods(self, root_node, parent_qn: str):
         class_captures = self.queries["classes"].captures(root_node)
-        for capture in class_captures:
-            class_node, _ = capture[0], capture[1]
-            if not hasattr(class_node, "child_by_field_name"):
-                continue
-            name_node = class_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            class_name = name_node.text.decode("utf8")
-            class_qn = f"{parent_qn}.{class_name}"
-            class_props = {
-                "qualified_name": class_qn,
-                "name": class_name,
-                "decorators": [],
-                "start_line": class_node.start_point[0] + 1,
-                "end_line": class_node.end_point[0] + 1,
-                "docstring": self._get_docstring(class_node),
-            }
-            logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
-            self.ingestor.ensure_node_batch("Class", class_props)
-            self.ingestor.ensure_relationship_batch(
-                ("Module", "qualified_name", parent_qn),
-                "DEFINES",
-                ("Class", "qualified_name", class_qn),
-            )
-            body_node = class_node.child_by_field_name("body")
-            if not body_node:
-                continue
-            method_captures = self.queries["methods"].captures(body_node)
-            for capture in method_captures:
-                method_node, _ = capture[0], capture[1]
-                if not hasattr(method_node, "child_by_field_name"):
+        if "class" in class_captures:
+            for class_node in class_captures["class"]:
+                name_node = class_node.child_by_field_name("name")
+                if not name_node:
                     continue
-                method_name_node = method_node.child_by_field_name("name")
-                if not method_name_node:
-                    continue
-                method_name = method_name_node.text.decode("utf8")
-                method_qn = f"{class_qn}.{method_name}"
-                method_props = {
-                    "qualified_name": method_qn,
-                    "name": method_name,
+                class_name = name_node.text.decode("utf8")
+                class_qn = f"{parent_qn}.{class_name}"
+                class_props = {
+                    "qualified_name": class_qn,
+                    "name": class_name,
                     "decorators": [],
-                    "start_line": method_node.start_point[0] + 1,
-                    "end_line": method_node.end_point[0] + 1,
-                    "docstring": self._get_docstring(method_node),
+                    "start_line": class_node.start_point[0] + 1,
+                    "end_line": class_node.end_point[0] + 1,
+                    "docstring": self._get_docstring(class_node),
                 }
-                logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
-                self.ingestor.ensure_node_batch("Method", method_props)
+                logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
+                self.ingestor.ensure_node_batch("Class", class_props)
                 self.ingestor.ensure_relationship_batch(
+                    ("Module", "qualified_name", parent_qn),
+                    "DEFINES",
                     ("Class", "qualified_name", class_qn),
-                    "DEFINES_METHOD",
-                    ("Method", "qualified_name", method_qn),
                 )
+                body_node = class_node.child_by_field_name("body")
+                if not body_node:
+                    continue
+                method_captures = self.queries["functions"].captures(body_node)
+                if "function" in method_captures:
+                    for method_node in method_captures["function"]:
+                        method_name_node = method_node.child_by_field_name("name")
+                        if not method_name_node:
+                            continue
+                        method_name = method_name_node.text.decode("utf8")
+                        method_qn = f"{class_qn}.{method_name}"
+                        method_props = {
+                            "qualified_name": method_qn,
+                            "name": method_name,
+                            "decorators": [],
+                            "start_line": method_node.start_point[0] + 1,
+                            "end_line": method_node.end_point[0] + 1,
+                            "docstring": self._get_docstring(method_node),
+                        }
+                        logger.info(
+                            f"    Found Method: {method_name} (qn: {method_qn})"
+                        )
+                        self.ingestor.ensure_node_batch("Method", method_props)
+                        self.ingestor.ensure_relationship_batch(
+                            ("Class", "qualified_name", class_qn),
+                            "DEFINES_METHOD",
+                            ("Method", "qualified_name", method_qn),
+                        )
 
     def _parse_dependencies(self, filepath: Path) -> None:
         """Parses a pyproject.toml file for dependencies."""
