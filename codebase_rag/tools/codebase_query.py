@@ -1,11 +1,17 @@
 from pydantic_ai import Tool, RunContext
 from ..schemas import GraphData
-from ..services.graph_db import MemgraphService, GraphQueryError
+from ..graph_updater import MemgraphIngestor
 from ..services.llm import CypherGenerator, LLMGenerationError
 from loguru import logger
 
 
-def create_query_tool(db_service: MemgraphService, cypher_gen: CypherGenerator) -> Tool:
+class GraphQueryError(Exception):
+    """Custom exception for graph query failures."""
+
+    pass
+
+
+def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -> Tool:
     """
     Factory function that creates the knowledge graph query tool,
     injecting its dependencies.
@@ -20,29 +26,29 @@ def create_query_tool(db_service: MemgraphService, cypher_gen: CypherGenerator) 
         the structured results.
         """
         logger.info(f"[Tool:QueryGraph] Received NL query: '{natural_language_query}'")
+        cypher_query = "N/A"
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
-            results = db_service.execute_query(cypher_query)
+
+            # Use the ingestor's public interface instead of accessing .conn
+            results = ingestor.fetch_all(cypher_query)
+
             summary = f"Successfully retrieved {len(results)} item(s) from the graph."
             return GraphData(query_used=cypher_query, results=results, summary=summary)
-
         except LLMGenerationError as e:
             return GraphData(
                 query_used="N/A",
                 results=[],
                 summary=f"I couldn't translate your request into a database query. Error: {e}",
             )
-        except GraphQueryError as e:
+        except Exception as e:
+            logger.error(
+                f"[Tool:QueryGraph] Error during query execution: {e}", exc_info=True
+            )
             return GraphData(
                 query_used=cypher_query,
                 results=[],
                 summary=f"There was an error querying the database: {e}",
-            )
-        except Exception as e:
-            return GraphData(
-                query_used="N/A",
-                results=[],
-                summary=f"An unexpected error occurred in the tool: {e}",
             )
 
     return Tool(

@@ -1,6 +1,6 @@
 [project]
 name = "graph-code"
-version = "0.1.0"
+version = "0.0.2"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,4 +10,23 @@ dependencies = [
     "pymgclient>=1.4.0",
     "python-dotenv>=1.1.0",
     "toml>=0.10.2",
+    "tree-sitter-python>=0.23.6",
+    "tree-sitter>=0.24.0",
+    "watchdog>=6.0.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+]
+
+[project.optional-dependencies]
+# Tree-sitter language support (optional)
+treesitter-full = [
+    "tree-sitter-python>=0.23.6",
+    "tree-sitter-javascript>=0.23.1", 
+    "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-rust>=0.24.0",
+    "tree-sitter-go>=0.23.4",
 ]

@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source srcset="assets/logo-dark.png" media="(prefers-color-scheme: dark)">
-    <source srcset="assets/logo-light.png" media="(prefers-color-scheme: light)">
+    <source srcset="assets/logo-dark-any.png" media="(prefers-color-scheme: dark)">
+    <source srcset="assets/logo-light-any.png" media="(prefers-color-scheme: light)">
     <img src="assets/logo-dark.png" alt="Graph-Code Logo" width="480">
   </picture>
 
@@ -18,9 +18,9 @@
 </p>
 </div>
 
-# Graph-Code: A Graph-Based RAG System for Python Codebases
+# Graph-Code: A Multi-Language Graph-Based RAG System
 
-A sophisticated Retrieval-Augmented Generation (RAG) system that analyzes Python repositories, builds knowledge graphs, and enables natural language querying of codebase structure and relationships.
+An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships.
 
 <div align="center">
   <img src="https://github.com/ChawlaAvi/code-graph-rag/blob/main/assets/code-rag-demo.gif" alt="ag-ui Logo" style="max-width: 20px; height: auto;" />
@@ -28,26 +28,31 @@ A sophisticated Retrieval-Augmented Generation (RAG) system that analyzes Python
 
 ## 🚀 Features
 
-- **AST-based Code Analysis**: Deep parsing of Python files to extract classes, functions, methods, and their relationships
-- **Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
-- **Natural Language Querying**: Ask questions about your codebase in plain English
-- **AI-Powered Cypher Generation**: Leverages Google Gemini to translate natural language to Cypher queries
-- **Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
-- **Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
+- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, and Go codebases
+- **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
+- **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
+- **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
+- **🤖 AI-Powered Cypher Generation**: Leverages Google Gemini to translate natural language to Cypher queries
+- **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
+- **🔗 Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
+- **🎯 Nested Function Support**: Handles complex nested functions and class hierarchies
+- **🔄 Language-Agnostic Design**: Unified graph schema across all supported languages
 
 ## 🏗️ Architecture
 
 The system consists of two main components:
 
-1. **Repository Parser** (`repo_parser.py`): Analyzes Python codebases and ingests data into Memgraph
+1. **Multi-language Parser**: Tree-sitter based parsing system that analyzes codebases and ingests data into Memgraph
 2. **RAG System** (`codebase_rag/`): Interactive CLI for querying the stored knowledge graph
 
 ### Core Components
 
-- **Graph Database**: Memgraph for storing code structure as nodes and relationships
-- **LLM Integration**: Google Gemini for natural language processing
-- **Code Analysis**: AST traversal for extracting code elements
-- **Query Tools**: Specialized tools for graph querying and code retrieval
+- **🌳 Tree-sitter Integration**: Language-agnostic parsing using Tree-sitter grammars
+- **📊 Graph Database**: Memgraph for storing code structure as nodes and relationships  
+- **🤖 LLM Integration**: Google Gemini for natural language processing
+- **🔍 Code Analysis**: Advanced AST traversal for extracting code elements across languages
+- **🛠️ Query Tools**: Specialized tools for graph querying and code retrieval
+- **⚙️ Language Configuration**: Configurable mappings for different programming languages
 
 ## 📋 Prerequisites
 
@@ -60,14 +65,28 @@ The system consists of two main components:
 
 1. **Clone the repository**:
 ```bash
-git clone <repository-url>
-cd graph-code
+git clone https://github.com/vitali87/code-graph-rag.git
+cd code-graph-rag
 ```
 
 2. **Install dependencies**:
+
+For basic Python support:
 ```bash
 uv sync
 ```
+
+For full multi-language support:
+```bash
+uv sync --extra treesitter-full
+```
+
+This installs Tree-sitter grammars for:
+- **Python** (.py)
+- **JavaScript** (.js, .jsx) 
+- **TypeScript** (.ts, .tsx)
+- **Rust** (.rs)
+- **Go** (.go)
 
 3. **Set up environment variables**:
 ```bash
@@ -93,16 +112,25 @@ docker-compose up -d
 
 ### Step 1: Parse a Repository
 
-Parse and ingest a Python repository into the knowledge graph:
+Parse and ingest a multi-language repository into the knowledge graph:
 
+**For the first repository (clean start):**
 ```bash
-python repo_parser.py /path/to/your/python/repo --clean
+python -m codebase_rag.main --repo-path /path/to/repo1 --update-graph --clean
 ```
 
-Options:
-- `--clean`: Clear existing data before parsing
-- `--host`: Memgraph host (default: localhost)
-- `--port`: Memgraph port (default: 7687)
+**For additional repositories (preserve existing data):**
+```bash
+python -m codebase_rag.main --repo-path /path/to/repo2 --update-graph
+python -m codebase_rag.main --repo-path /path/to/repo3 --update-graph
+```
+
+**Supported Languages**: The system automatically detects and processes files based on extensions:
+- **Python**: `.py` files
+- **JavaScript**: `.js`, `.jsx` files
+- **TypeScript**: `.ts`, `.tsx` files  
+- **Rust**: `.rs` files
+- **Go**: `.go` files
 
 ### Step 2: Query the Codebase
 
@@ -112,11 +140,14 @@ Start the interactive RAG CLI:
 python -m codebase_rag.main --repo-path /path/to/your/repo
 ```
 
-Example queries:
+Example queries (works across all supported languages):
 - "Show me all classes that contain 'user' in their name"
 - "Find functions related to database operations"
 - "What methods does the User class have?"
 - "Show me functions that handle authentication"
+- "List all TypeScript components"
+- "Find Rust structs and their methods"
+- "Show me Go interfaces and implementations"
 
 ## 📊 Graph Schema
 
@@ -124,14 +155,20 @@ The knowledge graph uses the following node types and relationships:
 
 ### Node Types
 - **Project**: Root node representing the entire repository
-- **Package**: Python packages (directories with `__init__.py`)
-- **Module**: Individual Python files
-- **Class**: Class definitions
-- **Function**: Module-level functions
-- **Method**: Class methods
+- **Package**: Language packages (Python: `__init__.py`, etc.)
+- **Module**: Individual source code files (`.py`, `.js`, `.ts`, `.rs`, `.go`)
+- **Class**: Class/Struct/Enum definitions across all languages
+- **Function**: Module-level functions and standalone functions
+- **Method**: Class methods and associated functions
 - **Folder**: Regular directories
-- **File**: Non-Python files
+- **File**: All files (source code and others)
 - **ExternalPackage**: External dependencies
+
+### Language-Specific Mappings
+- **Python**: `function_definition`, `class_definition`
+- **JavaScript/TypeScript**: `function_declaration`, `arrow_function`, `class_declaration`
+- **Rust**: `function_item`, `struct_item`, `enum_item`, `impl_item`
+- **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 
 ### Relationships
 - `CONTAINS_PACKAGE/MODULE/FILE/FOLDER`: Hierarchical containment
@@ -156,28 +193,75 @@ GEMINI_API_KEY = "required"
 
 ### Project Structure
 ```
-graph-code/
-├── repo_parser.py              # Repository analysis and ingestion
+code-graph-rag/
 ├── codebase_rag/              # RAG system package
 │   ├── main.py                # CLI entry point
 │   ├── config.py              # Configuration management
+│   ├── graph_updater.py       # Tree-sitter based multi-language parser
+│   ├── language_config.py     # Language-specific configurations
 │   ├── prompts.py             # LLM prompts and schemas
 │   ├── schemas.py             # Pydantic models
 │   ├── services/              # Core services
-│   │   ├── graph_db.py        # Memgraph integration
 │   │   └── llm.py             # Gemini LLM integration
 │   └── tools/                 # RAG tools
 │       ├── codebase_query.py  # Graph querying tool
-│       └── code_retrieval.py  # Code snippet retrieval
+│       ├── code_retrieval.py  # Code snippet retrieval
+│       └── file_reader.py     # File content reading
 ├── docker-compose.yaml        # Memgraph setup
-└── pyproject.toml            # Project dependencies
+├── pyproject.toml            # Project dependencies & language extras
+└── README.md                 # This file
 ```
 
 ### Key Dependencies
-- **pydantic-ai**: AI agent framework
-- **pymgclient**: Memgraph Python client
-- **loguru**: Advanced logging
+- **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
+- **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go)
+- **pydantic-ai**: AI agent framework for RAG orchestration
+- **pymgclient**: Memgraph Python client for graph database operations
+- **loguru**: Advanced logging with structured output
 - **python-dotenv**: Environment variable management
+
+## 🌍 Multi-Language Support
+
+### Supported Languages & Features
+
+| Language   | Extensions    | Functions | Classes/Structs | Modules | Package Detection |
+|------------|---------------|-----------|-----------------|---------|-------------------|
+| Python     | `.py`         | ✅        | ✅              | ✅      | `__init__.py`    |
+| JavaScript | `.js`, `.jsx` | ✅        | ✅              | ✅      | -                |
+| TypeScript | `.ts`, `.tsx` | ✅        | ✅              | ✅      | -                |
+| Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                |
+| Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                |
+
+### Language-Specific Features
+
+- **Python**: Full support including nested functions, methods, classes, and package structure
+- **JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions
+- **Rust**: Functions, structs, enums, impl blocks, and associated functions
+- **Go**: Functions, methods, type declarations, and struct definitions
+
+### Installation Options
+
+```bash
+# Basic Python-only support
+uv sync
+
+# Full multi-language support  
+uv sync --extra treesitter-full
+
+# Individual language support (if needed)
+uv add tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-rust tree-sitter-go
+```
+
+### Language Configuration
+
+The system uses a configuration-driven approach for language support. Each language is defined in `codebase_rag/language_config.py` with:
+
+- **File extensions**: Which files to process
+- **AST node types**: How to identify functions, classes, etc.
+- **Module structure**: How modules/packages are organized
+- **Name extraction**: How to extract names from AST nodes
+
+Adding support for new languages requires only configuration changes, no code modifications.
 
 ## 🐛 Debugging
 
