@@ -197,7 +197,7 @@ wheels = [
 
 [[package]]
 name = "graph-code"
-version = "0.1.0"
+version = "0.0.2"
 source = { virtual = "." }
 dependencies = [
     { name = "loguru" },
@@ -206,16 +206,20 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "toml" },
     { name = "tree-sitter" },
+    { name = "tree-sitter-java" },
     { name = "tree-sitter-python" },
+    { name = "tree-sitter-scala" },
     { name = "watchdog" },
 ]
 
 [package.optional-dependencies]
 treesitter-full = [
     { name = "tree-sitter-go" },
+    { name = "tree-sitter-java" },
     { name = "tree-sitter-javascript" },
     { name = "tree-sitter-python" },
     { name = "tree-sitter-rust" },
+    { name = "tree-sitter-scala" },
     { name = "tree-sitter-typescript" },
 ]
 
@@ -234,10 +238,14 @@ requires-dist = [
     { name = "toml", specifier = ">=0.10.2" },
     { name = "tree-sitter", specifier = ">=0.24.0" },
     { name = "tree-sitter-go", marker = "extra == 'treesitter-full'", specifier = ">=0.23.4" },
+    { name = "tree-sitter-java", specifier = ">=0.23.5" },
+    { name = "tree-sitter-java", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
     { name = "tree-sitter-javascript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
     { name = "tree-sitter-python", specifier = ">=0.23.6" },
     { name = "tree-sitter-python", marker = "extra == 'treesitter-full'", specifier = ">=0.23.6" },
     { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
+    { name = "tree-sitter-scala", specifier = ">=0.24.0" },
+    { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
     { name = "watchdog", specifier = ">=6.0.0" },
 ]
@@ -678,6 +686,21 @@ wheels = [
 ]
 
 [[package]]
+name = "tree-sitter-java"
+version = "0.23.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/dc/eb9c8f96304e5d8ae1663126d89967a622a80937ad2909903569ccb7ec8f/tree_sitter_java-0.23.5.tar.gz", hash = "sha256:f5cd57b8f1270a7f0438878750d02ccc79421d45cca65ff284f1527e9ef02e38", size = 138121 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/21/b3399780b440e1567a11d384d0ebb1aea9b642d0d98becf30fa55c0e3a3b/tree_sitter_java-0.23.5-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:355ce0308672d6f7013ec913dee4a0613666f4cda9044a7824240d17f38209df", size = 58926 },
+    { url = "https://files.pythonhosted.org/packages/57/ef/6406b444e2a93bc72a04e802f4107e9ecf04b8de4a5528830726d210599c/tree_sitter_java-0.23.5-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:24acd59c4720dedad80d548fe4237e43ef2b7a4e94c8549b0ca6e4c4d7bf6e69", size = 62288 },
+    { url = "https://files.pythonhosted.org/packages/4e/6c/74b1c150d4f69c291ab0b78d5dd1b59712559bbe7e7daf6d8466d483463f/tree_sitter_java-0.23.5-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9401e7271f0b333df39fc8a8336a0caf1b891d9a2b89ddee99fae66b794fc5b7", size = 85533 },
+    { url = "https://files.pythonhosted.org/packages/29/09/e0d08f5c212062fd046db35c1015a2621c2631bc8b4aae5740d7adb276ad/tree_sitter_java-0.23.5-cp39-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:370b204b9500b847f6d0c5ad584045831cee69e9a3e4d878535d39e4a7e4c4f1", size = 84033 },
+    { url = "https://files.pythonhosted.org/packages/43/56/7d06b23ddd09bde816a131aa504ee11a1bbe87c6b62ab9b2ed23849a3382/tree_sitter_java-0.23.5-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:aae84449e330363b55b14a2af0585e4e0dae75eb64ea509b7e5b0e1de536846a", size = 82564 },
+    { url = "https://files.pythonhosted.org/packages/da/d6/0528c7e1e88a18221dbd8ccee3825bf274b1fa300f745fd74eb343878043/tree_sitter_java-0.23.5-cp39-abi3-win_amd64.whl", hash = "sha256:1ee45e790f8d31d416bc84a09dac2e2c6bc343e89b8a2e1d550513498eedfde7", size = 60650 },
+    { url = "https://files.pythonhosted.org/packages/72/57/5bab54d23179350356515526fff3cc0f3ac23bfbc1a1d518a15978d4880e/tree_sitter_java-0.23.5-cp39-abi3-win_arm64.whl", hash = "sha256:402efe136104c5603b429dc26c7e75ae14faaca54cfd319ecc41c8f2534750f4", size = 59059 },
+]
+
+[[package]]
 name = "tree-sitter-javascript"
 version = "0.23.1"
 source = { registry = "https://pypi.org/simple" }
@@ -720,6 +743,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/74/d1/389eecb15c3f8ef4c947fcfbcc794ef4036b3b892c0f981e110860371daa/tree_sitter_rust-0.24.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:615f989241b717f14105b1bc621ff0c2200c86f1c3b36f1842d61f6605021152", size = 162857 },
     { url = "https://files.pythonhosted.org/packages/b9/df/a6321043d6dee313e5fa3b6a13384119d590393368134cf12f2ee7f9e664/tree_sitter_rust-0.24.0-cp39-abi3-win_amd64.whl", hash = "sha256:2e29be0292eaf1f99389b3af4281f92187612af31ba129e90f4755f762993441", size = 130052 },
     { url = "https://files.pythonhosted.org/packages/c8/33/70b320d24cd127d6ca427d2bef1279830f0786a1f2cde160f59b4fb80728/tree_sitter_rust-0.24.0-cp39-abi3-win_arm64.whl", hash = "sha256:7a0538eaf4063b443c6cd80a47df19249f65e27dbdf129396a9193749912d0c0", size = 128583 },
+]
+
+[[package]]
+name = "tree-sitter-scala"
+version = "0.24.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/56/aa5e5c6de49bae3de1d7270e3e38a2a1e08fee0a1ed24dc68a73ab650dfa/tree_sitter_scala-0.24.0.tar.gz", hash = "sha256:9d01b24bf6de3d1e60250ccda3ee12d388f85a16b5e96d5b640f69b8e222a358", size = 1132120 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/eb/df8c7b88f0042847c8c48c45aea451665fdbb158695dc3c4a000f11eaa6b/tree_sitter_scala-0.24.0-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:db4563205cb1b113b0926c95ca01a1823a9bca5b34e8b59f30127391996fe22d", size = 485915 },
+    { url = "https://files.pythonhosted.org/packages/a5/0f/0de4762c9efefc04be4d9d2c622848bdad00cb55191c30ecc169c3c6bbe1/tree_sitter_scala-0.24.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:0cd8cec453d63eee51b0b933d6b0ff6d5aeed2742b56c9d1e99e4aab1e1b0839", size = 516315 },
+    { url = "https://files.pythonhosted.org/packages/cd/4c/25d06b83baf1d4d104ab4d47fa003ed312f5422d6dc19f6336ac6c704938/tree_sitter_scala-0.24.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:55d298756b993ac09c140e82bc822e68f430bb654f0e06e4e8d41b9750a94c91", size = 544227 },
+    { url = "https://files.pythonhosted.org/packages/3f/22/21a75e5cf376e21209b83f8adb993a72668e14f9596d14d13980de837255/tree_sitter_scala-0.24.0-cp39-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f0139fb3af638b106b2400cb30a364e71a0f17a044402068ba6686c919476a95", size = 544124 },
+    { url = "https://files.pythonhosted.org/packages/82/d0/45ddd0420cc9c08b21a7f62cbb662cbd5020cf0ef22d0ccebf07cf20f190/tree_sitter_scala-0.24.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:03da3b1a574d67aea41de1297eed0b36373636558ecfb7de70024cd4ef892d33", size = 592991 },
+    { url = "https://files.pythonhosted.org/packages/16/17/549c50360734cc2be73572f7a5055f0c703c6c63502161e3ee4dd7395e64/tree_sitter_scala-0.24.0-cp39-abi3-win_amd64.whl", hash = "sha256:a300c6e18fbaaf7d645bd66e598c9577ca3f9a34d0976db0ee7259dc4ed145bb", size = 475343 },
+    { url = "https://files.pythonhosted.org/packages/79/08/2f2d3895a387b3b8c04e6d9050b4436aaac0103fc31dc2354cd162e0d217/tree_sitter_scala-0.24.0-cp39-abi3-win_arm64.whl", hash = "sha256:5123eef2d5ef55e47943f958ad78605e20d1eec54926cd3296d8c6fc006b2ed7", size = 479012 },
 ]
 
 [[package]]
