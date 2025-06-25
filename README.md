@@ -28,7 +28,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## 🚀 Features
 
-- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, and Go codebases
+- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, and Java codebases
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
@@ -162,6 +162,8 @@ python -m codebase_rag.main --repo-path /path/to/repo3 --update-graph
 - **TypeScript**: `.ts`, `.tsx` files  
 - **Rust**: `.rs` files
 - **Go**: `.go` files
+- **Scala**: `.scala`, `.sc` files
+- **Java**: `.java` files
 
 ### Step 2: Query the Codebase
 
@@ -221,7 +223,7 @@ The knowledge graph uses the following node types and relationships:
 ### Node Types
 - **Project**: Root node representing the entire repository
 - **Package**: Language packages (Python: `__init__.py`, etc.)
-- **Module**: Individual source code files (`.py`, `.js`, `.ts`, `.rs`, `.go`)
+- **Module**: Individual source code files (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.rs`, `.go`, `.scala`, `.sc`, `.java`)
 - **Class**: Class/Struct/Enum definitions across all languages
 - **Function**: Module-level functions and standalone functions
 - **Method**: Class methods and associated functions
@@ -291,7 +293,7 @@ code-graph-rag/
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
-- **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go)
+git - **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
 - **pydantic-ai**: AI agent framework for RAG orchestration
 - **pymgclient**: Memgraph Python client for graph database operations
 - **loguru**: Advanced logging with structured output
