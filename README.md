@@ -28,11 +28,11 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## 🚀 Features
 
-- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, and Go codebases
+- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, and Java codebases
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
-- **🤖 AI-Powered Cypher Generation**: Leverages Google Gemini to translate natural language to Cypher queries
+- **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini) and local models (Ollama) for natural language to Cypher translation
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
 - **🔗 Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
 - **🎯 Nested Function Support**: Handles complex nested functions and class hierarchies
@@ -49,7 +49,7 @@ The system consists of two main components:
 
 - **🌳 Tree-sitter Integration**: Language-agnostic parsing using Tree-sitter grammars
 - **📊 Graph Database**: Memgraph for storing code structure as nodes and relationships  
-- **🤖 LLM Integration**: Google Gemini for natural language processing
+- **🤖 LLM Integration**: Supports Google Gemini (cloud) and Ollama (local) for natural language processing
 - **🔍 Code Analysis**: Advanced AST traversal for extracting code elements across languages
 - **🛠️ Query Tools**: Specialized tools for graph querying and code retrieval
 - **⚙️ Language Configuration**: Configurable mappings for different programming languages
@@ -58,7 +58,8 @@ The system consists of two main components:
 
 - Python 3.12+
 - Docker & Docker Compose (for Memgraph)
-- Google Gemini API key
+- **For cloud models**: Google Gemini API key
+- **For local models**: Ollama installed and running
 - `uv` package manager
 
 ## 🛠️ Installation
@@ -93,10 +94,45 @@ This installs Tree-sitter grammars for:
 3. **Set up environment variables**:
 ```bash
 cp .env.example .env
-# Edit .env with your Gemini API key
+# Edit .env with your configuration (see options below)
 ```
 
-> **Note**: Only `GEMINI_API_KEY` is required. Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+### Configuration Options
+
+#### Option 1: Cloud Models (Gemini)
+```bash
+# .env file
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+
+#### Option 2: Local Models (Ollama)
+```bash
+# .env file
+LLM_PROVIDER=local
+LOCAL_MODEL_ENDPOINT=http://localhost:11434/v1
+LOCAL_ORCHESTRATOR_MODEL_ID=llama3
+LOCAL_CYPHER_MODEL_ID=llama3
+LOCAL_MODEL_API_KEY=ollama
+```
+
+**Install and run Ollama**:
+```bash
+# Install Ollama (macOS/Linux)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull required models
+ollama pull llama3
+# Or try other models like:
+# ollama pull llama3.1
+# ollama pull mistral
+# ollama pull codellama
+
+# Ollama will automatically start serving on localhost:11434
+```
+
+> **Note**: Local models provide privacy and no API costs, but may have lower accuracy compared to cloud models like Gemini.
 
 4. **Start Memgraph database**:
 ```bash
@@ -126,6 +162,8 @@ python -m codebase_rag.main --repo-path /path/to/repo3 --update-graph
 - **TypeScript**: `.ts`, `.tsx` files  
 - **Rust**: `.rs` files
 - **Go**: `.go` files
+- **Scala**: `.scala`, `.sc` files
+- **Java**: `.java` files
 
 ### Step 2: Query the Codebase
 
@@ -134,6 +172,40 @@ Start the interactive RAG CLI:
 ```bash
 python -m codebase_rag.main --repo-path /path/to/your/repo
 ```
+
+### Runtime Model Switching
+
+You can switch between cloud and local models at runtime using CLI arguments:
+
+**Use Local Models:**
+```bash
+python -m codebase_rag.main --repo-path /path/to/your/repo --llm-provider local
+```
+
+**Use Cloud Models:**
+```bash
+python -m codebase_rag.main --repo-path /path/to/your/repo --llm-provider gemini
+```
+
+**Specify Custom Models:**
+```bash
+# Use specific local models
+python -m codebase_rag.main --repo-path /path/to/your/repo \
+  --llm-provider local \
+  --orchestrator-model llama3.1 \
+  --cypher-model codellama
+
+# Use specific Gemini models
+python -m codebase_rag.main --repo-path /path/to/your/repo \
+  --llm-provider gemini \
+  --orchestrator-model gemini-2.0-flash-thinking-exp-01-21 \
+  --cypher-model gemini-2.5-flash-lite-preview-06-17
+```
+
+**Available CLI Arguments:**
+- `--llm-provider`: Choose `gemini` or `local`
+- `--orchestrator-model`: Specify model for main RAG orchestration
+- `--cypher-model`: Specify model for Cypher query generation
 
 Example queries (works across all supported languages):
 - "Show me all classes that contain 'user' in their name"
@@ -151,7 +223,7 @@ The knowledge graph uses the following node types and relationships:
 ### Node Types
 - **Project**: Root node representing the entire repository
 - **Package**: Language packages (Python: `__init__.py`, etc.)
-- **Module**: Individual source code files (`.py`, `.js`, `.ts`, `.rs`, `.go`)
+- **Module**: Individual source code files (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.rs`, `.go`, `.scala`, `.sc`, `.java`)
 - **Class**: Class/Struct/Enum definitions across all languages
 - **Function**: Module-level functions and standalone functions
 - **Method**: Class methods and associated functions
@@ -175,7 +247,26 @@ The knowledge graph uses the following node types and relationships:
 
 ## 🔧 Configuration
 
-Configuration is managed through environment variables in `.env` file. The system will fail early with a clear error if `GEMINI_API_KEY` is not set.
+Configuration is managed through environment variables in `.env` file:
+
+### Required Settings
+- `LLM_PROVIDER`: Set to `"gemini"` for cloud models or `"local"` for local models
+
+### Gemini (Cloud) Configuration
+- `GEMINI_API_KEY`: Required when `LLM_PROVIDER=gemini`
+- `GEMINI_MODEL_ID`: Main model for orchestration (default: `gemini-2.5-pro-preview-06-05`)
+- `MODEL_CYPHER_ID`: Model for Cypher generation (default: `gemini-2.5-flash-lite-preview-06-17`)
+
+### Local Models Configuration
+- `LOCAL_MODEL_ENDPOINT`: Ollama endpoint (default: `http://localhost:11434/v1`)
+- `LOCAL_ORCHESTRATOR_MODEL_ID`: Model for main RAG orchestration (default: `llama3`)
+- `LOCAL_CYPHER_MODEL_ID`: Model for Cypher query generation (default: `llama3`)
+- `LOCAL_MODEL_API_KEY`: API key for local models (default: `ollama`)
+
+### Other Settings
+- `MEMGRAPH_HOST`: Memgraph hostname (default: `localhost`)
+- `MEMGRAPH_PORT`: Memgraph port (default: `7687`)
+- `TARGET_REPO_PATH`: Default repository path (default: `.`)
 
 ## 🏃‍♂️ Development
 
@@ -202,7 +293,7 @@ code-graph-rag/
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
-- **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go)
+git - **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
 - **pydantic-ai**: AI agent framework for RAG orchestration
 - **pymgclient**: Memgraph Python client for graph database operations
 - **loguru**: Advanced logging with structured output
@@ -265,9 +356,13 @@ Adding support for new languages requires only configuration changes, no code mo
    - Open http://localhost:3000
    - Connect to memgraph:7687
 
-3. **Enable debug logging**:
-   - The RAG orchestrator runs in debug mode by default
-   - Check logs for detailed execution traces
+3. **For local models**:
+   - Verify Ollama is running: `ollama list`
+   - Check if models are downloaded: `ollama pull llama3`
+   - Test Ollama API: `curl http://localhost:11434/v1/models`
+   - Check Ollama logs: `ollama logs`
+
+
 
 ## 🤝 Contributing
 
