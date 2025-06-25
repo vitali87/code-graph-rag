@@ -18,7 +18,14 @@ async def main(target_repo_path: str = None):
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
     repo_path = target_repo_path or settings.TARGET_REPO_PATH
-    logger.info(f"Codebase RAG CLI - Using Model: {settings.GEMINI_MODEL_ID}")
+    logger.info(f"Codebase RAG CLI - LLM Provider: {settings.LLM_PROVIDER}")
+    if settings.LLM_PROVIDER == "gemini":
+        logger.info(f"Orchestrator Model: {settings.GEMINI_MODEL_ID}")
+        logger.info(f"Cypher Model: {settings.MODEL_CYPHER_ID}")
+    else:
+        logger.info(f"Orchestrator Model: {settings.LOCAL_ORCHESTRATOR_MODEL_ID}")
+        logger.info(f"Cypher Model: {settings.LOCAL_CYPHER_MODEL_ID}")
+        logger.info(f"Local Model Endpoint: {settings.LOCAL_MODEL_ENDPOINT}")
     logger.info(f"Target Repository: {repo_path}")
 
     # Use a single MemgraphIngestor instance within a context manager
@@ -90,7 +97,28 @@ def start():
         action="store_true",
         help="Clean the database before updating (use when adding first repo)",
     )
+    parser.add_argument(
+        "--llm-provider",
+        choices=["gemini", "local"],
+        help="Choose the LLM provider: 'gemini' or 'local'",
+    )
+    parser.add_argument("--orchestrator-model", help="Specify the orchestrator model ID")
+    parser.add_argument("--cypher-model", help="Specify the Cypher generator model ID")
     args = parser.parse_args()
+
+    # Override settings with command-line arguments if provided
+    if args.llm_provider:
+        settings.LLM_PROVIDER = args.llm_provider
+    if args.orchestrator_model:
+        if settings.LLM_PROVIDER == "gemini":
+            settings.GEMINI_MODEL_ID = args.orchestrator_model
+        else:
+            settings.LOCAL_ORCHESTRATOR_MODEL_ID = args.orchestrator_model
+    if args.cypher_model:
+        if settings.LLM_PROVIDER == "gemini":
+            settings.MODEL_CYPHER_ID = args.cypher_model
+        else:
+            settings.LOCAL_CYPHER_MODEL_ID = args.cypher_model
 
     # If update-graph flag is provided, run graph updater instead of RAG CLI
     if args.update_graph:
