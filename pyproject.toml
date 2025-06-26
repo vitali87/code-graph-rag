@@ -15,8 +15,11 @@ dependencies = [
     "watchdog>=6.0.0",
 ]
 
-[tool.uv]
-dev-dependencies = [
+[tool.setuptools]
+packages = ["codebase_rag"]
+
+[project.optional-dependencies]
+test = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
