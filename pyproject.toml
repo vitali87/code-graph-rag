@@ -23,8 +23,8 @@ test = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-# Tree-sitter language support (optional)
-# Tree-sitter language support (optional)
+
+[project.optional-dependencies]
 treesitter-full = [
     "tree-sitter-python>=0.23.6",
     "tree-sitter-javascript>=0.23.1", 
