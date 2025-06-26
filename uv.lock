@@ -221,6 +221,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
 treesitter-full = [
     { name = "tree-sitter-go" },
     { name = "tree-sitter-java" },
@@ -231,17 +235,13 @@ treesitter-full = [
     { name = "tree-sitter-typescript" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "pydantic-ai-slim", extras = ["google", "openai"], specifier = ">=0.2.18" },
     { name = "pymgclient", specifier = ">=1.4.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "tree-sitter", specifier = ">=0.24.0" },
@@ -255,13 +255,7 @@ requires-dist = [
     { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
     { name = "watchdog", specifier = ">=6.0.0" },
 ]
-provides-extras = ["treesitter-full"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
+provides-extras = ["test", "treesitter-full"]
 
 [[package]]
 name = "griffe"

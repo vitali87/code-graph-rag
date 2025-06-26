@@ -15,13 +15,15 @@ dependencies = [
     "watchdog>=6.0.0",
 ]
 
-[tool.uv]
-dev-dependencies = [
+[tool.setuptools]
+packages = ["codebase_rag"]
+
+[project.optional-dependencies]
+test = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-
-[project.optional-dependencies]
+# Tree-sitter language support (optional)
 # Tree-sitter language support (optional)
 treesitter-full = [
     "tree-sitter-python>=0.23.6",

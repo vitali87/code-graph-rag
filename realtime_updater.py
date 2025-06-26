@@ -34,7 +34,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         )
         # This DETACH DELETE query is crucial
         query = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
-        self.updater.ingestor._execute_query(
+        self.updater.ingestor.execute_write(
             query, {"path": str(path.relative_to(self.updater.repo_path))}
         )
 
