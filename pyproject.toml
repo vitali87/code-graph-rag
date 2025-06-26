@@ -22,7 +22,6 @@ dev-dependencies = [
 ]
 
 [project.optional-dependencies]
-# Tree-sitter language support (optional)
 treesitter-full = [
     "tree-sitter-python>=0.23.6",
     "tree-sitter-javascript>=0.23.1", 
