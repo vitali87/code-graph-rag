@@ -25,14 +25,24 @@ class FileWriter:
         """Creates or overwrites a file with the given content."""
         logger.info(f"[FileWriter] Creating file: {file_path}")
         try:
-            full_path = self.project_root / file_path
+            # Resolve the path to prevent traversal attacks
+            full_path = (self.project_root / file_path).resolve()
+
+            # Security check: Ensure the resolved path is within the project root
+            full_path.relative_to(self.project_root)
+
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content, encoding="utf-8")
             logger.info(
                 f"[FileWriter] Successfully wrote {len(content)} characters to {file_path}"
             )
             return FileCreationResult(file_path=file_path)
-
+        except ValueError:
+            err_msg = f"Security risk: Attempted to create file outside of project root: {file_path}"
+            logger.error(err_msg)
+            return FileCreationResult(
+                file_path=file_path, success=False, error_message=err_msg
+            )
         except Exception as e:
             err_msg = f"Error creating file {file_path}: {e}"
             logger.error(err_msg)

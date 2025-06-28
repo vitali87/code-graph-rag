@@ -327,6 +327,10 @@ To prevent errors and misplaced code, the agent is explicitly instructed to foll
 
 This ensures the agent is a reliable assistant for both analyzing and modifying your codebase.
 
+### Security Sandbox
+
+**Important**: All file system operations (`create_new_file`, `edit_existing_file`) are **strictly sandboxed** to the project's root directory. The agent cannot write to or edit files outside of the repository it was tasked to analyze, preventing any potential harm from path traversal attacks.
+
 ## 🌍 Multi-Language Support
 
 ### Supported Languages & Features
