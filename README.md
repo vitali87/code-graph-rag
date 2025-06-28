@@ -34,6 +34,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
 - **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini) and local models (Ollama) for natural language to Cypher translation
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
+- **✍️ File System Operations**: Full agentic control over file content creation, reading, and editing.
 - **🔗 Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
 - **🎯 Nested Function Support**: Handles complex nested functions and class hierarchies
 - **🔄 Language-Agnostic Design**: Unified graph schema across all supported languages
@@ -285,7 +286,9 @@ code-graph-rag/
 │   └── tools/                 # RAG tools
 │       ├── codebase_query.py  # Graph querying tool
 │       ├── code_retrieval.py  # Code snippet retrieval
-│       └── file_reader.py     # File content reading
+│       ├── file_reader.py     # File content reading
+│       ├── file_writer.py     # File content creation
+│       └── file_editor.py     # File content editing
 ├── docker-compose.yaml        # Memgraph setup
 ├── pyproject.toml            # Project dependencies & language extras
 └── README.md                 # This file
@@ -298,6 +301,31 @@ git - **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Ru
 - **pymgclient**: Memgraph Python client for graph database operations
 - **loguru**: Advanced logging with structured output
 - **python-dotenv**: Environment variable management
+
+## 🤖 Agentic Workflow & Tools
+
+The agent is designed with a deliberate workflow to ensure it acts with context and precision, especially when modifying the file system.
+
+### Core Tools
+
+The agent has access to a suite of tools to understand and interact with the codebase:
+
+- **`query_codebase_knowledge_graph`**: The primary tool for understanding the repository. It queries the graph database to find files, functions, classes, and their relationships based on natural language.
+- **`get_code_snippet`**: Retrieves the exact source code for a specific function or class.
+- **`read_file_content`**: Reads the entire content of a specified file.
+- **`create_new_file`**: Creates a new file with specified content.
+- **`edit_existing_file`**: Overwrites an existing file with new content.
+
+### The "Plan Before Writing" Workflow
+
+To prevent errors and misplaced code, the agent is explicitly instructed to follow a strict workflow before any write or edit operation:
+
+1.  **Understand Goal**: First, it clarifies the user's objective.
+2.  **Query & Explore**: It uses the `query_codebase_knowledge_graph` and `read_file_content` tools to explore the codebase. This step is crucial for finding the correct location and understanding the existing architectural patterns for any new code.
+3.  **Formulate a Plan**: Based on its exploration, the agent formulates a plan. It will state which file it intends to create or edit and provide a summary of the changes.
+4.  **Execute**: Only after this analysis does the agent use the `create_new_file` or `edit_existing_file` tools to execute the plan.
+
+This ensures the agent is a reliable assistant for both analyzing and modifying your codebase.
 
 ## 🌍 Multi-Language Support
 
@@ -361,8 +389,6 @@ Adding support for new languages requires only configuration changes, no code mo
    - Check if models are downloaded: `ollama pull llama3`
    - Test Ollama API: `curl http://localhost:11434/v1/models`
    - Check Ollama logs: `ollama logs`
-
-
 
 ## 🤝 Contributing
 
