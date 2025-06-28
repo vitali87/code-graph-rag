@@ -32,7 +32,9 @@ async def run_chat_loop(rag_agent, message_history: List):
     """Runs the main chat loop."""
     while True:
         try:
-            question = Prompt.ask("[bold cyan]Ask a question[/bold cyan]")
+            question = await asyncio.to_thread(
+                Prompt.ask, "[bold cyan]Ask a question[/bold cyan]"
+            )
             if question.lower() in ["exit", "quit"]:
                 break
             if not question.strip():
@@ -49,6 +51,28 @@ async def run_chat_loop(rag_agent, message_history: List):
         except Exception as e:
             logger.error(f"An unexpected error occurred: {e}", exc_info=True)
             console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+
+
+def _update_model_settings(
+    llm_provider: Optional[str],
+    orchestrator_model: Optional[str],
+    cypher_model: Optional[str],
+):
+    """Update model settings based on command-line arguments."""
+    if llm_provider:
+        settings.LLM_PROVIDER = llm_provider
+
+    provider = settings.LLM_PROVIDER
+    if orchestrator_model:
+        if provider == "gemini":
+            settings.GEMINI_MODEL_ID = orchestrator_model
+        else:
+            settings.LOCAL_ORCHESTRATOR_MODEL_ID = orchestrator_model
+    if cypher_model:
+        if provider == "gemini":
+            settings.MODEL_CYPHER_ID = cypher_model
+        else:
+            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
 
 
 async def main_async(repo_path: str):
@@ -120,18 +144,7 @@ def start(
     """Starts the Codebase RAG CLI."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     
-    if llm_provider:
-        settings.LLM_PROVIDER = llm_provider
-    if orchestrator_model:
-        if settings.LLM_PROVIDER == "gemini":
-            settings.GEMINI_MODEL_ID = orchestrator_model
-        else:
-            settings.LOCAL_ORCHESTRATOR_MODEL_ID = orchestrator_model
-    if cypher_model:
-        if settings.LLM_PROVIDER == "gemini":
-            settings.MODEL_CYPHER_ID = cypher_model
-        else:
-            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
+    _update_model_settings(llm_provider, orchestrator_model, cypher_model)
 
     if update_graph:
         from pathlib import Path
