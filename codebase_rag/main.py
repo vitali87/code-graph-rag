@@ -7,11 +7,13 @@ from .services.llm import CypherGenerator, create_rag_orchestrator
 from .tools.codebase_query import create_query_tool
 from .tools.code_retrieval import create_code_retrieval_tool, CodeRetriever
 from .tools.file_reader import create_file_reader_tool, FileReader
+from .tools.file_writer import create_file_writer_tool, FileWriter
+from .tools.file_editor import create_file_editor_tool, FileEditor
 
 from loguru import logger
 
 
-async def main(target_repo_path: str = None):
+async def main(target_repo_path: str | None = None):
     """Initializes services and runs the main application loop."""
 
     logger.remove()
@@ -42,6 +44,8 @@ async def main(target_repo_path: str = None):
         cypher_generator = CypherGenerator()
         code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
         file_reader = FileReader(project_root=repo_path)
+        file_writer = FileWriter(project_root=repo_path)
+        file_editor = FileEditor(project_root=repo_path)
 
         # 2. Create tools, injecting the *same* ingestor instance
         query_tool = create_query_tool(ingestor, cypher_generator)
@@ -49,10 +53,18 @@ async def main(target_repo_path: str = None):
             code_retriever
         )  # This tool needs its own rewrite next
         file_reader_tool = create_file_reader_tool(file_reader)
+        file_writer_tool = create_file_writer_tool(file_writer)
+        file_editor_tool = create_file_editor_tool(file_editor)
 
         # 3. Create the main agent
         rag_agent = create_rag_orchestrator(
-            tools=[query_tool, code_tool, file_reader_tool]
+            tools=[
+                query_tool,
+                code_tool,
+                file_reader_tool,
+                file_writer_tool,
+                file_editor_tool,
+            ]
         )
 
         message_history = []
