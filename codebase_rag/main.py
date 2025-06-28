@@ -1,8 +1,14 @@
 import asyncio
-import argparse
 import sys
+import typer
+from typing import Optional, List
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.console import Console
+from rich.table import Table
+
 from .config import settings
-from .graph_updater import MemgraphIngestor
+from .graph_updater import MemgraphIngestor, GraphUpdater
 from .services.llm import CypherGenerator, create_rag_orchestrator
 from .tools.codebase_query import create_query_tool
 from .tools.code_retrieval import create_code_retrieval_tool, CodeRetriever
@@ -12,154 +18,145 @@ from .tools.file_editor import create_file_editor_tool, FileEditor
 
 from loguru import logger
 
+app = typer.Typer(
+    name="graph-code",
+    help="An accurate Retrieval-Augmented Generation (RAG) system that analyzes "
+    "multi-language codebases using Tree-sitter, builds comprehensive knowledge "
+    "graphs, and enables natural language querying of codebase structure and "
+    "relationships.",
+)
+console = Console()
 
-async def main(target_repo_path: str | None = None):
+
+async def run_chat_loop(rag_agent, message_history: List):
+    """Runs the main chat loop."""
+    while True:
+        try:
+            question = Prompt.ask("[bold cyan]Ask a question[/bold cyan]")
+            if question.lower() in ["exit", "quit"]:
+                break
+            if not question.strip():
+                continue
+
+            with console.status("[bold green]Thinking...[/bold green]"):
+                response = await rag_agent.run(question, message_history=message_history)
+
+            console.print(Panel(response.output, title="[bold green]Final Answer[/bold green]", border_style="green"))
+            message_history.extend(response.new_messages())
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+            console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+
+
+async def main_async(repo_path: str):
     """Initializes services and runs the main application loop."""
-
     logger.remove()
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
-    repo_path = target_repo_path or settings.TARGET_REPO_PATH
-    logger.info(f"Codebase RAG CLI - LLM Provider: {settings.LLM_PROVIDER}")
+    table = Table(title="[bold green]Graph-Code Initializing...[/bold green]")
+    table.add_column("Configuration", style="cyan")
+    table.add_column("Value", style="magenta")
+    table.add_row("LLM Provider", settings.LLM_PROVIDER)
     if settings.LLM_PROVIDER == "gemini":
-        logger.info(f"Orchestrator Model: {settings.GEMINI_MODEL_ID}")
-        logger.info(f"Cypher Model: {settings.MODEL_CYPHER_ID}")
+        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
+        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
     else:
-        logger.info(f"Orchestrator Model: {settings.LOCAL_ORCHESTRATOR_MODEL_ID}")
-        logger.info(f"Cypher Model: {settings.LOCAL_CYPHER_MODEL_ID}")
-        logger.info(f"Local Model Endpoint: {settings.LOCAL_MODEL_ENDPOINT}")
-    logger.info(f"Target Repository: {repo_path}")
+        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
+        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+        table.add_row("Local Model Endpoint", settings.LOCAL_MODEL_ENDPOINT)
+    table.add_row("Target Repository", repo_path)
+    console.print(table)
 
-    # Use a single MemgraphIngestor instance within a context manager
-    with MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
-    ) as ingestor:
-        logger.info("Database connection established.")
-        logger.info(
-            "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
-        )
-        logger.info("-" * 50)
+    with MemgraphIngestor(host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT) as ingestor:
+        console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
+        console.print(Panel(
+            "[bold yellow]Ask questions about your codebase graph. Type 'exit' or 'quit' to end.[/bold yellow]",
+            border_style="yellow"
+        ))
 
-        # 1. Initialize services
         cypher_generator = CypherGenerator()
         code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
         file_reader = FileReader(project_root=repo_path)
         file_writer = FileWriter(project_root=repo_path)
         file_editor = FileEditor(project_root=repo_path)
 
-        # 2. Create tools, injecting the *same* ingestor instance
         query_tool = create_query_tool(ingestor, cypher_generator)
-        code_tool = create_code_retrieval_tool(
-            code_retriever
-        )  # This tool needs its own rewrite next
+        code_tool = create_code_retrieval_tool(code_retriever)
         file_reader_tool = create_file_reader_tool(file_reader)
         file_writer_tool = create_file_writer_tool(file_writer)
         file_editor_tool = create_file_editor_tool(file_editor)
 
-        # 3. Create the main agent
         rag_agent = create_rag_orchestrator(
-            tools=[
-                query_tool,
-                code_tool,
-                file_reader_tool,
-                file_writer_tool,
-                file_editor_tool,
-            ]
+            tools=[query_tool, code_tool, file_reader_tool, file_writer_tool, file_editor_tool]
         )
 
-        message_history = []
-
-        # 4. Main loop
-        while True:
-            try:
-                user_input = await asyncio.to_thread(input, "\nAsk a question: ")
-                if user_input.lower() in ["exit", "quit"]:
-                    break
-                if not user_input.strip():
-                    continue
-
-                response = await rag_agent.run(
-                    user_input, message_history=message_history
-                )
-                logger.info(f"\nFinal Answer:\n{response.output}")
-                logger.info("\n" + "=" * 70)
-
-                message_history.extend(response.new_messages())
-
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                logger.error(f"\nAn unexpected error occurred: {e}", exc_info=True)
-
-    logger.info("\nExiting...")
+        await run_chat_loop(rag_agent, [])
 
 
-def start():
-    parser = argparse.ArgumentParser(description="Codebase RAG CLI")
-    parser.add_argument(
-        "--repo-path", help="Path to the target repository for code retrieval"
-    )
-    parser.add_argument(
-        "--update-graph",
-        action="store_true",
-        help="Update the knowledge graph by parsing the repository",
-    )
-    parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Clean the database before updating (use when adding first repo)",
-    )
-    parser.add_argument(
-        "--llm-provider",
-        choices=["gemini", "local"],
-        help="Choose the LLM provider: 'gemini' or 'local'",
-    )
-    parser.add_argument("--orchestrator-model", help="Specify the orchestrator model ID")
-    parser.add_argument("--cypher-model", help="Specify the Cypher generator model ID")
-    args = parser.parse_args()
-
-    # Override settings with command-line arguments if provided
-    if args.llm_provider:
-        settings.LLM_PROVIDER = args.llm_provider
-    if args.orchestrator_model:
+@app.command()
+def start(
+    repo_path: Optional[str] = typer.Option(
+        None, "--repo-path", help="Path to the target repository for code retrieval"
+    ),
+    update_graph: bool = typer.Option(
+        False, "--update-graph", help="Update the knowledge graph by parsing the repository"
+    ),
+    clean: bool = typer.Option(
+        False, "--clean", help="Clean the database before updating (use when adding first repo)"
+    ),
+    llm_provider: Optional[str] = typer.Option(
+        None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
+    ),
+    orchestrator_model: Optional[str] = typer.Option(
+        None, "--orchestrator-model", help="Specify the orchestrator model ID"
+    ),
+    cypher_model: Optional[str] = typer.Option(
+        None, "--cypher-model", help="Specify the Cypher generator model ID"
+    ),
+):
+    """Starts the Codebase RAG CLI."""
+    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    
+    if llm_provider:
+        settings.LLM_PROVIDER = llm_provider
+    if orchestrator_model:
         if settings.LLM_PROVIDER == "gemini":
-            settings.GEMINI_MODEL_ID = args.orchestrator_model
+            settings.GEMINI_MODEL_ID = orchestrator_model
         else:
-            settings.LOCAL_ORCHESTRATOR_MODEL_ID = args.orchestrator_model
-    if args.cypher_model:
+            settings.LOCAL_ORCHESTRATOR_MODEL_ID = orchestrator_model
+    if cypher_model:
         if settings.LLM_PROVIDER == "gemini":
-            settings.MODEL_CYPHER_ID = args.cypher_model
+            settings.MODEL_CYPHER_ID = cypher_model
         else:
-            settings.LOCAL_CYPHER_MODEL_ID = args.cypher_model
+            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
 
-    # If update-graph flag is provided, run graph updater instead of RAG CLI
-    if args.update_graph:
+    if update_graph:
         from pathlib import Path
-        from .graph_updater import GraphUpdater, MemgraphIngestor
+        
+        repo_to_update = Path(target_repo_path)
+        console.print(f"[bold green]Updating knowledge graph for: {repo_to_update}[/bold green]")
 
-        repo_path = Path(args.repo_path or settings.TARGET_REPO_PATH)
-        logger.info(f"Updating knowledge graph for: {repo_path}")
-
-        with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
-        ) as ingestor:
-            if args.clean:
-                logger.info("Cleaning database...")
+        with MemgraphIngestor(host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT) as ingestor:
+            if clean:
+                console.print("[bold yellow]Cleaning database...[/bold yellow]")
                 ingestor.clean_database()
             ingestor.ensure_constraints()
-            updater = GraphUpdater(ingestor, repo_path)
+            updater = GraphUpdater(ingestor, repo_to_update)
             updater.run()
-
-        logger.info("Graph update completed!")
+        
+        console.print("[bold green]Graph update completed![/bold green]")
         return
 
     try:
-        asyncio.run(main(target_repo_path=args.repo_path))
+        asyncio.run(main_async(target_repo_path))
     except KeyboardInterrupt:
-        logger.error("\nApplication terminated by user.")
-    except ValueError as e:  # Catch config errors from startup
-        logger.error(f"Startup Error: {e}")
+        console.print("\n[bold red]Application terminated by user.[/bold red]")
+    except ValueError as e:
+        console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
 if __name__ == "__main__":
-    start()
+    app()
