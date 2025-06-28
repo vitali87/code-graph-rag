@@ -23,7 +23,11 @@ class FileEditor:
         """Overwrites the content of a file given its path and new content."""
         logger.info(f"[FileEditor] Editing file: {file_path}")
         try:
-            full_path = self.project_root / file_path
+            # Resolve the path to prevent traversal attacks
+            full_path = (self.project_root / file_path).resolve()
+
+            # Security check: Ensure the resolved path is within the project root
+            full_path.relative_to(self.project_root)
 
             if not full_path.is_file():
                 err_msg = f"File not found at path: {full_path}"
@@ -38,6 +42,14 @@ class FileEditor:
             )
             return EditResult(file_path=file_path, success=True)
 
+        except ValueError:
+            err_msg = (
+                f"Security risk: Attempted to edit file outside of project root: {file_path}"
+            )
+            logger.error(err_msg)
+            return EditResult(
+                file_path=file_path, success=False, error_message=err_msg
+            )
         except Exception as e:
             err_msg = f"Error writing to file {file_path}: {e}"
             logger.error(err_msg)
@@ -49,7 +61,7 @@ class FileEditor:
 def create_file_editor_tool(file_editor: FileEditor) -> Tool:
     """Factory function to create the file editor tool."""
 
-    async def edit_file_content(
+    async def edit_existing_file(
         ctx: RunContext, file_path: str, new_content: str
     ) -> EditResult:
         """
@@ -60,6 +72,6 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
         return await file_editor.edit_file(file_path, new_content)
 
     return Tool(
-        function=edit_file_content,
+        function=edit_existing_file,
         description="Overwrites an existing file with new content. Use with caution.",
     ) 
