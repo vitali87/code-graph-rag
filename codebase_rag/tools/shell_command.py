@@ -29,11 +29,7 @@ COMMAND_ALLOWLIST = {
 def _is_dangerous_command(cmd_parts: list[str]) -> bool:
     """Checks for dangerous command patterns."""
     command = cmd_parts[0]
-    if command == "rm" and "-rf" in cmd_parts:
-        # Prevent recursive force deletes
-        return True
-    # Add other dangerous patterns here if needed
-    return False
+    return command == "rm" and "-rf" in cmd_parts
 
 
 class ShellCommander:
@@ -88,7 +84,7 @@ class ShellCommander:
                 logger.warning(f"Stderr: {stderr_str}")
 
             return ShellCommandResult(
-                return_code=process.returncode if process.returncode is not None else -1,
+                return_code=process.returncode if process.returncode is not None else -1, # VA: redundant but to satisfy type checker
                 stdout=stdout_str,
                 stderr=stderr_str,
             )
@@ -116,7 +112,7 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
 
         For commands that modify the filesystem (rm, cp, mv, mkdir, rmdir),
         you MUST ask the user for confirmation before executing.
-        For example: "I am about to run `rm -rf /some/path`. Do you want to proceed?"
+        For example: "I am about to run `rm /some/path/file.txt`. Do you want to proceed?"
         Only execute after the user has explicitly confirmed.
         """
         return await shell_commander.execute(command)
