@@ -1,4 +1,5 @@
 import asyncio
+import shlex
 from pathlib import Path
 
 from loguru import logger
@@ -20,8 +21,15 @@ class ShellCommander:
         """
         logger.info(f"Executing shell command: {command}")
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
+            # Use shlex.split to safely parse the command and avoid shell injection
+            cmd_parts = shlex.split(command)
+            if not cmd_parts:
+                return ShellCommandResult(
+                    return_code=-1, stdout="", stderr="Empty command provided."
+                )
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd_parts,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.project_root,

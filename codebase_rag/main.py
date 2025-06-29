@@ -6,7 +6,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.console import Console
 from rich.table import Table
-import subprocess # Added this import
+from rich.markdown import Markdown
 
 from .config import settings
 from .graph_updater import MemgraphIngestor, GraphUpdater
@@ -45,28 +45,14 @@ async def run_chat_loop(rag_agent, message_history: List):
             with console.status("[bold green]Thinking...[/bold green]"):
                 response = await rag_agent.run(question, message_history=message_history)
 
-            # --- Start of Modified Code for Markdown Formatting ---
-            try:
-                # Pass the markdown content to glow via stdin
-                process = subprocess.run(
-                    ['glow', '-'], # '-' tells glow to read from stdin
-                    input=response.output.encode('utf-8'),
-                    capture_output=True,
-                    check=True
+            markdown_response = Markdown(response.output)
+            console.print(
+                Panel(
+                    markdown_response,
+                    title="[bold green]Final Answer[/bold green]",
+                    border_style="green",
                 )
-                markdown_output = process.stdout.decode('utf-8')
-                console.print(markdown_output)
-            except FileNotFoundError:
-                logger.warning("Glow not found. Falling back to Rich Panel for markdown rendering. Please install glow (https://github.com/charmbracelet/glow) for better markdown output.")
-                console.print(Panel(response.output, title="[bold green]Final Answer[/bold green]", border_style="green"))
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Glow command failed with error: {e.stderr.decode('utf-8')}", exc_info=True)
-                console.print(Panel(response.output, title="[bold red]Error rendering markdown[/bold red]", border_style="red"))
-            except Exception as e:
-                logger.error(f"An unexpected error occurred during glow rendering: {e}", exc_info=True)
-                console.print(Panel(response.output, title="[bold red]Error rendering markdown[/bold red]", border_style="red"))
-            # --- End of Modified Code ---
-
+            )
             message_history.extend(response.new_messages())
 
         except KeyboardInterrupt:
