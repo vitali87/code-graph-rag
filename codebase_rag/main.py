@@ -3,7 +3,7 @@ import sys
 import typer
 from typing import Optional, List
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich.console import Console
 from rich.table import Table
 from rich.markdown import Markdown
@@ -32,11 +32,21 @@ console = Console()
 
 async def run_chat_loop(rag_agent, message_history: List):
     """Runs the main chat loop."""
+    question = ""
     while True:
         try:
-            question = await asyncio.to_thread(
-                Prompt.ask, "[bold cyan]Ask a question[/bold cyan]"
-            )
+            # If the last response was a confirmation request, use a confirm prompt
+            if question.endswith("[y/n]"):
+                if Confirm.ask("Do you approve?"):
+                    question = "yes"
+                else:
+                    question = "no"
+                    console.print("[bold yellow]Operation cancelled.[/bold yellow]")
+            else:
+                question = await asyncio.to_thread(
+                    Prompt.ask, "[bold cyan]Ask a question[/bold cyan]"
+                )
+
             if question.lower() in ["exit", "quit"]:
                 break
             if not question.strip():
@@ -45,7 +55,9 @@ async def run_chat_loop(rag_agent, message_history: List):
             with console.status("[bold green]Thinking...[/bold green]"):
                 response = await rag_agent.run(question, message_history=message_history)
 
-            markdown_response = Markdown(response.output)
+            # Store the agent's raw output to check for confirmation requests
+            question = response.output
+            markdown_response = Markdown(question)
             console.print(
                 Panel(
                     markdown_response,
@@ -115,7 +127,9 @@ async def main_async(repo_path: str):
         file_reader = FileReader(project_root=repo_path)
         file_writer = FileWriter(project_root=repo_path)
         file_editor = FileEditor(project_root=repo_path)
-        shell_commander = ShellCommander(project_root=repo_path)
+        shell_commander = ShellCommander(
+            project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
+        )
 
         query_tool = create_query_tool(ingestor, cypher_generator)
         code_tool = create_code_retrieval_tool(code_retriever)
