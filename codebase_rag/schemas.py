@@ -40,3 +40,11 @@ class CodeSnippet(BaseModel):
     docstring: Optional[str] = None
     found: bool = True
     error_message: Optional[str] = None
+
+
+class ShellCommandResult(BaseModel):
+    """Data model for shell command results."""
+
+    return_code: int
+    stdout: str
+    stderr: str

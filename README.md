@@ -35,6 +35,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 - **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini) and local models (Ollama) for natural language to Cypher translation
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
 - **✍️ File System Operations**: Full agentic control over file content creation, reading, and editing.
+- **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
 - **🔗 Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
 - **🎯 Nested Function Support**: Handles complex nested functions and class hierarchies
 - **🔄 Language-Agnostic Design**: Unified graph schema across all supported languages
@@ -288,7 +289,8 @@ code-graph-rag/
 │       ├── code_retrieval.py  # Code snippet retrieval
 │       ├── file_reader.py     # File content reading
 │       ├── file_writer.py     # File content creation
-│       └── file_editor.py     # File content editing
+│       ├── file_editor.py     # File content editing
+│       └── shell_command.py   # Shell command execution
 ├── docker-compose.yaml        # Memgraph setup
 ├── pyproject.toml            # Project dependencies & language extras
 └── README.md                 # This file
@@ -315,13 +317,14 @@ The agent has access to a suite of tools to understand and interact with the cod
 - **`read_file_content`**: Reads the entire content of a specified file.
 - **`create_new_file`**: Creates a new file with specified content.
 - **`edit_existing_file`**: Overwrites an existing file with new content.
+- **`execute_shell_command`**: Executes a shell command in the project's environment.
 
 ### The "Plan Before Writing" Workflow
 
 To prevent errors and misplaced code, the agent is explicitly instructed to follow a strict workflow before any write or edit operation:
 
 1.  **Understand Goal**: First, it clarifies the user's objective.
-2.  **Query & Explore**: It uses the `query_codebase_knowledge_graph` and `read_file_content` tools to explore the codebase. This step is crucial for finding the correct location and understanding the existing architectural patterns for any new code.
+2.  **Query & Explore**: It uses `query_codebase_knowledge_graph` and `read_file_content` tools to explore the codebase. This step is crucial for finding the correct location and understanding the existing architectural patterns for any new code. The agent can also use `execute_shell_command` to run checks or use other CLI tools.
 3.  **Formulate a Plan**: Based on its exploration, the agent formulates a plan. It will state which file it intends to create or edit and provide a summary of the changes.
 4.  **Execute**: Only after this analysis does the agent use the `create_new_file` or `edit_existing_file` tools to execute the plan.
 
