@@ -15,10 +15,6 @@ COMMAND_ALLOWLIST = {
     "echo",
     "grep",
     "pwd",
-    "py",
-    "python",
-    "sh",
-    "bash",
     "pytest",
     "ruff",
     # FS Modifying commands - Agent MUST ask for confirmation before using.
@@ -28,6 +24,16 @@ COMMAND_ALLOWLIST = {
     "mkdir",
     "rmdir",
 }
+
+
+def _is_dangerous_command(cmd_parts: list[str]) -> bool:
+    """Checks for dangerous command patterns."""
+    command = cmd_parts[0]
+    if command == "rm" and "-rf" in cmd_parts:
+        # Prevent recursive force deletes
+        return True
+    # Add other dangerous patterns here if needed
+    return False
 
 
 class ShellCommander:
@@ -53,6 +59,12 @@ class ShellCommander:
             # Security: Check if the command is in the allowlist
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
                 err_msg = f"Command '{cmd_parts[0]}' is not in the allowlist."
+                logger.error(err_msg)
+                return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
+
+            # Security: Check for dangerous argument combinations
+            if _is_dangerous_command(cmd_parts):
+                err_msg = f"Rejected dangerous command: {' '.join(cmd_parts)}"
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 

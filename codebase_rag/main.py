@@ -36,7 +36,7 @@ async def run_chat_loop(rag_agent, message_history: List):
     while True:
         try:
             # If the last response was a confirmation request, use a confirm prompt
-            if question.endswith("[y/n]"):
+            if "[y/n]" in question:
                 if Confirm.ask("Do you approve?"):
                     question = "yes"
                 else:
