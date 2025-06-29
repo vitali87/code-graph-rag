@@ -3,9 +3,10 @@ import sys
 import typer
 from typing import Optional, List
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich.console import Console
 from rich.table import Table
+from rich.markdown import Markdown
 
 from .config import settings
 from .graph_updater import MemgraphIngestor, GraphUpdater
@@ -15,6 +16,7 @@ from .tools.code_retrieval import create_code_retrieval_tool, CodeRetriever
 from .tools.file_reader import create_file_reader_tool, FileReader
 from .tools.file_writer import create_file_writer_tool, FileWriter
 from .tools.file_editor import create_file_editor_tool, FileEditor
+from .tools.shell_command import ShellCommander, create_shell_command_tool
 
 from loguru import logger
 
@@ -30,11 +32,21 @@ console = Console()
 
 async def run_chat_loop(rag_agent, message_history: List):
     """Runs the main chat loop."""
+    question = ""
     while True:
         try:
-            question = await asyncio.to_thread(
-                Prompt.ask, "[bold cyan]Ask a question[/bold cyan]"
-            )
+            # If the last response was a confirmation request, use a confirm prompt
+            if "[y/n]" in question:
+                if Confirm.ask("Do you approve?"):
+                    question = "yes"
+                else:
+                    question = "no"
+                    console.print("[bold yellow]Operation cancelled.[/bold yellow]")
+            else:
+                question = await asyncio.to_thread(
+                    Prompt.ask, "[bold cyan]Ask a question[/bold cyan]"
+                )
+
             if question.lower() in ["exit", "quit"]:
                 break
             if not question.strip():
@@ -43,7 +55,16 @@ async def run_chat_loop(rag_agent, message_history: List):
             with console.status("[bold green]Thinking...[/bold green]"):
                 response = await rag_agent.run(question, message_history=message_history)
 
-            console.print(Panel(response.output, title="[bold green]Final Answer[/bold green]", border_style="green"))
+            # Store the agent's raw output to check for confirmation requests
+            question = response.output
+            markdown_response = Markdown(question)
+            console.print(
+                Panel(
+                    markdown_response,
+                    title="[bold green]Final Answer[/bold green]",
+                    border_style="green",
+                )
+            )
             message_history.extend(response.new_messages())
 
         except KeyboardInterrupt:
@@ -106,15 +127,26 @@ async def main_async(repo_path: str):
         file_reader = FileReader(project_root=repo_path)
         file_writer = FileWriter(project_root=repo_path)
         file_editor = FileEditor(project_root=repo_path)
+        shell_commander = ShellCommander(
+            project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
+        )
 
         query_tool = create_query_tool(ingestor, cypher_generator)
         code_tool = create_code_retrieval_tool(code_retriever)
         file_reader_tool = create_file_reader_tool(file_reader)
         file_writer_tool = create_file_writer_tool(file_writer)
         file_editor_tool = create_file_editor_tool(file_editor)
+        shell_command_tool = create_shell_command_tool(shell_commander)
 
         rag_agent = create_rag_orchestrator(
-            tools=[query_tool, code_tool, file_reader_tool, file_writer_tool, file_editor_tool]
+            tools=[
+                query_tool,
+                code_tool,
+                file_reader_tool,
+                file_writer_tool,
+                file_editor_tool,
+                shell_command_tool,
+            ]
         )
 
         await run_chat_loop(rag_agent, [])

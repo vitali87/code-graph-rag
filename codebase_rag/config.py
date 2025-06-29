@@ -25,6 +25,7 @@ class AppConfig:
     LOCAL_MODEL_API_KEY = os.getenv("LOCAL_MODEL_API_KEY", "ollama")
 
     TARGET_REPO_PATH = os.getenv("TARGET_REPO_PATH", ".")
+    SHELL_COMMAND_TIMEOUT = int(os.getenv("SHELL_COMMAND_TIMEOUT", 30))
 
     def __init__(self):
         if self.LLM_PROVIDER == "gemini" and not self.GEMINI_API_KEY:
