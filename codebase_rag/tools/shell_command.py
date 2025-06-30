@@ -111,9 +111,10 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         """
         Executes an allow-listed shell command.
 
-        For commands that modify the filesystem (rm, cp, mv, mkdir, rmdir),
-        you MUST ask the user for confirmation before executing.
-        For example: "I am about to run `rm /some/path/file.txt`. Do you want to proceed?"
+        For commands that modify the filesystem (rm, cp, mv, mkdir, rmdir) or the
+        python environment (`uv`), you MUST ask the user for confirmation before
+        executing.
+        For example: "I am about to run `uv pip install pytest`. Do you want to proceed?"
         Only execute after the user has explicitly confirmed.
         """
         return await shell_commander.execute(command)
