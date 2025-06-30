@@ -2,7 +2,6 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic_ai import Tool
 from loguru import logger
-import base64
 
 
 class FileReadResult(BaseModel):

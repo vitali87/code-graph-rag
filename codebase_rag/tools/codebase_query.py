@@ -46,7 +46,18 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
                     table.add_column(header)
 
                 for row in results:
-                    table.add_row(*[str(item) for item in row.values()])
+                    renderable_values = []
+                    for value in row.values():
+                        if value is None:
+                            renderable_values.append("")
+                        elif isinstance(value, (int, float)):
+                            # Let Rich handle number formatting by converting to string
+                            renderable_values.append(str(value))
+                        elif isinstance(value, bool):
+                            renderable_values.append("✓" if value else "✗")
+                        else:
+                            renderable_values.append(str(value))
+                    table.add_row(*renderable_values)
 
                 console.print(
                     Panel(

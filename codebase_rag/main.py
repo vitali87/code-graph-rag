@@ -134,13 +134,6 @@ async def main_async(repo_path: str):
         )
         directory_lister = DirectoryLister(project_root=repo_path)
         document_analyzer = DocumentAnalyzer(project_root=repo_path)
-        logger.info(f"CodeRetriever initialized with root: {repo_path}")
-        logger.info(f"FileReader initialized with root: {repo_path}")
-        logger.info(f"FileWriter initialized with root: {repo_path}")
-        logger.info(f"FileEditor initialized with root: {repo_path}")
-        logger.info(f"ShellCommander initialized with root: {repo_path}")
-        logger.info(f"DirectoryLister initialized with root: {repo_path}")
-        logger.info(f"DocumentAnalyzer initialized with root: {repo_path}") 
 
         query_tool = create_query_tool(ingestor, cypher_generator)
         code_tool = create_code_retrieval_tool(code_retriever)
