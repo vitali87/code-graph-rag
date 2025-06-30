@@ -70,7 +70,7 @@ async def run_chat_loop(rag_agent, message_history: List):
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+            logger.error("An unexpected error occurred: {}", e, exc_info=True)
             console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
 
 
