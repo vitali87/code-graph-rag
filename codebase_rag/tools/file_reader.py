@@ -11,7 +11,6 @@ class FileReadResult(BaseModel):
     file_path: str
     content: str | None = None
     error_message: str | None = None
-    is_binary: bool = False
 
 
 class FileReader:
@@ -19,36 +18,36 @@ class FileReader:
 
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
+        # Define extensions that should be treated as binary and not read by this tool
+        self.binary_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".tiff", ".webp"}
         logger.info(f"FileReader initialized with root: {self.project_root}")
 
     async def read_file(self, file_path: str) -> FileReadResult:
-        """Reads and returns the content of a file."""
-        logger.info(f"[FileReader] Reading file: {file_path}")
+        """Reads and returns the content of a text-based file."""
+        logger.info(f"[FileReader] Attempting to read file: {file_path}")
         try:
-            # Resolve the path to prevent traversal attacks
             full_path = (self.project_root / file_path).resolve()
-
-            # Security check: Ensure the resolved path is within the project root
-            full_path.relative_to(self.project_root)
+            full_path.relative_to(self.project_root) # Security check
 
             if not full_path.is_file():
-                return FileReadResult(
-                    file_path=file_path, error_message="File not found."
-                )
+                return FileReadResult(file_path=file_path, error_message="File not found.")
 
+            # Check if the file has a binary extension
+            if full_path.suffix.lower() in self.binary_extensions:
+                error_msg = f"File '{file_path}' is a binary file. Use the 'analyze_document' tool for this file type."
+                logger.warning(f"[FileReader] {error_msg}")
+                return FileReadResult(file_path=file_path, error_message=error_msg)
+
+            # Proceed with reading as a text file
             try:
-                # Try reading as text first
-                logger.info(f"Reading text file {file_path}.")
                 content = full_path.read_text(encoding="utf-8")
+                logger.info(f"[FileReader] Successfully read text from {file_path}")
                 return FileReadResult(file_path=file_path, content=content)
             except UnicodeDecodeError:
-                # If that fails, treat it as a binary file
-                logger.info(f"File {file_path} is binary, encoding as base64.")
-                content_bytes = full_path.read_bytes()
-                content_b64 = base64.b64encode(content_bytes).decode("utf-8")
-                return FileReadResult(
-                    file_path=file_path, content=content_b64, is_binary=True
-                )
+                error_msg = f"File '{file_path}' could not be read as text. It may be a binary file. If it is a document (e.g., PDF), use the 'analyze_document' tool."
+                logger.warning(f"[FileReader] {error_msg}")
+                return FileReadResult(file_path=file_path, error_message=error_msg)
+
         except ValueError:
             return FileReadResult(
                 file_path=file_path,
@@ -66,9 +65,8 @@ def create_file_reader_tool(file_reader: FileReader) -> Tool:
 
     async def read_file_content(file_path: str) -> str:
         """
-        Reads and returns the content of any file from the codebase. It handles both text and binary files.
-        - For text files, it returns the content as a string.
-        - For binary files (e.g., images), it returns a base64-encoded string.
+        Reads the content of a specified text-based file (e.g., source code, README.md, config files).
+        This tool should NOT be used for binary files like PDFs or images. For those, use the 'analyze_document' tool.
         """
         result = await file_reader.read_file(file_path)
         if result.error_message:
@@ -77,5 +75,5 @@ def create_file_reader_tool(file_reader: FileReader) -> Tool:
 
     return Tool(
         function=read_file_content,
-        description="Reads and returns the content of a specified file.\n- For text files, it returns the content as a string.\n- For binary files, it returns a base64-encoded string.",
+        description="Reads the content of text-based files. For documents like PDFs or images, use the 'analyze_document' tool instead.",
     )
