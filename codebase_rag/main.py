@@ -17,6 +17,7 @@ from .tools.file_reader import create_file_reader_tool, FileReader
 from .tools.file_writer import create_file_writer_tool, FileWriter
 from .tools.file_editor import create_file_editor_tool, FileEditor
 from .tools.shell_command import ShellCommander, create_shell_command_tool
+from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
 
 from loguru import logger
 
@@ -130,6 +131,13 @@ async def main_async(repo_path: str):
         shell_commander = ShellCommander(
             project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
         )
+        directory_lister = DirectoryLister(project_root=repo_path)
+        logger.info(f"CodeRetriever initialized with root: {repo_path}")
+        logger.info(f"FileReader initialized with root: {repo_path}")
+        logger.info(f"FileWriter initialized with root: {repo_path}")
+        logger.info(f"FileEditor initialized with root: {repo_path}")
+        logger.info(f"ShellCommander initialized with root: {repo_path}")
+        logger.info(f"DirectoryLister initialized with root: {repo_path}")
 
         query_tool = create_query_tool(ingestor, cypher_generator)
         code_tool = create_code_retrieval_tool(code_retriever)
@@ -137,6 +145,7 @@ async def main_async(repo_path: str):
         file_writer_tool = create_file_writer_tool(file_writer)
         file_editor_tool = create_file_editor_tool(file_editor)
         shell_command_tool = create_shell_command_tool(shell_commander)
+        directory_lister_tool = create_directory_lister_tool(directory_lister)
 
         rag_agent = create_rag_orchestrator(
             tools=[
@@ -146,6 +155,7 @@ async def main_async(repo_path: str):
                 file_writer_tool,
                 file_editor_tool,
                 shell_command_tool,
+                directory_lister_tool,
             ]
         )
 
