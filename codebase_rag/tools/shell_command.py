@@ -17,6 +17,7 @@ COMMAND_ALLOWLIST = {
     "pwd",
     "pytest",
     "ruff",
+    "uv",
     # FS Modifying commands - Agent MUST ask for confirmation before using.
     "rm",
     "cp",
