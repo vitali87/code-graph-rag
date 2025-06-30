@@ -84,6 +84,11 @@ For full multi-language support:
 uv sync --extra treesitter-full
 ```
 
+For development (including tests):
+```bash
+uv sync --extra treesitter-full --extra test
+```
+
 This installs Tree-sitter grammars for:
 - **Python** (.py)
 - **JavaScript** (.js, .jsx) 
