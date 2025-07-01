@@ -180,3 +180,39 @@ class MemgraphIngestor:
         """Executes a write query without returning results."""
         logger.debug(f"Executing write query: {query} with params: {params}")
         self._execute_query(query, params)
+
+    def export_graph_to_dict(self) -> dict[str, Any]:
+        """Export the entire graph as a dictionary with nodes and relationships."""
+        logger.info("Exporting graph data...")
+        
+        # Get all nodes with their labels and properties
+        nodes_query = """
+        MATCH (n)
+        RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
+        """
+        nodes_data = self.fetch_all(nodes_query)
+        
+        # Get all relationships with their types and properties
+        relationships_query = """
+        MATCH (a)-[r]->(b)
+        RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
+        """
+        relationships_data = self.fetch_all(relationships_query)
+        
+        graph_data = {
+            "nodes": nodes_data,
+            "relationships": relationships_data,
+            "metadata": {
+                "total_nodes": len(nodes_data),
+                "total_relationships": len(relationships_data),
+                "exported_at": self._get_current_timestamp()
+            }
+        }
+        
+        logger.info(f"Exported {len(nodes_data)} nodes and {len(relationships_data)} relationships")
+        return graph_data
+    
+    def _get_current_timestamp(self) -> str:
+        """Get current timestamp in ISO format."""
+        from datetime import datetime
+        return datetime.now().isoformat()

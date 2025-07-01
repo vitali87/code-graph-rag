@@ -154,13 +154,13 @@ Parse and ingest a multi-language repository into the knowledge graph:
 
 **For the first repository (clean start):**
 ```bash
-python -m codebase_rag.main --repo-path /path/to/repo1 --update-graph --clean
+python -m codebase_rag.main start --repo-path /path/to/repo1 --update-graph --clean
 ```
 
 **For additional repositories (preserve existing data):**
 ```bash
-python -m codebase_rag.main --repo-path /path/to/repo2 --update-graph
-python -m codebase_rag.main --repo-path /path/to/repo3 --update-graph
+python -m codebase_rag.main start --repo-path /path/to/repo2 --update-graph
+python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
 ```
 
 **Supported Languages**: The system automatically detects and processes files based on extensions:
@@ -177,7 +177,7 @@ python -m codebase_rag.main --repo-path /path/to/repo3 --update-graph
 Start the interactive RAG CLI:
 
 ```bash
-python -m codebase_rag.main --repo-path /path/to/your/repo
+python -m codebase_rag.main start --repo-path /path/to/your/repo
 ```
 
 ### Runtime Model Switching
@@ -186,24 +186,24 @@ You can switch between cloud and local models at runtime using CLI arguments:
 
 **Use Local Models:**
 ```bash
-python -m codebase_rag.main --repo-path /path/to/your/repo --llm-provider local
+python -m codebase_rag.main start --repo-path /path/to/your/repo --llm-provider local
 ```
 
 **Use Cloud Models:**
 ```bash
-python -m codebase_rag.main --repo-path /path/to/your/repo --llm-provider gemini
+python -m codebase_rag.main start --repo-path /path/to/your/repo --llm-provider gemini
 ```
 
 **Specify Custom Models:**
 ```bash
 # Use specific local models
-python -m codebase_rag.main --repo-path /path/to/your/repo \
+python -m codebase_rag.main start --repo-path /path/to/your/repo \
   --llm-provider local \
   --orchestrator-model llama3.1 \
   --cypher-model codellama
 
 # Use specific Gemini models
-python -m codebase_rag.main --repo-path /path/to/your/repo \
+python -m codebase_rag.main start --repo-path /path/to/your/repo \
   --llm-provider gemini \
   --orchestrator-model gemini-2.0-flash-thinking-exp-01-21 \
   --cypher-model gemini-2.5-flash-lite-preview-06-17
@@ -222,6 +222,53 @@ Example queries (works across all supported languages):
 - "List all TypeScript components"
 - "Find Rust structs and their methods"
 - "Show me Go interfaces and implementations"
+
+### Step 3: Export Graph Data (New!)
+
+For programmatic access and integration with other tools, you can export the entire knowledge graph to JSON:
+
+**Export during graph update:**
+```bash
+python -m codebase_rag.main start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+```
+
+**Export existing graph without updating:**
+```bash
+python -m codebase_rag.main export -o my_graph.json
+```
+
+**Working with exported data:**
+```python
+from codebase_rag.graph_loader import load_graph
+
+# Load the exported graph
+graph = load_graph("my_graph.json")
+
+# Get summary statistics
+summary = graph.summary()
+print(f"Total nodes: {summary['total_nodes']}")
+print(f"Total relationships: {summary['total_relationships']}")
+
+# Find specific node types
+functions = graph.find_nodes_by_label("Function")
+classes = graph.find_nodes_by_label("Class")
+
+# Analyze relationships
+for func in functions[:5]:
+    relationships = graph.get_relationships_for_node(func.node_id)
+    print(f"Function {func.properties['name']} has {len(relationships)} relationships")
+```
+
+**Example analysis script:**
+```bash
+python examples/graph_export_example.py my_graph.json
+```
+
+This provides a reliable, programmatic way to access your codebase structure without LLM restrictions, perfect for:
+- Integration with other tools
+- Custom analysis scripts
+- Building documentation generators
+- Creating code metrics dashboards
 
 ## 📊 Graph Schema
 
