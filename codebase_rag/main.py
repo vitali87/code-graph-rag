@@ -1,12 +1,14 @@
 import asyncio
 import sys
 import typer
+import json
 from typing import Optional, List
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.console import Console
 from rich.table import Table
 from rich.markdown import Markdown
+from pathlib import Path
 
 from .config import settings
 from .graph_updater import MemgraphIngestor, GraphUpdater
@@ -98,6 +100,40 @@ def _update_model_settings(
             settings.LOCAL_CYPHER_MODEL_ID = cypher_model
 
 
+def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
+    """
+    Export graph data to a JSON file.
+    
+    Args:
+        ingestor: The MemgraphIngestor instance to export from
+        output: Output file path
+        
+    Returns:
+        True if export was successful, False otherwise
+    """
+
+    
+    try:
+        graph_data = ingestor.export_graph_to_dict()
+        output_path = Path(output)
+        
+        # Ensure the output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write JSON with proper formatting
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(graph_data, f, indent=2, ensure_ascii=False)
+        
+        console.print(f"[bold green]Graph exported successfully to: {output_path.absolute()}[/bold green]")
+        console.print(f"[bold cyan]Export contains {graph_data['metadata']['total_nodes']} nodes and {graph_data['metadata']['total_relationships']} relationships[/bold cyan]")
+        return True
+        
+    except Exception as e:
+        console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
+        logger.error(f"Export error: {e}", exc_info=True)
+        return False
+
+
 async def main_async(repo_path: str):
     """Initializes services and runs the main application loop."""
     logger.remove()
@@ -171,6 +207,9 @@ def start(
     clean: bool = typer.Option(
         False, "--clean", help="Clean the database before updating (use when adding first repo)"
     ),
+    output: Optional[str] = typer.Option(
+        None, "-o", "--output", help="Export graph to JSON file after updating (requires --update-graph)"
+    ),
     llm_provider: Optional[str] = typer.Option(
         None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
     ),
@@ -184,10 +223,14 @@ def start(
     """Starts the Codebase RAG CLI."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     
+    # Validate output option usage
+    if output and not update_graph:
+        console.print("[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]")
+        raise typer.Exit(1)
+    
     _update_model_settings(llm_provider, orchestrator_model, cypher_model)
 
     if update_graph:
-        from pathlib import Path
         
         repo_to_update = Path(target_repo_path)
         console.print(f"[bold green]Updating knowledge graph for: {repo_to_update}[/bold green]")
@@ -199,6 +242,12 @@ def start(
             ingestor.ensure_constraints()
             updater = GraphUpdater(ingestor, repo_to_update)
             updater.run()
+            
+            # Export graph if output file specified
+            if output:
+                console.print(f"[bold cyan]Exporting graph to: {output}[/bold cyan]")
+                if not _export_graph_to_file(ingestor, output):
+                    raise typer.Exit(1)
         
         console.print("[bold green]Graph update completed![/bold green]")
         return
@@ -209,6 +258,30 @@ def start(
         console.print("\n[bold red]Application terminated by user.[/bold red]")
     except ValueError as e:
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
+
+
+@app.command()
+def export(
+    output: str = typer.Option(..., "-o", "--output", help="Output file path for the exported graph"),
+    format_json: bool = typer.Option(True, "--json/--no-json", help="Export in JSON format"),
+):
+    """Export the current knowledge graph to a file."""
+    if not format_json:
+        console.print("[bold red]Error: Currently only JSON format is supported.[/bold red]")
+        raise typer.Exit(1)
+
+    console.print("[bold cyan]Connecting to Memgraph to export graph...[/bold cyan]")
+
+    try:
+        with MemgraphIngestor(host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT) as ingestor:
+            console.print("[bold cyan]Exporting graph data...[/bold cyan]")
+            if not _export_graph_to_file(ingestor, output):
+                raise typer.Exit(1)
+
+    except Exception as e:
+        console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
+        logger.error(f"Export error: {e}", exc_info=True)
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":
