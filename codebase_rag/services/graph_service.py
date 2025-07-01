@@ -1,3 +1,4 @@
+from datetime import timezone
 import mgclient
 from loguru import logger
 from typing import Any, Optional
@@ -215,4 +216,4 @@ class MemgraphIngestor:
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
         from datetime import datetime
-        return datetime.now().isoformat()
+        return datetime.now(timezone.utc).isoformat()

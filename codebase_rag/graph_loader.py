@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
+from collections import defaultdict
 from loguru import logger
 
 
@@ -31,9 +32,16 @@ class GraphLoader:
         self._data: Optional[Dict[str, Any]] = None
         self._nodes: Optional[List[GraphNode]] = None
         self._relationships: Optional[List[GraphRelationship]] = None
+        
+        # Performance indexes
+        self._nodes_by_id: Dict[int, GraphNode] = {}
+        self._nodes_by_label: Dict[str, List[GraphNode]] = defaultdict(list)
+        self._outgoing_rels: Dict[int, List[GraphRelationship]] = defaultdict(list)
+        self._incoming_rels: Dict[int, List[GraphRelationship]] = defaultdict(list)
+        self._property_indexes: Dict[str, Dict[Any, List[GraphNode]]] = {}
     
     def load(self) -> None:
-        """Load the graph data from file."""
+        """Load the graph data from file and build performance indexes."""
         if not self.file_path.exists():
             raise FileNotFoundError(f"Graph file not found: {self.file_path}")
         
@@ -41,32 +49,53 @@ class GraphLoader:
         with open(self.file_path, 'r', encoding='utf-8') as f:
             self._data = json.load(f)
         
-        # Ensure data is loaded
         if self._data is None:
             raise RuntimeError("Failed to load data from file")
         
-        # Parse nodes
-        self._nodes = [
-            GraphNode(
-                node_id=node['node_id'],
-                labels=node['labels'],
-                properties=node['properties']
+        # Parse nodes and build indexes
+        self._nodes = []
+        for node_data in self._data['nodes']:
+            node = GraphNode(
+                node_id=node_data['node_id'],
+                labels=node_data['labels'],
+                properties=node_data['properties']
             )
-            for node in self._data['nodes']
-        ]
+            self._nodes.append(node)
+            
+            # Build indexes
+            self._nodes_by_id[node.node_id] = node
+            for label in node.labels:
+                self._nodes_by_label[label].append(node)
         
-        # Parse relationships
-        self._relationships = [
-            GraphRelationship(
-                from_id=rel['from_id'],
-                to_id=rel['to_id'],
-                type=rel['type'],
-                properties=rel['properties']
+        # Parse relationships and build indexes
+        self._relationships = []
+        for rel_data in self._data['relationships']:
+            rel = GraphRelationship(
+                from_id=rel_data['from_id'],
+                to_id=rel_data['to_id'],
+                type=rel_data['type'],
+                properties=rel_data['properties']
             )
-            for rel in self._data['relationships']
-        ]
+            self._relationships.append(rel)
+            
+            # Build relationship indexes
+            self._outgoing_rels[rel.from_id].append(rel)
+            self._incoming_rels[rel.to_id].append(rel)
         
-        logger.info(f"Loaded {len(self._nodes)} nodes and {len(self._relationships)} relationships")
+        logger.info(f"Loaded {len(self._nodes)} nodes and "
+                   f"{len(self._relationships)} relationships with indexes")
+    
+    def _build_property_index(self, property_name: str) -> None:
+        """Build index for a specific property."""
+        if property_name in self._property_indexes:
+            return
+        
+        index: Dict[Any, List[GraphNode]] = defaultdict(list)
+        for node in self.nodes:
+            value = node.properties.get(property_name)
+            if value is not None:
+                index[value].append(node)
+        self._property_indexes[property_name] = dict(index)
     
     @property
     def nodes(self) -> List[GraphNode]:
@@ -93,40 +122,47 @@ class GraphLoader:
         return self._data['metadata']
     
     def find_nodes_by_label(self, label: str) -> List[GraphNode]:
-        """Find all nodes with a specific label."""
-        return [node for node in self.nodes if label in node.labels]
+        """Find all nodes with a specific label. O(1) lookup."""
+        if self._nodes is None:
+            self.load()
+        return self._nodes_by_label.get(label, [])
     
     def find_node_by_property(self, property_name: str, value: Any) -> List[GraphNode]:
-        """Find nodes by property value."""
-        return [
-            node for node in self.nodes 
-            if node.properties.get(property_name) == value
-        ]
+        """Find nodes by property value. O(1) lookup after first use."""
+        if self._nodes is None:
+            self.load()
+        
+        self._build_property_index(property_name)
+        return self._property_indexes[property_name].get(value, [])
+    
+    def get_node_by_id(self, node_id: int) -> Optional[GraphNode]:
+        """Get a node by its ID. O(1) lookup."""
+        if self._nodes is None:
+            self.load()
+        return self._nodes_by_id.get(node_id)
     
     def get_relationships_for_node(self, node_id: int) -> List[GraphRelationship]:
-        """Get all relationships (incoming and outgoing) for a specific node."""
-        return [
-            rel for rel in self.relationships 
-            if rel.from_id == node_id or rel.to_id == node_id
-        ]
+        """Get all relationships (incoming and outgoing) for a node. O(1) lookup."""
+        return (self.get_outgoing_relationships(node_id) + 
+                self.get_incoming_relationships(node_id))
     
     def get_outgoing_relationships(self, node_id: int) -> List[GraphRelationship]:
-        """Get outgoing relationships for a specific node."""
-        return [rel for rel in self.relationships if rel.from_id == node_id]
+        """Get outgoing relationships for a specific node. O(1) lookup."""
+        if self._relationships is None:
+            self.load()
+        return self._outgoing_rels.get(node_id, [])
     
     def get_incoming_relationships(self, node_id: int) -> List[GraphRelationship]:
-        """Get incoming relationships for a specific node."""
-        return [rel for rel in self.relationships if rel.to_id == node_id]
+        """Get incoming relationships for a specific node. O(1) lookup."""
+        if self._relationships is None:
+            self.load()
+        return self._incoming_rels.get(node_id, [])
     
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the graph structure."""
-        node_labels = {}
+        node_labels = {label: len(nodes) for label, nodes in self._nodes_by_label.items()}
+        
         relationship_types = {}
-        
-        for node in self.nodes:
-            for label in node.labels:
-                node_labels[label] = node_labels.get(label, 0) + 1
-        
         for rel in self.relationships:
             relationship_types[rel.type] = relationship_types.get(rel.type, 0) + 1
         
