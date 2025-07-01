@@ -15,9 +15,9 @@ class AppConfig:
     # Gemini provider 'gla' or 'vertex'
     GEMINI_PROVIDER = os.getenv("GEMINI_PROVIDER", "gla")
 
-    GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-1.5-pro")
-    GEMINI_VISION_MODEL_ID = os.getenv("GEMINI_VISION_MODEL_ID", "gemini-1.5-flash")
-    MODEL_CYPHER_ID = os.getenv("MODEL_CYPHER_ID", "gemini-1.5-flash")
+    GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-06-05")
+    GEMINI_VISION_MODEL_ID = os.getenv("GEMINI_VISION_MODEL_ID", "gemini-2.5-pro-preview-06-05")
+    MODEL_CYPHER_ID = os.getenv("MODEL_CYPHER_ID", "gemini-2.5-flash-lite-preview-06-17")
     # API key for Gemini.
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     # Thinking budget for Gemini models.
@@ -44,10 +44,10 @@ class AppConfig:
         if self.GEMINI_THINKING_BUDGET is not None:
             try:
                 self.GEMINI_THINKING_BUDGET = int(self.GEMINI_THINKING_BUDGET)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as e:
                 raise ValueError(
                     "Configuration Error: GEMINI_THINKING_BUDGET must be an integer."
-                )
+                ) from e
 
         if self.LLM_PROVIDER == "gemini" and self.GEMINI_PROVIDER == "gla" and not self.GEMINI_API_KEY:
             raise ValueError("Configuration Error: GEMINI_API_KEY is required when GEMINI_PROVIDER is 'gla'.")

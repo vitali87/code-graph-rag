@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from pydantic_ai import Tool, RunContext
+from pydantic_ai import Tool
 from loguru import logger
 from ..config import settings
 
@@ -85,8 +85,7 @@ class DocumentAnalyzer:
 def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
     """Factory function to create the document analyzer tool."""
     
-    # The context is not used here but required by the pydantic-ai Tool signature.
-    def analyze_document(ctx: RunContext, file_path: str, question: str) -> str:
+    def analyze_document(file_path: str, question: str) -> str:
         """
         Analyzes a document (like a PDF) to answer a specific question about its content.
         Use this tool when a user asks a question that requires understanding the content of a non-source-code file.
