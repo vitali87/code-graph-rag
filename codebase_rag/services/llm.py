@@ -1,7 +1,8 @@
 from pydantic_ai import Agent, Tool
-from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
+from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider
 from ..config import settings
 from ..prompts import (
@@ -10,6 +11,7 @@ from ..prompts import (
     RAG_ORCHESTRATOR_SYSTEM_PROMPT,
 )
 from loguru import logger
+from typing import cast
 
 
 class LLMGenerationError(Exception):
@@ -33,10 +35,27 @@ class CypherGenerator:
 
     def __init__(self):
         try:
+            model_settings = None
             if settings.LLM_PROVIDER == "gemini":
+                if settings.GEMINI_PROVIDER == "vertex":
+                    provider = GoogleVertexProvider(
+                        project_id=settings.GCP_PROJECT_ID,
+                        region=cast(VertexAiRegion, settings.GCP_REGION),
+                        service_account_file=settings.GCP_SERVICE_ACCOUNT_FILE,
+                    )
+                else:
+                    provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)
+
+                if settings.GEMINI_THINKING_BUDGET is not None:
+                    model_settings = GeminiModelSettings(
+                        gemini_thinking_config={
+                            "thinking_budget": int(settings.GEMINI_THINKING_BUDGET)
+                        }
+                    )
+
                 llm = GeminiModel(
                     settings.MODEL_CYPHER_ID,
-                    provider=GoogleGLAProvider(api_key=settings.GEMINI_API_KEY),
+                    provider=provider,
                 )
                 system_prompt = GEMINI_LITE_CYPHER_SYSTEM_PROMPT
             else:  # local provider
@@ -52,6 +71,7 @@ class CypherGenerator:
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
+                model_settings=model_settings,
             )
         except Exception as e:
             raise LLMGenerationError(
@@ -83,10 +103,27 @@ class CypherGenerator:
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
+        model_settings = None
         if settings.LLM_PROVIDER == "gemini":
+            if settings.GEMINI_PROVIDER == "vertex":
+                provider = GoogleVertexProvider(
+                    project_id=settings.GCP_PROJECT_ID,
+                    region=cast(VertexAiRegion, settings.GCP_REGION),
+                    service_account_file=settings.GCP_SERVICE_ACCOUNT_FILE,
+                )
+            else:
+                provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)
+
+            if settings.GEMINI_THINKING_BUDGET is not None:
+                model_settings = GeminiModelSettings(
+                    gemini_thinking_config={
+                        "thinking_budget": int(settings.GEMINI_THINKING_BUDGET)
+                    }
+                )
+
             llm = GeminiModel(
                 settings.GEMINI_MODEL_ID,
-                provider=GoogleGLAProvider(api_key=settings.GEMINI_API_KEY),
+                provider=provider,
             )
         else:  # local provider
             llm = OpenAIModel(
@@ -101,7 +138,7 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             model=llm,
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
-            debug_mode=True,
+            model_settings=model_settings,
         )  # type: ignore
     except Exception as e:
         raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e

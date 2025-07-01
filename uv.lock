@@ -223,7 +223,7 @@ version = "0.0.2"
 source = { virtual = "." }
 dependencies = [
     { name = "loguru" },
-    { name = "pydantic-ai-slim", extra = ["google", "openai"] },
+    { name = "pydantic-ai-slim", extra = ["google", "openai", "vertexai"] },
     { name = "pymgclient" },
     { name = "python-dotenv" },
     { name = "rich" },
@@ -252,7 +252,7 @@ treesitter-full = [
 [package.metadata]
 requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic-ai-slim", extras = ["google", "openai"], specifier = ">=0.2.18" },
+    { name = "pydantic-ai-slim", extras = ["google", "openai", "vertexai"], specifier = ">=0.2.18" },
     { name = "pymgclient", specifier = ">=1.4.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
@@ -571,6 +571,10 @@ google = [
 ]
 openai = [
     { name = "openai" },
+]
+vertexai = [
+    { name = "google-auth" },
+    { name = "requests" },
 ]
 
 [[package]]

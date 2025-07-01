@@ -1,4 +1,7 @@
 from pydantic_ai import Tool, RunContext
+from rich.table import Table
+from rich.panel import Panel
+from rich.console import Console
 from ..schemas import GraphData
 from ..graph_updater import MemgraphIngestor
 from ..services.llm import CypherGenerator, LLMGenerationError
@@ -16,6 +19,7 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
     Factory function that creates the knowledge graph query tool,
     injecting its dependencies.
     """
+    console = Console()
 
     async def query_codebase_knowledge_graph(
         ctx: RunContext, natural_language_query: str
@@ -30,8 +34,38 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
 
-            # Use the ingestor's public interface instead of accessing .conn
             results = ingestor.fetch_all(cypher_query)
+
+            if results:
+                table = Table(
+                    show_header=True,
+                    header_style="bold magenta",
+                )
+                headers = results[0].keys()
+                for header in headers:
+                    table.add_column(header)
+
+                for row in results:
+                    renderable_values = []
+                    for value in row.values():
+                        if value is None:
+                            renderable_values.append("")
+                        elif isinstance(value, (int, float)):
+                            # Let Rich handle number formatting by converting to string
+                            renderable_values.append(str(value))
+                        elif isinstance(value, bool):
+                            renderable_values.append("✓" if value else "✗")
+                        else:
+                            renderable_values.append(str(value))
+                    table.add_row(*renderable_values)
+
+                console.print(
+                    Panel(
+                        table,
+                        title="[bold blue]Cypher Query Results[/bold blue]",
+                        expand=False,
+                    )
+                )
 
             summary = f"Successfully retrieved {len(results)} item(s) from the graph."
             return GraphData(query_used=cypher_query, results=results, summary=summary)
