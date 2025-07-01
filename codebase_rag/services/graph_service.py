@@ -2,7 +2,8 @@ from datetime import timezone
 import mgclient
 from loguru import logger
 from typing import Any, Optional
-
+from datetime import datetime
+from collections import defaultdict
 
 class MemgraphIngestor:
     """Handles all communication and query execution with the Memgraph database."""
@@ -121,7 +122,6 @@ class MemgraphIngestor:
     def flush_nodes(self) -> None:
         if not self.node_buffer:
             return
-        from collections import defaultdict
 
         nodes_by_label = defaultdict(list)
         for label, props in self.node_buffer:
@@ -143,7 +143,6 @@ class MemgraphIngestor:
     def flush_relationships(self) -> None:
         if not self.relationship_buffer:
             return
-        from collections import defaultdict
 
         rels_by_pattern = defaultdict(list)
         for from_node, rel_type, to_node, props in self.relationship_buffer:
@@ -215,5 +214,4 @@ class MemgraphIngestor:
     
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
-        from datetime import datetime
         return datetime.now(timezone.utc).isoformat()
