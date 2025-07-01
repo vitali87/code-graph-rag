@@ -1,18 +1,12 @@
-# Create new file: codebase_rag/tools/document_analyzer.py
-
 import os
 from pathlib import Path
 from pydantic_ai import Tool, RunContext
 from loguru import logger
+from ..config import settings
 
-# We need the google-genai library for direct multimodal calls
-try:
-    from google import genai
-    from google.genai import types
-except ImportError as e:
-    raise ImportError(
-        "Please install google-genai for multimodal capabilities: `uv add google-genai`"
-    ) from e
+from google import genai
+from google.genai import types
+
 
 class DocumentAnalyzer:
     """
@@ -52,28 +46,8 @@ class DocumentAnalyzer:
 
             # Call the model and get the response
             response = self.client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=prompt_parts,
-                config=types.GenerateContentConfig(
-                    safety_settings=[
-                        types.SafetySetting(
-                            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                            threshold=types.HarmBlockThreshold.BLOCK_NONE
-                        ),
-                        types.SafetySetting(
-                            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                            threshold=types.HarmBlockThreshold.BLOCK_NONE
-                        ),
-                        types.SafetySetting(
-                            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                            threshold=types.HarmBlockThreshold.BLOCK_NONE
-                        ),
-                        types.SafetySetting(
-                            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                            threshold=types.HarmBlockThreshold.BLOCK_NONE
-                        ),
-                    ]
-                )
+                model=settings.GEMINI_MODEL_ID,
+                contents=prompt_parts
             )
 
             logger.success(f"Successfully received analysis for '{file_path}'.")

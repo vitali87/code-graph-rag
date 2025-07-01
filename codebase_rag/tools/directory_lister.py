@@ -19,11 +19,11 @@ class DirectoryLister:
             if not target_path.is_dir():
                 return f"Error: '{directory_path}' is not a valid directory."
 
-            contents = os.listdir(target_path)
-            if not contents:
+            if contents := os.listdir(target_path):
+                return "\n".join(contents)
+            else:
                 return f"The directory '{directory_path}' is empty."
 
-            return "\n".join(contents)
         except Exception as e:
             logger.error(f"Error listing directory {directory_path}: {e}")
             return f"Error: Could not list contents of '{directory_path}'."
@@ -41,10 +41,12 @@ class DirectoryLister:
             # If relative, resolve it against the root path
             safe_path = (self.project_root / file_path).resolve()
 
-        if self.project_root not in safe_path.parents and safe_path != self.project_root:
+        try:
+            safe_path.relative_to(self.project_root)
+        except ValueError as e:
             raise PermissionError(
                 "Access denied: Cannot access files outside the project root."
-            )
+            ) from e
 
         return safe_path
 
