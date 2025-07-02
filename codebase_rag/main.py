@@ -107,6 +107,8 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
         key_bindings=bindings,
         wrap_lines=True,
     )
+    if result is None:
+        raise EOFError
     return result.strip()
 
 
