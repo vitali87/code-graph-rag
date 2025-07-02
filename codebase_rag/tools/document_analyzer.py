@@ -1,7 +1,9 @@
 import os
+import shutil
 from pathlib import Path
 from pydantic_ai import Tool
 from loguru import logger
+import mimetypes
 from ..config import settings
 
 from google import genai
@@ -29,18 +31,40 @@ class DocumentAnalyzer:
         """
         logger.info(f"[DocumentAnalyzer] Analyzing '{file_path}' with question: '{question}'")
         try:
-            full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root) # Security check
+            # Handle absolute paths by copying to .tmp folder
+            if Path(file_path).is_absolute():
+                source_path = Path(file_path)
+                if not source_path.exists():
+                    return f"Error: File not found at '{file_path}'."
+                
+                # Create .tmp folder if it doesn't exist
+                tmp_dir = self.project_root / ".tmp"
+                tmp_dir.mkdir(exist_ok=True)
+                
+                # Copy file to .tmp with original filename
+                tmp_file = tmp_dir / source_path.name
+                shutil.copy2(source_path, tmp_file)
+                full_path = tmp_file
+                logger.info(f"Copied external file to: {full_path}")
+            else:
+                # Handle relative paths as before
+                full_path = (self.project_root / file_path).resolve()
+                full_path.relative_to(self.project_root) # Security check
 
             if not full_path.is_file():
                 return f"Error: File not found at '{file_path}'."
 
-            # Prepare the multimodal prompt - use simple format
+            # Determine mime type dynamically
+            mime_type, _ = mimetypes.guess_type(full_path)
+            if not mime_type:
+                mime_type = "application/octet-stream"  # Default if type can't be guessed
+
+            # Prepare the multimodal prompt
             file_bytes = full_path.read_bytes()
             
             # Use the simpler format that the library expects
             prompt_parts = [
-                types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+                types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
                 f"Based on the document provided, please answer the following question: {question}"
             ]
 

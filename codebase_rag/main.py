@@ -2,6 +2,9 @@ import asyncio
 import sys
 import typer
 import json
+import shutil
+import re
+import os
 from typing import Optional, List
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
@@ -34,7 +37,42 @@ app = typer.Typer(
 console = Console()
 
 
-async def run_chat_loop(rag_agent, message_history: List):
+def _handle_chat_images(question: str, project_root: Path) -> str:
+    """
+    Checks for image file paths in the question, copies them to a temporary
+    directory, and replaces the path in the question.
+    """
+    # Simple regex to find potential absolute file paths with image extensions
+    match = re.search(r"(/[^/ ]*?/.*\.(png|jpg|jpeg|gif))", question)
+    if not match:
+        return question
+
+    original_path_str = match.group(1)
+    original_path = Path(original_path_str)
+
+    if not original_path.exists() or not original_path.is_file():
+        logger.warning(f"Image path found, but does not exist: {original_path_str}")
+        return question
+
+    tmp_dir = project_root / ".tmp"
+    tmp_dir.mkdir(exist_ok=True)
+
+    try:
+        new_path = tmp_dir / original_path.name
+        shutil.copy(original_path, new_path)
+        new_relative_path = os.path.relpath(new_path, project_root)
+        
+        # Replace the original path in the question with the new relative path
+        updated_question = question.replace(original_path_str, str(new_relative_path))
+        
+        logger.info(f"Copied image to temporary path: {new_relative_path}")
+        return updated_question
+    except Exception as e:
+        logger.error(f"Failed to copy image to temporary directory: {e}")
+        return question
+
+
+async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
     """Runs the main chat loop."""
     question = ""
     while True:
@@ -55,6 +93,9 @@ async def run_chat_loop(rag_agent, message_history: List):
                 break
             if not question.strip():
                 continue
+
+            # Handle images in the question
+            question = _handle_chat_images(question, project_root)
 
             with console.status("[bold green]Thinking...[/bold green]"):
                 response = await rag_agent.run(question, message_history=message_history)
@@ -137,7 +178,14 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 async def main_async(repo_path: str):
     """Initializes services and runs the main application loop."""
     logger.remove()
-    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    logger.add(sys.stdout, format="{time:YYYY-DD-MM HH:mm:ss.SSS} | {message}")
+
+    # Clean up temp directory on startup
+    project_root = Path(repo_path).resolve()
+    tmp_dir = project_root / ".tmp"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir()
 
     table = Table(title="[bold green]Graph-Code Initializing...[/bold green]")
     table.add_column("Configuration", style="cyan")
@@ -193,13 +241,16 @@ async def main_async(repo_path: str):
             ]
         )
 
-        await run_chat_loop(rag_agent, [])
+        await run_chat_loop(rag_agent, [], project_root)
 
 
 @app.command()
 def start(
     repo_path: Optional[str] = typer.Option(
         None, "--repo-path", help="Path to the target repository for code retrieval"
+    ),
+    show_repo: bool = typer.Option(
+        False, "--show-repo", help="Show the repository being analyzed and exit"
     ),
     update_graph: bool = typer.Option(
         False, "--update-graph", help="Update the knowledge graph by parsing the repository"
@@ -223,6 +274,10 @@ def start(
     """Starts the Codebase RAG CLI."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     
+    if show_repo:
+        console.print(f"[bold green]Repository being analyzed:[/bold green] {target_repo_path}")
+        raise typer.Exit()
+
     # Validate output option usage
     if output and not update_graph:
         console.print("[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]")
