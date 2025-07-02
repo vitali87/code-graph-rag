@@ -180,13 +180,16 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 async def main_async(repo_path: str):
     """Initializes services and runs the main application loop."""
     logger.remove()
-    logger.add(sys.stdout, format="{time:YYYY-DD-MM HH:mm:ss.SSS} | {message}")
+    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
     # Clean up temp directory on startup
     project_root = Path(repo_path).resolve()
     tmp_dir = project_root / ".tmp"
     if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
+        if tmp_dir.is_dir():
+            shutil.rmtree(tmp_dir)
+        else:
+            tmp_dir.unlink()
     tmp_dir.mkdir()
 
     table = Table(title="[bold green]Graph-Code Initializing...[/bold green]")
