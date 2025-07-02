@@ -254,9 +254,6 @@ def start(
     repo_path: Optional[str] = typer.Option(
         None, "--repo-path", help="Path to the target repository for code retrieval"
     ),
-    show_repo: bool = typer.Option(
-        False, "--show-repo", help="Show the repository being analyzed and exit"
-    ),
     update_graph: bool = typer.Option(
         False, "--update-graph", help="Update the knowledge graph by parsing the repository"
     ),
@@ -279,10 +276,6 @@ def start(
     """Starts the Codebase RAG CLI."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     
-    if show_repo:
-        console.print(f"[bold green]Repository being analyzed:[/bold green] {target_repo_path}")
-        raise typer.Exit()
-
     # Validate output option usage
     if output and not update_graph:
         console.print("[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]")
@@ -318,6 +311,17 @@ def start(
         console.print("\n[bold red]Application terminated by user.[/bold red]")
     except ValueError as e:
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
+
+
+@app.command()
+def show_repo(
+    repo_path: Optional[str] = typer.Option(
+        None, "--repo-path", help="Path to the target repository to check"
+    )
+):
+    """Shows the repository being analyzed."""
+    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    console.print(f"[bold green]Repository being analyzed:[/bold green] {target_repo_path}")
 
 
 @app.command()
