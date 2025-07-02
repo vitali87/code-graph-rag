@@ -15,6 +15,7 @@ dependencies = [
     "watchdog>=6.0.0",
     "typer[all]>=0.12.5",
     "rich>=13.7.1",
+    "prompt-toolkit>=3.0.0",
 ]
 
 [tool.setuptools]
