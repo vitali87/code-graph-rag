@@ -5,6 +5,7 @@ import json
 import shutil
 import re
 import os
+import uuid
 from typing import Optional, List
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
@@ -42,34 +43,35 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     Checks for image file paths in the question, copies them to a temporary
     directory, and replaces the path in the question.
     """
-    # Simple regex to find potential absolute file paths with image extensions
-    match = re.search(r"(/[^/ ]*?/.*\.(png|jpg|jpeg|gif))", question)
-    if not match:
+    # Find all potential absolute file paths with image extensions
+    image_paths = re.findall(r"(/[^/ ]*?/.*\.(png|jpg|jpeg|gif))", question)
+    if not image_paths:
         return question
 
-    original_path_str = match.group(1)
-    original_path = Path(original_path_str)
-
-    if not original_path.exists() or not original_path.is_file():
-        logger.warning(f"Image path found, but does not exist: {original_path_str}")
-        return question
-
+    updated_question = question
     tmp_dir = project_root / ".tmp"
     tmp_dir.mkdir(exist_ok=True)
 
-    try:
-        new_path = tmp_dir / original_path.name
-        shutil.copy(original_path, new_path)
-        new_relative_path = os.path.relpath(new_path, project_root)
-        
-        # Replace the original path in the question with the new relative path
-        updated_question = question.replace(original_path_str, str(new_relative_path))
-        
-        logger.info(f"Copied image to temporary path: {new_relative_path}")
-        return updated_question
-    except Exception as e:
-        logger.error(f"Failed to copy image to temporary directory: {e}")
-        return question
+    for original_path_str in image_paths:
+        original_path = Path(original_path_str)
+
+        if not original_path.exists() or not original_path.is_file():
+            logger.warning(f"Image path found, but does not exist: {original_path_str}")
+            continue
+
+        try:
+            new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
+            shutil.copy(original_path, new_path)
+            new_relative_path = os.path.relpath(new_path, project_root)
+            
+            # Replace the original path in the question with the new relative path
+            updated_question = updated_question.replace(original_path_str, str(new_relative_path))
+            
+            logger.info(f"Copied image to temporary path: {new_relative_path}")
+        except Exception as e:
+            logger.error(f"Failed to copy image to temporary directory: {e}")
+            
+    return updated_question
 
 
 async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
