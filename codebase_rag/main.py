@@ -2,6 +2,10 @@ import asyncio
 import sys
 import typer
 import json
+import shutil
+import re
+import os
+import uuid
 from typing import Optional, List
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
@@ -34,7 +38,43 @@ app = typer.Typer(
 console = Console()
 
 
-async def run_chat_loop(rag_agent, message_history: List):
+def _handle_chat_images(question: str, project_root: Path) -> str:
+    """
+    Checks for image file paths in the question, copies them to a temporary
+    directory, and replaces the path in the question.
+    """
+    # Find all potential absolute file paths with image extensions
+    image_paths = re.findall(r"(/[^/ ]*?/.*\.(png|jpg|jpeg|gif))", question)
+    if not image_paths:
+        return question
+
+    updated_question = question
+    tmp_dir = project_root / ".tmp"
+    tmp_dir.mkdir(exist_ok=True)
+
+    for original_path_str in image_paths:
+        original_path = Path(original_path_str)
+
+        if not original_path.exists() or not original_path.is_file():
+            logger.warning(f"Image path found, but does not exist: {original_path_str}")
+            continue
+
+        try:
+            new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
+            shutil.copy(original_path, new_path)
+            new_relative_path = os.path.relpath(new_path, project_root)
+            
+            # Replace the original path in the question with the new relative path
+            updated_question = updated_question.replace(original_path_str, str(new_relative_path))
+            
+            logger.info(f"Copied image to temporary path: {new_relative_path}")
+        except Exception as e:
+            logger.error(f"Failed to copy image to temporary directory: {e}")
+            
+    return updated_question
+
+
+async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
     """Runs the main chat loop."""
     question = ""
     while True:
@@ -55,6 +95,9 @@ async def run_chat_loop(rag_agent, message_history: List):
                 break
             if not question.strip():
                 continue
+
+            # Handle images in the question
+            question = _handle_chat_images(question, project_root)
 
             with console.status("[bold green]Thinking...[/bold green]"):
                 response = await rag_agent.run(question, message_history=message_history)
@@ -139,6 +182,16 @@ async def main_async(repo_path: str):
     logger.remove()
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
+    # Clean up temp directory on startup
+    project_root = Path(repo_path).resolve()
+    tmp_dir = project_root / ".tmp"
+    if tmp_dir.exists():
+        if tmp_dir.is_dir():
+            shutil.rmtree(tmp_dir)
+        else:
+            tmp_dir.unlink()
+    tmp_dir.mkdir()
+
     table = Table(title="[bold green]Graph-Code Initializing...[/bold green]")
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
@@ -193,13 +246,16 @@ async def main_async(repo_path: str):
             ]
         )
 
-        await run_chat_loop(rag_agent, [])
+        await run_chat_loop(rag_agent, [], project_root)
 
 
 @app.command()
 def start(
     repo_path: Optional[str] = typer.Option(
         None, "--repo-path", help="Path to the target repository for code retrieval"
+    ),
+    show_repo: bool = typer.Option(
+        False, "--show-repo", help="Show the repository being analyzed and exit"
     ),
     update_graph: bool = typer.Option(
         False, "--update-graph", help="Update the knowledge graph by parsing the repository"
@@ -223,6 +279,10 @@ def start(
     """Starts the Codebase RAG CLI."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     
+    if show_repo:
+        console.print(f"[bold green]Repository being analyzed:[/bold green] {target_repo_path}")
+        raise typer.Exit()
+
     # Validate output option usage
     if output and not update_graph:
         console.print("[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]")
