@@ -15,6 +15,7 @@ from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
 from rich.table import Table
 from rich.markdown import Markdown
+from rich.text import Text
 from pathlib import Path
 
 from .config import settings
@@ -78,7 +79,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
 
 
 def get_multiline_input(prompt_text: str = "Ask a question") -> str:
-    """Get multiline input from user with Command+Enter to submit."""
+    """Get multiline input from user with Ctrl+J to submit."""
     bindings = KeyBindings()
     
     @bindings.add('c-j')
@@ -96,19 +97,17 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
         """Handle Ctrl+C."""
         event.app.exit(exception=KeyboardInterrupt)
     
-    try:
-        # Convert Rich markup to prompt-toolkit HTML formatting
-        clean_prompt = prompt_text.replace("[bold cyan]", "").replace("[/bold cyan]", "")
-        colored_prompt = HTML(f'<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: ')
-        result = prompt(
-            colored_prompt,
-            multiline=True,
-            key_bindings=bindings,
-            wrap_lines=True,
-        )
-        return result.strip()
-    except KeyboardInterrupt:
-        raise KeyboardInterrupt()
+    # Convert Rich markup to plain text using Rich's parser
+    clean_prompt = Text.from_markup(prompt_text).plain
+    
+    colored_prompt = HTML(f'<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: ')
+    result = prompt(
+        colored_prompt,
+        multiline=True,
+        key_bindings=bindings,
+        wrap_lines=True,
+    )
+    return result.strip()
 
 
 async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
