@@ -8,10 +8,14 @@ import os
 import uuid
 from typing import Optional, List
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm
+from prompt_toolkit import prompt
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
 from rich.table import Table
 from rich.markdown import Markdown
+from rich.text import Text
 from pathlib import Path
 
 from .config import settings
@@ -74,6 +78,40 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     return updated_question
 
 
+def get_multiline_input(prompt_text: str = "Ask a question") -> str:
+    """Get multiline input from user with Ctrl+J to submit."""
+    bindings = KeyBindings()
+    
+    @bindings.add('c-j')
+    def submit(event):
+        """Submit the current input."""
+        event.app.exit(result=event.app.current_buffer.text)
+    
+    @bindings.add('enter')
+    def new_line(event):
+        """Insert a new line instead of submitting."""
+        event.current_buffer.insert_text('\n')
+    
+    @bindings.add('c-c')
+    def keyboard_interrupt(event):
+        """Handle Ctrl+C."""
+        event.app.exit(exception=KeyboardInterrupt)
+    
+    # Convert Rich markup to plain text using Rich's parser
+    clean_prompt = Text.from_markup(prompt_text).plain
+    
+    colored_prompt = HTML(f'<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: ')
+    result = prompt(
+        colored_prompt,
+        multiline=True,
+        key_bindings=bindings,
+        wrap_lines=True,
+    )
+    if result is None:
+        raise EOFError
+    return result.strip()
+
+
 async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
     """Runs the main chat loop."""
     question = ""
@@ -88,7 +126,7 @@ async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
                     console.print("[bold yellow]Operation cancelled.[/bold yellow]")
             else:
                 question = await asyncio.to_thread(
-                    Prompt.ask, "[bold cyan]Ask a question[/bold cyan]"
+                    get_multiline_input, "[bold cyan]Ask a question[/bold cyan]"
                 )
 
             if question.lower() in ["exit", "quit"]:
