@@ -48,7 +48,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     directory, and replaces the path in the question.
     """
     # Find all potential absolute file paths with image extensions
-    image_paths = re.findall(r"(/[^/ ]*?/.*\.(png|jpg|jpeg|gif))", question)
+    image_paths = re.findall(r"(/[^/ ]*?/.*\\.(png|jpg|jpeg|gif))", question)
     if not image_paths:
         return question
 
@@ -313,7 +313,7 @@ def start(
 ):
     """Starts the Codebase RAG CLI."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
-    
+
     # Validate output option usage
     if output and not update_graph:
         console.print("[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]")
@@ -351,15 +351,6 @@ def start(
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
-@app.command()
-def show_repo(
-    repo_path: Optional[str] = typer.Option(
-        None, "--repo-path", help="Path to the target repository to check"
-    )
-):
-    """Shows the repository being analyzed."""
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
-    console.print(f"[bold green]Repository being analyzed:[/bold green] {target_repo_path}")
 
 
 @app.command()
