@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -13,6 +13,7 @@ class LanguageConfig:
     function_node_types: List[str]
     class_node_types: List[str]
     module_node_types: List[str]
+    call_node_types: List[str] = field(default_factory=list)
 
     # Field names for extracting names
     name_field: str = "name"
@@ -34,6 +35,7 @@ LANGUAGE_CONFIGS = {
         function_node_types=["function_definition"],
         class_node_types=["class_definition"],
         module_node_types=["module"],
+        call_node_types=["call"],
         package_indicators=["__init__.py"],
     ),
     "javascript": LanguageConfig(
@@ -46,6 +48,7 @@ LANGUAGE_CONFIGS = {
         ],
         class_node_types=["class_declaration"],
         module_node_types=["program"],
+        call_node_types=["call_expression"],
     ),
     "typescript": LanguageConfig(
         name="typescript",
@@ -57,6 +60,7 @@ LANGUAGE_CONFIGS = {
         ],
         class_node_types=["class_declaration"],
         module_node_types=["program"],
+        call_node_types=["call_expression"],
     ),
     "rust": LanguageConfig(
         name="rust",
@@ -64,6 +68,7 @@ LANGUAGE_CONFIGS = {
         function_node_types=["function_item"],
         class_node_types=["struct_item", "enum_item", "impl_item"],
         module_node_types=["source_file"],
+        call_node_types=["call_expression"],
     ),
     "go": LanguageConfig(
         name="go",
@@ -71,6 +76,7 @@ LANGUAGE_CONFIGS = {
         function_node_types=["function_declaration", "method_declaration"],
         class_node_types=["type_declaration"],  # Go structs
         module_node_types=["source_file"],
+        call_node_types=["call_expression"],
     ),
     "scala": LanguageConfig(
         name="scala",
@@ -103,6 +109,7 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["program"],
         package_indicators=[],  # Java uses package declarations
+        call_node_types=["method_invocation"],
     ),
 }
 

@@ -10,3 +10,6 @@ wheels/
 .venv
 .env
 .tmp
+
+.pytest_cache/
+.claude/

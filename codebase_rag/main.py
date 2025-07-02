@@ -28,7 +28,7 @@ from .tools.file_writer import create_file_writer_tool, FileWriter
 from .tools.file_editor import create_file_editor_tool, FileEditor
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
-from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_tool 
+from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_tool
 
 from loguru import logger
 
@@ -48,7 +48,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     directory, and replaces the path in the question.
     """
     # Find all potential absolute file paths with image extensions
-    image_paths = re.findall(r"(/[^/ ]*?/.*\\.(png|jpg|jpeg|gif))", question)
+    image_paths = re.findall(r"(/[^/ ]*?/.*\.(png|jpg|jpeg|gif))", question)
     if not image_paths:
         return question
 
@@ -56,7 +56,8 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     tmp_dir = project_root / ".tmp"
     tmp_dir.mkdir(exist_ok=True)
 
-    for original_path_str in image_paths:
+    for match in image_paths:
+        original_path_str = match[0] if isinstance(match, tuple) else match
         original_path = Path(original_path_str)
 
         if not original_path.exists() or not original_path.is_file():
@@ -67,40 +68,44 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
             shutil.copy(original_path, new_path)
             new_relative_path = os.path.relpath(new_path, project_root)
-            
+
             # Replace the original path in the question with the new relative path
-            updated_question = updated_question.replace(original_path_str, str(new_relative_path))
-            
+            updated_question = updated_question.replace(
+                original_path_str, str(new_relative_path)
+            )
+
             logger.info(f"Copied image to temporary path: {new_relative_path}")
         except Exception as e:
             logger.error(f"Failed to copy image to temporary directory: {e}")
-            
+
     return updated_question
 
 
 def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     """Get multiline input from user with Ctrl+J to submit."""
     bindings = KeyBindings()
-    
-    @bindings.add('c-j')
+
+    @bindings.add("c-j")
     def submit(event):
         """Submit the current input."""
         event.app.exit(result=event.app.current_buffer.text)
-    
-    @bindings.add('enter')
+
+    @bindings.add("enter")
     def new_line(event):
         """Insert a new line instead of submitting."""
-        event.current_buffer.insert_text('\n')
-    
-    @bindings.add('c-c')
+        event.current_buffer.insert_text("\n")
+
+    @bindings.add("c-c")
     def keyboard_interrupt(event):
         """Handle Ctrl+C."""
         event.app.exit(exception=KeyboardInterrupt)
-    
+
     # Convert Rich markup to plain text using Rich's parser
     clean_prompt = Text.from_markup(prompt_text).plain
-    
-    colored_prompt = HTML(f'<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: ')
+
+    colored_prompt = HTML(
+        f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
+    )
     result = prompt(
         colored_prompt,
         multiline=True,
@@ -138,7 +143,9 @@ async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
             question = _handle_chat_images(question, project_root)
 
             with console.status("[bold green]Thinking...[/bold green]"):
-                response = await rag_agent.run(question, message_history=message_history)
+                response = await rag_agent.run(
+                    question, message_history=message_history
+                )
 
             # Store the agent's raw output to check for confirmation requests
             question = response.output
@@ -184,31 +191,34 @@ def _update_model_settings(
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
     """
     Export graph data to a JSON file.
-    
+
     Args:
         ingestor: The MemgraphIngestor instance to export from
         output: Output file path
-        
+
     Returns:
         True if export was successful, False otherwise
     """
 
-    
     try:
         graph_data = ingestor.export_graph_to_dict()
         output_path = Path(output)
-        
+
         # Ensure the output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Write JSON with proper formatting
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(graph_data, f, indent=2, ensure_ascii=False)
-        
-        console.print(f"[bold green]Graph exported successfully to: {output_path.absolute()}[/bold green]")
-        console.print(f"[bold cyan]Export contains {graph_data['metadata']['total_nodes']} nodes and {graph_data['metadata']['total_relationships']} relationships[/bold cyan]")
+
+        console.print(
+            f"[bold green]Graph exported successfully to: {output_path.absolute()}[/bold green]"
+        )
+        console.print(
+            f"[bold cyan]Export contains {graph_data['metadata']['total_nodes']} nodes and {graph_data['metadata']['total_relationships']} relationships[/bold cyan]"
+        )
         return True
-        
+
     except Exception as e:
         console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
         logger.error(f"Export error: {e}", exc_info=True)
@@ -244,12 +254,16 @@ async def main_async(repo_path: str):
     table.add_row("Target Repository", repo_path)
     console.print(table)
 
-    with MemgraphIngestor(host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT) as ingestor:
+    with MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+    ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
-        console.print(Panel(
-            "[bold yellow]Ask questions about your codebase graph. Type 'exit' or 'quit' to end.[/bold yellow]",
-            border_style="yellow"
-        ))
+        console.print(
+            Panel(
+                "[bold yellow]Ask questions about your codebase graph. Type 'exit' or 'quit' to end.[/bold yellow]",
+                border_style="yellow",
+            )
+        )
 
         cypher_generator = CypherGenerator()
         code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
@@ -293,13 +307,20 @@ def start(
         None, "--repo-path", help="Path to the target repository for code retrieval"
     ),
     update_graph: bool = typer.Option(
-        False, "--update-graph", help="Update the knowledge graph by parsing the repository"
+        False,
+        "--update-graph",
+        help="Update the knowledge graph by parsing the repository",
     ),
     clean: bool = typer.Option(
-        False, "--clean", help="Clean the database before updating (use when adding first repo)"
+        False,
+        "--clean",
+        help="Clean the database before updating (use when adding first repo)",
     ),
     output: Optional[str] = typer.Option(
-        None, "-o", "--output", help="Export graph to JSON file after updating (requires --update-graph)"
+        None,
+        "-o",
+        "--output",
+        help="Export graph to JSON file after updating (requires --update-graph)",
     ),
     llm_provider: Optional[str] = typer.Option(
         None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
@@ -316,30 +337,36 @@ def start(
 
     # Validate output option usage
     if output and not update_graph:
-        console.print("[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]")
+        console.print(
+            "[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]"
+        )
         raise typer.Exit(1)
-    
+
     _update_model_settings(llm_provider, orchestrator_model, cypher_model)
 
     if update_graph:
-        
-        repo_to_update = Path(target_repo_path)
-        console.print(f"[bold green]Updating knowledge graph for: {repo_to_update}[/bold green]")
 
-        with MemgraphIngestor(host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT) as ingestor:
+        repo_to_update = Path(target_repo_path)
+        console.print(
+            f"[bold green]Updating knowledge graph for: {repo_to_update}[/bold green]"
+        )
+
+        with MemgraphIngestor(
+            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+        ) as ingestor:
             if clean:
                 console.print("[bold yellow]Cleaning database...[/bold yellow]")
                 ingestor.clean_database()
             ingestor.ensure_constraints()
             updater = GraphUpdater(ingestor, repo_to_update)
             updater.run()
-            
+
             # Export graph if output file specified
             if output:
                 console.print(f"[bold cyan]Exporting graph to: {output}[/bold cyan]")
                 if not _export_graph_to_file(ingestor, output):
                     raise typer.Exit(1)
-        
+
         console.print("[bold green]Graph update completed![/bold green]")
         return
 
@@ -351,22 +378,28 @@ def start(
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
-
-
 @app.command()
 def export(
-    output: str = typer.Option(..., "-o", "--output", help="Output file path for the exported graph"),
-    format_json: bool = typer.Option(True, "--json/--no-json", help="Export in JSON format"),
+    output: str = typer.Option(
+        ..., "-o", "--output", help="Output file path for the exported graph"
+    ),
+    format_json: bool = typer.Option(
+        True, "--json/--no-json", help="Export in JSON format"
+    ),
 ):
     """Export the current knowledge graph to a file."""
     if not format_json:
-        console.print("[bold red]Error: Currently only JSON format is supported.[/bold red]")
+        console.print(
+            "[bold red]Error: Currently only JSON format is supported.[/bold red]"
+        )
         raise typer.Exit(1)
 
     console.print("[bold cyan]Connecting to Memgraph to export graph...[/bold cyan]")
 
     try:
-        with MemgraphIngestor(host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT) as ingestor:
+        with MemgraphIngestor(
+            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+        ) as ingestor:
             console.print("[bold cyan]Exporting graph data...[/bold cyan]")
             if not _export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)

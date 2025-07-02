@@ -7,6 +7,7 @@ from watchdog.events import FileSystemEventHandler
 from loguru import logger
 
 from codebase_rag.graph_updater import MemgraphIngestor, GraphUpdater
+from codebase_rag.language_config import get_language_config
 
 
 class CodeChangeEventHandler(FileSystemEventHandler):
@@ -40,7 +41,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         if event.event_type in ["modified", "created"]:
             # If the file was created or modified, re-parse it
-            self.updater.parse_and_ingest_file(path)
+            # First determine the language from the file extension
+            lang_config = get_language_config(path.suffix)
+            if lang_config and lang_config.name in self.updater.parsers:
+                self.updater.parse_and_ingest_file(path, lang_config.name)
 
         # Flush changes to the database immediately
         self.updater.ingestor.flush_all()
