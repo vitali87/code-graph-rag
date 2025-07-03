@@ -1,4 +1,3 @@
-
 import os
 import toml
 from pathlib import Path
@@ -71,6 +70,8 @@ class GraphUpdater:
         self.repo_path = repo_path
         self.project_name = repo_path.name
         self.structural_elements: Dict[Path, Optional[str]] = {}
+        # Registry to track all defined functions and methods
+        self.function_registry: Dict[str, str] = {}  # {qualified_name: type}
         self.ignore_dirs = {
             ".git",
             "venv",
@@ -150,15 +151,23 @@ class GraphUpdater:
         }
 
     def run(self) -> None:
-        """Orchestrates the two-pass parsing and ingestion process."""
+        """Orchestrates the parsing and ingestion process."""
         self.ingestor.ensure_node_batch("Project", {"name": self.project_name})
         logger.info(f"Ensuring Project: {self.project_name}")
 
         logger.info("--- Pass 1: Identifying Packages and Folders ---")
         self._identify_structure()
 
-        logger.info("\n--- Pass 2: Processing Files and Python Modules ---")
+        logger.info(
+            "\n--- Pass 2: Processing Files and Collecting Function Definitions ---"
+        )
         self._process_files()
+
+        logger.info(
+            f"\n--- Found {len(self.function_registry)} functions/methods in codebase ---"
+        )
+        logger.info("--- Pass 3: Processing Function Calls ---")
+        self._process_function_calls()
 
         logger.info("\n--- Analysis complete. Flushing all data to database... ---")
         self.ingestor.flush_all()
@@ -358,7 +367,9 @@ class GraphUpdater:
         for func_node in func_nodes:
             # Ensure func_node is a Node object
             if not isinstance(func_node, Node):
-                logger.warning(f"Expected Node object but got {type(func_node)}: {func_node}")
+                logger.warning(
+                    f"Expected Node object but got {type(func_node)}: {func_node}"
+                )
                 continue
             if self._is_method(func_node, lang_config):
                 continue
@@ -385,6 +396,9 @@ class GraphUpdater:
             logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
             self.ingestor.ensure_node_batch("Function", props)
 
+            # Register the function in our registry
+            self.function_registry[func_qn] = "Function"
+
             parent_type, parent_qn = self._determine_function_parent(
                 func_node, module_qn, lang_config
             )
@@ -394,10 +408,7 @@ class GraphUpdater:
                 ("Function", "qualified_name", func_qn),
             )
 
-            # Ingest calls made by this function
-            self._ingest_function_calls(
-                func_node, func_qn, "Function", module_qn, language
-            )
+            # Note: Function calls will be processed in a separate pass
 
     def _build_nested_qualified_name(
         self, func_node, module_qn: str, func_name: str, lang_config: LanguageConfig
@@ -408,7 +419,9 @@ class GraphUpdater:
 
         # Add a check to ensure the initial 'current' is a Node object
         if not isinstance(current, Node):
-            logger.warning(f"Unexpected parent type for node {func_node}: {type(current)}. Skipping qualified name generation.")
+            logger.warning(
+                f"Unexpected parent type for node {func_node}: {type(current)}. Skipping qualified name generation."
+            )
             return None
 
         while current and current.type not in lang_config.module_node_types:
@@ -417,12 +430,14 @@ class GraphUpdater:
                     path_parts.append(name_node.text.decode("utf8"))
             elif current.type in lang_config.class_node_types:
                 return None  # This is a method, handled separately
-            
+
             # Check if current.parent is a Node before assigning to current
-            if hasattr(current, 'parent') and isinstance(current.parent, Node):
+            if hasattr(current, "parent") and isinstance(current.parent, Node):
                 current = current.parent
             else:
-                logger.warning(f"Unexpected parent type or missing parent attribute for node type: {current.type} (parent: {getattr(current, 'parent', 'None')}). Stopping traversal.")
+                logger.warning(
+                    f"Unexpected parent type or missing parent attribute for node type: {current.type} (parent: {getattr(current, 'parent', 'None')}). Stopping traversal."
+                )
                 # Instead of returning None, we'll break and try to form a QN with what we have.
                 # This might still lead to incomplete QNs but prevents crashing.
                 break
@@ -439,12 +454,12 @@ class GraphUpdater:
         # Add a check to ensure the initial 'current' is a Node object
         if not isinstance(current, Node):
             return False
-            
+
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.class_node_types:
                 return True
             # Check if current.parent is a Node before assigning to current
-            if hasattr(current, 'parent') and isinstance(current.parent, Node):
+            if hasattr(current, "parent") and isinstance(current.parent, Node):
                 current = current.parent
             else:
                 break
@@ -457,7 +472,9 @@ class GraphUpdater:
         current = func_node.parent
         # Add a check to ensure the initial 'current' is a Node object
         if not isinstance(current, Node):
-            logger.warning(f"Unexpected parent type for node {func_node}: {type(current)}. Returning Module parent.")
+            logger.warning(
+                f"Unexpected parent type for node {func_node}: {type(current)}. Returning Module parent."
+            )
             return "Module", module_qn
 
         while current and current.type not in lang_config.module_node_types:
@@ -469,13 +486,15 @@ class GraphUpdater:
                     ):
                         return "Function", parent_func_qn
                 break  # Stop at the first function parent
-            
+
             # Check if current.parent is a Node before assigning to current
-            if hasattr(current, 'parent') and isinstance(current.parent, Node):
+            if hasattr(current, "parent") and isinstance(current.parent, Node):
                 current = current.parent
             else:
-                logger.warning(f"Unexpected parent type or missing parent attribute for node type: {current.type} (parent: {getattr(current, 'parent', 'None')}). Stopping traversal.")
-                break # Exit loop if parent is not a Node
+                logger.warning(
+                    f"Unexpected parent type or missing parent attribute for node type: {current.type} (parent: {getattr(current, 'parent', 'None')}). Stopping traversal."
+                )
+                break  # Exit loop if parent is not a Node
 
         return "Module", module_qn
 
@@ -489,7 +508,9 @@ class GraphUpdater:
         for class_node in class_nodes:
             # Ensure class_node is a Node object
             if not isinstance(class_node, Node):
-                logger.warning(f"Expected Node object but got {type(class_node)}: {class_node}")
+                logger.warning(
+                    f"Expected Node object but got {type(class_node)}: {class_node}"
+                )
                 continue
             name_node = class_node.child_by_field_name("name")
             if not name_node:
@@ -522,7 +543,9 @@ class GraphUpdater:
             for method_node in method_nodes:
                 # Ensure method_node is a Node object
                 if not isinstance(method_node, Node):
-                    logger.warning(f"Expected Node object but got {type(method_node)}: {method_node}")
+                    logger.warning(
+                        f"Expected Node object but got {type(method_node)}: {method_node}"
+                    )
                     continue
                 method_name_node = method_node.child_by_field_name("name")
                 if not method_name_node:
@@ -539,11 +562,141 @@ class GraphUpdater:
                 }
                 logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
                 self.ingestor.ensure_node_batch("Method", method_props)
+
+                # Register the method in our registry
+                self.function_registry[method_qn] = "Method"
+
                 self.ingestor.ensure_relationship_batch(
                     ("Class", "qualified_name", class_qn),
                     "DEFINES_METHOD",
                     ("Method", "qualified_name", method_qn),
                 )
+
+    def _parse_dependencies(self, filepath: Path) -> None:
+        """Parses a pyproject.toml file for dependencies."""
+        logger.info(f"  Parsing pyproject.toml: {filepath}")
+        try:
+            data = toml.load(filepath)
+            # Support both Poetry and standard PEP 621 dependencies
+            deps = (data.get("tool", {}).get("poetry", {}).get("dependencies", {})) or {
+                dep.split(">=")[0].split("==")[0].strip(): dep
+                for dep in data.get("project", {}).get("dependencies", [])
+            }
+
+            for dep_name, dep_spec in deps.items():
+                if dep_name.lower() == "python":
+                    continue
+                logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
+                self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
+                self.ingestor.ensure_relationship_batch(
+                    ("Project", "name", self.project_name),
+                    "DEPENDS_ON_EXTERNAL",
+                    ("ExternalPackage", "name", dep_name),
+                    properties={"version_spec": str(dep_spec)},
+                )
+        except Exception as e:
+            logger.error(f"    Error parsing {filepath}: {e}")
+
+    def _process_function_calls(self) -> None:
+        """Third pass: Process function calls now that all functions are registered."""
+        for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
+            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
+            root = Path(root_str)
+
+            for file_name in files:
+                filepath = root / file_name
+
+                # Check if this file type is supported
+                lang_config = get_language_config(filepath.suffix)
+                if lang_config and lang_config.name in self.parsers:
+                    self._process_calls_in_file(filepath, lang_config.name)
+
+    def _process_calls_in_file(self, file_path: Path, language: str):
+        """Process function calls in a specific file."""
+        if isinstance(file_path, str):
+            file_path = Path(file_path)
+        relative_path = file_path.relative_to(self.repo_path)
+        relative_path_str = str(relative_path)
+
+        try:
+            source_bytes = file_path.read_bytes()
+            parser = self.parsers[language]
+            tree = parser.parse(source_bytes)
+            root_node = tree.root_node
+
+            module_qn = ".".join(
+                [self.project_name] + list(relative_path.with_suffix("").parts)
+            )
+            if file_path.name == "__init__.py":
+                module_qn = ".".join(
+                    [self.project_name] + list(relative_path.parent.parts)
+                )
+
+            # Process calls in top-level functions
+            self._process_calls_in_functions(root_node, module_qn, language)
+            # Process calls in class methods
+            self._process_calls_in_classes(root_node, module_qn, language)
+
+        except Exception as e:
+            logger.error(f"Failed to process calls in {file_path}: {e}")
+
+    def _process_calls_in_functions(self, root_node, module_qn: str, language: str):
+        """Process calls in top-level functions."""
+        lang_queries = self.queries[language]
+        lang_config = lang_queries["config"]
+
+        captures = lang_queries["functions"].captures(root_node)
+        func_nodes = captures.get("function", [])
+        for func_node in func_nodes:
+            if not isinstance(func_node, Node):
+                continue
+            if self._is_method(func_node, lang_config):
+                continue
+
+            name_node = func_node.child_by_field_name("name")
+            if not name_node:
+                continue
+            func_name = name_node.text.decode("utf8")
+            func_qn = self._build_nested_qualified_name(
+                func_node, module_qn, func_name, lang_config
+            )
+
+            if func_qn:
+                self._ingest_function_calls(
+                    func_node, func_qn, "Function", module_qn, language
+                )
+
+    def _process_calls_in_classes(self, root_node, module_qn: str, language: str):
+        """Process calls in class methods."""
+        lang_queries = self.queries[language]
+        lang_config = lang_queries["config"]
+
+        class_captures = lang_queries["classes"].captures(root_node)
+        class_nodes = class_captures.get("class", [])
+        for class_node in class_nodes:
+            if not isinstance(class_node, Node):
+                continue
+            name_node = class_node.child_by_field_name("name")
+            if not name_node:
+                continue
+            class_name = name_node.text.decode("utf8")
+            class_qn = f"{module_qn}.{class_name}"
+
+            body_node = class_node.child_by_field_name("body")
+            if not body_node:
+                continue
+
+            method_captures = lang_queries["functions"].captures(body_node)
+            method_nodes = method_captures.get("function", [])
+            for method_node in method_nodes:
+                if not isinstance(method_node, Node):
+                    continue
+                method_name_node = method_node.child_by_field_name("name")
+                if not method_name_node:
+                    continue
+                method_name = method_name_node.text.decode("utf8")
+                method_qn = f"{class_qn}.{method_name}"
+
                 self._ingest_function_calls(
                     method_node, method_qn, "Method", module_qn, language
                 )
@@ -592,49 +745,80 @@ class GraphUpdater:
         for call_node in call_nodes:
             # Ensure call_node is a Node object
             if not isinstance(call_node, Node):
-                logger.warning(f"Expected Node object but got {type(call_node)}: {call_node}")
+                logger.warning(
+                    f"Expected Node object but got {type(call_node)}: {call_node}"
+                )
                 continue
             call_name = self._get_call_target_name(call_node)
             if not call_name:
                 continue
 
-            # Simplified resolution: assume the called function is in the same module.
-            # A full implementation would need to resolve imports.
-            callee_qn = f"{module_qn}.{call_name}"
+            # Only create relationships to functions that actually exist in our codebase
+            callee_info = self._resolve_function_call(call_name, module_qn)
+            if not callee_info:
+                continue
 
+            callee_type, callee_qn = callee_info
             logger.debug(
-                f"      Found call from {caller_qn} to {call_name} (resolved as {callee_qn})"
+                f"      Found call from {caller_qn} to {call_name} (resolved as {callee_type}:{callee_qn})"
             )
-            # We don't know if the callee is a Function or Method, so we create a generic relationship
-            # that can be resolved later. For now, we assume it's a call to a function-like entity.
-            # A more advanced approach would query the DB to find the type of `callee_qn`.
+
             self.ingestor.ensure_relationship_batch(
                 (caller_type, "qualified_name", caller_qn),
                 "CALLS",
-                ("Function", "qualified_name", callee_qn),  # Assume Function for now
+                (callee_type, "qualified_name", callee_qn),
             )
 
-    def _parse_dependencies(self, filepath: Path) -> None:
-        """Parses a pyproject.toml file for dependencies."""
-        logger.info(f"  Parsing pyproject.toml: {filepath}")
-        try:
-            data = toml.load(filepath)
-            # Support both Poetry and standard PEP 621 dependencies
-            deps = (data.get("tool", {}).get("poetry", {}).get("dependencies", {})) or {
-                dep.split(">=")[0].split("==")[0].strip(): dep
-                for dep in data.get("project", {}).get("dependencies", [])
-            }
+    def _resolve_function_call(
+        self, call_name: str, module_qn: str
+    ) -> Optional[tuple[str, str]]:
+        """Try to resolve a function call to an existing function/method in the codebase."""
+        # Try different possible qualified names for the function
+        possible_qns = [
+            # Same module
+            f"{module_qn}.{call_name}",
+            # Project root level
+            f"{self.project_name}.{call_name}",
+            # Parent module (for nested calls)
+            (
+                f"{'.'.join(module_qn.split('.')[:-1])}.{call_name}"
+                if "." in module_qn
+                else None
+            ),
+        ]
 
-            for dep_name, dep_spec in deps.items():
-                if dep_name.lower() == "python":
-                    continue
-                logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
-                self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
-                self.ingestor.ensure_relationship_batch(
-                    ("Project", "name", self.project_name),
-                    "DEPENDS_ON_EXTERNAL",
-                    ("ExternalPackage", "name", dep_name),
-                    properties={"version_spec": str(dep_spec)},
-                )
-        except Exception as e:
-            logger.error(f"    Error parsing {filepath}: {e}")
+        # Remove None values
+        possible_qns = [qn for qn in possible_qns if qn]
+
+        # Check our registry for exact matches
+        for qn in possible_qns:
+            if qn in self.function_registry:
+                return self.function_registry[qn], qn
+
+        # Check for partial matches (for cases where we might have import aliasing)
+        for registered_qn, node_type in self.function_registry.items():
+            if registered_qn.endswith(f".{call_name}"):
+                # Additional validation to avoid false positives
+                if self._is_likely_same_function(call_name, registered_qn, module_qn):
+                    return node_type, registered_qn
+
+        return None
+
+    def _is_likely_same_function(
+        self, call_name: str, registered_qn: str, caller_module_qn: str
+    ) -> bool:
+        """Additional heuristic to validate if a partial match is likely correct."""
+        # If the function name is very specific (long, contains underscores), it's likely a match
+        if len(call_name) > 10 or "_" in call_name:
+            return True
+
+        # If it's in the same package/submodule, it's likely a match
+        caller_parts = caller_module_qn.split(".")
+        registered_parts = registered_qn.split(".")
+
+        # Check if they share common package structure
+        if len(caller_parts) >= 2 and len(registered_parts) >= 2:
+            if caller_parts[:2] == registered_parts[:2]:  # Same top-level package
+                return True
+
+        return False

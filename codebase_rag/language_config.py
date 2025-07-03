@@ -92,6 +92,12 @@ LANGUAGE_CONFIGS = {
             "case_class_definition",
         ],
         module_node_types=["compilation_unit"],
+        call_node_types=[
+            "call_expression",
+            "generic_function",
+            "field_expression",
+            "infix_expression",
+        ],
         package_indicators=[],  # Scala uses package declarations
     ),
     "java": LanguageConfig(
