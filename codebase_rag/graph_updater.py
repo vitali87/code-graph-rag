@@ -72,7 +72,9 @@ class GraphUpdater:
         # Registry to track all defined functions and methods
         self.function_registry: dict[str, str] = {}  # {qualified_name: type}
         # Cache for parsed ASTs to avoid re-parsing files
-        self.ast_cache: dict[Path, tuple[Node, str]] = {}  # {filepath: (ast_root_node, language)}
+        self.ast_cache: dict[Path, tuple[Node, str]] = (
+            {}
+        )  # {filepath: (ast_root_node, language)}
         self.ignore_dirs = {
             ".git",
             "venv",
@@ -482,7 +484,6 @@ class GraphUpdater:
 
     def _ingest_classes_and_methods(self, root_node, module_qn: str, language: str):
         lang_queries = self.queries[language]
-        lang_config = lang_queries["config"]
 
         class_captures = lang_queries["classes"].captures(root_node)
         class_nodes = class_captures.get("class", [])
@@ -570,9 +571,7 @@ class GraphUpdater:
         for file_path, (root_node, language) in self.ast_cache.items():
             self._process_calls_in_file(file_path, root_node, language)
 
-    def _process_calls_in_file(
-        self, file_path: Path, root_node: Node, language: str
-    ):
+    def _process_calls_in_file(self, file_path: Path, root_node: Node, language: str):
         """Process function calls in a specific file using its cached AST."""
         relative_path = file_path.relative_to(self.repo_path)
         logger.debug(f"Processing calls in cached AST for: {relative_path}")
@@ -619,7 +618,6 @@ class GraphUpdater:
 
     def _process_calls_in_classes(self, root_node, module_qn: str, language: str):
         lang_queries = self.queries[language]
-        lang_config = lang_queries["config"]
 
         class_captures = lang_queries["classes"].captures(root_node)
         class_nodes = class_captures.get("class", [])
@@ -733,6 +731,7 @@ class GraphUpdater:
 
         return None
 
+    # TODO: (VA) This is a hack to resolve function calls. We need to improve this.
     def _is_likely_same_function(
         self, call_name: str, registered_qn: str, caller_module_qn: str
     ) -> bool:

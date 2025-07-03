@@ -51,7 +51,7 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
                     for value in row.values():
                         if value is None:
                             renderable_values.append("")
-                        elif isinstance(value, (int, float)):
+                        elif isinstance(value, int | float):
                             # Let Rich handle number formatting by converting to string
                             renderable_values.append(str(value))
                         elif isinstance(value, bool):

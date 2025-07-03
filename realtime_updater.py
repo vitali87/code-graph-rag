@@ -1,12 +1,13 @@
-import time
 import argparse
 import sys
+import time
 from pathlib import Path
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-from loguru import logger
 
-from codebase_rag.graph_updater import MemgraphIngestor, GraphUpdater
+from loguru import logger
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+
+from codebase_rag.graph_updater import GraphUpdater, MemgraphIngestor
 from codebase_rag.language_config import get_language_config
 
 

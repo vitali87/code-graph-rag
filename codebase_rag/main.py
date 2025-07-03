@@ -3,7 +3,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -417,7 +416,7 @@ def export(
 async def run_optimization_loop(rag_agent, message_history: list, project_root: Path, language: str, reference_book: str | None = None):
     """Runs the optimization loop with the RAG agent."""
     console.print(f"[bold green]Starting {language} optimization session...[/bold green]")
-    
+
     # Prepare book context based on provided reference
     book_context = ""
     if reference_book:
@@ -430,7 +429,7 @@ async def run_optimization_loop(rag_agent, message_history: list, project_root: 
             book_context = "I will use general best practices for optimization recommendations."
     else:
         book_context = "I will use general best practices and industry standards for optimization recommendations."
-    
+
     console.print(
         Panel(
             f"[bold yellow]The agent will analyze your {language} codebase and propose specific optimizations.\n"
@@ -439,7 +438,7 @@ async def run_optimization_loop(rag_agent, message_history: list, project_root: 
             border_style="yellow",
         )
     )
-    
+
     initial_question = f"""
 I want you to analyze my {language} codebase and propose specific optimizations based on industry best practices.
 
@@ -455,10 +454,10 @@ Please:
 
 Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
 """
-    
+
     question = initial_question
     first_run = True
-    
+
     while True:
         try:
             # If the last response was a confirmation request, use a confirm prompt
@@ -517,11 +516,11 @@ async def main_optimize_async(
 ):
     """Async wrapper for the optimization functionality."""
     project_root = Path(target_repo_path).resolve()
-    
+
     _update_model_settings(llm_provider, orchestrator_model, cypher_model)
-    
+
     console.print(f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]")
-    
+
     # Clean up temp directory on startup
     tmp_dir = project_root / ".tmp"
     if tmp_dir.exists():
@@ -530,7 +529,7 @@ async def main_optimize_async(
         else:
             tmp_dir.unlink()
     tmp_dir.mkdir()
-    
+
     # Display configuration
     table = Table(title="[bold green]Optimization Session Configuration[/bold green]")
     table.add_column("Setting", style="cyan")
@@ -545,12 +544,12 @@ async def main_optimize_async(
         table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
         table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
     console.print(table)
-    
+
     with MemgraphIngestor(
         host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
-        
+
         # Initialize all the tools for the RAG agent
         cypher_generator = CypherGenerator()
         code_retriever = CodeRetriever(project_root=target_repo_path, ingestor=ingestor)
@@ -562,7 +561,7 @@ async def main_optimize_async(
         )
         directory_lister = DirectoryLister(project_root=target_repo_path)
         document_analyzer = DocumentAnalyzer(project_root=target_repo_path)
-        
+
         # Create tools
         query_tool = create_query_tool(ingestor, cypher_generator)
         code_tool = create_code_retrieval_tool(code_retriever)
@@ -572,7 +571,7 @@ async def main_optimize_async(
         shell_command_tool = create_shell_command_tool(shell_commander)
         directory_lister_tool = create_directory_lister_tool(directory_lister)
         document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
-        
+
         # Create the RAG orchestrator with all tools
         rag_agent = create_rag_orchestrator(
             tools=[
@@ -586,7 +585,7 @@ async def main_optimize_async(
                 document_analyzer_tool,
             ]
         )
-        
+
         # Run the optimization loop
         await run_optimization_loop(rag_agent, [], project_root, language, reference_book)
 
@@ -612,11 +611,11 @@ def optimize(
 ):
     """Interactive codebase optimization using RAG agent with optional reference book for best practices."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
-    
+
     if not Path(target_repo_path).exists():
         console.print(f"[bold red]Error: Repository path '{target_repo_path}' does not exist.[/bold red]")
         raise typer.Exit(1)
-    
+
     try:
         asyncio.run(main_optimize_async(
             language=language,

@@ -43,10 +43,10 @@ treesitter-full = [
 
 [tool.ruff]
 line-length = 88
-select = ["E", "F", "W", "I", "UP"]
 target-version = "py312"
 
 [tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.format]

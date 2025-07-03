@@ -59,7 +59,7 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
         ctx: RunContext, file_path: str, content: str
     ) -> FileCreationResult:
         """
-        Creates a new file with the specified content. 
+        Creates a new file with the specified content.
         If the file already exists, it will be overwritten.
         Use this to create new files in the codebase.
         """

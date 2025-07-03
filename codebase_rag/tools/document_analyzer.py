@@ -115,7 +115,7 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
         """
         Analyzes a document (like a PDF) to answer a specific question about its content.
         Use this tool when a user asks a question that requires understanding the content of a non-source-code file.
-        
+
         Args:
             file_path: The path to the document file (e.g., 'path/to/book.pdf').
             question: The specific question to ask about the document's content.

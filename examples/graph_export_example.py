@@ -90,7 +90,7 @@ def analyze_graph(graph_file: str) -> None:
                 for rel_type in rel_types:
                     print(f"     - {rel_type}")
 
-        print(f"\n✅ Analysis complete!")
+        print("\n✅ Analysis complete!")
 
     except Exception as e:
         print(f"❌ Error analyzing graph: {e}")
@@ -106,15 +106,15 @@ def main():
         print("\nOr export an existing graph:")
         print("python -m codebase_rag.main export -o graph.json")
         sys.exit(1)
-    
+
     graph_file = sys.argv[1]
-    
+
     if not Path(graph_file).exists():
         print(f"❌ Graph file not found: {graph_file}")
         sys.exit(1)
-    
+
     analyze_graph(graph_file)
 
 
 if __name__ == "__main__":
-    main() 
+    main()
