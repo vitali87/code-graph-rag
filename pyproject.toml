@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "loguru>=0.7.3",
     "pydantic-ai-slim[google,openai,vertexai]>=0.2.18",
+    "pydantic-settings>=2.0.0",
     "pymgclient>=1.4.0",
     "python-dotenv>=1.1.0",
     "toml>=0.10.2",
