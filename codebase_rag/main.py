@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -410,6 +411,213 @@ def export(
     except Exception as e:
         console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
         logger.error(f"Export error: {e}", exc_info=True)
+        raise typer.Exit(1) from e
+
+
+async def run_optimization_loop(rag_agent, message_history: list, project_root: Path, language: str):
+    """Runs the optimization loop with the RAG agent."""
+    console.print(f"[bold green]Starting {language} optimization session...[/bold green]")
+    console.print(
+        Panel(
+            f"[bold yellow]The agent will analyze your {language} codebase using the Expert Python Programming book and propose specific optimizations.\n"
+            f"You'll be asked to approve each suggestion before implementation.\n"
+            f"Type 'exit' or 'quit' to end the session.[/bold yellow]",
+            border_style="yellow",
+        )
+    )
+    
+    # Initial optimization analysis
+    book_path = Path(__file__).parent.parent / "optimize" / "EXPERT_PYTHON_PROGRAMMING_FOURTH_EDITION.pdf"
+    book_context = ""
+    if book_path.exists():
+        book_context = "I have access to the Expert Python Programming Fourth Edition book for best practices reference."
+    
+    initial_question = f"""
+I want you to analyze my {language} codebase and propose specific optimizations based on best practices from the Expert Python Programming book.
+
+{book_context}
+
+Please:
+1. Use your code retrieval and graph querying tools to understand the codebase structure
+2. Read relevant source files to identify optimization opportunities
+3. Reference best practices from the Expert Python Programming book
+4. Propose specific, actionable optimizations with file references
+5. Ask for my approval before implementing any changes
+6. Use your file editing tools to implement approved changes
+
+Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
+"""
+    
+    question = initial_question
+    first_run = True
+    
+    while True:
+        try:
+            # If the last response was a confirmation request, use a confirm prompt
+            if "[y/n]" in question:
+                if Confirm.ask("Do you approve?"):
+                    question = "yes"
+                else:
+                    question = "no"
+                    console.print("[bold yellow]Operation cancelled.[/bold yellow]")
+            elif not first_run:
+                # Ask for user input on subsequent iterations
+                question = await asyncio.to_thread(
+                    get_multiline_input, "[bold cyan]Your response[/bold cyan]"
+                )
+
+            if question.lower() in ["exit", "quit"]:
+                break
+            if not question.strip():
+                continue
+
+            # Handle images in the question
+            question = _handle_chat_images(question, project_root)
+
+            with console.status("[bold green]Agent is analyzing codebase...[/bold green]"):
+                response = await rag_agent.run(
+                    question, message_history=message_history
+                )
+
+            # Store the agent's raw output to check for confirmation requests
+            question = response.output
+            markdown_response = Markdown(question)
+            console.print(
+                Panel(
+                    markdown_response,
+                    title="[bold green]Optimization Agent[/bold green]",
+                    border_style="green",
+                )
+            )
+            message_history.extend(response.new_messages())
+            first_run = False
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            logger.error("An unexpected error occurred: {}", e, exc_info=True)
+            console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+
+
+async def main_optimize_async(
+    language: str,
+    target_repo_path: str,
+    llm_provider: str | None = None,
+    orchestrator_model: str | None = None,
+    cypher_model: str | None = None,
+):
+    """Async wrapper for the optimization functionality."""
+    project_root = Path(target_repo_path).resolve()
+    
+    _update_model_settings(llm_provider, orchestrator_model, cypher_model)
+    
+    console.print(f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]")
+    
+    # Clean up temp directory on startup
+    tmp_dir = project_root / ".tmp"
+    if tmp_dir.exists():
+        if tmp_dir.is_dir():
+            shutil.rmtree(tmp_dir)
+        else:
+            tmp_dir.unlink()
+    tmp_dir.mkdir()
+    
+    # Display configuration
+    table = Table(title="[bold green]Optimization Session Configuration[/bold green]")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", style="magenta")
+    table.add_row("Target Language", language)
+    table.add_row("Repository Path", str(project_root))
+    table.add_row("LLM Provider", settings.LLM_PROVIDER)
+    if settings.LLM_PROVIDER == "gemini":
+        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
+        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
+    else:
+        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
+        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+    console.print(table)
+    
+    with MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+    ) as ingestor:
+        console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
+        
+        # Initialize all the tools for the RAG agent
+        cypher_generator = CypherGenerator()
+        code_retriever = CodeRetriever(project_root=target_repo_path, ingestor=ingestor)
+        file_reader = FileReader(project_root=target_repo_path)
+        file_writer = FileWriter(project_root=target_repo_path)
+        file_editor = FileEditor(project_root=target_repo_path)
+        shell_commander = ShellCommander(
+            project_root=target_repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
+        )
+        directory_lister = DirectoryLister(project_root=target_repo_path)
+        document_analyzer = DocumentAnalyzer(project_root=target_repo_path)
+        
+        # Create tools
+        query_tool = create_query_tool(ingestor, cypher_generator)
+        code_tool = create_code_retrieval_tool(code_retriever)
+        file_reader_tool = create_file_reader_tool(file_reader)
+        file_writer_tool = create_file_writer_tool(file_writer)
+        file_editor_tool = create_file_editor_tool(file_editor)
+        shell_command_tool = create_shell_command_tool(shell_commander)
+        directory_lister_tool = create_directory_lister_tool(directory_lister)
+        document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
+        
+        # Create the RAG orchestrator with all tools
+        rag_agent = create_rag_orchestrator(
+            tools=[
+                query_tool,
+                code_tool,
+                file_reader_tool,
+                file_writer_tool,
+                file_editor_tool,
+                shell_command_tool,
+                directory_lister_tool,
+                document_analyzer_tool,
+            ]
+        )
+        
+        # Run the optimization loop
+        await run_optimization_loop(rag_agent, [], project_root, language)
+
+
+@app.command()
+def optimize(
+    language: str = typer.Argument(..., help="Programming language to optimize for (e.g., python, java, javascript)"),
+    repo_path: str | None = typer.Option(
+        None, "--repo-path", help="Path to the repository to optimize"
+    ),
+    llm_provider: str | None = typer.Option(
+        None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
+    ),
+    orchestrator_model: str | None = typer.Option(
+        None, "--orchestrator-model", help="Specify the orchestrator model ID"
+    ),
+    cypher_model: str | None = typer.Option(
+        None, "--cypher-model", help="Specify the Cypher generator model ID"
+    ),
+):
+    """Interactive codebase optimization using RAG agent with Expert Python Programming book."""
+    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    
+    if not Path(target_repo_path).exists():
+        console.print(f"[bold red]Error: Repository path '{target_repo_path}' does not exist.[/bold red]")
+        raise typer.Exit(1)
+    
+    try:
+        asyncio.run(main_optimize_async(
+            language=language,
+            target_repo_path=target_repo_path,
+            llm_provider=llm_provider,
+            orchestrator_model=orchestrator_model,
+            cypher_model=cypher_model,
+        ))
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Optimization session terminated by user.[/bold red]")
+    except Exception as e:
+        console.print(f"[bold red]Failed to start optimization session: {e}[/bold red]")
+        logger.error(f"Optimization error: {e}", exc_info=True)
         raise typer.Exit(1) from e
 
 
