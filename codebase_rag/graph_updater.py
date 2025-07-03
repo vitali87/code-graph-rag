@@ -1,7 +1,7 @@
 import os
 import toml
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, Tuple
 
 from loguru import logger
 from tree_sitter import Language, Parser, Node
@@ -72,6 +72,8 @@ class GraphUpdater:
         self.structural_elements: Dict[Path, Optional[str]] = {}
         # Registry to track all defined functions and methods
         self.function_registry: Dict[str, str] = {}  # {qualified_name: type}
+        # Cache for parsed ASTs to avoid re-parsing files
+        self.ast_cache: Dict[Path, Tuple[Node, str]] = {}  # {filepath: (ast_root_node, language)}
         self.ignore_dirs = {
             ".git",
             "venv",
@@ -159,14 +161,14 @@ class GraphUpdater:
         self._identify_structure()
 
         logger.info(
-            "\n--- Pass 2: Processing Files and Collecting Function Definitions ---"
+            "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
         )
         self._process_files()
 
         logger.info(
             f"\n--- Found {len(self.function_registry)} functions/methods in codebase ---"
         )
-        logger.info("--- Pass 3: Processing Function Calls ---")
+        logger.info("--- Pass 3: Processing Function Calls from AST Cache ---")
         self._process_function_calls()
 
         logger.info("\n--- Analysis complete. Flushing all data to database... ---")
@@ -241,7 +243,7 @@ class GraphUpdater:
                 )
 
     def _process_files(self) -> None:
-        """Second pass: Walks the directory again to process all files."""
+        """Second pass: Walks the directory, parses files, and caches their ASTs."""
         for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
             dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
             root = Path(root_str)
@@ -277,7 +279,7 @@ class GraphUpdater:
                     ("File", "path", relative_filepath),
                 )
 
-                # Check if this file type is supported
+                # Check if this file type is supported for parsing
                 lang_config = get_language_config(filepath.suffix)
                 if lang_config and lang_config.name in self.parsers:
                     self.parse_and_ingest_file(filepath, lang_config.name)
@@ -298,12 +300,15 @@ class GraphUpdater:
         return None
 
     def parse_and_ingest_file(self, file_path: Path, language: str):
-        # Ensure file_path is a Path object
+        """
+        Parses a file, ingests its structure and definitions,
+        and caches the AST for the next pass.
+        """
         if isinstance(file_path, str):
             file_path = Path(file_path)
         relative_path = file_path.relative_to(self.repo_path)
         relative_path_str = str(relative_path)
-        logger.info(f"Parsing {language}: {relative_path_str}")
+        logger.info(f"Parsing and Caching AST for {language}: {relative_path_str}")
 
         try:
             # Check if language is supported
@@ -315,6 +320,9 @@ class GraphUpdater:
             parser = self.parsers[language]
             tree = parser.parse(source_bytes)
             root_node = tree.root_node
+
+            # Cache the parsed AST for the function call pass
+            self.ast_cache[file_path] = (root_node, language)
 
             module_qn = ".".join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
@@ -362,10 +370,8 @@ class GraphUpdater:
         lang_config = lang_queries["config"]
 
         captures = lang_queries["functions"].captures(root_node)
-        # captures() returns a dict of {capture_name: [Node, ...]}
         func_nodes = captures.get("function", [])
         for func_node in func_nodes:
-            # Ensure func_node is a Node object
             if not isinstance(func_node, Node):
                 logger.warning(
                     f"Expected Node object but got {type(func_node)}: {func_node}"
@@ -396,7 +402,6 @@ class GraphUpdater:
             logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
             self.ingestor.ensure_node_batch("Function", props)
 
-            # Register the function in our registry
             self.function_registry[func_qn] = "Function"
 
             parent_type, parent_qn = self._determine_function_parent(
@@ -408,19 +413,15 @@ class GraphUpdater:
                 ("Function", "qualified_name", func_qn),
             )
 
-            # Note: Function calls will be processed in a separate pass
-
     def _build_nested_qualified_name(
         self, func_node, module_qn: str, func_name: str, lang_config: LanguageConfig
     ) -> Optional[str]:
-        """Build qualified name for nested functions. Returns None for methods."""
         path_parts = []
         current = func_node.parent
 
-        # Add a check to ensure the initial 'current' is a Node object
         if not isinstance(current, Node):
             logger.warning(
-                f"Unexpected parent type for node {func_node}: {type(current)}. Skipping qualified name generation."
+                f"Unexpected parent type for node {func_node}: {type(current)}. Skipping."
             )
             return None
 
@@ -429,17 +430,11 @@ class GraphUpdater:
                 if name_node := current.child_by_field_name("name"):
                     path_parts.append(name_node.text.decode("utf8"))
             elif current.type in lang_config.class_node_types:
-                return None  # This is a method, handled separately
+                return None  # This is a method
 
-            # Check if current.parent is a Node before assigning to current
             if hasattr(current, "parent") and isinstance(current.parent, Node):
                 current = current.parent
             else:
-                logger.warning(
-                    f"Unexpected parent type or missing parent attribute for node type: {current.type} (parent: {getattr(current, 'parent', 'None')}). Stopping traversal."
-                )
-                # Instead of returning None, we'll break and try to form a QN with what we have.
-                # This might still lead to incomplete QNs but prevents crashing.
                 break
 
         path_parts.reverse()
@@ -449,16 +444,13 @@ class GraphUpdater:
             return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node, lang_config: LanguageConfig) -> bool:
-        """Check if a function is a method within a class."""
         current = func_node.parent
-        # Add a check to ensure the initial 'current' is a Node object
         if not isinstance(current, Node):
             return False
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.class_node_types:
                 return True
-            # Check if current.parent is a Node before assigning to current
             if hasattr(current, "parent") and isinstance(current.parent, Node):
                 current = current.parent
             else:
@@ -468,13 +460,8 @@ class GraphUpdater:
     def _determine_function_parent(
         self, func_node, module_qn: str, lang_config: LanguageConfig
     ) -> tuple[str, str]:
-        """Determine the parent for a function (Module or another Function)."""
         current = func_node.parent
-        # Add a check to ensure the initial 'current' is a Node object
         if not isinstance(current, Node):
-            logger.warning(
-                f"Unexpected parent type for node {func_node}: {type(current)}. Returning Module parent."
-            )
             return "Module", module_qn
 
         while current and current.type not in lang_config.module_node_types:
@@ -485,16 +472,12 @@ class GraphUpdater:
                         current, module_qn, parent_func_name, lang_config
                     ):
                         return "Function", parent_func_qn
-                break  # Stop at the first function parent
+                break
 
-            # Check if current.parent is a Node before assigning to current
             if hasattr(current, "parent") and isinstance(current.parent, Node):
                 current = current.parent
             else:
-                logger.warning(
-                    f"Unexpected parent type or missing parent attribute for node type: {current.type} (parent: {getattr(current, 'parent', 'None')}). Stopping traversal."
-                )
-                break  # Exit loop if parent is not a Node
+                break
 
         return "Module", module_qn
 
@@ -503,14 +486,9 @@ class GraphUpdater:
         lang_config = lang_queries["config"]
 
         class_captures = lang_queries["classes"].captures(root_node)
-        # captures() returns a dict of {capture_name: [Node, ...]}
         class_nodes = class_captures.get("class", [])
         for class_node in class_nodes:
-            # Ensure class_node is a Node object
             if not isinstance(class_node, Node):
-                logger.warning(
-                    f"Expected Node object but got {type(class_node)}: {class_node}"
-                )
                 continue
             name_node = class_node.child_by_field_name("name")
             if not name_node:
@@ -538,14 +516,9 @@ class GraphUpdater:
                 continue
 
             method_captures = lang_queries["functions"].captures(body_node)
-            # captures() returns a dict of {capture_name: [Node, ...]}
             method_nodes = method_captures.get("function", [])
             for method_node in method_nodes:
-                # Ensure method_node is a Node object
                 if not isinstance(method_node, Node):
-                    logger.warning(
-                        f"Expected Node object but got {type(method_node)}: {method_node}"
-                    )
                     continue
                 method_name_node = method_node.child_by_field_name("name")
                 if not method_name_node:
@@ -563,7 +536,6 @@ class GraphUpdater:
                 logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
                 self.ingestor.ensure_node_batch("Method", method_props)
 
-                # Register the method in our registry
                 self.function_registry[method_qn] = "Method"
 
                 self.ingestor.ensure_relationship_batch(
@@ -573,16 +545,13 @@ class GraphUpdater:
                 )
 
     def _parse_dependencies(self, filepath: Path) -> None:
-        """Parses a pyproject.toml file for dependencies."""
         logger.info(f"  Parsing pyproject.toml: {filepath}")
         try:
             data = toml.load(filepath)
-            # Support both Poetry and standard PEP 621 dependencies
             deps = (data.get("tool", {}).get("poetry", {}).get("dependencies", {})) or {
                 dep.split(">=")[0].split("==")[0].strip(): dep
                 for dep in data.get("project", {}).get("dependencies", [])
             }
-
             for dep_name, dep_spec in deps.items():
                 if dep_name.lower() == "python":
                     continue
@@ -598,32 +567,18 @@ class GraphUpdater:
             logger.error(f"    Error parsing {filepath}: {e}")
 
     def _process_function_calls(self) -> None:
-        """Third pass: Process function calls now that all functions are registered."""
-        for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
-            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
-            root = Path(root_str)
+        """Third pass: Process function calls using the cached ASTs."""
+        for file_path, (root_node, language) in self.ast_cache.items():
+            self._process_calls_in_file(file_path, root_node, language)
 
-            for file_name in files:
-                filepath = root / file_name
-
-                # Check if this file type is supported
-                lang_config = get_language_config(filepath.suffix)
-                if lang_config and lang_config.name in self.parsers:
-                    self._process_calls_in_file(filepath, lang_config.name)
-
-    def _process_calls_in_file(self, file_path: Path, language: str):
-        """Process function calls in a specific file."""
-        if isinstance(file_path, str):
-            file_path = Path(file_path)
+    def _process_calls_in_file(
+        self, file_path: Path, root_node: Node, language: str
+    ):
+        """Process function calls in a specific file using its cached AST."""
         relative_path = file_path.relative_to(self.repo_path)
-        relative_path_str = str(relative_path)
+        logger.debug(f"Processing calls in cached AST for: {relative_path}")
 
         try:
-            source_bytes = file_path.read_bytes()
-            parser = self.parsers[language]
-            tree = parser.parse(source_bytes)
-            root_node = tree.root_node
-
             module_qn = ".".join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
@@ -632,16 +587,13 @@ class GraphUpdater:
                     [self.project_name] + list(relative_path.parent.parts)
                 )
 
-            # Process calls in top-level functions
             self._process_calls_in_functions(root_node, module_qn, language)
-            # Process calls in class methods
             self._process_calls_in_classes(root_node, module_qn, language)
 
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
 
     def _process_calls_in_functions(self, root_node, module_qn: str, language: str):
-        """Process calls in top-level functions."""
         lang_queries = self.queries[language]
         lang_config = lang_queries["config"]
 
@@ -667,7 +619,6 @@ class GraphUpdater:
                 )
 
     def _process_calls_in_classes(self, root_node, module_qn: str, language: str):
-        """Process calls in class methods."""
         lang_queries = self.queries[language]
         lang_config = lang_queries["config"]
 
@@ -702,26 +653,18 @@ class GraphUpdater:
                 )
 
     def _get_call_target_name(self, call_node: Node) -> Optional[str]:
-        """Extracts the name of the function or method being called."""
-        # For 'call' in Python, the function being called is in the 'function' child
         if func_child := call_node.child_by_field_name("function"):
-            # Direct call: my_function() -> identifier
             if func_child.type == "identifier":
                 return func_child.text.decode("utf8")
-            # Attribute access: obj.method() -> attribute
             elif func_child.type == "attribute":
-                # The actual name is in the 'attribute' child of the 'attribute' node
                 if attr_child := func_child.child_by_field_name("attribute"):
                     return attr_child.text.decode("utf8")
-        # For 'call_expression' in JS/TS, the function is in the 'function' child
         if func_child := call_node.child_by_field_name("function"):
             if func_child.type == "identifier":
                 return func_child.text.decode("utf8")
-            # Member expression: obj.method() -> member_expression
             elif func_child.type == "member_expression":
                 if prop_child := func_child.child_by_field_name("property"):
                     return prop_child.text.decode("utf8")
-        # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
             return name_node.text.decode("utf8")
         return None
@@ -734,26 +677,19 @@ class GraphUpdater:
         module_qn: str,
         language: str,
     ):
-        """Finds all function calls within a function/method and creates CALLS relationships."""
         calls_query = self.queries[language].get("calls")
         if not calls_query:
             return
 
         call_captures = calls_query.captures(caller_node)
-        # captures() returns a dict of {capture_name: [Node, ...]}
         call_nodes = call_captures.get("call", [])
         for call_node in call_nodes:
-            # Ensure call_node is a Node object
             if not isinstance(call_node, Node):
-                logger.warning(
-                    f"Expected Node object but got {type(call_node)}: {call_node}"
-                )
                 continue
             call_name = self._get_call_target_name(call_node)
             if not call_name:
                 continue
 
-            # Only create relationships to functions that actually exist in our codebase
             callee_info = self._resolve_function_call(call_name, module_qn)
             if not callee_info:
                 continue
@@ -772,33 +708,23 @@ class GraphUpdater:
     def _resolve_function_call(
         self, call_name: str, module_qn: str
     ) -> Optional[tuple[str, str]]:
-        """Try to resolve a function call to an existing function/method in the codebase."""
-        # Try different possible qualified names for the function
         possible_qns = [
-            # Same module
             f"{module_qn}.{call_name}",
-            # Project root level
             f"{self.project_name}.{call_name}",
-            # Parent module (for nested calls)
             (
                 f"{'.'.join(module_qn.split('.')[:-1])}.{call_name}"
                 if "." in module_qn
                 else None
             ),
         ]
-
-        # Remove None values
         possible_qns = [qn for qn in possible_qns if qn]
 
-        # Check our registry for exact matches
         for qn in possible_qns:
             if qn in self.function_registry:
                 return self.function_registry[qn], qn
 
-        # Check for partial matches (for cases where we might have import aliasing)
         for registered_qn, node_type in self.function_registry.items():
             if registered_qn.endswith(f".{call_name}"):
-                # Additional validation to avoid false positives
                 if self._is_likely_same_function(call_name, registered_qn, module_qn):
                     return node_type, registered_qn
 
@@ -807,18 +733,14 @@ class GraphUpdater:
     def _is_likely_same_function(
         self, call_name: str, registered_qn: str, caller_module_qn: str
     ) -> bool:
-        """Additional heuristic to validate if a partial match is likely correct."""
-        # If the function name is very specific (long, contains underscores), it's likely a match
         if len(call_name) > 10 or "_" in call_name:
             return True
 
-        # If it's in the same package/submodule, it's likely a match
         caller_parts = caller_module_qn.split(".")
         registered_parts = registered_qn.split(".")
 
-        # Check if they share common package structure
         if len(caller_parts) >= 2 and len(registered_parts) >= 2:
-            if caller_parts[:2] == registered_parts[:2]:  # Same top-level package
+            if caller_parts[:2] == registered_parts[:2]:
                 return True
 
         return False
