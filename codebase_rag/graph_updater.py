@@ -653,20 +653,24 @@ class GraphUpdater:
                 )
 
     def _get_call_target_name(self, call_node: Node) -> Optional[str]:
+        """Extracts the name of the function or method being called."""
+        # For 'call' in Python and 'call_expression' in JS/TS
         if func_child := call_node.child_by_field_name("function"):
             if func_child.type == "identifier":
                 return func_child.text.decode("utf8")
+            # Python: obj.method() -> attribute
             elif func_child.type == "attribute":
                 if attr_child := func_child.child_by_field_name("attribute"):
                     return attr_child.text.decode("utf8")
-        if func_child := call_node.child_by_field_name("function"):
-            if func_child.type == "identifier":
-                return func_child.text.decode("utf8")
+            # JS/TS: obj.method() -> member_expression
             elif func_child.type == "member_expression":
                 if prop_child := func_child.child_by_field_name("property"):
                     return prop_child.text.decode("utf8")
+
+        # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
             return name_node.text.decode("utf8")
+            
         return None
 
     def _ingest_function_calls(
