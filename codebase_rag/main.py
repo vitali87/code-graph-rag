@@ -433,20 +433,27 @@ async def run_optimization_loop(rag_agent, message_history: list, project_root: 
 
     # Initial optimization analysis
 
-    document_instruction = ""
+    instructions = [
+        "Use your code retrieval and graph querying tools to understand the codebase structure",
+        "Read relevant source files to identify optimization opportunities",
+    ]
     if reference_document:
-        document_instruction = f"3. Use the analyze_document tool to reference best practices from {reference_document}\n"
+        instructions.append(f"Use the analyze_document tool to reference best practices from {reference_document}")
+    
+    instructions.extend([
+        f"Reference established patterns and best practices for {language}",
+        "Propose specific, actionable optimizations with file references",
+        "Ask for my approval before implementing any changes",
+        "Use your file editing tools to implement approved changes",
+    ])
+    
+    numbered_instructions = "\n".join(f"{i+1}. {inst}" for i, inst in enumerate(instructions))
 
     initial_question = f"""
 I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
 
 Please:
-1. Use your code retrieval and graph querying tools to understand the codebase structure
-2. Read relevant source files to identify optimization opportunities
-{document_instruction}3. Reference established patterns and best practices
-4. Propose specific, actionable optimizations with file references
-5. Ask for my approval before implementing any changes
-6. Use your file editing tools to implement approved changes
+{numbered_instructions}
 
 Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
 """

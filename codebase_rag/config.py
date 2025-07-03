@@ -1,7 +1,7 @@
 
 from dotenv import load_dotenv
 from pydantic import AnyHttpUrl, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load environment variables from .env file
 # Pydantic's BaseSettings will also automatically read from .env files,
@@ -14,6 +14,12 @@ class AppConfig(BaseSettings):
     Application Configuration using Pydantic for robust validation and type-safety.
     All settings are loaded from environment variables or a .env file.
     """
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
@@ -54,11 +60,6 @@ class AppConfig(BaseSettings):
                     "Configuration Error: GCP_PROJECT_ID is required when GEMINI_PROVIDER is 'vertex'."
                 )
         return self
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
 
 
 settings = AppConfig()
