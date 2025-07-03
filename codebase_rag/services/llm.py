@@ -1,17 +1,19 @@
+from typing import cast
+
+from loguru import logger
 from pydantic_ai import Agent, Tool
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider
+
 from ..config import settings
 from ..prompts import (
     GEMINI_LITE_CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
     RAG_ORCHESTRATOR_SYSTEM_PROMPT,
 )
-from loguru import logger
-from typing import cast
 
 
 class LLMGenerationError(Exception):

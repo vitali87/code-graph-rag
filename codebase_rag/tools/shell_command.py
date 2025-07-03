@@ -3,7 +3,7 @@ import shlex
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import Tool, RunContext
+from pydantic_ai import RunContext, Tool
 
 from ..schemas import ShellCommandResult
 
@@ -92,7 +92,7 @@ class ShellCommander:
                 stdout=stdout_str,
                 stderr=stderr_str,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             msg = f"Command '{command}' timed out after {self.timeout} seconds."
             logger.error(msg)
             try:

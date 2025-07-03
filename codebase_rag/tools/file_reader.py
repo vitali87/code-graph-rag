@@ -1,7 +1,8 @@
 from pathlib import Path
+
+from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Tool
-from loguru import logger
 
 
 class FileReadResult(BaseModel):

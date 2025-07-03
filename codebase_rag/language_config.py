@@ -1,4 +1,3 @@
-from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
 
@@ -7,20 +6,20 @@ class LanguageConfig:
     """Configuration for language-specific Tree-sitter parsing."""
 
     name: str
-    file_extensions: List[str]
+    file_extensions: list[str]
 
     # AST node type mappings to semantic concepts
-    function_node_types: List[str]
-    class_node_types: List[str]
-    module_node_types: List[str]
-    call_node_types: List[str] = field(default_factory=list)
+    function_node_types: list[str]
+    class_node_types: list[str]
+    module_node_types: list[str]
+    call_node_types: list[str] = field(default_factory=list)
 
     # Field names for extracting names
     name_field: str = "name"
     body_field: str = "body"
 
     # Package detection patterns
-    package_indicators: List[str] = None  # e.g., ["__init__.py"] for Python
+    package_indicators: list[str] = None  # e.g., ["__init__.py"] for Python
 
     def __post_init__(self):
         if self.package_indicators is None:
@@ -120,7 +119,7 @@ LANGUAGE_CONFIGS = {
 }
 
 
-def get_language_config(file_extension: str) -> Optional[LanguageConfig]:
+def get_language_config(file_extension: str) -> LanguageConfig | None:
     """Get language configuration based on file extension."""
     for config in LANGUAGE_CONFIGS.values():
         if file_extension in config.file_extensions:
@@ -128,6 +127,6 @@ def get_language_config(file_extension: str) -> Optional[LanguageConfig]:
     return None
 
 
-def get_language_config_by_name(language_name: str) -> Optional[LanguageConfig]:
+def get_language_config_by_name(language_name: str) -> LanguageConfig | None:
     """Get language configuration by language name."""
     return LANGUAGE_CONFIGS.get(language_name.lower())

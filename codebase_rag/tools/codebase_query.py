@@ -1,11 +1,12 @@
-from pydantic_ai import Tool, RunContext
-from rich.table import Table
-from rich.panel import Panel
-from rich.console import Console
-from ..schemas import GraphData
-from ..graph_updater import MemgraphIngestor
-from ..services.llm import CypherGenerator, LLMGenerationError
 from loguru import logger
+from pydantic_ai import RunContext, Tool
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+from ..graph_updater import MemgraphIngestor
+from ..schemas import GraphData
+from ..services.llm import CypherGenerator, LLMGenerationError
 
 
 class GraphQueryError(Exception):

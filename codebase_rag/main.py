@@ -1,36 +1,36 @@
 import asyncio
-import sys
-import typer
 import json
-import shutil
-import re
 import os
+import re
+import shutil
+import sys
 import uuid
-from typing import Optional, List
-from rich.panel import Panel
-from rich.prompt import Confirm
-from prompt_toolkit import prompt
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import HTML
-from rich.console import Console
-from rich.table import Table
-from rich.markdown import Markdown
-from rich.text import Text
 from pathlib import Path
 
+import typer
+from loguru import logger
+from prompt_toolkit import prompt
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.shortcuts import print_formatted_text
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Confirm
+from rich.table import Table
+from rich.text import Text
+
 from .config import settings
-from .graph_updater import MemgraphIngestor, GraphUpdater
+from .graph_updater import GraphUpdater, MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
+from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
-from .tools.code_retrieval import create_code_retrieval_tool, CodeRetriever
-from .tools.file_reader import create_file_reader_tool, FileReader
-from .tools.file_writer import create_file_writer_tool, FileWriter
-from .tools.file_editor import create_file_editor_tool, FileEditor
-from .tools.shell_command import ShellCommander, create_shell_command_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
 from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_tool
-
-from loguru import logger
+from .tools.file_editor import FileEditor, create_file_editor_tool
+from .tools.file_reader import FileReader, create_file_reader_tool
+from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.shell_command import ShellCommander, create_shell_command_tool
 
 app = typer.Typer(
     name="graph-code",
@@ -39,7 +39,7 @@ app = typer.Typer(
     "graphs, and enables natural language querying of codebase structure and "
     "relationships.",
 )
-console = Console()
+console = Console(width=None, force_terminal=True)
 
 
 def _handle_chat_images(question: str, project_root: Path) -> str:
@@ -103,11 +103,14 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     # Convert Rich markup to plain text using Rich's parser
     clean_prompt = Text.from_markup(prompt_text).plain
 
-    colored_prompt = HTML(
+    # Display the colored prompt first
+    print_formatted_text(HTML(
         f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
-    )
+    ), end="")
+
+    # Use simple prompt without formatting to avoid alignment issues
     result = prompt(
-        colored_prompt,
+        "",
         multiline=True,
         key_bindings=bindings,
         wrap_lines=True,
@@ -117,7 +120,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     return result.strip()
 
 
-async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
+async def run_chat_loop(rag_agent, message_history: list, project_root: Path):
     """Runs the main chat loop."""
     question = ""
     while True:
@@ -167,9 +170,9 @@ async def run_chat_loop(rag_agent, message_history: List, project_root: Path):
 
 
 def _update_model_settings(
-    llm_provider: Optional[str],
-    orchestrator_model: Optional[str],
-    cypher_model: Optional[str],
+    llm_provider: str | None,
+    orchestrator_model: str | None,
+    cypher_model: str | None,
 ):
     """Update model settings based on command-line arguments."""
     if llm_provider:
@@ -303,7 +306,7 @@ async def main_async(repo_path: str):
 
 @app.command()
 def start(
-    repo_path: Optional[str] = typer.Option(
+    repo_path: str | None = typer.Option(
         None, "--repo-path", help="Path to the target repository for code retrieval"
     ),
     update_graph: bool = typer.Option(
@@ -316,19 +319,19 @@ def start(
         "--clean",
         help="Clean the database before updating (use when adding first repo)",
     ),
-    output: Optional[str] = typer.Option(
+    output: str | None = typer.Option(
         None,
         "-o",
         "--output",
         help="Export graph to JSON file after updating (requires --update-graph)",
     ),
-    llm_provider: Optional[str] = typer.Option(
+    llm_provider: str | None = typer.Option(
         None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
     ),
-    orchestrator_model: Optional[str] = typer.Option(
+    orchestrator_model: str | None = typer.Option(
         None, "--orchestrator-model", help="Specify the orchestrator model ID"
     ),
-    cypher_model: Optional[str] = typer.Option(
+    cypher_model: str | None = typer.Option(
         None, "--cypher-model", help="Specify the Cypher generator model ID"
     ),
 ):

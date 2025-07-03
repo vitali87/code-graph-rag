@@ -1,10 +1,10 @@
 import os
-import toml
 from pathlib import Path
-from typing import Any, Optional, Dict, Tuple
+from typing import Any
 
+import toml
 from loguru import logger
-from tree_sitter import Language, Parser, Node
+from tree_sitter import Language, Node, Parser
 
 from codebase_rag.services.graph_service import MemgraphIngestor
 
@@ -45,9 +45,8 @@ except ImportError:
     java_language_so = None
 
 from .language_config import (
-    get_language_config,
-    get_language_config_by_name,
     LanguageConfig,
+    get_language_config,
 )
 
 # Language library mapping
@@ -69,11 +68,11 @@ class GraphUpdater:
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = repo_path.name
-        self.structural_elements: Dict[Path, Optional[str]] = {}
+        self.structural_elements: dict[Path, str | None] = {}
         # Registry to track all defined functions and methods
-        self.function_registry: Dict[str, str] = {}  # {qualified_name: type}
+        self.function_registry: dict[str, str] = {}  # {qualified_name: type}
         # Cache for parsed ASTs to avoid re-parsing files
-        self.ast_cache: Dict[Path, Tuple[Node, str]] = {}  # {filepath: (ast_root_node, language)}
+        self.ast_cache: dict[Path, tuple[Node, str]] = {}  # {filepath: (ast_root_node, language)}
         self.ignore_dirs = {
             ".git",
             "venv",
@@ -86,9 +85,9 @@ class GraphUpdater:
         }
 
         # Initialize parsers and queries for all available languages
-        self.parsers: Dict[str, Parser] = {}
-        self.languages: Dict[str, Language] = {}
-        self.queries: Dict[str, Dict[str, Any]] = {}
+        self.parsers: dict[str, Parser] = {}
+        self.languages: dict[str, Language] = {}
+        self.queries: dict[str, dict[str, Any]] = {}
 
         self._initialize_languages()
 
@@ -286,7 +285,7 @@ class GraphUpdater:
                 elif file_name == "pyproject.toml":
                     self._parse_dependencies(filepath)
 
-    def _get_docstring(self, node: Node) -> Optional[str]:
+    def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""
         body_node = node.child_by_field_name("body")
         if not body_node or not body_node.children:
@@ -415,7 +414,7 @@ class GraphUpdater:
 
     def _build_nested_qualified_name(
         self, func_node, module_qn: str, func_name: str, lang_config: LanguageConfig
-    ) -> Optional[str]:
+    ) -> str | None:
         path_parts = []
         current = func_node.parent
 
@@ -652,7 +651,7 @@ class GraphUpdater:
                     method_node, method_qn, "Method", module_qn, language
                 )
 
-    def _get_call_target_name(self, call_node: Node) -> Optional[str]:
+    def _get_call_target_name(self, call_node: Node) -> str | None:
         """Extracts the name of the function or method being called."""
         # For 'call' in Python and 'call_expression' in JS/TS
         if func_child := call_node.child_by_field_name("function"):
@@ -670,7 +669,7 @@ class GraphUpdater:
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
             return name_node.text.decode("utf8")
-            
+
         return None
 
     def _ingest_function_calls(
@@ -711,7 +710,7 @@ class GraphUpdater:
 
     def _resolve_function_call(
         self, call_name: str, module_qn: str
-    ) -> Optional[tuple[str, str]]:
+    ) -> tuple[str, str] | None:
         possible_qns = [
             f"{module_qn}.{call_name}",
             f"{self.project_name}.{call_name}",

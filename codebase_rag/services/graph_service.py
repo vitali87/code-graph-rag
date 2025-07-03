@@ -1,9 +1,10 @@
-from datetime import timezone
+from collections import defaultdict
+from datetime import UTC, datetime
+from typing import Any
+
 import mgclient
 from loguru import logger
-from typing import Any, Optional
-from datetime import datetime
-from collections import defaultdict
+
 
 class MemgraphIngestor:
     """Handles all communication and query execution with the Memgraph database."""
@@ -12,9 +13,9 @@ class MemgraphIngestor:
         self._host = host
         self._port = port
         self.batch_size = batch_size
-        self.conn: Optional[mgclient.Connection] = None
+        self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, Any]]] = []
-        self.relationship_buffer: list[tuple[tuple, str, tuple, Optional[dict]]] = []
+        self.relationship_buffer: list[tuple[tuple, str, tuple, dict | None]] = []
 
     def __enter__(self):
         logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
@@ -35,7 +36,7 @@ class MemgraphIngestor:
             logger.info("\nDisconnected from Memgraph.")
 
     def _execute_query(
-        self, query: str, params: Optional[dict[str, Any]] = None
+        self, query: str, params: dict[str, Any] | None = None
     ) -> list:
         if not self.conn:
             raise ConnectionError("Not connected to Memgraph.")
@@ -113,7 +114,7 @@ class MemgraphIngestor:
         from_node: tuple,
         rel_type: str,
         to_node: tuple,
-        properties: Optional[dict[str, Any]] = None,
+        properties: dict[str, Any] | None = None,
     ) -> None:
         self.relationship_buffer.append((from_node, rel_type, to_node, properties))
         if len(self.relationship_buffer) >= self.batch_size:
@@ -169,13 +170,13 @@ class MemgraphIngestor:
         self.flush_relationships()
         logger.info("--- Flushing complete. ---")
 
-    def fetch_all(self, query: str, params: Optional[dict[str, Any]] = None) -> list:
+    def fetch_all(self, query: str, params: dict[str, Any] | None = None) -> list:
         """Executes a query and fetches all results."""
         logger.debug(f"Executing fetch query: {query} with params: {params}")
         return self._execute_query(query, params)
 
     def execute_write(
-        self, query: str, params: Optional[dict[str, Any]] = None
+        self, query: str, params: dict[str, Any] | None = None
     ) -> None:
         """Executes a write query without returning results."""
         logger.debug(f"Executing write query: {query} with params: {params}")
@@ -184,21 +185,21 @@ class MemgraphIngestor:
     def export_graph_to_dict(self) -> dict[str, Any]:
         """Export the entire graph as a dictionary with nodes and relationships."""
         logger.info("Exporting graph data...")
-        
+
         # Get all nodes with their labels and properties
         nodes_query = """
         MATCH (n)
         RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
         """
         nodes_data = self.fetch_all(nodes_query)
-        
+
         # Get all relationships with their types and properties
         relationships_query = """
         MATCH (a)-[r]->(b)
         RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
         """
         relationships_data = self.fetch_all(relationships_query)
-        
+
         graph_data = {
             "nodes": nodes_data,
             "relationships": relationships_data,
@@ -208,10 +209,10 @@ class MemgraphIngestor:
                 "exported_at": self._get_current_timestamp()
             }
         }
-        
+
         logger.info(f"Exported {len(nodes_data)} nodes and {len(relationships_data)} relationships")
         return graph_data
-    
+
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()

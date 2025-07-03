@@ -1,12 +1,13 @@
 import os
 import shutil
+
+# Add the project root to the Python path to resolve module imports
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
-# Add the project root to the Python path to resolve module imports
-import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater

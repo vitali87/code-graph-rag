@@ -1,14 +1,15 @@
+import mimetypes
 import os
 import shutil
 import uuid
 from pathlib import Path
-from pydantic_ai import Tool
-from loguru import logger
-import mimetypes
-from ..config import settings
 
 from google import genai
 from google.genai import types
+from loguru import logger
+from pydantic_ai import Tool
+
+from ..config import settings
 
 
 class DocumentAnalyzer:
@@ -37,11 +38,11 @@ class DocumentAnalyzer:
                 source_path = Path(file_path)
                 if not source_path.is_file():
                     return f"Error: File not found at '{file_path}'."
-                
+
                 # Create .tmp folder if it doesn't exist
                 tmp_dir = self.project_root / ".tmp"
                 tmp_dir.mkdir(exist_ok=True)
-                
+
                 # Copy file to .tmp with a unique filename to avoid collisions
                 tmp_file = tmp_dir / f"{uuid.uuid4()}-{source_path.name}"
                 shutil.copy2(source_path, tmp_file)
@@ -62,7 +63,7 @@ class DocumentAnalyzer:
 
             # Prepare the multimodal prompt
             file_bytes = full_path.read_bytes()
-            
+
             # Use the simpler format that the library expects
             prompt_parts = [
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
@@ -76,7 +77,7 @@ class DocumentAnalyzer:
             )
 
             logger.success(f"Successfully received analysis for '{file_path}'.")
-            
+
             # Check if response has text content
             if hasattr(response, 'text') and response.text:
                 return str(response.text)
@@ -109,7 +110,7 @@ class DocumentAnalyzer:
 
 def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
     """Factory function to create the document analyzer tool."""
-    
+
     def analyze_document(file_path: str, question: str) -> str:
         """
         Analyzes a document (like a PDF) to answer a specific question about its content.

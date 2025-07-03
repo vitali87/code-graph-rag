@@ -1,12 +1,13 @@
-from pydantic import BaseModel, Field, field_validator, ConfigDict
-from typing import List, Any, Optional
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GraphData(BaseModel):
     """Data model for results returned from the knowledge graph tool."""
 
     query_used: str
-    results: List[dict[str, Any]]
+    results: list[dict[str, Any]]
     summary: str = Field(description="A brief summary of the operation's outcome.")
 
     @field_validator("results", mode="before")
@@ -37,9 +38,9 @@ class CodeSnippet(BaseModel):
     file_path: str
     line_start: int
     line_end: int
-    docstring: Optional[str] = None
+    docstring: str | None = None
     found: bool = True
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 class ShellCommandResult(BaseModel):
