@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import Any
+from collections import defaultdict
 
 import toml
 from loguru import logger
@@ -71,6 +72,8 @@ class GraphUpdater:
         self.structural_elements: dict[Path, str | None] = {}
         # Registry to track all defined functions and methods
         self.function_registry: dict[str, str] = {}  # {qualified_name: type}
+        # Index for fast lookup of functions/methods by their simple name
+        self.simple_name_lookup: dict[str, list[str]] = defaultdict(list)
         # Cache for parsed ASTs to avoid re-parsing files
         self.ast_cache: dict[Path, tuple[Node, str]] = (
             {}
@@ -404,6 +407,7 @@ class GraphUpdater:
             self.ingestor.ensure_node_batch("Function", props)
 
             self.function_registry[func_qn] = "Function"
+            self.simple_name_lookup[func_name].append(func_qn)
 
             parent_type, parent_qn = self._determine_function_parent(
                 func_node, module_qn, lang_config
@@ -537,6 +541,7 @@ class GraphUpdater:
                 self.ingestor.ensure_node_batch("Method", method_props)
 
                 self.function_registry[method_qn] = "Method"
+                self.simple_name_lookup[method_name].append(method_qn)
 
                 self.ingestor.ensure_relationship_batch(
                     ("Class", "qualified_name", class_qn),
@@ -709,6 +714,7 @@ class GraphUpdater:
     def _resolve_function_call(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
+        # First, try to resolve with fully qualified names
         possible_qns = [
             f"{module_qn}.{call_name}",
             f"{self.project_name}.{call_name}",
@@ -724,10 +730,12 @@ class GraphUpdater:
             if qn in self.function_registry:
                 return self.function_registry[qn], qn
 
-        for registered_qn, node_type in self.function_registry.items():
-            if registered_qn.endswith(f".{call_name}"):
+        # If not found, use the simple name lookup as a fallback
+        if call_name in self.simple_name_lookup:
+            # This is a simplification.
+            for registered_qn in self.simple_name_lookup[call_name]:
                 if self._is_likely_same_function(call_name, registered_qn, module_qn):
-                    return node_type, registered_qn
+                    return self.function_registry[registered_qn], registered_qn
 
         return None
 
