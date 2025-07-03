@@ -1,8 +1,10 @@
 from pathlib import Path
-from pydantic_ai import Tool, RunContext
+
 from loguru import logger
-from ..schemas import CodeSnippet
+from pydantic_ai import RunContext, Tool
+
 from ..graph_updater import MemgraphIngestor
+from ..schemas import CodeSnippet
 
 
 class CodeRetriever:

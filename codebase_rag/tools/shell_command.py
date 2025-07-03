@@ -3,7 +3,7 @@ import shlex
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import Tool, RunContext
+from pydantic_ai import RunContext, Tool
 
 from ..schemas import ShellCommandResult
 
@@ -18,6 +18,7 @@ COMMAND_ALLOWLIST = {
     "pytest",
     "ruff",
     "uv",
+    "find",
     # FS Modifying commands - Agent MUST ask for confirmation before using.
     "rm",
     "cp",
@@ -85,11 +86,13 @@ class ShellCommander:
                 logger.warning(f"Stderr: {stderr_str}")
 
             return ShellCommandResult(
-                return_code=process.returncode if process.returncode is not None else -1, # VA: redundant but to satisfy type checker
+                return_code=(
+                    process.returncode if process.returncode is not None else -1
+                ),  # VA: redundant but to satisfy type checker
                 stdout=stdout_str,
                 stderr=stderr_str,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             msg = f"Command '{command}' timed out after {self.timeout} seconds."
             logger.error(msg)
             try:
@@ -97,7 +100,9 @@ class ShellCommander:
                 await process.wait()
                 logger.info("Process killed due to timeout.")
             except ProcessLookupError:
-                logger.warning("Process already terminated when timeout kill was attempted.")
+                logger.warning(
+                    "Process already terminated when timeout kill was attempted."
+                )
             return ShellCommandResult(return_code=-1, stdout="", stderr=msg)
         except Exception as e:
             logger.error(f"An error occurred while executing command: {e}")
@@ -123,4 +128,4 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         function=run_shell_command,
         name="execute_shell_command",
         description="Executes a shell command from an approved allowlist.",
-    ) 
+    )

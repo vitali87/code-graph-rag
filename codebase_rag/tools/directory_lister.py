@@ -1,7 +1,8 @@
-from pydantic_ai import Tool
-from pathlib import Path
-from loguru import logger
 import os
+from pathlib import Path
+
+from loguru import logger
+from pydantic_ai import Tool
 
 
 class DirectoryLister:
@@ -55,4 +56,4 @@ def create_directory_lister_tool(directory_lister: DirectoryLister) -> Tool:
     return Tool(
         function=directory_lister.list_directory_contents,
         description="Lists the contents of a directory to explore the codebase.",
-    ) 
+    )

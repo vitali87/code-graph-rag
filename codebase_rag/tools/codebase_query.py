@@ -1,11 +1,12 @@
-from pydantic_ai import Tool, RunContext
-from rich.table import Table
-from rich.panel import Panel
-from rich.console import Console
-from ..schemas import GraphData
-from ..graph_updater import MemgraphIngestor
-from ..services.llm import CypherGenerator, LLMGenerationError
 from loguru import logger
+from pydantic_ai import RunContext, Tool
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+from ..graph_updater import MemgraphIngestor
+from ..schemas import GraphData
+from ..services.llm import CypherGenerator, LLMGenerationError
 
 
 class GraphQueryError(Exception):
@@ -50,7 +51,7 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
                     for value in row.values():
                         if value is None:
                             renderable_values.append("")
-                        elif isinstance(value, (int, float)):
+                        elif isinstance(value, int | float):
                             # Let Rich handle number formatting by converting to string
                             renderable_values.append(str(value))
                         elif isinstance(value, bool):
