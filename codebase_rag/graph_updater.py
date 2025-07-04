@@ -77,7 +77,7 @@ class GraphUpdater:
         # Registry to track all defined functions and methods
         self.function_registry: dict[str, str] = {}  # {qualified_name: type}
         # Index for fast lookup of functions/methods by their simple name
-        self.simple_name_lookup: dict[str, list[str]] = defaultdict(list)
+        self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
         # Cache for parsed ASTs to avoid re-parsing files
         self.ast_cache: dict[Path, tuple[Node, str]] = (
             {}
@@ -165,129 +165,99 @@ class GraphUpdater:
         self.ingestor.ensure_node_batch("Project", {"name": self.project_name})
         logger.info(f"Ensuring Project: {self.project_name}")
 
-        logger.info("--- Pass 1: Identifying Packages and Folders ---")
-        self._identify_structure()
-
-        logger.info(
-            "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
-        )
-        self._process_files()
+        logger.info("--- Pass 1: Processing repository structure and files ---")
+        self._process_repository()
 
         logger.info(
             f"\n--- Found {len(self.function_registry)} functions/methods in codebase ---"
         )
-        logger.info("--- Pass 3: Processing Function Calls from AST Cache ---")
+        logger.info("--- Pass 2: Processing Function Calls from AST Cache ---")
         self._process_function_calls()
 
         logger.info("\n--- Analysis complete. Flushing all data to database... ---")
         self.ingestor.flush_all()
 
-    def _identify_structure(self) -> None:
-        """First pass: Walks the directory to find all packages and folders."""
-        for root_str, dirs, _ in os.walk(self.repo_path, topdown=True):
-            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
-            root = Path(root_str)
-            relative_root = root.relative_to(self.repo_path)
-
-            parent_rel_path = relative_root.parent
-            parent_container_qn = self.structural_elements.get(parent_rel_path)
-
-            # Check if this directory is a package for any supported language
-            is_package = False
-            package_indicators = set()
-
-            # Collect package indicators from all language configs
-            for lang_name, lang_queries in self.queries.items():
-                lang_config = lang_queries["config"]
-                package_indicators.update(lang_config.package_indicators)
-
-            # Check if any package indicator exists
-            for indicator in package_indicators:
-                if (root / indicator).exists():
-                    is_package = True
-                    break
-
-            if is_package:
-                package_qn = ".".join([self.project_name] + list(relative_root.parts))
-                self.structural_elements[relative_root] = package_qn
-                logger.info(f"  Identified Package: {package_qn}")
-                self.ingestor.ensure_node_batch(
-                    "Package",
-                    {
-                        "qualified_name": package_qn,
-                        "name": root.name,
-                        "path": str(relative_root),
-                    },
-                )
-                parent_label, parent_key, parent_val = (
-                    ("Project", "name", self.project_name)
-                    if parent_rel_path == Path(".")
-                    else ("Package", "qualified_name", parent_container_qn)
-                )
-                self.ingestor.ensure_relationship_batch(
-                    (parent_label, parent_key, parent_val),
-                    "CONTAINS_PACKAGE",
-                    ("Package", "qualified_name", package_qn),
-                )
-            elif root != self.repo_path:
-                self.structural_elements[relative_root] = None  # Mark as folder
-                logger.info(f"  Identified Folder: '{relative_root}'")
-                self.ingestor.ensure_node_batch(
-                    "Folder", {"path": str(relative_root), "name": root.name}
-                )
-                parent_label, parent_key, parent_val = (
-                    ("Project", "name", self.project_name)
-                    if parent_rel_path == Path(".")
-                    else (
-                        ("Package", "qualified_name", parent_container_qn)
-                        if parent_container_qn
-                        else ("Folder", "path", str(parent_rel_path))
-                    )
-                )
-                self.ingestor.ensure_relationship_batch(
-                    (parent_label, parent_key, parent_val),
-                    "CONTAINS_FOLDER",
-                    ("Folder", "path", str(relative_root)),
-                )
-
-    def _process_files(self) -> None:
-        """Second pass: Walks the directory, parses files, and caches their ASTs."""
+    def _process_repository(self) -> None:
+        """
+        Single pass: Walks the directory to find packages, folders, and files,
+        then parses files and caches their ASTs.
+        """
         for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
             dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
             root = Path(root_str)
             relative_root = root.relative_to(self.repo_path)
-            parent_container_qn = self.structural_elements.get(relative_root)
+
+            # Determine the parent container for the current directory
+            parent_rel_path = relative_root.parent
+            parent_container_qn = self.structural_elements.get(parent_rel_path)
 
             parent_label, parent_key, parent_val = (
-                ("Package", "qualified_name", parent_container_qn)
-                if parent_container_qn
+                ("Project", "name", self.project_name)
+                if root == self.repo_path
                 else (
-                    ("Folder", "path", str(relative_root))
-                    if relative_root != Path(".")
-                    else ("Project", "name", self.project_name)
+                    ("Package", "qualified_name", parent_container_qn)
+                    if parent_container_qn
+                    else ("Folder", "path", str(parent_rel_path))
                 )
             )
 
+            # Process the current directory itself, unless it's the root
+            if root == self.repo_path:
+                current_container_label, current_container_key, current_container_val = parent_label, parent_key, parent_val
+            else:
+                # Check if the current directory is a package
+                is_package = False
+                package_indicators = set()
+                for lang_queries in self.queries.values():
+                    package_indicators.update(lang_queries["config"].package_indicators)
+                for indicator in package_indicators:
+                    if (root / indicator).exists():
+                        is_package = True
+                        break
+
+                if is_package:
+                    package_qn = ".".join([self.project_name] + list(relative_root.parts))
+                    self.structural_elements[relative_root] = package_qn
+                    logger.info(f"  Identified Package: {package_qn}")
+                    self.ingestor.ensure_node_batch(
+                        "Package",
+                        {"qualified_name": package_qn, "name": root.name, "path": str(relative_root)},
+                    )
+                    self.ingestor.ensure_relationship_batch(
+                        (parent_label, parent_key, parent_val),
+                        "CONTAINS_PACKAGE",
+                        ("Package", "qualified_name", package_qn),
+                    )
+                    current_container_label, current_container_key, current_container_val = "Package", "qualified_name", package_qn
+                else:  # It's a Folder
+                    self.structural_elements[relative_root] = None
+                    folder_path_str = str(relative_root)
+                    logger.info(f"  Identified Folder: '{folder_path_str}'")
+                    self.ingestor.ensure_node_batch(
+                        "Folder", {"path": folder_path_str, "name": root.name}
+                    )
+                    self.ingestor.ensure_relationship_batch(
+                        (parent_label, parent_key, parent_val),
+                        "CONTAINS_FOLDER",
+                        ("Folder", "path", folder_path_str),
+                    )
+                    current_container_label, current_container_key, current_container_val = "Folder", "path", folder_path_str
+
+            # Process files in the current directory
             for file_name in files:
                 filepath = root / file_name
                 relative_filepath = str(filepath.relative_to(self.repo_path))
 
-                # Create generic File node for all files
                 self.ingestor.ensure_node_batch(
                     "File",
-                    {
-                        "path": relative_filepath,
-                        "name": file_name,
-                        "extension": filepath.suffix,
-                    },
+                    {"path": relative_filepath, "name": file_name, "extension": filepath.suffix},
                 )
                 self.ingestor.ensure_relationship_batch(
-                    (parent_label, parent_key, parent_val),
+                    (current_container_label, current_container_key, current_container_val),
                     "CONTAINS_FILE",
                     ("File", "path", relative_filepath),
                 )
 
-                # Check if this file type is supported for parsing
                 lang_config = get_language_config(filepath.suffix)
                 if lang_config and lang_config.name in self.parsers:
                     self.parse_and_ingest_file(filepath, lang_config.name)
@@ -416,7 +386,7 @@ class GraphUpdater:
             self.ingestor.ensure_node_batch("Function", props)
 
             self.function_registry[func_qn] = "Function"
-            self.simple_name_lookup[func_name].append(func_qn)
+            self.simple_name_lookup[func_name].add(func_qn)
 
             parent_type, parent_qn = self._determine_function_parent(
                 func_node, module_qn, lang_config
@@ -561,7 +531,7 @@ class GraphUpdater:
                 self.ingestor.ensure_node_batch("Method", method_props)
 
                 self.function_registry[method_qn] = "Method"
-                self.simple_name_lookup[method_name].append(method_qn)
+                self.simple_name_lookup[method_name].add(method_qn)
 
                 self.ingestor.ensure_relationship_batch(
                     ("Class", "qualified_name", class_qn),
