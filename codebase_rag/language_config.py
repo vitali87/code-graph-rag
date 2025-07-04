@@ -19,9 +19,9 @@ class LanguageConfig:
     body_field: str = "body"
 
     # Package detection patterns
-    package_indicators: list[str] = None  # e.g., ["__init__.py"] for Python
+    package_indicators: list[str] = field(default_factory=list)  # e.g., ["__init__.py"] for Python
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.package_indicators is None:
             self.package_indicators = []
 

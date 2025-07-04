@@ -1,7 +1,7 @@
 import os
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
-from collections import defaultdict
 
 import toml
 from loguru import logger
@@ -11,39 +11,39 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 
 # Import available Tree-sitter languages
 try:
-    from tree_sitter_python import language as python_language_so
+    from tree_sitter_python import language as python_language_so  # type: ignore
 except ImportError:
-    python_language_so = None
+    python_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_javascript import language as javascript_language_so
+    from tree_sitter_javascript import language as javascript_language_so  # type: ignore
 except ImportError:
-    javascript_language_so = None
+    javascript_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_typescript import language_typescript as typescript_language_so
+    from tree_sitter_typescript import language_typescript as typescript_language_so  # type: ignore
 except ImportError:
-    typescript_language_so = None
+    typescript_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_rust import language as rust_language_so
+    from tree_sitter_rust import language as rust_language_so  # type: ignore
 except ImportError:
-    rust_language_so = None
+    rust_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_go import language as go_language_so
+    from tree_sitter_go import language as go_language_so  # type: ignore
 except ImportError:
-    go_language_so = None
+    go_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_scala import language as scala_language_so
+    from tree_sitter_scala import language as scala_language_so  # type: ignore
 except ImportError:
-    scala_language_so = None
+    scala_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_java import language as java_language_so
+    from tree_sitter_java import language as java_language_so  # type: ignore
 except ImportError:
-    java_language_so = None
+    java_language_so = None  # type: ignore
 
 from .language_config import (
     LanguageConfig,
@@ -96,7 +96,7 @@ class GraphUpdater:
 
         self._initialize_languages()
 
-    def _initialize_languages(self):
+    def _initialize_languages(self) -> None:
         """Initialize Tree-sitter parsers for all available languages."""
         from .language_config import LANGUAGE_CONFIGS
 
@@ -134,7 +134,7 @@ class GraphUpdater:
 
     def _compile_queries_for_language(
         self, lang_name: str, lang_config: LanguageConfig, language: Language
-    ):
+    ) -> None:
         """Compile Tree-sitter queries for a specific language."""
         function_patterns = " ".join(
             [
@@ -300,10 +300,12 @@ class GraphUpdater:
             first_statement.type == "expression_statement"
             and first_statement.children[0].type == "string"
         ):
-            return first_statement.children[0].text.decode("utf-8").strip("'\" \n")
+            text = first_statement.children[0].text
+            if text is not None:
+                return text.decode("utf-8").strip("'\" \n")
         return None
 
-    def parse_and_ingest_file(self, file_path: Path, language: str):
+    def parse_and_ingest_file(self, file_path: Path, language: str) -> None:
         """
         Parses a file, ingests its structure and definitions,
         and caches the AST for the next pass.
@@ -369,7 +371,7 @@ class GraphUpdater:
         except Exception as e:
             logger.error(f"Failed to parse or ingest {file_path}: {e}")
 
-    def _ingest_top_level_functions(self, root_node, module_qn: str, language: str):
+    def _ingest_top_level_functions(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self.queries[language]
         lang_config = lang_queries["config"]
 
@@ -387,7 +389,10 @@ class GraphUpdater:
             name_node = func_node.child_by_field_name("name")
             if not name_node:
                 continue
-            func_name = name_node.text.decode("utf8")
+            text = name_node.text
+            if text is None:
+                continue
+            func_name = text.decode("utf8")
             func_qn = self._build_nested_qualified_name(
                 func_node, module_qn, func_name, lang_config
             )
@@ -395,7 +400,7 @@ class GraphUpdater:
             if not func_qn:
                 continue
 
-            props = {
+            props: dict[str, Any] = {
                 "qualified_name": func_qn,
                 "name": func_name,
                 "decorators": [],
@@ -419,7 +424,7 @@ class GraphUpdater:
             )
 
     def _build_nested_qualified_name(
-        self, func_node, module_qn: str, func_name: str, lang_config: LanguageConfig
+        self, func_node: Node, module_qn: str, func_name: str, lang_config: LanguageConfig
     ) -> str | None:
         path_parts = []
         current = func_node.parent
@@ -433,7 +438,9 @@ class GraphUpdater:
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
                 if name_node := current.child_by_field_name("name"):
-                    path_parts.append(name_node.text.decode("utf8"))
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode("utf8"))
             elif current.type in lang_config.class_node_types:
                 return None  # This is a method
 
@@ -448,7 +455,7 @@ class GraphUpdater:
         else:
             return f"{module_qn}.{func_name}"
 
-    def _is_method(self, func_node, lang_config: LanguageConfig) -> bool:
+    def _is_method(self, func_node: Node, lang_config: LanguageConfig) -> bool:
         current = func_node.parent
         if not isinstance(current, Node):
             return False
@@ -463,7 +470,7 @@ class GraphUpdater:
         return False
 
     def _determine_function_parent(
-        self, func_node, module_qn: str, lang_config: LanguageConfig
+        self, func_node: Node, module_qn: str, lang_config: LanguageConfig
     ) -> tuple[str, str]:
         current = func_node.parent
         if not isinstance(current, Node):
@@ -472,7 +479,10 @@ class GraphUpdater:
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
                 if name_node := current.child_by_field_name("name"):
-                    parent_func_name = name_node.text.decode("utf8")
+                    parent_text = name_node.text
+                    if parent_text is None:
+                        continue
+                    parent_func_name = parent_text.decode("utf8")
                     if parent_func_qn := self._build_nested_qualified_name(
                         current, module_qn, parent_func_name, lang_config
                     ):
@@ -486,7 +496,7 @@ class GraphUpdater:
 
         return "Module", module_qn
 
-    def _ingest_classes_and_methods(self, root_node, module_qn: str, language: str):
+    def _ingest_classes_and_methods(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self.queries[language]
 
         class_captures = lang_queries["classes"].captures(root_node)
@@ -497,9 +507,12 @@ class GraphUpdater:
             name_node = class_node.child_by_field_name("name")
             if not name_node:
                 continue
-            class_name = name_node.text.decode("utf8")
+            text = name_node.text
+            if text is None:
+                continue
+            class_name = text.decode("utf8")
             class_qn = f"{module_qn}.{class_name}"
-            class_props = {
+            class_props: dict[str, Any] = {
                 "qualified_name": class_qn,
                 "name": class_name,
                 "decorators": [],
@@ -527,9 +540,12 @@ class GraphUpdater:
                 method_name_node = method_node.child_by_field_name("name")
                 if not method_name_node:
                     continue
-                method_name = method_name_node.text.decode("utf8")
+                text = method_name_node.text
+                if text is None:
+                    continue
+                method_name = text.decode("utf8")
                 method_qn = f"{class_qn}.{method_name}"
-                method_props = {
+                method_props: dict[str, Any] = {
                     "qualified_name": method_qn,
                     "name": method_name,
                     "decorators": [],
@@ -576,7 +592,7 @@ class GraphUpdater:
         for file_path, (root_node, language) in self.ast_cache.items():
             self._process_calls_in_file(file_path, root_node, language)
 
-    def _process_calls_in_file(self, file_path: Path, root_node: Node, language: str):
+    def _process_calls_in_file(self, file_path: Path, root_node: Node, language: str) -> None:
         """Process function calls in a specific file using its cached AST."""
         relative_path = file_path.relative_to(self.repo_path)
         logger.debug(f"Processing calls in cached AST for: {relative_path}")
@@ -596,7 +612,7 @@ class GraphUpdater:
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
 
-    def _process_calls_in_functions(self, root_node, module_qn: str, language: str):
+    def _process_calls_in_functions(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self.queries[language]
         lang_config = lang_queries["config"]
 
@@ -611,7 +627,10 @@ class GraphUpdater:
             name_node = func_node.child_by_field_name("name")
             if not name_node:
                 continue
-            func_name = name_node.text.decode("utf8")
+            text = name_node.text
+            if text is None:
+                continue
+            func_name = text.decode("utf8")
             func_qn = self._build_nested_qualified_name(
                 func_node, module_qn, func_name, lang_config
             )
@@ -621,7 +640,7 @@ class GraphUpdater:
                     func_node, func_qn, "Function", module_qn, language
                 )
 
-    def _process_calls_in_classes(self, root_node, module_qn: str, language: str):
+    def _process_calls_in_classes(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self.queries[language]
 
         class_captures = lang_queries["classes"].captures(root_node)
@@ -632,7 +651,10 @@ class GraphUpdater:
             name_node = class_node.child_by_field_name("name")
             if not name_node:
                 continue
-            class_name = name_node.text.decode("utf8")
+            text = name_node.text
+            if text is None:
+                continue
+            class_name = text.decode("utf8")
             class_qn = f"{module_qn}.{class_name}"
 
             body_node = class_node.child_by_field_name("body")
@@ -647,7 +669,10 @@ class GraphUpdater:
                 method_name_node = method_node.child_by_field_name("name")
                 if not method_name_node:
                     continue
-                method_name = method_name_node.text.decode("utf8")
+                text = method_name_node.text
+                if text is None:
+                    continue
+                method_name = text.decode("utf8")
                 method_qn = f"{class_qn}.{method_name}"
 
                 self._ingest_function_calls(
@@ -659,19 +684,27 @@ class GraphUpdater:
         # For 'call' in Python and 'call_expression' in JS/TS
         if func_child := call_node.child_by_field_name("function"):
             if func_child.type == "identifier":
-                return func_child.text.decode("utf8")
+                text = func_child.text
+                if text is not None:
+                    return text.decode("utf8")
             # Python: obj.method() -> attribute
             elif func_child.type == "attribute":
                 if attr_child := func_child.child_by_field_name("attribute"):
-                    return attr_child.text.decode("utf8")
+                    text = attr_child.text
+                    if text is not None:
+                        return text.decode("utf8")
             # JS/TS: obj.method() -> member_expression
             elif func_child.type == "member_expression":
                 if prop_child := func_child.child_by_field_name("property"):
-                    return prop_child.text.decode("utf8")
+                    text = prop_child.text
+                    if text is not None:
+                        return text.decode("utf8")
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
-            return name_node.text.decode("utf8")
+            text = name_node.text
+            if text is not None:
+                return text.decode("utf8")
 
         return None
 
@@ -682,7 +715,7 @@ class GraphUpdater:
         caller_type: str,
         module_qn: str,
         language: str,
-    ):
+    ) -> None:
         calls_query = self.queries[language].get("calls")
         if not calls_query:
             return

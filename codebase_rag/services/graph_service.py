@@ -17,14 +17,14 @@ class MemgraphIngestor:
         self.node_buffer: list[tuple[str, dict[str, Any]]] = []
         self.relationship_buffer: list[tuple[tuple, str, tuple, dict | None]] = []
 
-    def __enter__(self):
+    def __enter__(self) -> 'MemgraphIngestor':
         logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
         self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
         logger.info("Successfully connected to Memgraph.")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any) -> None:
         if exc_type:
             logger.error(
                 f"An exception occurred: {exc_val}. Flushing remaining items...",

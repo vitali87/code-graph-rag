@@ -1,12 +1,8 @@
 
-from dotenv import load_dotenv
+from __future__ import annotations
+
 from pydantic import AnyHttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-# Load environment variables from .env file
-# Pydantic's BaseSettings will also automatically read from .env files,
-# but loading it explicitly ensures it works consistently.
-load_dotenv()
 
 
 class AppConfig(BaseSettings):
@@ -14,7 +10,7 @@ class AppConfig(BaseSettings):
     Application Configuration using Pydantic for robust validation and type-safety.
     All settings are loaded from environment variables or a .env file.
     """
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -39,7 +35,7 @@ class AppConfig(BaseSettings):
     GCP_REGION: str = "us-central1"
     GCP_SERVICE_ACCOUNT_FILE: str | None = None
 
-    LOCAL_MODEL_ENDPOINT: AnyHttpUrl = "http://localhost:11434/v1"
+    LOCAL_MODEL_ENDPOINT: AnyHttpUrl = AnyHttpUrl("http://localhost:11434/v1")
     LOCAL_ORCHESTRATOR_MODEL_ID: str = "llama3"
     LOCAL_CYPHER_MODEL_ID: str = "llama3"
     LOCAL_MODEL_API_KEY: str = "ollama"
@@ -48,7 +44,7 @@ class AppConfig(BaseSettings):
     SHELL_COMMAND_TIMEOUT: int = 30
 
     @model_validator(mode='after')
-    def check_required_fields(self):
+    def check_required_fields(self) -> AppConfig:
         """Validate that required API keys and project IDs are set based on the provider."""
         if self.LLM_PROVIDER == "gemini":
             if self.GEMINI_PROVIDER == "gla" and not self.GEMINI_API_KEY:

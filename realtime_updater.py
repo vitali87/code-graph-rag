@@ -2,6 +2,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from watchdog.events import FileSystemEventHandler
@@ -20,7 +21,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _is_relevant(self, path_str: str) -> bool:
         return not any(part in self.ignore_patterns for part in Path(path_str).parts)
 
-    def dispatch(self, event):
+    def dispatch(self, event: Any) -> None:
         """A single dispatch method to handle all events."""
         if not self._is_relevant(event.src_path) or event.is_directory:
             return
@@ -52,7 +53,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         logger.success(f"Graph updated for: {path.name}")
 
 
-def start_watcher(repo_path: str, host: str, port: int):
+def start_watcher(repo_path: str, host: str, port: int) -> None:
     repo_path_obj = Path(repo_path).resolve()
 
     with MemgraphIngestor(host=host, port=port) as ingestor:

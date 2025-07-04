@@ -10,6 +10,7 @@ wheels/
 .venv
 .env
 .tmp
-
+.ruff_cache/
+.mypy_cache/
 .pytest_cache/
 .claude/

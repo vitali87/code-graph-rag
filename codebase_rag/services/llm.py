@@ -35,7 +35,7 @@ def _clean_cypher_response(response_text: str) -> str:
 class CypherGenerator:
     """Generates Cypher queries from natural language."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         try:
             model_settings = None
             if settings.LLM_PROVIDER == "gemini":
@@ -46,7 +46,7 @@ class CypherGenerator:
                         service_account_file=settings.GCP_SERVICE_ACCOUNT_FILE,
                     )
                 else:
-                    provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)
+                    provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)  # type: ignore
 
                 if settings.GEMINI_THINKING_BUDGET is not None:
                     model_settings = GeminiModelSettings(
@@ -61,11 +61,11 @@ class CypherGenerator:
                 )
                 system_prompt = GEMINI_LITE_CYPHER_SYSTEM_PROMPT
             else:  # local provider
-                llm = OpenAIModel(
+                llm = OpenAIModel(  # type: ignore
                     settings.LOCAL_CYPHER_MODEL_ID,
                     provider=OpenAIProvider(
                         api_key=settings.LOCAL_MODEL_API_KEY,
-                        base_url=settings.LOCAL_MODEL_ENDPOINT,
+                        base_url=str(settings.LOCAL_MODEL_ENDPOINT),
                     ),
                 )
                 system_prompt = LOCAL_CYPHER_SYSTEM_PROMPT
@@ -114,7 +114,7 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
                     service_account_file=settings.GCP_SERVICE_ACCOUNT_FILE,
                 )
             else:
-                provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)
+                provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)  # type: ignore
 
             if settings.GEMINI_THINKING_BUDGET is not None:
                 model_settings = GeminiModelSettings(
@@ -128,11 +128,11 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
                 provider=provider,
             )
         else:  # local provider
-            llm = OpenAIModel(
+            llm = OpenAIModel(  # type: ignore
                 settings.LOCAL_ORCHESTRATOR_MODEL_ID,
                 provider=OpenAIProvider(
                     api_key=settings.LOCAL_MODEL_API_KEY,
-                    base_url=settings.LOCAL_MODEL_ENDPOINT,
+                    base_url=str(settings.LOCAL_MODEL_ENDPOINT),
                 ),
             )
 
