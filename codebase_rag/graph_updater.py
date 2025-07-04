@@ -208,14 +208,17 @@ class GraphUpdater:
     def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""
         body_node = node.child_by_field_name("body")
-        if not body_node or not body_node.children:
+        if not (body_node and body_node.children):
             return None
+
         first_statement = body_node.children[0]
-        if (
-            first_statement.type == "expression_statement"
-            and first_statement.children[0].type == "string"
-        ):
-            return first_statement.children[0].text.decode("utf-8").strip("'\" \n")
+        if first_statement.type != "expression_statement" or not first_statement.children:
+            return None
+
+        string_node = first_statement.children[0]
+        if string_node.type == "string":
+            return string_node.text.decode("utf-8").strip("'\" \n")
+
         return None
 
     def parse_and_ingest_file(self, file_path: Path, language: str) -> None:
