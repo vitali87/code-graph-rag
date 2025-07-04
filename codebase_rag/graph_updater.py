@@ -11,43 +11,39 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 
 # Import available Tree-sitter languages
 try:
-    from tree_sitter_python import language as python_language_so  # type: ignore
+    from tree_sitter_python import language as python_language_so
 except ImportError:
-    python_language_so = None  # type: ignore
+    python_language_so = None
 
 try:
-    from tree_sitter_javascript import (
-        language as javascript_language_so,  # type: ignore
-    )
+    from tree_sitter_javascript import language as javascript_language_so
 except ImportError:
-    javascript_language_so = None  # type: ignore
+    javascript_language_so = None
 
 try:
-    from tree_sitter_typescript import (
-        language_typescript as typescript_language_so,  # type: ignore
-    )
+    from tree_sitter_typescript import language_typescript as typescript_language_so
 except ImportError:
-    typescript_language_so = None  # type: ignore
+    typescript_language_so = None
 
 try:
-    from tree_sitter_rust import language as rust_language_so  # type: ignore
+    from tree_sitter_rust import language as rust_language_so
 except ImportError:
-    rust_language_so = None  # type: ignore
+    rust_language_so = None
 
 try:
-    from tree_sitter_go import language as go_language_so  # type: ignore
+    from tree_sitter_go import language as go_language_so
 except ImportError:
-    go_language_so = None  # type: ignore
+    go_language_so = None
 
 try:
-    from tree_sitter_scala import language as scala_language_so  # type: ignore
+    from tree_sitter_scala import language as scala_language_so
 except ImportError:
-    scala_language_so = None  # type: ignore
+    scala_language_so = None
 
 try:
-    from tree_sitter_java import language as java_language_so  # type: ignore
+    from tree_sitter_java import language as java_language_so
 except ImportError:
-    java_language_so = None  # type: ignore
+    java_language_so = None
 
 from .language_config import (
     LanguageConfig,
@@ -74,91 +70,67 @@ class GraphUpdater:
         self.repo_path = repo_path
         self.project_name = repo_path.name
         self.structural_elements: dict[Path, str | None] = {}
-        # Registry to track all defined functions and methods
-        self.function_registry: dict[str, str] = {}  # {qualified_name: type}
-        # Index for fast lookup of functions/methods by their simple name
+        self.function_registry: dict[str, str] = {}
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
-        # Cache for parsed ASTs to avoid re-parsing files
-        self.ast_cache: dict[Path, tuple[Node, str]] = (
-            {}
-        )  # {filepath: (ast_root_node, language)}
+        self.ast_cache: dict[Path, tuple[Node, str]] = {}
         self.ignore_dirs = {
-            ".git",
-            "venv",
-            ".venv",
-            "__pycache__",
-            "node_modules",
-            "build",
-            "dist",
-            ".eggs",
+            ".git", "venv", ".venv", "__pycache__", "node_modules",
+            "build", "dist", ".eggs",
         }
-
-        # Initialize parsers and queries for all available languages
         self.parsers: dict[str, Parser] = {}
         self.languages: dict[str, Language] = {}
+        self.lang_configs: dict[str, LanguageConfig] = {}
         self.queries: dict[str, dict[str, Any]] = {}
-
         self._initialize_languages()
 
     def _initialize_languages(self) -> None:
-        """Initialize Tree-sitter parsers for all available languages."""
+        """Initialize Tree-sitter parsers and language configs."""
         from .language_config import LANGUAGE_CONFIGS
 
         available_languages = []
-
         for lang_name, lang_config in LANGUAGE_CONFIGS.items():
             lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
-            if lang_lib is not None:
+            if lang_lib:
                 try:
-                    # Create parser and language for this language
                     parser = Parser()
                     language = Language(lang_lib())
                     parser.language = language
-
                     self.parsers[lang_name] = parser
                     self.languages[lang_name] = language
-
-                    # Compile queries for this language
-                    self._compile_queries_for_language(lang_name, lang_config, language)
-
+                    self.lang_configs[lang_name] = lang_config
                     available_languages.append(lang_name)
                     logger.success(f"Successfully loaded {lang_name} grammar.")
-
                 except Exception as e:
                     logger.warning(f"Failed to load {lang_name} grammar: {e}")
             else:
                 logger.debug(f"Tree-sitter library for {lang_name} not available.")
-
         if not available_languages:
             raise RuntimeError(
-                "No Tree-sitter languages available. Please install tree-sitter language packages."
+                "No Tree-sitter languages available. Please install packages."
             )
-
         logger.info(f"Initialized parsers for: {', '.join(available_languages)}")
 
-    def _compile_queries_for_language(
-        self, lang_name: str, lang_config: LanguageConfig, language: Language
-    ) -> None:
-        """Compile Tree-sitter queries for a specific language."""
-        function_patterns = " ".join(
-            [
-                f"({node_type}) @function"
-                for node_type in lang_config.function_node_types
-            ]
-        )
-        class_patterns = " ".join(
-            [f"({node_type}) @class" for node_type in lang_config.class_node_types]
-        )
-        call_patterns = " ".join(
-            [f"({node_type}) @call" for node_type in lang_config.call_node_types]
-        )
+    def _get_queries(self, language: str) -> dict[str, Any]:
+        """Compile and cache Tree-sitter queries for a language on demand."""
+        if language in self.queries:
+            return self.queries[language]
 
-        self.queries[lang_name] = {
-            "functions": language.query(function_patterns),
-            "classes": language.query(class_patterns),
-            "calls": language.query(call_patterns) if call_patterns else None,
+        lang_obj = self.languages[language]
+        lang_config = self.lang_configs[language]
+
+        function_patterns = " ".join(f"({nt}) @function" for nt in lang_config.function_node_types)
+        class_patterns = " ".join(f"({nt}) @class" for nt in lang_config.class_node_types)
+        call_patterns = " ".join(f"({nt}) @call" for nt in lang_config.call_node_types)
+
+        compiled_queries = {
+            "functions": lang_obj.query(function_patterns),
+            "classes": lang_obj.query(class_patterns),
+            "calls": lang_obj.query(call_patterns) if call_patterns else None,
             "config": lang_config,
         }
+        self.queries[language] = compiled_queries
+        logger.debug(f"Lazily compiled queries for {language}.")
+        return compiled_queries
 
     def run(self) -> None:
         """Orchestrates the parsing and ingestion process."""
@@ -168,9 +140,7 @@ class GraphUpdater:
         logger.info("--- Pass 1: Processing repository structure and files ---")
         self._process_repository()
 
-        logger.info(
-            f"\n--- Found {len(self.function_registry)} functions/methods in codebase ---"
-        )
+        logger.info(f"\n--- Found {len(self.function_registry)} functions/methods ---")
         logger.info("--- Pass 2: Processing Function Calls from AST Cache ---")
         self._process_function_calls()
 
@@ -178,91 +148,62 @@ class GraphUpdater:
         self.ingestor.flush_all()
 
     def _process_repository(self) -> None:
-        """
-        Single pass: Walks the directory to find packages, folders, and files,
-        then parses files and caches their ASTs.
-        """
+        """Single pass to find and process all elements in the repository."""
         for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
             dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
             root = Path(root_str)
             relative_root = root.relative_to(self.repo_path)
-
-            # Determine the parent container for the current directory
             parent_rel_path = relative_root.parent
             parent_container_qn = self.structural_elements.get(parent_rel_path)
 
             parent_label, parent_key, parent_val = (
-                ("Project", "name", self.project_name)
-                if root == self.repo_path
-                else (
-                    ("Package", "qualified_name", parent_container_qn)
-                    if parent_container_qn
-                    else ("Folder", "path", str(parent_rel_path))
-                )
+                ("Project", "name", self.project_name) if root == self.repo_path else
+                ("Package", "qualified_name", parent_container_qn) if parent_container_qn else
+                ("Folder", "path", str(parent_rel_path))
             )
 
-            # Process the current directory itself, unless it's the root
-            if root == self.repo_path:
-                current_container_label, current_container_key, current_container_val = parent_label, parent_key, parent_val
-            else:
-                # Check if the current directory is a package
-                is_package = False
-                package_indicators = set()
-                for lang_queries in self.queries.values():
-                    package_indicators.update(lang_queries["config"].package_indicators)
-                for indicator in package_indicators:
-                    if (root / indicator).exists():
-                        is_package = True
-                        break
+            current_container_label, current_container_key, current_container_val = (
+                self._process_directory(root, relative_root, parent_label, parent_key, parent_val)
+                if root != self.repo_path else
+                (parent_label, parent_key, parent_val)
+            )
 
-                if is_package:
-                    package_qn = ".".join([self.project_name] + list(relative_root.parts))
-                    self.structural_elements[relative_root] = package_qn
-                    logger.info(f"  Identified Package: {package_qn}")
-                    self.ingestor.ensure_node_batch(
-                        "Package",
-                        {"qualified_name": package_qn, "name": root.name, "path": str(relative_root)},
-                    )
-                    self.ingestor.ensure_relationship_batch(
-                        (parent_label, parent_key, parent_val),
-                        "CONTAINS_PACKAGE",
-                        ("Package", "qualified_name", package_qn),
-                    )
-                    current_container_label, current_container_key, current_container_val = "Package", "qualified_name", package_qn
-                else:  # It's a Folder
-                    self.structural_elements[relative_root] = None
-                    folder_path_str = str(relative_root)
-                    logger.info(f"  Identified Folder: '{folder_path_str}'")
-                    self.ingestor.ensure_node_batch(
-                        "Folder", {"path": folder_path_str, "name": root.name}
-                    )
-                    self.ingestor.ensure_relationship_batch(
-                        (parent_label, parent_key, parent_val),
-                        "CONTAINS_FOLDER",
-                        ("Folder", "path", folder_path_str),
-                    )
-                    current_container_label, current_container_key, current_container_val = "Folder", "path", folder_path_str
+            self._process_files_in_dir(files, root, current_container_label, current_container_key, current_container_val)
 
-            # Process files in the current directory
-            for file_name in files:
-                filepath = root / file_name
-                relative_filepath = str(filepath.relative_to(self.repo_path))
+    def _process_directory(self, root: Path, relative_root: Path, parent_label: str, parent_key: str, parent_val: Any) -> tuple[str, str, Any]:
+        """Process a single directory to determine if it's a Package or Folder."""
+        package_indicators = {ind for conf in self.lang_configs.values() for ind in conf.package_indicators}
+        is_package = any((root / indicator).exists() for indicator in package_indicators)
 
-                self.ingestor.ensure_node_batch(
-                    "File",
-                    {"path": relative_filepath, "name": file_name, "extension": filepath.suffix},
-                )
-                self.ingestor.ensure_relationship_batch(
-                    (current_container_label, current_container_key, current_container_val),
-                    "CONTAINS_FILE",
-                    ("File", "path", relative_filepath),
-                )
+        if is_package:
+            package_qn = ".".join([self.project_name] + list(relative_root.parts))
+            self.structural_elements[relative_root] = package_qn
+            logger.info(f"  Identified Package: {package_qn}")
+            props = {"qualified_name": package_qn, "name": root.name, "path": str(relative_root)}
+            self.ingestor.ensure_node_batch("Package", props)
+            self.ingestor.ensure_relationship_batch((parent_label, parent_key, parent_val), "CONTAINS_PACKAGE", ("Package", "qualified_name", package_qn))
+            return "Package", "qualified_name", package_qn
+        else:
+            self.structural_elements[relative_root] = None
+            folder_path_str = str(relative_root)
+            logger.info(f"  Identified Folder: '{folder_path_str}'")
+            props = {"path": folder_path_str, "name": root.name}
+            self.ingestor.ensure_node_batch("Folder", props)
+            self.ingestor.ensure_relationship_batch((parent_label, parent_key, parent_val), "CONTAINS_FOLDER", ("Folder", "path", folder_path_str))
+            return "Folder", "path", folder_path_str
 
-                lang_config = get_language_config(filepath.suffix)
-                if lang_config and lang_config.name in self.parsers:
-                    self.parse_and_ingest_file(filepath, lang_config.name)
-                elif file_name == "pyproject.toml":
-                    self._parse_dependencies(filepath)
+    def _process_files_in_dir(self, files: list[str], root: Path, container_label: str, container_key: str, container_val: Any) -> None:
+        """Process all files within a given directory."""
+        for file_name in files:
+            filepath = root / file_name
+            relative_filepath = str(filepath.relative_to(self.repo_path))
+            self.ingestor.ensure_node_batch("File", {"path": relative_filepath, "name": file_name, "extension": filepath.suffix})
+            self.ingestor.ensure_relationship_batch((container_label, container_key, container_val), "CONTAINS_FILE", ("File", "path", relative_filepath))
+            lang_config = get_language_config(filepath.suffix)
+            if lang_config and lang_config.name in self.parsers:
+                self.parse_and_ingest_file(filepath, lang_config.name)
+            elif file_name == "pyproject.toml":
+                self._parse_dependencies(filepath)
 
     def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""
@@ -274,290 +215,126 @@ class GraphUpdater:
             first_statement.type == "expression_statement"
             and first_statement.children[0].type == "string"
         ):
-            text = first_statement.children[0].text
-            if text is not None:
-                return text.decode("utf-8").strip("'\" \n")
+            return first_statement.children[0].text.decode("utf-8").strip("'\" \n")
         return None
 
     def parse_and_ingest_file(self, file_path: Path, language: str) -> None:
-        """
-        Parses a file, ingests its structure and definitions,
-        and caches the AST for the next pass.
-        """
-        if isinstance(file_path, str):
-            file_path = Path(file_path)
+        """Parses a file, ingests its structure, and caches the AST."""
         relative_path = file_path.relative_to(self.repo_path)
-        relative_path_str = str(relative_path)
-        logger.info(f"Parsing and Caching AST for {language}: {relative_path_str}")
-
+        logger.info(f"Parsing and Caching AST for {language}: {relative_path}")
         try:
-            # Check if language is supported
-            if language not in self.parsers or language not in self.queries:
-                logger.warning(f"Unsupported language '{language}' for {file_path}")
-                return
-
             source_bytes = file_path.read_bytes()
             parser = self.parsers[language]
             tree = parser.parse(source_bytes)
             root_node = tree.root_node
-
-            # Cache the parsed AST for the function call pass
             self.ast_cache[file_path] = (root_node, language)
-
-            module_qn = ".".join(
-                [self.project_name] + list(relative_path.with_suffix("").parts)
-            )
+            module_qn = ".".join([self.project_name] + list(relative_path.with_suffix("").parts))
             if file_path.name == "__init__.py":
-                module_qn = ".".join(
-                    [self.project_name] + list(relative_path.parent.parts)
-                )
-
-            self.ingestor.ensure_node_batch(
-                "Module",
-                {
-                    "qualified_name": module_qn,
-                    "name": file_path.name,
-                    "path": relative_path_str,
-                },
-            )
-
-            # Link Module to its parent Package/Folder
+                module_qn = ".".join([self.project_name] + list(relative_path.parent.parts))
+            self.ingestor.ensure_node_batch("Module", {"qualified_name": module_qn, "name": file_path.name, "path": str(relative_path)})
             parent_rel_path = relative_path.parent
             parent_container_qn = self.structural_elements.get(parent_rel_path)
             parent_label, parent_key, parent_val = (
-                ("Package", "qualified_name", parent_container_qn)
-                if parent_container_qn
-                else (
-                    ("Folder", "path", str(parent_rel_path))
-                    if parent_rel_path != Path(".")
-                    else ("Project", "name", self.project_name)
-                )
+                ("Package", "qualified_name", parent_container_qn) if parent_container_qn else
+                ("Folder", "path", str(parent_rel_path)) if parent_rel_path != Path(".") else
+                ("Project", "name", self.project_name)
             )
-            self.ingestor.ensure_relationship_batch(
-                (parent_label, parent_key, parent_val),
-                "CONTAINS_MODULE",
-                ("Module", "qualified_name", module_qn),
-            )
-
+            self.ingestor.ensure_relationship_batch((parent_label, parent_key, parent_val), "CONTAINS_MODULE", ("Module", "qualified_name", module_qn))
             self._ingest_top_level_functions(root_node, module_qn, language)
             self._ingest_classes_and_methods(root_node, module_qn, language)
-
         except Exception as e:
             logger.error(f"Failed to parse or ingest {file_path}: {e}")
 
     def _ingest_top_level_functions(self, root_node: Node, module_qn: str, language: str) -> None:
-        lang_queries = self.queries[language]
+        lang_queries = self._get_queries(language)
         lang_config = lang_queries["config"]
-
         captures = lang_queries["functions"].captures(root_node)
-        func_nodes = captures.get("function", [])
-        for func_node in func_nodes:
-            if not isinstance(func_node, Node):
-                logger.warning(
-                    f"Expected Node object but got {type(func_node)}: {func_node}"
-                )
-                continue
+        for func_node, _ in captures:
             if self._is_method(func_node, lang_config):
                 continue
-
             name_node = func_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            func_name = text.decode("utf8")
-            func_qn = self._build_nested_qualified_name(
-                func_node, module_qn, func_name, lang_config
-            )
-
-            if not func_qn:
-                continue
-
-            props: dict[str, Any] = {
-                "qualified_name": func_qn,
-                "name": func_name,
-                "decorators": [],
-                "start_line": func_node.start_point[0] + 1,
-                "end_line": func_node.end_point[0] + 1,
-                "docstring": self._get_docstring(func_node),
-            }
+            if not name_node: continue
+            func_name = name_node.text.decode("utf8")
+            func_qn = self._build_nested_qualified_name(func_node, module_qn, func_name, lang_config)
+            if not func_qn: continue
+            props = {"qualified_name": func_qn, "name": func_name, "decorators": [], "start_line": func_node.start_point[0] + 1, "end_line": func_node.end_point[0] + 1, "docstring": self._get_docstring(func_node)}
             logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
             self.ingestor.ensure_node_batch("Function", props)
-
             self.function_registry[func_qn] = "Function"
             self.simple_name_lookup[func_name].add(func_qn)
+            parent_type, parent_qn = self._determine_function_parent(func_node, module_qn, lang_config)
+            self.ingestor.ensure_relationship_batch((parent_type, "qualified_name", parent_qn), "DEFINES", ("Function", "qualified_name", func_qn))
 
-            parent_type, parent_qn = self._determine_function_parent(
-                func_node, module_qn, lang_config
-            )
-            self.ingestor.ensure_relationship_batch(
-                (parent_type, "qualified_name", parent_qn),
-                "DEFINES",
-                ("Function", "qualified_name", func_qn),
-            )
-
-    def _build_nested_qualified_name(
-        self, func_node: Node, module_qn: str, func_name: str, lang_config: LanguageConfig
-    ) -> str | None:
+    def _build_nested_qualified_name(self, node: Node, module_qn: str, name: str, lang_config: LanguageConfig) -> str | None:
         path_parts = []
-        current = func_node.parent
-
-        if not isinstance(current, Node):
-            logger.warning(
-                f"Unexpected parent type for node {func_node}: {type(current)}. Skipping."
-            )
-            return None
-
+        current = node.parent
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
                 if name_node := current.child_by_field_name("name"):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode("utf8"))
+                    path_parts.append(name_node.text.decode("utf8"))
             elif current.type in lang_config.class_node_types:
-                return None  # This is a method
-
-            if hasattr(current, "parent") and isinstance(current.parent, Node):
-                current = current.parent
-            else:
-                break
-
+                return None
+            current = current.parent
         path_parts.reverse()
-        if path_parts:
-            return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
-        else:
-            return f"{module_qn}.{func_name}"
+        return f"{module_qn}.{'.'.join(path_parts)}.{name}" if path_parts else f"{module_qn}.{name}"
 
-    def _is_method(self, func_node: Node, lang_config: LanguageConfig) -> bool:
-        current = func_node.parent
-        if not isinstance(current, Node):
-            return False
-
+    def _is_method(self, node: Node, lang_config: LanguageConfig) -> bool:
+        current = node.parent
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.class_node_types:
                 return True
-            if hasattr(current, "parent") and isinstance(current.parent, Node):
-                current = current.parent
-            else:
-                break
+            current = current.parent
         return False
 
-    def _determine_function_parent(
-        self, func_node: Node, module_qn: str, lang_config: LanguageConfig
-    ) -> tuple[str, str]:
-        current = func_node.parent
-        if not isinstance(current, Node):
-            return "Module", module_qn
-
+    def _determine_function_parent(self, node: Node, module_qn: str, lang_config: LanguageConfig) -> tuple[str, str]:
+        current = node.parent
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
                 if name_node := current.child_by_field_name("name"):
-                    parent_text = name_node.text
-                    if parent_text is None:
-                        continue
-                    parent_func_name = parent_text.decode("utf8")
-                    if parent_func_qn := self._build_nested_qualified_name(
-                        current, module_qn, parent_func_name, lang_config
-                    ):
-                        return "Function", parent_func_qn
+                    parent_name = name_node.text.decode("utf8")
+                    if parent_qn := self._build_nested_qualified_name(current, module_qn, parent_name, lang_config):
+                        return "Function", parent_qn
                 break
-
-            if hasattr(current, "parent") and isinstance(current.parent, Node):
-                current = current.parent
-            else:
-                break
-
+            current = current.parent
         return "Module", module_qn
 
     def _ingest_classes_and_methods(self, root_node: Node, module_qn: str, language: str) -> None:
-        lang_queries = self.queries[language]
-
-        class_captures = lang_queries["classes"].captures(root_node)
-        class_nodes = class_captures.get("class", [])
-        for class_node in class_nodes:
-            if not isinstance(class_node, Node):
-                continue
+        lang_queries = self._get_queries(language)
+        for class_node, _ in lang_queries["classes"].captures(root_node):
             name_node = class_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            class_name = text.decode("utf8")
+            if not name_node: continue
+            class_name = name_node.text.decode("utf8")
             class_qn = f"{module_qn}.{class_name}"
-            class_props: dict[str, Any] = {
-                "qualified_name": class_qn,
-                "name": class_name,
-                "decorators": [],
-                "start_line": class_node.start_point[0] + 1,
-                "end_line": class_node.end_point[0] + 1,
-                "docstring": self._get_docstring(class_node),
-            }
+            props = {"qualified_name": class_qn, "name": class_name, "decorators": [], "start_line": class_node.start_point[0] + 1, "end_line": class_node.end_point[0] + 1, "docstring": self._get_docstring(class_node)}
             logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
-            self.ingestor.ensure_node_batch("Class", class_props)
-            self.ingestor.ensure_relationship_batch(
-                ("Module", "qualified_name", module_qn),
-                "DEFINES",
-                ("Class", "qualified_name", class_qn),
-            )
-
+            self.ingestor.ensure_node_batch("Class", props)
+            self.ingestor.ensure_relationship_batch(("Module", "qualified_name", module_qn), "DEFINES", ("Class", "qualified_name", class_qn))
             body_node = class_node.child_by_field_name("body")
-            if not body_node:
-                continue
-
-            method_captures = lang_queries["functions"].captures(body_node)
-            method_nodes = method_captures.get("function", [])
-            for method_node in method_nodes:
-                if not isinstance(method_node, Node):
-                    continue
+            if not body_node: continue
+            for method_node, _ in lang_queries["functions"].captures(body_node):
                 method_name_node = method_node.child_by_field_name("name")
-                if not method_name_node:
-                    continue
-                text = method_name_node.text
-                if text is None:
-                    continue
-                method_name = text.decode("utf8")
+                if not method_name_node: continue
+                method_name = method_name_node.text.decode("utf8")
                 method_qn = f"{class_qn}.{method_name}"
-                method_props: dict[str, Any] = {
-                    "qualified_name": method_qn,
-                    "name": method_name,
-                    "decorators": [],
-                    "start_line": method_node.start_point[0] + 1,
-                    "end_line": method_node.end_point[0] + 1,
-                    "docstring": self._get_docstring(method_node),
-                }
+                method_props = {"qualified_name": method_qn, "name": method_name, "decorators": [], "start_line": method_node.start_point[0] + 1, "end_line": method_node.end_point[0] + 1, "docstring": self._get_docstring(method_node)}
                 logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
                 self.ingestor.ensure_node_batch("Method", method_props)
-
                 self.function_registry[method_qn] = "Method"
                 self.simple_name_lookup[method_name].add(method_qn)
-
-                self.ingestor.ensure_relationship_batch(
-                    ("Class", "qualified_name", class_qn),
-                    "DEFINES_METHOD",
-                    ("Method", "qualified_name", method_qn),
-                )
+                self.ingestor.ensure_relationship_batch(("Class", "qualified_name", class_qn), "DEFINES_METHOD", ("Method", "qualified_name", method_qn))
 
     def _parse_dependencies(self, filepath: Path) -> None:
         logger.info(f"  Parsing pyproject.toml: {filepath}")
         try:
             data = toml.load(filepath)
             deps = (data.get("tool", {}).get("poetry", {}).get("dependencies", {})) or {
-                dep.split(">=")[0].split("==")[0].strip(): dep
-                for dep in data.get("project", {}).get("dependencies", [])
+                dep.split(">=")[0].split("==")[0].strip(): dep for dep in data.get("project", {}).get("dependencies", [])
             }
             for dep_name, dep_spec in deps.items():
-                if dep_name.lower() == "python":
-                    continue
+                if dep_name.lower() == "python": continue
                 logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
                 self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
-                self.ingestor.ensure_relationship_batch(
-                    ("Project", "name", self.project_name),
-                    "DEPENDS_ON_EXTERNAL",
-                    ("ExternalPackage", "name", dep_name),
-                    properties={"version_spec": str(dep_spec)},
-                )
+                self.ingestor.ensure_relationship_batch(("Project", "name", self.project_name), "DEPENDS_ON_EXTERNAL", ("ExternalPackage", "name", dep_name), properties={"version_spec": str(dep_spec)})
         except Exception as e:
             logger.error(f"    Error parsing {filepath}: {e}")
 
@@ -570,194 +347,94 @@ class GraphUpdater:
         """Process function calls in a specific file using its cached AST."""
         relative_path = file_path.relative_to(self.repo_path)
         logger.debug(f"Processing calls in cached AST for: {relative_path}")
-
         try:
-            module_qn = ".".join(
-                [self.project_name] + list(relative_path.with_suffix("").parts)
-            )
+            module_qn = ".".join([self.project_name] + list(relative_path.with_suffix("").parts))
             if file_path.name == "__init__.py":
-                module_qn = ".".join(
-                    [self.project_name] + list(relative_path.parent.parts)
-                )
-
+                module_qn = ".".join([self.project_name] + list(relative_path.parent.parts))
             self._process_calls_in_functions(root_node, module_qn, language)
             self._process_calls_in_classes(root_node, module_qn, language)
-
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
 
     def _process_calls_in_functions(self, root_node: Node, module_qn: str, language: str) -> None:
-        lang_queries = self.queries[language]
+        lang_queries = self._get_queries(language)
         lang_config = lang_queries["config"]
-
-        captures = lang_queries["functions"].captures(root_node)
-        func_nodes = captures.get("function", [])
-        for func_node in func_nodes:
-            if not isinstance(func_node, Node):
-                continue
-            if self._is_method(func_node, lang_config):
-                continue
-
+        for func_node, _ in lang_queries["functions"].captures(root_node):
+            if self._is_method(func_node, lang_config): continue
             name_node = func_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            func_name = text.decode("utf8")
-            func_qn = self._build_nested_qualified_name(
-                func_node, module_qn, func_name, lang_config
-            )
-
+            if not name_node: continue
+            func_name = name_node.text.decode("utf8")
+            func_qn = self._build_nested_qualified_name(func_node, module_qn, func_name, lang_config)
             if func_qn:
-                self._ingest_function_calls(
-                    func_node, func_qn, "Function", module_qn, language
-                )
+                self._ingest_function_calls(func_node, func_qn, "Function", module_qn, language)
 
     def _process_calls_in_classes(self, root_node: Node, module_qn: str, language: str) -> None:
-        lang_queries = self.queries[language]
-
-        class_captures = lang_queries["classes"].captures(root_node)
-        class_nodes = class_captures.get("class", [])
-        for class_node in class_nodes:
-            if not isinstance(class_node, Node):
-                continue
+        lang_queries = self._get_queries(language)
+        for class_node, _ in lang_queries["classes"].captures(root_node):
             name_node = class_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            class_name = text.decode("utf8")
+            if not name_node: continue
+            class_name = name_node.text.decode("utf8")
             class_qn = f"{module_qn}.{class_name}"
-
             body_node = class_node.child_by_field_name("body")
-            if not body_node:
-                continue
-
-            method_captures = lang_queries["functions"].captures(body_node)
-            method_nodes = method_captures.get("function", [])
-            for method_node in method_nodes:
-                if not isinstance(method_node, Node):
-                    continue
+            if not body_node: continue
+            for method_node, _ in lang_queries["functions"].captures(body_node):
                 method_name_node = method_node.child_by_field_name("name")
-                if not method_name_node:
-                    continue
-                text = method_name_node.text
-                if text is None:
-                    continue
-                method_name = text.decode("utf8")
+                if not method_name_node: continue
+                method_name = method_name_node.text.decode("utf8")
                 method_qn = f"{class_qn}.{method_name}"
-
-                self._ingest_function_calls(
-                    method_node, method_qn, "Method", module_qn, language
-                )
+                self._ingest_function_calls(method_node, method_qn, "Method", module_qn, language)
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """Extracts the name of the function or method being called."""
-        # For 'call' in Python and 'call_expression' in JS/TS
-        if func_child := call_node.child_by_field_name("function"):
-            if func_child.type == "identifier":
-                text = func_child.text
-                if text is not None:
-                    return text.decode("utf8")
-            # Python: obj.method() -> attribute
-            elif func_child.type == "attribute":
-                if attr_child := func_child.child_by_field_name("attribute"):
-                    text = attr_child.text
-                    if text is not None:
-                        return text.decode("utf8")
-            # JS/TS: obj.method() -> member_expression
-            elif func_child.type == "member_expression":
-                if prop_child := func_child.child_by_field_name("property"):
-                    text = prop_child.text
-                    if text is not None:
-                        return text.decode("utf8")
+        target_node = call_node.child_by_field_name("function")
+        if not target_node:
+            target_node = call_node.child_by_field_name("name")
+        if not target_node:
+            return None
 
-        # For 'method_invocation' in Java
-        if name_node := call_node.child_by_field_name("name"):
-            text = name_node.text
-            if text is not None:
-                return text.decode("utf8")
-
+        if target_node.type == "identifier":
+            return target_node.text.decode("utf8")
+        elif target_node.type == "attribute":
+            return target_node.child_by_field_name("attribute").text.decode("utf8")
+        elif target_node.type == "member_expression":
+            return target_node.child_by_field_name("property").text.decode("utf8")
         return None
 
-    def _ingest_function_calls(
-        self,
-        caller_node: Node,
-        caller_qn: str,
-        caller_type: str,
-        module_qn: str,
-        language: str,
-    ) -> None:
-        calls_query = self.queries[language].get("calls")
-        if not calls_query:
-            return
-
-        call_captures = calls_query.captures(caller_node)
-        call_nodes = call_captures.get("call", [])
-        for call_node in call_nodes:
-            if not isinstance(call_node, Node):
-                continue
+    def _ingest_function_calls(self, caller_node: Node, caller_qn: str, caller_type: str, module_qn: str, language: str) -> None:
+        calls_query = self._get_queries(language).get("calls")
+        if not calls_query: return
+        for call_node, _ in calls_query.captures(caller_node):
             call_name = self._get_call_target_name(call_node)
-            if not call_name:
-                continue
-
+            if not call_name: continue
             callee_info = self._resolve_function_call(call_name, module_qn)
-            if not callee_info:
-                continue
-
+            if not callee_info: continue
             callee_type, callee_qn = callee_info
-            logger.debug(
-                f"      Found call from {caller_qn} to {call_name} (resolved as {callee_type}:{callee_qn})"
-            )
+            logger.debug(f"      Found call from {caller_qn} to {call_name} (resolved as {callee_type}:{callee_qn})")
+            self.ingestor.ensure_relationship_batch((caller_type, "qualified_name", caller_qn), "CALLS", (callee_type, "qualified_name", callee_qn))
 
-            self.ingestor.ensure_relationship_batch(
-                (caller_type, "qualified_name", caller_qn),
-                "CALLS",
-                (callee_type, "qualified_name", callee_qn),
-            )
-
-    def _resolve_function_call(
-        self, call_name: str, module_qn: str
-    ) -> tuple[str, str] | None:
-        # First, try to resolve with fully qualified names
+    def _resolve_function_call(self, call_name: str, module_qn: str) -> tuple[str, str] | None:
+        """Resolve a function call to its qualified name."""
         possible_qns = [
             f"{module_qn}.{call_name}",
             f"{self.project_name}.{call_name}",
-            (
-                f"{'.'.join(module_qn.split('.')[:-1])}.{call_name}"
-                if "." in module_qn
-                else None
-            ),
         ]
-        possible_qns = [qn for qn in possible_qns if qn]
+        if "." in module_qn:
+            possible_qns.append(f"{'.'.join(module_qn.split('.')[:-1])}.{call_name}")
 
         for qn in possible_qns:
             if qn in self.function_registry:
                 return self.function_registry[qn], qn
 
-        # If not found, use the simple name lookup as a fallback
         if call_name in self.simple_name_lookup:
-            # This is a simplification.
             for registered_qn in self.simple_name_lookup[call_name]:
                 if self._is_likely_same_function(call_name, registered_qn, module_qn):
                     return self.function_registry[registered_qn], registered_qn
-
         return None
 
-    # TODO: (VA) This is a hack to resolve function calls. We need to improve this.
-    def _is_likely_same_function(
-        self, call_name: str, registered_qn: str, caller_module_qn: str
-    ) -> bool:
+    def _is_likely_same_function(self, call_name: str, registered_qn: str, caller_module_qn: str) -> bool:
+        """A heuristic to resolve function calls with the same simple name."""
         if len(call_name) > 10 or "_" in call_name:
             return True
-
         caller_parts = caller_module_qn.split(".")
         registered_parts = registered_qn.split(".")
-
-        if len(caller_parts) >= 2 and len(registered_parts) >= 2:
-            if caller_parts[:2] == registered_parts[:2]:
-                return True
-
-        return False
+        return len(caller_parts) >= 2 and len(registered_parts) >= 2 and caller_parts[:2] == registered_parts[:2]
