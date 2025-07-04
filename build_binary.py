@@ -56,23 +56,23 @@ def build_binary():
     
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("✅ Binary built successfully!")
+        print("Binary built successfully!")
         
         # Show binary info
         binary_path = Path("dist") / binary_name
         if binary_path.exists():
             size_mb = binary_path.stat().st_size / (1024 * 1024)
-            print(f"📦 Binary: {binary_path}")
-            print(f"📏 Size: {size_mb:.1f} MB")
+            print(f"Binary: {binary_path}")
+            print(f"Size: {size_mb:.1f} MB")
             
             # Make sure it's executable
             os.chmod(binary_path, 0o755)
-            print("🚀 Binary is ready for distribution!")
+            print("Binary is ready for distribution!")
             
         return True
         
     except subprocess.CalledProcessError as e:
-        print(f"❌ Build failed: {e}")
+        print(f"Build failed: {e}")
         print("STDOUT:", e.stdout)
         print("STDERR:", e.stderr)
         return False
