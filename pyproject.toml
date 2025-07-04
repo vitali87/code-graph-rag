@@ -62,5 +62,6 @@ disallow_untyped_defs = true
 
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.14.1",
     "types-toml>=0.10.8.20240310",
 ]

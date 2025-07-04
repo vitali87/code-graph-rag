@@ -1,0 +1,52 @@
+name: Build Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: amd64
+          - os: windows-latest
+            platform: windows
+            arch: amd64
+          - os: macos-latest
+            platform: darwin
+            arch: amd64
+          - os: macos-14
+            platform: darwin
+            arch: arm64
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+    
+    - name: Install dependencies
+      run: uv sync
+    
+    - name: Install PyInstaller
+      run: uv add --dev pyinstaller
+    
+    - name: Build binary
+      run: uv run python build_binary.py
+    
+    - name: Upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: graph-code-${{ matrix.platform }}-${{ matrix.arch }}
+        path: dist/graph-code-*
