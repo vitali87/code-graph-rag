@@ -23,6 +23,7 @@ Relationships (source)-[REL_TYPE]->(target):
 - Module -[:DEFINES]-> (Class|Function)
 - Class -[:DEFINES_METHOD]-> Method
 - Project -[:DEPENDS_ON_EXTERNAL]-> ExternalPackage
+- (Function|Method) -[:CALLS]-> (Function|Method)
 
 **2. Critical Cypher Query Rules**
 
