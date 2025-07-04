@@ -13,19 +13,21 @@ class GraphData(BaseModel):
     @field_validator("results", mode="before")
     @classmethod
     def _format_results(cls, v: Any) -> list[dict[str, Any]]:
+        """
+        Sanitize results to ensure all values are JSON-serializable basic types.
+        Converts non-standard types to their string representation.
+        """
         if not isinstance(v, list):
-            return []  # Return empty list instead of v
+            return []
 
-        clean_results = []
-        for row in v:
-            clean_row = {}
-            for k, val in row.items():
-                if not isinstance(val, str | int | float | bool | list | dict | type(None)):
-                    clean_row[k] = str(val)
-                else:
-                    clean_row[k] = val  # type: ignore
-            clean_results.append(clean_row)
-        return clean_results
+        allowed_types = (str, int, float, bool, list, dict, type(None))
+        return [
+            {
+                k: val if isinstance(val, allowed_types) else str(val)
+                for k, val in row.items()
+            }
+            for row in v
+        ]
 
     model_config = ConfigDict(extra="forbid")
 
