@@ -48,7 +48,7 @@ def build_binary():
         "--collect-all", "loguru",
         "--collect-all", "toml",
         # Entry point
-        "graph_code.py"
+        "main.py"
     ]
     
     print(f"Building binary: {binary_name}")
