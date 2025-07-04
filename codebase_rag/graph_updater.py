@@ -251,8 +251,14 @@ class GraphUpdater:
     def _ingest_top_level_functions(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self._get_queries(language)
         lang_config = lang_queries["config"]
-        captures = lang_queries["functions"].captures(root_node)
-        for func_node, _ in captures:
+        raw_captures = lang_queries["functions"].captures(root_node)
+
+        # Process captures into a dictionary
+        captures = defaultdict(list)
+        for node, name in raw_captures:
+            captures[name].append(node)
+
+        for func_node in captures.get("function", []):
             if self._is_method(func_node, lang_config):
                 continue
             name_node = func_node.child_by_field_name("name")
@@ -303,7 +309,13 @@ class GraphUpdater:
 
     def _ingest_classes_and_methods(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self._get_queries(language)
-        for class_node, _ in lang_queries["classes"].captures(root_node):
+        raw_class_captures = lang_queries["classes"].captures(root_node)
+
+        class_captures = defaultdict(list)
+        for node, name in raw_class_captures:
+            class_captures[name].append(node)
+
+        for class_node in class_captures.get("class", []):
             name_node = class_node.child_by_field_name("name")
             if not name_node: continue
             class_name = name_node.text.decode("utf8")
@@ -314,7 +326,13 @@ class GraphUpdater:
             self.ingestor.ensure_relationship_batch(("Module", "qualified_name", module_qn), "DEFINES", ("Class", "qualified_name", class_qn))
             body_node = class_node.child_by_field_name("body")
             if not body_node: continue
-            for method_node, _ in lang_queries["functions"].captures(body_node):
+
+            raw_method_captures = lang_queries["functions"].captures(body_node)
+            method_captures = defaultdict(list)
+            for node, name in raw_method_captures:
+                method_captures[name].append(node)
+
+            for method_node in method_captures.get("function", []):
                 method_name_node = method_node.child_by_field_name("name")
                 if not method_name_node: continue
                 method_name = method_name_node.text.decode("utf8")
@@ -362,7 +380,13 @@ class GraphUpdater:
     def _process_calls_in_functions(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self._get_queries(language)
         lang_config = lang_queries["config"]
-        for func_node, _ in lang_queries["functions"].captures(root_node):
+        raw_captures = lang_queries["functions"].captures(root_node)
+
+        captures = defaultdict(list)
+        for node, name in raw_captures:
+            captures[name].append(node)
+
+        for func_node in captures.get("function", []):
             if self._is_method(func_node, lang_config): continue
             name_node = func_node.child_by_field_name("name")
             if not name_node: continue
@@ -373,14 +397,26 @@ class GraphUpdater:
 
     def _process_calls_in_classes(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self._get_queries(language)
-        for class_node, _ in lang_queries["classes"].captures(root_node):
+        raw_captures = lang_queries["classes"].captures(root_node)
+
+        captures = defaultdict(list)
+        for node, name in raw_captures:
+            captures[name].append(node)
+
+        for class_node in captures.get("class", []):
             name_node = class_node.child_by_field_name("name")
             if not name_node: continue
             class_name = name_node.text.decode("utf8")
             class_qn = f"{module_qn}.{class_name}"
             body_node = class_node.child_by_field_name("body")
             if not body_node: continue
-            for method_node, _ in lang_queries["functions"].captures(body_node):
+
+            raw_method_captures = lang_queries["functions"].captures(body_node)
+            method_captures = defaultdict(list)
+            for node, name in raw_method_captures:
+                method_captures[name].append(node)
+
+            for method_node in method_captures.get("function", []):
                 method_name_node = method_node.child_by_field_name("name")
                 if not method_name_node: continue
                 method_name = method_name_node.text.decode("utf8")
@@ -406,7 +442,13 @@ class GraphUpdater:
     def _ingest_function_calls(self, caller_node: Node, caller_qn: str, caller_type: str, module_qn: str, language: str) -> None:
         calls_query = self._get_queries(language).get("calls")
         if not calls_query: return
-        for call_node, _ in calls_query.captures(caller_node):
+        raw_captures = calls_query.captures(caller_node)
+        
+        captures = defaultdict(list)
+        for node, name in raw_captures:
+            captures[name].append(node)
+            
+        for call_node in captures.get("call", []):
             call_name = self._get_call_target_name(call_node)
             if not call_name: continue
             callee_info = self._resolve_function_call(call_name, module_qn)
