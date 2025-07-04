@@ -255,7 +255,8 @@ class GraphUpdater:
 
         # Process captures into a dictionary
         captures = defaultdict(list)
-        for node, name in raw_captures:
+        for capture in raw_captures:
+            node, name = capture[0], capture[1]
             captures[name].append(node)
 
         for func_node in captures.get("function", []):
@@ -312,7 +313,8 @@ class GraphUpdater:
         raw_class_captures = lang_queries["classes"].captures(root_node)
 
         class_captures = defaultdict(list)
-        for node, name in raw_class_captures:
+        for capture in raw_class_captures:
+            node, name = capture[0], capture[1]
             class_captures[name].append(node)
 
         for class_node in class_captures.get("class", []):
@@ -329,7 +331,8 @@ class GraphUpdater:
 
             raw_method_captures = lang_queries["functions"].captures(body_node)
             method_captures = defaultdict(list)
-            for node, name in raw_method_captures:
+            for capture in raw_method_captures:
+                node, name = capture[0], capture[1]
                 method_captures[name].append(node)
 
             for method_node in method_captures.get("function", []):
@@ -383,7 +386,8 @@ class GraphUpdater:
         raw_captures = lang_queries["functions"].captures(root_node)
 
         captures = defaultdict(list)
-        for node, name in raw_captures:
+        for capture in raw_captures:
+            node, name = capture[0], capture[1]
             captures[name].append(node)
 
         for func_node in captures.get("function", []):
@@ -400,7 +404,8 @@ class GraphUpdater:
         raw_captures = lang_queries["classes"].captures(root_node)
 
         captures = defaultdict(list)
-        for node, name in raw_captures:
+        for capture in raw_captures:
+            node, name = capture[0], capture[1]
             captures[name].append(node)
 
         for class_node in captures.get("class", []):
@@ -413,7 +418,8 @@ class GraphUpdater:
 
             raw_method_captures = lang_queries["functions"].captures(body_node)
             method_captures = defaultdict(list)
-            for node, name in raw_method_captures:
+            for capture in raw_method_captures:
+                node, name = capture[0], capture[1]
                 method_captures[name].append(node)
 
             for method_node in method_captures.get("function", []):
@@ -445,7 +451,8 @@ class GraphUpdater:
         raw_captures = calls_query.captures(caller_node)
         
         captures = defaultdict(list)
-        for node, name in raw_captures:
+        for capture in raw_captures:
+            node, name = capture[0], capture[1]
             captures[name].append(node)
             
         for call_node in captures.get("call", []):
