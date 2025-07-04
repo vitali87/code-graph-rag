@@ -36,6 +36,8 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
 - **✍️ File System Operations**: Full agentic control over file content creation, reading, and editing.
 - **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
+- **🚀 Interactive Code Optimization**: AI-powered codebase optimization with language-specific best practices and interactive approval workflow
+- **📚 Reference-Guided Optimization**: Use your own coding standards and architectural documents to guide optimization suggestions
 - **🔗 Dependency Analysis**: Parses `pyproject.toml` to understand external dependencies
 - **🎯 Nested Function Support**: Handles complex nested functions and class hierarchies
 - **🔄 Language-Agnostic Design**: Unified graph schema across all supported languages
@@ -147,6 +149,12 @@ docker-compose up -d
 ```
 
 ## 🎯 Usage
+
+The Graph-Code system offers four main modes of operation:
+1. **Parse & Ingest**: Build knowledge graph from your codebase
+2. **Interactive Query**: Ask questions about your code in natural language  
+3. **Export & Analyze**: Export graph data for programmatic analysis
+4. **AI Optimization**: Get AI-powered optimization suggestions for your code
 
 ### Step 1: Parse a Repository
 
@@ -269,6 +277,93 @@ This provides a reliable, programmatic way to access your codebase structure wit
 - Custom analysis scripts
 - Building documentation generators
 - Creating code metrics dashboards
+
+### Step 4: Code Optimization (New!)
+
+For AI-powered codebase optimization with best practices guidance:
+
+**Basic optimization for a specific language:**
+```bash
+python -m codebase_rag.main optimize python --repo-path /path/to/your/repo
+```
+
+**Optimization with reference documentation:**
+```bash
+python -m codebase_rag.main optimize python \
+  --repo-path /path/to/your/repo \
+  --reference-document /path/to/best_practices.md
+```
+
+**Using specific models for optimization:**
+```bash
+python -m codebase_rag.main optimize javascript \
+  --repo-path /path/to/frontend \
+  --llm-provider gemini \
+  --orchestrator-model gemini-2.0-flash-thinking-exp-01-21
+```
+
+**Supported Languages for Optimization:**
+- `python` - Python codebases
+- `javascript` - JavaScript/Node.js projects  
+- `typescript` - TypeScript projects
+- `rust` - Rust projects
+- `go` - Go projects
+- `java` - Java projects
+- `scala` - Scala projects
+
+**How It Works:**
+1. **Analysis Phase**: The agent analyzes your codebase structure using the knowledge graph
+2. **Pattern Recognition**: Identifies common anti-patterns, performance issues, and improvement opportunities
+3. **Best Practices Application**: Applies language-specific best practices and patterns
+4. **Interactive Approval**: Presents each optimization suggestion for your approval before implementation
+5. **Guided Implementation**: Implements approved changes with detailed explanations
+
+**Example Optimization Session:**
+```
+Starting python optimization session...
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ The agent will analyze your python codebase and propose specific          ┃
+┃ optimizations. You'll be asked to approve each suggestion before          ┃
+┃ implementation. Type 'exit' or 'quit' to end the session.                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+🔍 Analyzing codebase structure...
+📊 Found 23 Python modules with potential optimizations
+
+💡 Optimization Suggestion #1:
+   File: src/data_processor.py
+   Issue: Using list comprehension in a loop can be optimized
+   Suggestion: Replace with generator expression for memory efficiency
+   
+   [y/n] Do you approve this optimization?
+```
+
+**Reference Document Support:**
+You can provide reference documentation (like coding standards, architectural guidelines, or best practices documents) to guide the optimization process:
+
+```bash
+# Use company coding standards
+python -m codebase_rag.main optimize python \
+  --reference-document ./docs/coding_standards.md
+
+# Use architectural guidelines  
+python -m codebase_rag.main optimize java \
+  --reference-document ./ARCHITECTURE.md
+
+# Use performance best practices
+python -m codebase_rag.main optimize rust \
+  --reference-document ./docs/performance_guide.md
+```
+
+The agent will incorporate the guidance from your reference documents when suggesting optimizations, ensuring they align with your project's standards and architectural decisions.
+
+**CLI Arguments for Optimization:**
+- `language`: Target programming language (required)
+- `--repo-path`: Path to repository (defaults to current directory)
+- `--reference-document`: Path to reference documentation for guidance
+- `--llm-provider`: Choose `gemini` or `local` models
+- `--orchestrator-model`: Specify model for optimization analysis
+- `--cypher-model`: Specify model for graph queries
 
 ## 📊 Graph Schema
 

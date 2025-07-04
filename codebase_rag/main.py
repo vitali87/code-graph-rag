@@ -6,6 +6,7 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 import typer
 from loguru import logger
@@ -86,17 +87,17 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     bindings = KeyBindings()
 
     @bindings.add("c-j")
-    def submit(event):
+    def submit(event: Any) -> None:
         """Submit the current input."""
         event.app.exit(result=event.app.current_buffer.text)
 
     @bindings.add("enter")
-    def new_line(event):
+    def new_line(event: Any) -> None:
         """Insert a new line instead of submitting."""
         event.current_buffer.insert_text("\n")
 
     @bindings.add("c-c")
-    def keyboard_interrupt(event):
+    def keyboard_interrupt(event: Any) -> None:
         """Handle Ctrl+C."""
         event.app.exit(exception=KeyboardInterrupt)
 
@@ -120,7 +121,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     return result.strip()
 
 
-async def run_chat_loop(rag_agent, message_history: list, project_root: Path):
+async def run_chat_loop(rag_agent: Any, message_history: list[Any], project_root: Path) -> None:
     """Runs the main chat loop."""
     question = ""
     while True:
@@ -173,7 +174,7 @@ def _update_model_settings(
     llm_provider: str | None,
     orchestrator_model: str | None,
     cypher_model: str | None,
-):
+) -> None:
     """Update model settings based on command-line arguments."""
     if llm_provider:
         settings.LLM_PROVIDER = llm_provider
@@ -228,7 +229,44 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-async def main_async(repo_path: str):
+def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -> Any:
+    """Initializes all services and creates the RAG agent."""
+    cypher_generator = CypherGenerator()
+    code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
+    file_reader = FileReader(project_root=repo_path)
+    file_writer = FileWriter(project_root=repo_path)
+    file_editor = FileEditor(project_root=repo_path)
+    shell_commander = ShellCommander(
+        project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
+    )
+    directory_lister = DirectoryLister(project_root=repo_path)
+    document_analyzer = DocumentAnalyzer(project_root=repo_path)
+
+    query_tool = create_query_tool(ingestor, cypher_generator)
+    code_tool = create_code_retrieval_tool(code_retriever)
+    file_reader_tool = create_file_reader_tool(file_reader)
+    file_writer_tool = create_file_writer_tool(file_writer)
+    file_editor_tool = create_file_editor_tool(file_editor)
+    shell_command_tool = create_shell_command_tool(shell_commander)
+    directory_lister_tool = create_directory_lister_tool(directory_lister)
+    document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
+
+    rag_agent = create_rag_orchestrator(
+        tools=[
+            query_tool,
+            code_tool,
+            file_reader_tool,
+            file_writer_tool,
+            file_editor_tool,
+            shell_command_tool,
+            directory_lister_tool,
+            document_analyzer_tool,
+        ]
+    )
+    return rag_agent
+
+
+async def main_async(repo_path: str) -> None:
     """Initializes services and runs the main application loop."""
     logger.remove()
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
@@ -253,7 +291,7 @@ async def main_async(repo_path: str):
     else:
         table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
         table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
-        table.add_row("Local Model Endpoint", settings.LOCAL_MODEL_ENDPOINT)
+        table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
     table.add_row("Target Repository", repo_path)
     console.print(table)
 
@@ -268,39 +306,7 @@ async def main_async(repo_path: str):
             )
         )
 
-        cypher_generator = CypherGenerator()
-        code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
-        file_reader = FileReader(project_root=repo_path)
-        file_writer = FileWriter(project_root=repo_path)
-        file_editor = FileEditor(project_root=repo_path)
-        shell_commander = ShellCommander(
-            project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
-        )
-        directory_lister = DirectoryLister(project_root=repo_path)
-        document_analyzer = DocumentAnalyzer(project_root=repo_path)
-
-        query_tool = create_query_tool(ingestor, cypher_generator)
-        code_tool = create_code_retrieval_tool(code_retriever)
-        file_reader_tool = create_file_reader_tool(file_reader)
-        file_writer_tool = create_file_writer_tool(file_writer)
-        file_editor_tool = create_file_editor_tool(file_editor)
-        shell_command_tool = create_shell_command_tool(shell_commander)
-        directory_lister_tool = create_directory_lister_tool(directory_lister)
-        document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
-
-        rag_agent = create_rag_orchestrator(
-            tools=[
-                query_tool,
-                code_tool,
-                file_reader_tool,
-                file_writer_tool,
-                file_editor_tool,
-                shell_command_tool,
-                directory_lister_tool,
-                document_analyzer_tool,
-            ]
-        )
-
+        rag_agent = _initialize_services_and_agent(repo_path, ingestor)
         await run_chat_loop(rag_agent, [], project_root)
 
 
@@ -334,7 +340,7 @@ def start(
     cypher_model: str | None = typer.Option(
         None, "--cypher-model", help="Specify the Cypher generator model ID"
     ),
-):
+) -> None:
     """Starts the Codebase RAG CLI."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
@@ -389,7 +395,7 @@ def export(
     format_json: bool = typer.Option(
         True, "--json/--no-json", help="Export in JSON format"
     ),
-):
+) -> None:
     """Export the current knowledge graph to a file."""
     if not format_json:
         console.print(
@@ -413,44 +419,42 @@ def export(
         raise typer.Exit(1) from e
 
 
-async def run_optimization_loop(rag_agent, message_history: list, project_root: Path, language: str, reference_book: str | None = None):
+async def run_optimization_loop(rag_agent: Any, message_history: list[Any], project_root: Path, language: str, reference_document: str | None = None) -> None:
     """Runs the optimization loop with the RAG agent."""
     console.print(f"[bold green]Starting {language} optimization session...[/bold green]")
-
-    # Prepare book context based on provided reference
-    book_context = ""
-    if reference_book:
-        book_path = Path(reference_book)
-        if book_path.exists():
-            book_context = f"I have access to the reference book at {reference_book} for best practices guidance."
-            console.print(f"[bold cyan]Using reference book: {reference_book}[/bold cyan]")
-        else:
-            console.print(f"[bold yellow]Warning: Reference book not found at {reference_book}[/bold yellow]")
-            book_context = "I will use general best practices for optimization recommendations."
-    else:
-        book_context = "I will use general best practices and industry standards for optimization recommendations."
-
+    document_info = f" using the reference document: {reference_document}" if reference_document else ""
     console.print(
         Panel(
-            f"[bold yellow]The agent will analyze your {language} codebase and propose specific optimizations.\n"
+            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations.\n"
             f"You'll be asked to approve each suggestion before implementation.\n"
             f"Type 'exit' or 'quit' to end the session.[/bold yellow]",
             border_style="yellow",
         )
     )
 
-    initial_question = f"""
-I want you to analyze my {language} codebase and propose specific optimizations based on industry best practices.
+    # Initial optimization analysis
 
-{book_context}
+    instructions = [
+        "Use your code retrieval and graph querying tools to understand the codebase structure",
+        "Read relevant source files to identify optimization opportunities",
+    ]
+    if reference_document:
+        instructions.append(f"Use the analyze_document tool to reference best practices from {reference_document}")
+
+    instructions.extend([
+        f"Reference established patterns and best practices for {language}",
+        "Propose specific, actionable optimizations with file references",
+        "Ask for my approval before implementing any changes",
+        "Use your file editing tools to implement approved changes",
+    ])
+
+    numbered_instructions = "\n".join(f"{i+1}. {inst}" for i, inst in enumerate(instructions))
+
+    initial_question = f"""
+I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
 
 Please:
-1. Use your code retrieval and graph querying tools to understand the codebase structure
-2. Read relevant source files to identify optimization opportunities
-3. Reference best practices and modern {language} development standards
-4. Propose specific, actionable optimizations with file references
-5. Ask for my approval before implementing any changes
-6. Use your file editing tools to implement approved changes
+{numbered_instructions}
 
 Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
 """
@@ -509,11 +513,11 @@ Start by analyzing the codebase structure and identifying the main areas that co
 async def main_optimize_async(
     language: str,
     target_repo_path: str,
+    reference_document: str | None = None,
     llm_provider: str | None = None,
     orchestrator_model: str | None = None,
     cypher_model: str | None = None,
-    reference_book: str | None = None,
-):
+) -> None:
     """Async wrapper for the optimization functionality."""
     project_root = Path(target_repo_path).resolve()
 
@@ -550,44 +554,8 @@ async def main_optimize_async(
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
 
-        # Initialize all the tools for the RAG agent
-        cypher_generator = CypherGenerator()
-        code_retriever = CodeRetriever(project_root=target_repo_path, ingestor=ingestor)
-        file_reader = FileReader(project_root=target_repo_path)
-        file_writer = FileWriter(project_root=target_repo_path)
-        file_editor = FileEditor(project_root=target_repo_path)
-        shell_commander = ShellCommander(
-            project_root=target_repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
-        )
-        directory_lister = DirectoryLister(project_root=target_repo_path)
-        document_analyzer = DocumentAnalyzer(project_root=target_repo_path)
-
-        # Create tools
-        query_tool = create_query_tool(ingestor, cypher_generator)
-        code_tool = create_code_retrieval_tool(code_retriever)
-        file_reader_tool = create_file_reader_tool(file_reader)
-        file_writer_tool = create_file_writer_tool(file_writer)
-        file_editor_tool = create_file_editor_tool(file_editor)
-        shell_command_tool = create_shell_command_tool(shell_commander)
-        directory_lister_tool = create_directory_lister_tool(directory_lister)
-        document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
-
-        # Create the RAG orchestrator with all tools
-        rag_agent = create_rag_orchestrator(
-            tools=[
-                query_tool,
-                code_tool,
-                file_reader_tool,
-                file_writer_tool,
-                file_editor_tool,
-                shell_command_tool,
-                directory_lister_tool,
-                document_analyzer_tool,
-            ]
-        )
-
-        # Run the optimization loop
-        await run_optimization_loop(rag_agent, [], project_root, language, reference_book)
+        rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
+        await run_optimization_loop(rag_agent, [], project_root, language, reference_document)
 
 
 @app.command()
@@ -596,8 +564,8 @@ def optimize(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help="Path to the repository to optimize"
     ),
-    reference_book: str | None = typer.Option(
-        None, "--reference-book", help="Path to a reference book/document for best practices guidance"
+    reference_document: str | None = typer.Option(
+        None, "--reference-document", help="Path to reference document/book for optimization guidance"
     ),
     llm_provider: str | None = typer.Option(
         None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
@@ -608,8 +576,8 @@ def optimize(
     cypher_model: str | None = typer.Option(
         None, "--cypher-model", help="Specify the Cypher generator model ID"
     ),
-):
-    """Interactive codebase optimization using RAG agent with optional reference book for best practices."""
+) -> None:
+    """Interactive codebase optimization using RAG agent with best practices guidance."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
     if not Path(target_repo_path).exists():
@@ -620,10 +588,10 @@ def optimize(
         asyncio.run(main_optimize_async(
             language=language,
             target_repo_path=target_repo_path,
+            reference_document=reference_document,
             llm_provider=llm_provider,
             orchestrator_model=orchestrator_model,
             cypher_model=cypher_model,
-            reference_book=reference_book,
         ))
     except KeyboardInterrupt:
         console.print("\n[bold red]Optimization session terminated by user.[/bold red]")

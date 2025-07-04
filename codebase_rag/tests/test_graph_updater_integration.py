@@ -19,7 +19,7 @@ class TestGraphUpdaterIntegration(unittest.TestCase):
     Integration-style test for the GraphUpdater's function call detection.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Set up a temporary directory with a sample Python project."""
         self.temp_dir = tempfile.mkdtemp()
         self.project_path = Path(self.temp_dir) / "test_project"
@@ -47,11 +47,11 @@ class TestGraphUpdaterIntegration(unittest.TestCase):
             f.write("    \"\"\"A function defined in the same file.\"\"\"\n")
             f.write("    pass\n")
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """Remove the temporary directory and its contents."""
         shutil.rmtree(self.temp_dir)
 
-    def test_function_call_relationships_are_created(self):
+    def test_function_call_relationships_are_created(self) -> None:
         """
         Tests that GraphUpdater correctly identifies and creates CALLS relationships
         for both local and cross-module function calls.

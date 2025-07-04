@@ -12,9 +12,9 @@ class GraphData(BaseModel):
 
     @field_validator("results", mode="before")
     @classmethod
-    def _format_results(cls, v):
+    def _format_results(cls, v: Any) -> list[dict[str, Any]]:
         if not isinstance(v, list):
-            return v
+            return []  # Return empty list instead of v
 
         clean_results = []
         for row in v:
@@ -23,7 +23,7 @@ class GraphData(BaseModel):
                 if not isinstance(val, str | int | float | bool | list | dict | type(None)):
                     clean_row[k] = str(val)
                 else:
-                    clean_row[k] = val
+                    clean_row[k] = val  # type: ignore
             clean_results.append(clean_row)
         return clean_results
 

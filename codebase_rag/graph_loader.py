@@ -120,7 +120,7 @@ class GraphLoader:
         if self._data is None:
             self.load()
         assert self._data is not None, "Data should be loaded"
-        return self._data['metadata']
+        return self._data['metadata']  # type: ignore
 
     def find_nodes_by_label(self, label: str) -> list[GraphNode]:
         """Find all nodes with a specific label. O(1) lookup."""
@@ -163,7 +163,7 @@ class GraphLoader:
         """Get a summary of the graph structure."""
         node_labels = {label: len(nodes) for label, nodes in self._nodes_by_label.items()}
 
-        relationship_types = {}
+        relationship_types: dict[str, int] = {}
         for rel in self.relationships:
             relationship_types[rel.type] = relationship_types.get(rel.type, 0) + 1
 

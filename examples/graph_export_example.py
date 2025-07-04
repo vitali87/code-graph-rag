@@ -97,7 +97,7 @@ def analyze_graph(graph_file: str) -> None:
         sys.exit(1)
 
 
-def main():
+def main() -> None:
     """Main function to demonstrate graph analysis."""
     if len(sys.argv) != 2:
         print("Usage: python graph_export_example.py <exported_graph.json>")
