@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from dotenv import load_dotenv
 from pydantic import AnyHttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,8 +27,8 @@ class AppConfig(BaseSettings):
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
 
-    LLM_PROVIDER: str = "gemini"
-    GEMINI_PROVIDER: str = "gla"
+    LLM_PROVIDER: Literal["gemini", "local"] = "gemini"
+    GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
 
     GEMINI_MODEL_ID: str = "gemini-1.5-pro-latest"
     GEMINI_VISION_MODEL_ID: str = "gemini-1.5-pro-latest"

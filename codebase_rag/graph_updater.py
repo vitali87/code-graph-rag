@@ -16,12 +16,16 @@ except ImportError:
     python_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_javascript import language as javascript_language_so  # type: ignore
+    from tree_sitter_javascript import (
+        language as javascript_language_so,  # type: ignore
+    )
 except ImportError:
     javascript_language_so = None  # type: ignore
 
 try:
-    from tree_sitter_typescript import language_typescript as typescript_language_so  # type: ignore
+    from tree_sitter_typescript import (
+        language_typescript as typescript_language_so,  # type: ignore
+    )
 except ImportError:
     typescript_language_so = None  # type: ignore
 

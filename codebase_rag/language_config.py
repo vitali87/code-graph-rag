@@ -21,10 +21,6 @@ class LanguageConfig:
     # Package detection patterns
     package_indicators: list[str] = field(default_factory=list)  # e.g., ["__init__.py"] for Python
 
-    def __post_init__(self) -> None:
-        if self.package_indicators is None:
-            self.package_indicators = []
-
 
 # Language configurations
 LANGUAGE_CONFIGS = {
