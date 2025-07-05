@@ -28,11 +28,55 @@ COMMAND_ALLOWLIST = {
     "rmdir",
 }
 
+# Git commands that require user confirmation
+GIT_CONFIRMATION_COMMANDS = {
+    "add",
+    "commit",
+    "push",
+    "pull",
+    "merge",
+    "rebase",
+    "reset",
+    "checkout",
+    "branch",
+    "tag",
+    "stash",
+    "cherry-pick",
+    "revert",
+}
+
 
 def _is_dangerous_command(cmd_parts: list[str]) -> bool:
     """Checks for dangerous command patterns."""
     command = cmd_parts[0]
     return command == "rm" and "-rf" in cmd_parts
+
+
+def _requires_confirmation(cmd_parts: list[str]) -> tuple[bool, str]:
+    """
+    Checks if a command requires user confirmation.
+    Returns (requires_confirmation, reason).
+    """
+    if not cmd_parts:
+        return False, ""
+    
+    command = cmd_parts[0]
+    
+    # File system modification commands
+    if command in {"rm", "cp", "mv", "mkdir", "rmdir"}:
+        return True, f"filesystem modification command '{command}'"
+    
+    # Package management commands
+    if command == "uv":
+        return True, "package management command 'uv'"
+    
+    # Git commands that modify state
+    if command == "git" and len(cmd_parts) > 1:
+        git_subcommand = cmd_parts[1]
+        if git_subcommand in GIT_CONFIRMATION_COMMANDS:
+            return True, f"git command 'git {git_subcommand}'"
+    
+    return False, ""
 
 
 class ShellCommander:
@@ -43,7 +87,7 @@ class ShellCommander:
         self.timeout = timeout
         logger.info(f"ShellCommander initialized with root: {self.project_root}")
 
-    async def execute(self, command: str) -> ShellCommandResult:
+    async def execute(self, command: str, confirmed: bool = False) -> ShellCommandResult:
         """
         Execute a shell command and return the status code, stdout, and stderr.
         """
@@ -70,6 +114,13 @@ class ShellCommander:
             if _is_dangerous_command(cmd_parts):
                 err_msg = f"Rejected dangerous command: {' '.join(cmd_parts)}"
                 logger.error(err_msg)
+                return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
+
+            # Check if command requires confirmation but wasn't pre-approved
+            requires_confirmation, reason = _requires_confirmation(cmd_parts)
+            if requires_confirmation and not confirmed:
+                err_msg = f"Command requires user confirmation: {reason}. Agent must ask user permission before executing: {' '.join(cmd_parts)}"
+                logger.warning(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
             process = await asyncio.create_subprocess_exec(
@@ -125,17 +176,22 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         AVAILABLE COMMANDS:
         - File operations: ls, cat, find, pwd
         - Text search: rg (ripgrep) - USE THIS INSTEAD OF grep
-        - Version control: git
+        - Version control: git (some subcommands require confirmation)
         - Testing: pytest, mypy, ruff  
-        - Package management: uv
+        - Package management: uv (requires confirmation)
         - File system: rm, cp, mv, mkdir, rmdir (require confirmation)
         - Other: echo
         
         IMPORTANT: Use 'rg' for text searching, NOT 'grep' (grep is not available).
         
-        For commands that modify the filesystem (rm, cp, mv, mkdir, rmdir) or the
-        python environment (uv), you MUST ask the user for confirmation before executing.
-        Example: "I am about to run `uv pip install pytest`. Do you want to proceed?"
+        COMMANDS REQUIRING USER CONFIRMATION:
+        - File system: rm, cp, mv, mkdir, rmdir
+        - Package management: uv (any subcommand)
+        - Git operations: add, commit, push, pull, merge, rebase, reset, checkout, branch, tag, stash, cherry-pick, revert
+        - Safe git commands (no confirmation needed): status, log, diff, show, ls-files, remote, config
+        
+        For commands that require confirmation, you MUST ask the user for permission before executing.
+        Example: "I am about to run `git add .`. Do you want to proceed?"
         Only execute after the user has explicitly confirmed.
         """
         return await shell_commander.execute(command)
@@ -143,5 +199,5 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     return Tool(
         function=run_shell_command,
         name="execute_shell_command",
-        description="Executes shell commands from allowlist: ls, cat, find, pwd, rg (NOT grep), git, pytest, mypy, ruff, uv, echo, rm/cp/mv/mkdir/rmdir (with confirmation).",
+        description="Executes shell commands from allowlist. REQUIRES CONFIRMATION: git add/commit/push/pull/merge/etc, uv, rm/cp/mv/mkdir/rmdir. Safe: ls, cat, find, pwd, rg, git status/log/diff, pytest, mypy, ruff, echo.",
     )
