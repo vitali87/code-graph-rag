@@ -1,19 +1,16 @@
-from pathlib import Path
-from typing import List, Tuple
-import time
-import psutil
-import os
-import ast
-
-import diff_match_patch as dmp
+from typing import Any, Dict, Optional, Callable
 from loguru import logger
+from tree_sitter import Language, Parser, Node
+from pathlib import Path
+import difflib
 from pydantic import BaseModel
-from pydantic_ai import RunContext, Tool
-from tree_sitter import Language, Parser
+from pydantic_ai import Tool
+import diff_match_patch
 
-from codebase_rag.language_config import get_language_config
+# Define a type for the language library loaders
+LanguageLoader = Callable[[], object]
 
-# Import available Tree-sitter languages
+# Import available Tree-sitter languages and correctly type them as Optional
 try:
     from tree_sitter_python import language as python_language_so
 except ImportError:
@@ -49,8 +46,8 @@ try:
 except ImportError:
     java_language_so = None
 
-# Language mapping for tree-sitter parsers
-LANGUAGE_PARSERS = {
+
+LANGUAGE_LIBRARIES: Dict[str, Optional[LanguageLoader]] = {
     "python": python_language_so,
     "javascript": javascript_language_so,
     "typescript": typescript_language_so,
@@ -60,374 +57,214 @@ LANGUAGE_PARSERS = {
     "java": java_language_so,
 }
 
+LANGUAGE_EXTENSIONS = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".scala": "scala",
+}
+
 
 class EditResult(BaseModel):
     """Data model for file edit results."""
-
+    
     file_path: str
     success: bool
     error_message: str | None = None
-    edit_type: str | None = None  # 'full' or 'chunk'
-    changes_applied: int | None = None  # Number of diff patches applied
-    performance_metrics: dict | None = None  # Performance tracking data
-    validation_passed: bool | None = None  # Whether syntax validation passed
-
-
-class PerformanceMonitor:
-    """Performance monitoring for file edit operations."""
-    
-    def __init__(self):
-        self.start_time = None
-        self.start_memory = None
-        self.process = psutil.Process(os.getpid())
-    
-    def start_monitoring(self):
-        """Start performance monitoring."""
-        self.start_time = time.time()
-        self.start_memory = self.process.memory_info().rss / 1024 / 1024  # MB
-    
-    def get_metrics(self) -> dict:
-        """Get current performance metrics."""
-        if self.start_time is None:
-            return {}
-        
-        elapsed_time = time.time() - self.start_time
-        current_memory = self.process.memory_info().rss / 1024 / 1024  # MB
-        memory_delta = current_memory - self.start_memory if self.start_memory else 0
-        
-        return {
-            "elapsed_time_seconds": round(elapsed_time, 3),
-            "memory_usage_mb": round(current_memory, 2),
-            "memory_delta_mb": round(memory_delta, 2),
-            "cpu_percent": round(self.process.cpu_percent(), 2)
-        }
 
 
 class FileEditor:
-    """Service to edit files in the filesystem."""
-
-    def __init__(self, project_root: str = ".", chunk_threshold_kb: int = 10, chunk_threshold_lines: int = 500, enable_performance_monitoring: bool = True):
+    def __init__(self, project_root: str = ".") -> None:
         self.project_root = Path(project_root).resolve()
-        self.chunk_threshold_kb = chunk_threshold_kb
-        self.chunk_threshold_lines = chunk_threshold_lines
-        self.enable_performance_monitoring = enable_performance_monitoring
-        self.dmp = dmp.diff_match_patch()
-        
-        # Initialize tree-sitter parsers for syntax validation
-        self.parsers = {}
-        self._init_tree_sitter_parsers()
-        
+        self.parsers: Dict[str, Parser] = {}
+        self.dmp = diff_match_patch.diff_match_patch()
+        self._initialize_parsers()
         logger.info(f"FileEditor initialized with root: {self.project_root}")
-        logger.info(f"Chunk thresholds: {chunk_threshold_kb}KB, {chunk_threshold_lines} lines")
-        logger.info(f"Performance monitoring: {'enabled' if enable_performance_monitoring else 'disabled'}")
-        logger.info(f"Syntax validation available for: {list(self.parsers.keys())}")
 
-    def _init_tree_sitter_parsers(self):
-        """Initialize tree-sitter parsers for available languages."""
-        for lang_name, language_so in LANGUAGE_PARSERS.items():
-            if language_so is not None:
+    def _initialize_parsers(self) -> None:
+        for lang_name, lang_lib in LANGUAGE_LIBRARIES.items():
+            if lang_lib:
                 try:
-                    parser = Parser()
-                    language = Language(language_so())  # Call the function to get the language
-                    parser.language = language  # Use parser.language instead of parser.set_language
+                    language = Language(lang_lib())
+                    parser = Parser(language)
+                    parser.language = language
                     self.parsers[lang_name] = parser
-                    logger.debug(f"Initialized tree-sitter parser for {lang_name}")
                 except Exception as e:
-                    logger.warning(f"Failed to initialize tree-sitter parser for {lang_name}: {e}")
+                    logger.warning(f"Failed to load {lang_name} grammar: {e}")
 
-    def _should_use_chunk_edit(self, file_path: Path, current_content: str) -> bool:
-        """Determine if chunk editing should be used based on file size and content."""
-        # Check file size
-        file_size_kb = file_path.stat().st_size / 1024
-        if file_size_kb > self.chunk_threshold_kb:
-            return True
-        
-        # Check line count
-        line_count = len(current_content.splitlines())
-        if line_count > self.chunk_threshold_lines:
-            return True
-        
-        return False
-
-    def _apply_chunk_edit(self, current_content: str, new_content: str) -> Tuple[str, int]:
-        """Apply chunk-based editing using diff-match-patch."""
-        # Generate diff patches
-        diffs = self.dmp.diff_main(current_content, new_content)
-        self.dmp.diff_cleanupSemantic(diffs)
-        
-        # Create patches
-        patches = self.dmp.patch_make(current_content, diffs)
-        
-        # Apply patches
-        result, results = self.dmp.patch_apply(patches, current_content)
-        
-        # Count successful patch applications
-        successful_patches = sum(1 for success in results if success)
-        
-        return result, successful_patches
-
-    def _validate_syntax(self, content: str, file_path: str) -> tuple[bool, str | None]:
-        """Validate syntax using tree-sitter for supported languages or AST for Python."""
+    def get_parser(self, file_path: str) -> Optional[Parser]:
         file_path_obj = Path(file_path)
-        file_extension = file_path_obj.suffix
+        extension = file_path_obj.suffix
         
-        # Get language configuration
-        lang_config = get_language_config(file_extension)
-        if not lang_config:
-            logger.debug(f"[FileEditor] No language config found for {file_extension}, skipping validation")
-            return True, None
+        # Handle .tmp files by looking at the base name before .tmp
+        if extension == '.tmp':
+            # Get the extension before .tmp (e.g., test_file.py.tmp -> .py)
+            base_name = file_path_obj.stem
+            if '.' in base_name:
+                extension = '.' + base_name.split('.')[-1]
         
-        lang_name = lang_config.name
-        
-        # Special case for Python: use AST parser for better error messages
-        if lang_name == "python":
-            try:
-                ast.parse(content)
-                logger.debug(f"[FileEditor] Python AST validation passed for {file_path}")
-                return True, None
-            except SyntaxError as e:
-                error_msg = f"Python syntax error: {e.msg} at line {e.lineno}"
-                logger.warning(f"[FileEditor] Python AST validation failed for {file_path}: {error_msg}")
-                return False, error_msg
-        
-        # Use tree-sitter for other languages
-        if lang_name in self.parsers:
-            try:
-                parser = self.parsers[lang_name]
-                tree = parser.parse(content.encode('utf-8'))
-                
-                # Check for parse errors
-                if tree.root_node.has_error:
-                    # Find the first error node
-                    error_node = self._find_error_node(tree.root_node)
-                    if error_node:
-                        start_line = error_node.start_point[0] + 1  # Convert to 1-based
-                        error_msg = f"{lang_name.title()} syntax error at line {start_line}"
-                    else:
-                        error_msg = f"{lang_name.title()} syntax error detected"
-                    
-                    logger.warning(f"[FileEditor] Tree-sitter validation failed for {file_path}: {error_msg}")
-                    return False, error_msg
-                
-                logger.debug(f"[FileEditor] Tree-sitter validation passed for {file_path} ({lang_name})")
-                return True, None
-                
-            except Exception as e:
-                logger.warning(f"[FileEditor] Tree-sitter validation error for {file_path}: {e}")
-                # Don't fail on parser errors, just skip validation
-                return True, None
-        
-        # Language not supported for validation
-        logger.debug(f"[FileEditor] No parser available for {lang_name}, skipping validation")
-        return True, None
-
-    def _find_error_node(self, node):
-        """Recursively find the first error node in the parse tree."""
-        if node.is_error:
-            return node
-        for child in node.children:
-            error_node = self._find_error_node(child)
-            if error_node:
-                return error_node
+        lang_name = LANGUAGE_EXTENSIONS.get(extension)
+        if lang_name:
+            return self.parsers.get(lang_name)
         return None
 
+    def get_ast(self, file_path: str) -> Optional[Node]:
+        parser = self.get_parser(file_path)
+        if not parser:
+            logger.warning(f"No parser available for {file_path}")
+            return None
+        
+        with open(file_path, "rb") as f:
+            content = f.read()
+        
+        tree = parser.parse(content)
+        return tree.root_node
+
+    def get_function_source_code(self, file_path: str, function_name: str) -> Optional[str]:
+        root_node = self.get_ast(file_path)
+        if not root_node:
+            return None
+        
+        # Recursively search for function definitions
+        def find_function_node(node):
+            if node.type == "function_definition":
+                # Get the function name node (first child after 'def')
+                for child in node.children:
+                    if child.type == "identifier" and child.text.decode('utf-8') == function_name:
+                        return node
+            
+            # Recursively search children
+            for child in node.children:
+                result = find_function_node(child)
+                if result:
+                    return result
+            return None
+        
+        function_node = find_function_node(root_node)
+        if function_node:
+            return function_node.text.decode('utf-8')
+            
+        return None
+
+    def replace_function_source_code(self, file_path: str, function_name: str, new_code: str) -> bool:
+        original_code = self.get_function_source_code(file_path, function_name)
+        if not original_code:
+            logger.error(f"Function '{function_name}' not found in {file_path}.")
+            return False
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            original_content = f.read()
+        
+        # Create patches using diff-match-patch
+        patches = self.dmp.patch_make(original_code, new_code)
+        
+        # Apply patches to the original content
+        new_content, results = self.dmp.patch_apply(patches, original_content)
+        
+        # Check if all patches were applied successfully
+        if not all(results):
+            logger.warning(f"Some patches failed to apply cleanly for function '{function_name}'")
+            # Fallback to simple string replacement
+            new_content = original_content.replace(original_code, new_code)
+        
+        if original_content == new_content:
+            logger.warning("No changes detected after replacement.")
+            return False
+            
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        
+        logger.success(f"Successfully replaced function '{function_name}' in {file_path}.")
+        return True
+
+    def get_diff(self, file_path: str, function_name: str, new_code: str) -> Optional[str]:
+        original_code = self.get_function_source_code(file_path, function_name)
+        if not original_code:
+            return None
+
+        # Use diff-match-patch for more sophisticated diff generation
+        diffs = self.dmp.diff_main(original_code, new_code)
+        self.dmp.diff_cleanupSemantic(diffs)
+        
+        # Convert to unified diff format for readability
+        diff = difflib.unified_diff(
+            original_code.splitlines(keepends=True),
+            new_code.splitlines(keepends=True),
+            fromfile=f"original/{function_name}",
+            tofile=f"new/{function_name}",
+        )
+        return "".join(diff)
+
+    def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
+        """Apply a patch to a file using diff-match-patch."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                original_content = f.read()
+            
+            # Parse the patch
+            patches = self.dmp.patch_fromText(patch_text)
+            
+            # Apply the patch
+            new_content, results = self.dmp.patch_apply(patches, original_content)
+            
+            # Check if all patches were applied successfully
+            if not all(results):
+                logger.warning(f"Some patches failed to apply cleanly to {file_path}")
+                return False
+            
+            # Write the updated content
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            logger.success(f"Successfully applied patch to {file_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error applying patch to {file_path}: {e}")
+            return False
+
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
-        """Edits a file using either full replacement or chunk-based editing."""
-        logger.info(f"[FileEditor] Editing file: {file_path}")
-        
-        # Start performance monitoring
-        monitor = PerformanceMonitor() if self.enable_performance_monitoring else None
-        if monitor:
-            monitor.start_monitoring()
-            
+        """Overwrites the content of a specified file with new content."""
+        logger.info(f"[FileEditor] Attempting to edit file: {file_path}")
         try:
-            # Resolve the path to prevent traversal attacks
             full_path = (self.project_root / file_path).resolve()
-
-            # Security check: Ensure the resolved path is within the project root
-            full_path.relative_to(self.project_root)
-
-            if not full_path.is_file():
-                err_msg = f"File not found at path: {full_path}"
-                logger.warning(err_msg)
-                return EditResult(
-                    file_path=file_path, success=False, error_message=err_msg
-                )
-
-            # Read current content
-            current_content = full_path.read_text(encoding="utf-8")
+            full_path.relative_to(self.project_root)  # Security check
             
-            # Determine edit strategy
-            use_chunk_edit = self._should_use_chunk_edit(full_path, current_content)
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
             
-            if use_chunk_edit:
-                # Apply chunk-based editing
-                final_content, patches_applied = self._apply_chunk_edit(current_content, new_content)
-                edit_type = "chunk"
-                logger.info(f"[FileEditor] Applied {patches_applied} patches using chunk editing")
-            else:
-                # Use full replacement
-                final_content = new_content
-                edit_type = "full"
-                patches_applied = None
-                logger.info(f"[FileEditor] Using full replacement for small file")
-
-            # Validate syntax before writing
-            validation_passed, validation_error = self._validate_syntax(final_content, file_path)
-            if not validation_passed:
-                logger.error(f"[FileEditor] Syntax validation failed for {file_path}: {validation_error}")
-                return EditResult(
-                    file_path=file_path, 
-                    success=False, 
-                    error_message=f"Syntax validation failed: {validation_error}",
-                    edit_type=edit_type,
-                    validation_passed=False
-                )
-
-            # Write the final content
-            full_path.write_text(final_content, encoding="utf-8")
-            logger.info(
-                f"[FileEditor] Successfully wrote {len(final_content)} characters to {file_path} ({edit_type} edit)"
-            )
+            logger.success(f"[FileEditor] Successfully edited file: {file_path}")
+            return EditResult(file_path=file_path, success=True)
             
-            # Get performance metrics
-            metrics = monitor.get_metrics() if monitor else None
-            if metrics:
-                logger.info(f"[FileEditor] Performance metrics: {metrics}")
-            
-            return EditResult(
-                file_path=file_path, 
-                success=True, 
-                edit_type=edit_type, 
-                changes_applied=patches_applied,
-                performance_metrics=metrics,
-                validation_passed=validation_passed
-            )
-
         except ValueError:
-            err_msg = (
-                f"Security risk: Attempted to edit file outside of project root: {file_path}"
-            )
-            logger.error(err_msg)
-            return EditResult(
-                file_path=file_path, success=False, error_message=err_msg
-            )
+            error_msg = "Security risk: Attempted to edit file outside of project root."
+            logger.error(f"[FileEditor] {error_msg}")
+            return EditResult(file_path=file_path, success=False, error_message=error_msg)
         except Exception as e:
-            err_msg = f"Error writing to file {file_path}: {e}"
-            logger.error(err_msg)
-            return EditResult(
-                file_path=file_path, success=False, error_message=err_msg
-            )
-
-    async def edit_file_with_chunks(self, file_path: str, new_content: str) -> EditResult:
-        """Forces chunk-based editing regardless of file size."""
-        logger.info(f"[FileEditor] Force chunk editing file: {file_path}")
-        
-        # Start performance monitoring
-        monitor = PerformanceMonitor() if self.enable_performance_monitoring else None
-        if monitor:
-            monitor.start_monitoring()
-            
-        try:
-            # Resolve the path to prevent traversal attacks
-            full_path = (self.project_root / file_path).resolve()
-
-            # Security check: Ensure the resolved path is within the project root
-            full_path.relative_to(self.project_root)
-
-            if not full_path.is_file():
-                err_msg = f"File not found at path: {full_path}"
-                logger.warning(err_msg)
-                return EditResult(
-                    file_path=file_path, success=False, error_message=err_msg
-                )
-
-            # Read current content
-            current_content = full_path.read_text(encoding="utf-8")
-            
-            # Apply chunk-based editing
-            final_content, patches_applied = self._apply_chunk_edit(current_content, new_content)
-            
-            # Validate syntax before writing
-            validation_passed, validation_error = self._validate_syntax(final_content, file_path)
-            if not validation_passed:
-                logger.error(f"[FileEditor] Syntax validation failed for {file_path}: {validation_error}")
-                return EditResult(
-                    file_path=file_path, 
-                    success=False, 
-                    error_message=f"Syntax validation failed: {validation_error}",
-                    edit_type="chunk",
-                    validation_passed=False
-                )
-            
-            # Write the final content
-            full_path.write_text(final_content, encoding="utf-8")
-            logger.info(
-                f"[FileEditor] Successfully applied {patches_applied} patches to {file_path}"
-            )
-            
-            # Get performance metrics
-            metrics = monitor.get_metrics() if monitor else None
-            if metrics:
-                logger.info(f"[FileEditor] Performance metrics: {metrics}")
-            
-            return EditResult(
-                file_path=file_path, 
-                success=True, 
-                edit_type="chunk", 
-                changes_applied=patches_applied,
-                performance_metrics=metrics,
-                validation_passed=validation_passed
-            )
-
-        except ValueError:
-            err_msg = (
-                f"Security risk: Attempted to edit file outside of project root: {file_path}"
-            )
-            logger.error(err_msg)
-            return EditResult(
-                file_path=file_path, success=False, error_message=err_msg
-            )
-        except Exception as e:
-            err_msg = f"Error writing to file {file_path}: {e}"
-            logger.error(err_msg)
-            return EditResult(
-                file_path=file_path, success=False, error_message=err_msg
-            )
+            error_msg = f"An unexpected error occurred: {e}"
+            logger.error(f"[FileEditor] Error editing file {file_path}: {e}")
+            return EditResult(file_path=file_path, success=False, error_message=error_msg)
 
 
 def create_file_editor_tool(file_editor: FileEditor) -> Tool:
     """Factory function to create the file editor tool."""
 
-    async def edit_existing_file(
-        ctx: RunContext, file_path: str, new_content: str
-    ) -> EditResult:
+    async def edit_existing_file(file_path: str, new_content: str) -> str:
         """
-        Edits a file using smart strategy (chunk-based for large files, full replacement for small files).
+        Overwrites the content of a specified file with new content.
         Use this to modify existing files. The 'file_path' can be found
         from the 'path' property of nodes returned by the graph query tool.
         """
-        return await file_editor.edit_file(file_path, new_content)
+        result = await file_editor.edit_file(file_path, new_content)
+        if result.success:
+            return f"Successfully edited file: {file_path}"
+        else:
+            return f"Error editing file: {result.error_message}"
 
     return Tool(
         function=edit_existing_file,
-        description="Edits an existing file using smart strategy (chunk-based for large files, full replacement for small files).",
-    )
-
-
-def create_chunk_editor_tool(file_editor: FileEditor) -> Tool:
-    """Factory function to create the chunk-only file editor tool."""
-
-    async def edit_file_with_chunks(
-        ctx: RunContext, file_path: str, new_content: str
-    ) -> EditResult:
-        """
-        Forces chunk-based editing regardless of file size.
-        Use this when you want to apply incremental changes to preserve file structure.
-        """
-        return await file_editor.edit_file_with_chunks(file_path, new_content)
-
-    return Tool(
-        function=edit_file_with_chunks,
-        description="Forces chunk-based editing for precise incremental changes.",
+        description="Overwrites an existing file with new content. Use with caution.",
     )

@@ -1,87 +1,35 @@
 import os
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 import toml
 from loguru import logger
-from tree_sitter import Language, Node, Parser
+from tree_sitter import Node, Parser
 
 from codebase_rag.services.graph_service import MemgraphIngestor
-
-# Import available Tree-sitter languages
-try:
-    from tree_sitter_python import language as python_language_so  # type: ignore
-except ImportError:
-    python_language_so = None  # type: ignore
-
-try:
-    from tree_sitter_javascript import (
-        language as javascript_language_so,  # type: ignore
-    )
-except ImportError:
-    javascript_language_so = None  # type: ignore
-
-try:
-    from tree_sitter_typescript import (
-        language_typescript as typescript_language_so,  # type: ignore
-    )
-except ImportError:
-    typescript_language_so = None  # type: ignore
-
-try:
-    from tree_sitter_rust import language as rust_language_so  # type: ignore
-except ImportError:
-    rust_language_so = None  # type: ignore
-
-try:
-    from tree_sitter_go import language as go_language_so  # type: ignore
-except ImportError:
-    go_language_so = None  # type: ignore
-
-try:
-    from tree_sitter_scala import language as scala_language_so  # type: ignore
-except ImportError:
-    scala_language_so = None  # type: ignore
-
-try:
-    from tree_sitter_java import language as java_language_so  # type: ignore
-except ImportError:
-    java_language_so = None  # type: ignore
-
-from .language_config import (
-    LanguageConfig,
-    get_language_config,
-)
-
-# Language library mapping
-LANGUAGE_LIBRARIES = {
-    "python": python_language_so,
-    "javascript": javascript_language_so,
-    "typescript": typescript_language_so,
-    "rust": rust_language_so,
-    "go": go_language_so,
-    "scala": scala_language_so,
-    "java": java_language_so,
-}
+from .language_config import LanguageConfig, get_language_config
 
 
 class GraphUpdater:
     """Parses code using Tree-sitter and updates the graph."""
 
-    def __init__(self, ingestor: MemgraphIngestor, repo_path: Path):
+    def __init__(
+        self,
+        ingestor: MemgraphIngestor,
+        repo_path: Path,
+        parsers: Dict[str, Parser],
+        queries: Dict[str, Any],
+    ):
         self.ingestor = ingestor
         self.repo_path = repo_path
+        self.parsers = parsers
+        self.queries = queries
         self.project_name = repo_path.name
         self.structural_elements: dict[Path, str | None] = {}
-        # Registry to track all defined functions and methods
         self.function_registry: dict[str, str] = {}  # {qualified_name: type}
-        # Index for fast lookup of functions/methods by their simple name
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
-        # Cache for parsed ASTs to avoid re-parsing files
-        self.ast_cache: dict[Path, tuple[Node, str]] = (
-            {}
-        )  # {filepath: (ast_root_node, language)}
+        self.ast_cache: dict[Path, tuple[Node, str]] = {}
         self.ignore_dirs = {
             ".git",
             "venv",
@@ -91,73 +39,6 @@ class GraphUpdater:
             "build",
             "dist",
             ".eggs",
-        }
-
-        # Initialize parsers and queries for all available languages
-        self.parsers: dict[str, Parser] = {}
-        self.languages: dict[str, Language] = {}
-        self.queries: dict[str, dict[str, Any]] = {}
-
-        self._initialize_languages()
-
-    def _initialize_languages(self) -> None:
-        """Initialize Tree-sitter parsers for all available languages."""
-        from .language_config import LANGUAGE_CONFIGS
-
-        available_languages = []
-
-        for lang_name, lang_config in LANGUAGE_CONFIGS.items():
-            lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
-            if lang_lib is not None:
-                try:
-                    # Create parser and language for this language
-                    parser = Parser()
-                    language = Language(lang_lib())
-                    parser.language = language
-
-                    self.parsers[lang_name] = parser
-                    self.languages[lang_name] = language
-
-                    # Compile queries for this language
-                    self._compile_queries_for_language(lang_name, lang_config, language)
-
-                    available_languages.append(lang_name)
-                    logger.success(f"Successfully loaded {lang_name} grammar.")
-
-                except Exception as e:
-                    logger.warning(f"Failed to load {lang_name} grammar: {e}")
-            else:
-                logger.debug(f"Tree-sitter library for {lang_name} not available.")
-
-        if not available_languages:
-            raise RuntimeError(
-                "No Tree-sitter languages available. Please install tree-sitter language packages."
-            )
-
-        logger.info(f"Initialized parsers for: {', '.join(available_languages)}")
-
-    def _compile_queries_for_language(
-        self, lang_name: str, lang_config: LanguageConfig, language: Language
-    ) -> None:
-        """Compile Tree-sitter queries for a specific language."""
-        function_patterns = " ".join(
-            [
-                f"({node_type}) @function"
-                for node_type in lang_config.function_node_types
-            ]
-        )
-        class_patterns = " ".join(
-            [f"({node_type}) @class" for node_type in lang_config.class_node_types]
-        )
-        call_patterns = " ".join(
-            [f"({node_type}) @call" for node_type in lang_config.call_node_types]
-        )
-
-        self.queries[lang_name] = {
-            "functions": language.query(function_patterns),
-            "classes": language.query(class_patterns),
-            "calls": language.query(call_patterns) if call_patterns else None,
-            "config": lang_config,
         }
 
     def run(self) -> None:
@@ -293,7 +174,6 @@ class GraphUpdater:
                     self.parse_and_ingest_file(filepath, lang_config.name)
                 elif file_name == "pyproject.toml":
                     self._parse_dependencies(filepath)
-
     def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""
         body_node = node.child_by_field_name("body")
@@ -377,7 +257,7 @@ class GraphUpdater:
 
     def _ingest_top_level_functions(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self.queries[language]
-        lang_config = lang_queries["config"]
+        lang_config: LanguageConfig = lang_queries["config"]
 
         captures = lang_queries["functions"].captures(root_node)
         func_nodes = captures.get("function", [])
@@ -448,10 +328,7 @@ class GraphUpdater:
             elif current.type in lang_config.class_node_types:
                 return None  # This is a method
 
-            if hasattr(current, "parent") and isinstance(current.parent, Node):
-                current = current.parent
-            else:
-                break
+            current = current.parent
 
         path_parts.reverse()
         if path_parts:
@@ -467,10 +344,7 @@ class GraphUpdater:
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.class_node_types:
                 return True
-            if hasattr(current, "parent") and isinstance(current.parent, Node):
-                current = current.parent
-            else:
-                break
+            current = current.parent
         return False
 
     def _determine_function_parent(
@@ -493,10 +367,7 @@ class GraphUpdater:
                         return "Function", parent_func_qn
                 break
 
-            if hasattr(current, "parent") and isinstance(current.parent, Node):
-                current = current.parent
-            else:
-                break
+            current = current.parent
 
         return "Module", module_qn
 
@@ -618,7 +489,7 @@ class GraphUpdater:
 
     def _process_calls_in_functions(self, root_node: Node, module_qn: str, language: str) -> None:
         lang_queries = self.queries[language]
-        lang_config = lang_queries["config"]
+        lang_config: LanguageConfig = lang_queries["config"]
 
         captures = lang_queries["functions"].captures(root_node)
         func_nodes = captures.get("function", [])

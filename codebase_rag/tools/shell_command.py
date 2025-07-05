@@ -16,6 +16,7 @@ COMMAND_ALLOWLIST = {
     "grep",
     "pwd",
     "pytest",
+    "mypy",
     "ruff",
     "uv",
     "find",
