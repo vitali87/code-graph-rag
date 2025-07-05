@@ -17,6 +17,8 @@ dependencies = [
     "typer>=0.12.5",
     "rich>=13.7.1",
     "prompt-toolkit>=3.0.0",
+    "diff-match-patch>=20241021",
+    "psutil>=5.9.0",
 ]
 
 [tool.setuptools]
