@@ -2,7 +2,7 @@ from pathlib import Path
 
 from loguru import logger
 from pydantic import BaseModel
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 
 
 class FileCreationResult(BaseModel):
@@ -56,7 +56,7 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
     """Factory function to create the file writer tool."""
 
     async def create_new_file(
-        ctx: RunContext, file_path: str, content: str
+        file_path: str, content: str
     ) -> FileCreationResult:
         """
         Creates a new file with the specified content.

@@ -1,5 +1,5 @@
 from loguru import logger
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -25,7 +25,7 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator, c
         console = Console(width=None, force_terminal=True)
 
     async def query_codebase_knowledge_graph(
-        ctx: RunContext, natural_language_query: str
+        natural_language_query: str
     ) -> GraphData:
         """
         Queries the codebase knowledge graph. Translates a natural language question
