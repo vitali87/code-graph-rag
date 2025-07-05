@@ -77,7 +77,7 @@ class GraphUpdater:
         # Registry to track all defined functions and methods
         self.function_registry: dict[str, str] = {}  # {qualified_name: type}
         # Index for fast lookup of functions/methods by their simple name
-        self.simple_name_lookup: dict[str, list[str]] = defaultdict(list)
+        self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
         # Cache for parsed ASTs to avoid re-parsing files
         self.ast_cache: dict[Path, tuple[Node, str]] = (
             {}
@@ -416,7 +416,7 @@ class GraphUpdater:
             self.ingestor.ensure_node_batch("Function", props)
 
             self.function_registry[func_qn] = "Function"
-            self.simple_name_lookup[func_name].append(func_qn)
+            self.simple_name_lookup[func_name].add(func_qn)
 
             parent_type, parent_qn = self._determine_function_parent(
                 func_node, module_qn, lang_config
@@ -561,7 +561,7 @@ class GraphUpdater:
                 self.ingestor.ensure_node_batch("Method", method_props)
 
                 self.function_registry[method_qn] = "Method"
-                self.simple_name_lookup[method_name].append(method_qn)
+                self.simple_name_lookup[method_name].add(method_qn)
 
                 self.ingestor.ensure_relationship_batch(
                     ("Class", "qualified_name", class_qn),
