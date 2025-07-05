@@ -267,20 +267,22 @@ class FileEditor:
         
         # Process diffs to show limited context
         for op, text in diffs:
-            lines = text.splitlines()
+            # Use keepends=True to preserve newlines for accurate rendering
+            lines = text.splitlines(keepends=True)
             
             if op == self.dmp.DIFF_DELETE:
                 for line in lines:
-                    print(f"{RED}- {line}{RESET}")
+                    # rstrip to remove the trailing newline for cleaner printing
+                    print(f"{RED}- {line.rstrip()}{RESET}")
             elif op == self.dmp.DIFF_INSERT:
                 for line in lines:
-                    print(f"{GREEN}+ {line}{RESET}")
+                    print(f"{GREEN}+ {line.rstrip()}{RESET}")
             elif op == self.dmp.DIFF_EQUAL:
                 # For unchanged sections, show limited context
                 if len(lines) > CONTEXT_LINES * 2:
                     # Show first few lines
                     for line in lines[:CONTEXT_LINES]:
-                        print(f"  {line}")
+                        print(f"  {line.rstrip()}")
                     
                     # Show truncation indicator if there are many lines
                     omitted_count = len(lines) - (CONTEXT_LINES * 2)
@@ -289,11 +291,11 @@ class FileEditor:
                     
                     # Show last few lines
                     for line in lines[-CONTEXT_LINES:]:
-                        print(f"  {line}")
+                        print(f"  {line.rstrip()}")
                 else:
                     # Show all lines if not too many
                     for line in lines:
-                        print(f"  {line}")
+                        print(f"  {line.rstrip()}")
         
         print()  # Extra newline for spacing
 
