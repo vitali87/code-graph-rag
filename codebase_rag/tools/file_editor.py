@@ -36,16 +36,19 @@ class FileEditor:
         self.parsers, _ = load_parsers()
         logger.info(f"FileEditor initialized with root: {self.project_root}")
 
-    def get_parser(self, file_path: str) -> Optional[Parser]:
-        file_path_obj = Path(file_path)
+    def _get_real_extension(self, file_path_obj: Path) -> str:
+        """Gets the file extension, looking past a .tmp suffix if present."""
         extension = file_path_obj.suffix
-
-        # Handle .tmp files by looking at the base name before .tmp
         if extension == ".tmp":
             # Get the extension before .tmp (e.g., test_file.py.tmp -> .py)
             base_name = file_path_obj.stem
             if "." in base_name:
-                extension = "." + base_name.split(".")[-1]
+                return "." + base_name.split(".")[-1]
+        return extension
+
+    def get_parser(self, file_path: str) -> Optional[Parser]:
+        file_path_obj = Path(file_path)
+        extension = self._get_real_extension(file_path_obj)
 
         lang_name = LANGUAGE_EXTENSIONS.get(extension)
         if lang_name:
@@ -73,13 +76,7 @@ class FileEditor:
 
         # Get language config for this file
         file_path_obj = Path(file_path)
-        extension = file_path_obj.suffix
-
-        # Handle .tmp files by looking at the base name before .tmp
-        if extension == ".tmp":
-            base_name = file_path_obj.stem
-            if "." in base_name:
-                extension = "." + base_name.split(".")[-1]
+        extension = self._get_real_extension(file_path_obj)
 
         lang_config = get_language_config(extension)
         if not lang_config:
