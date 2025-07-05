@@ -28,9 +28,18 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator, c
         natural_language_query: str
     ) -> GraphData:
         """
-        Queries the codebase knowledge graph. Translates a natural language question
-        into a Cypher query, executes it against the Memgraph database, and returns
-        the structured results.
+        Queries the codebase knowledge graph using natural language.
+        
+        Provide your question in plain English about the codebase structure, 
+        functions, classes, dependencies, or relationships. The tool will
+        automatically translate your natural language question into the
+        appropriate database query and return the results.
+        
+        Examples:
+        - "Find all functions that call each other"
+        - "What classes are in the user authentication module"
+        - "Show me functions with the longest call chains"
+        - "Which files contain functions related to database operations"
         """
         logger.info(f"[Tool:QueryGraph] Received NL query: '{natural_language_query}'")
         cypher_query = "N/A"
@@ -91,5 +100,5 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator, c
 
     return Tool(
         function=query_codebase_knowledge_graph,
-        description="Use this tool to query the codebase knowledge graph for specific information like classes, functions, methods, dependencies, or code structure.",
+        description="Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'.",
     )
