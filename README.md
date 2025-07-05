@@ -445,7 +445,7 @@ code-graph-rag/
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
-git - **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
+- **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
 - **pydantic-ai**: AI agent framework for RAG orchestration
 - **pymgclient**: Memgraph Python client for graph database operations
 - **loguru**: Advanced logging with structured output
@@ -463,19 +463,20 @@ The agent has access to a suite of tools to understand and interact with the cod
 - **`get_code_snippet`**: Retrieves the exact source code for a specific function or class.
 - **`read_file_content`**: Reads the entire content of a specified file.
 - **`create_new_file`**: Creates a new file with specified content.
-- **`edit_existing_file`**: Overwrites an existing file with new content.
+- **`edit_existing_file`**: Applies changes to an existing file. Instead of overwriting, it uses a sophisticated `diff-match-patch` mechanism to apply targeted changes, making the process safer and more precise.
 - **`execute_shell_command`**: Executes a shell command in the project's environment.
 
-### The "Plan Before Writing" Workflow
+### Intelligent and Safe File Editing
 
-To prevent errors and misplaced code, the agent is explicitly instructed to follow a strict workflow before any write or edit operation:
+To prevent errors and misplaced code, the agent follows a sophisticated and interactive workflow before making any changes to the codebase. This process is far more advanced than simply overwriting a file.
 
-1.  **Understand Goal**: First, it clarifies the user's objective.
-2.  **Query & Explore**: It uses `query_codebase_knowledge_graph` and `read_file_content` tools to explore the codebase. This step is crucial for finding the correct location and understanding the existing architectural patterns for any new code. The agent can also use `execute_shell_command` to run checks or use other CLI tools.
-3.  **Formulate a Plan**: Based on its exploration, the agent formulates a plan. It will state which file it intends to create or edit and provide a summary of the changes.
-4.  **Execute**: Only after this analysis does the agent use the `create_new_file` or `edit_existing_file` tools to execute the plan.
+1.  **AST-Based Targeting**: The agent uses `tree-sitter` to parse the source code into an Abstract Syntax Tree (AST). This allows it to precisely locate the exact function or method that needs to be modified, even in complex files. It can disambiguate functions with the same name by using qualified names (e.g., `ClassName.method_name`) or line numbers.
 
-This ensures the agent is a reliable assistant for both analyzing and modifying your codebase.
+2.  **Diff and Patch Application**: Instead of replacing the entire file, the agent uses a `diff-match-patch` algorithm. It calculates the specific differences between the old code and the new code and creates a "patch." This patch is then applied to the original file, ensuring that only the intended lines are changed. This is a surgical and safe approach.
+
+3.  **Visual Confirmation**: Before applying the patch, the agent displays a colored `diff` in the console. This visual feedback shows the user exactly which lines will be added, removed, or modified, allowing for a final check before the change is committed to the file.
+
+This multi-step, interactive process ensures that file modifications are accurate, safe, and transparent, making the agent a reliable assistant for both analyzing and modifying your codebase.
 
 ### Security Sandbox
 
@@ -528,6 +529,15 @@ The system uses a configuration-driven approach for language support. Each langu
 
 Adding support for new languages requires only configuration changes, no code modifications.
 
+## 📦 Building a binary
+
+You can build a binary of the application using the `build_binary.py` script. This script uses PyInstaller to package the application and its dependencies into a single executable.
+
+```bash
+python build_binary.py
+```
+The resulting binary will be located in the `dist` directory.
+
 ## 🐛 Debugging
 
 1. **Check Memgraph connection**:
@@ -547,10 +557,9 @@ Adding support for new languages requires only configuration changes, no code mo
 ## 🤝 Contributing
 
 1. Follow the established code structure
-2. Keep files under 100 lines (as per user rules)
-3. Use type annotations
-4. Follow conventional commit messages
-5. Use DRY principles
+2. Use type annotations
+3. Follow conventional commit messages
+4. Use DRY principles
 
 ## 🙋‍♂️ Support
 

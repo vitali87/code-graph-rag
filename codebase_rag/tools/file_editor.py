@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Optional
 from loguru import logger
 from tree_sitter import Parser, Node
 from pathlib import Path
@@ -249,7 +249,7 @@ class FileEditor:
     def _display_colored_diff(
         self, original_content: str, new_content: str, file_path: str
     ) -> None:
-        """Display a colored diff using diff-match-patch."""
+        """Display a concise colored diff with limited context."""
         # Generate diffs using diff-match-patch
         diffs = self.dmp.diff_main(original_content, new_content)
         self.dmp.diff_cleanupSemantic(diffs)
@@ -258,23 +258,43 @@ class FileEditor:
         RED = "\033[31m"
         GREEN = "\033[32m"
         CYAN = "\033[36m"
+        GRAY = "\033[90m"
         RESET = "\033[0m"
 
         print(f"\n{CYAN}Changes to {file_path}:{RESET}")
 
+        CONTEXT_LINES = 5  # Show 5 lines before/after changes
+        
+        # Process diffs to show limited context
         for op, text in diffs:
             lines = text.splitlines()
-            for line in lines:
-                if op == self.dmp.DIFF_DELETE:
+            
+            if op == self.dmp.DIFF_DELETE:
+                for line in lines:
                     print(f"{RED}- {line}{RESET}")
-                elif op == self.dmp.DIFF_INSERT:
+            elif op == self.dmp.DIFF_INSERT:
+                for line in lines:
                     print(f"{GREEN}+ {line}{RESET}")
-                elif op == self.dmp.DIFF_EQUAL:
-                    # Show some context lines but truncate if too many
-                    context_lines = line.split("\n") if "\n" in line else [line]
-                    for ctx_line in context_lines[:3]:  # Show max 3 context lines
-                        if ctx_line.strip():  # Skip empty lines
-                            print(f"  {ctx_line}")
+            elif op == self.dmp.DIFF_EQUAL:
+                # For unchanged sections, show limited context
+                if len(lines) > CONTEXT_LINES * 2:
+                    # Show first few lines
+                    for line in lines[:CONTEXT_LINES]:
+                        print(f"  {line}")
+                    
+                    # Show truncation indicator if there are many lines
+                    omitted_count = len(lines) - (CONTEXT_LINES * 2)
+                    if omitted_count > 0:
+                        print(f"{GRAY}  ... ({omitted_count} lines omitted) ...{RESET}")
+                    
+                    # Show last few lines
+                    for line in lines[-CONTEXT_LINES:]:
+                        print(f"  {line}")
+                else:
+                    # Show all lines if not too many
+                    for line in lines:
+                        print(f"  {line}")
+        
         print()  # Extra newline for spacing
 
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
@@ -323,9 +343,11 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
 
     async def edit_existing_file(file_path: str, new_content: str) -> str:
         """
-        Overwrites the content of a specified file with new content.
-        Use this to modify existing files. The 'file_path' can be found
-        from the 'path' property of nodes returned by the graph query tool.
+        Edits an existing file with new content and shows a visual diff of changes.
+        This tool displays a concise diff showing exactly what changes will be made,
+        with 5 lines of context around modifications and truncation for large files.
+        Use this for modifying existing files when you want to see the changes.
+        The 'file_path' can be found from the 'path' property of nodes returned by the graph query tool.
         """
         result = await file_editor.edit_file(file_path, new_content)
         if result.success:
@@ -335,5 +357,5 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
 
     return Tool(
         function=edit_existing_file,
-        description="Overwrites an existing file with new content. Use with caution.",
+        description="Edits an existing file and shows a visual diff of changes. Displays concise diffs with context lines and truncation for large files. Preferred for modifying existing files.",
     )

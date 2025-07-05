@@ -60,12 +60,13 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
     ) -> FileCreationResult:
         """
         Creates a new file with the specified content.
-        If the file already exists, it will be overwritten.
-        Use this to create new files in the codebase.
+        If the file already exists, it will be completely overwritten WITHOUT showing any diff.
+        Use this ONLY for creating entirely new files, not for modifying existing ones.
+        For modifying existing files with diff preview, use edit_existing_file instead.
         """
         return await file_writer.create_file(file_path, content)
 
     return Tool(
         function=create_new_file,
-        description="Creates a new file with the given content. This will overwrite the file if it already exists.",
+        description="Creates a new file with content. Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications.",
     )

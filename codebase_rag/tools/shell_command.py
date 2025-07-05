@@ -10,10 +10,10 @@ from ..schemas import ShellCommandResult
 # A strict list of commands the agent is allowed to execute.
 COMMAND_ALLOWLIST = {
     "ls",
+    "rg",
     "cat",
     "git",
     "echo",
-    "grep",
     "pwd",
     "pytest",
     "mypy",
