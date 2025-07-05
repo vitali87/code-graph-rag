@@ -3,7 +3,7 @@ import shlex
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 
 from ..schemas import ShellCommandResult
 
@@ -57,7 +57,12 @@ class ShellCommander:
 
             # Security: Check if the command is in the allowlist
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
-                err_msg = f"Command '{cmd_parts[0]}' is not in the allowlist."
+                available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
+                suggestion = ""
+                if cmd_parts[0] == "grep":
+                    suggestion = " Use 'rg' instead of 'grep' for text searching."
+                
+                err_msg = f"Command '{cmd_parts[0]}' is not in the allowlist.{suggestion} Available commands: {available_commands}"
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
@@ -113,14 +118,24 @@ class ShellCommander:
 def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     """Factory function to create the shell command tool."""
 
-    async def run_shell_command(ctx: RunContext, command: str) -> ShellCommandResult:
+    async def run_shell_command(command: str) -> ShellCommandResult:
         """
-        Executes an allow-listed shell command.
-
+        Executes a shell command from the approved allowlist only.
+        
+        AVAILABLE COMMANDS:
+        - File operations: ls, cat, find, pwd
+        - Text search: rg (ripgrep) - USE THIS INSTEAD OF grep
+        - Version control: git
+        - Testing: pytest, mypy, ruff  
+        - Package management: uv
+        - File system: rm, cp, mv, mkdir, rmdir (require confirmation)
+        - Other: echo
+        
+        IMPORTANT: Use 'rg' for text searching, NOT 'grep' (grep is not available).
+        
         For commands that modify the filesystem (rm, cp, mv, mkdir, rmdir) or the
-        python environment (`uv`), you MUST ask the user for confirmation before
-        executing.
-        For example: "I am about to run `uv pip install pytest`. Do you want to proceed?"
+        python environment (uv), you MUST ask the user for confirmation before executing.
+        Example: "I am about to run `uv pip install pytest`. Do you want to proceed?"
         Only execute after the user has explicitly confirmed.
         """
         return await shell_commander.execute(command)
@@ -128,5 +143,5 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     return Tool(
         function=run_shell_command,
         name="execute_shell_command",
-        description="Executes a shell command from an approved allowlist.",
+        description="Executes shell commands from allowlist: ls, cat, find, pwd, rg (NOT grep), git, pytest, mypy, ruff, uv, echo, rm/cp/mv/mkdir/rmdir (with confirmation).",
     )

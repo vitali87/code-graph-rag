@@ -19,8 +19,7 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 def temp_repo() -> Generator[Path, None, None]:
     """Creates a temporary repository path for a test and cleans up afterward."""
     temp_dir = tempfile.mkdtemp()
-    repo_path = Path(temp_dir)
-    yield repo_path
+    yield Path(temp_dir)
     shutil.rmtree(temp_dir)
 
 

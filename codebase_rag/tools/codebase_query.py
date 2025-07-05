@@ -15,12 +15,14 @@ class GraphQueryError(Exception):
     pass
 
 
-def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -> Tool:
+def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator, console: Console | None = None) -> Tool:
     """
     Factory function that creates the knowledge graph query tool,
     injecting its dependencies.
     """
-    console = Console()
+    # Use provided console or create a default one
+    if console is None:
+        console = Console(width=None, force_terminal=True)
 
     async def query_codebase_knowledge_graph(
         ctx: RunContext, natural_language_query: str
@@ -51,11 +53,12 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
                     for value in row.values():
                         if value is None:
                             renderable_values.append("")
+                        elif isinstance(value, bool):
+                            # Check bool first since bool is a subclass of int in Python
+                            renderable_values.append("✓" if value else "✗")
                         elif isinstance(value, int | float):
                             # Let Rich handle number formatting by converting to string
                             renderable_values.append(str(value))
-                        elif isinstance(value, bool):
-                            renderable_values.append("✓" if value else "✗")
                         else:
                             renderable_values.append(str(value))
                     table.add_row(*renderable_values)

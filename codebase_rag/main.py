@@ -243,7 +243,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     directory_lister = DirectoryLister(project_root=repo_path)
     document_analyzer = DocumentAnalyzer(project_root=repo_path)
 
-    query_tool = create_query_tool(ingestor, cypher_generator)
+    query_tool = create_query_tool(ingestor, cypher_generator, console)
     code_tool = create_code_retrieval_tool(code_retriever)
     file_reader_tool = create_file_reader_tool(file_reader)
     file_writer_tool = create_file_writer_tool(file_writer)
