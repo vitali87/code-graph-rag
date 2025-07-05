@@ -108,7 +108,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     # Display the colored prompt first
     print_formatted_text(HTML(
         f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
-    ), end="")
+    ))
 
     # Use simple prompt without formatting to avoid alignment issues
     result = prompt(

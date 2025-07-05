@@ -68,7 +68,7 @@ class FileEditor:
         return tree.root_node
 
     def get_function_source_code(
-        self, file_path: str, function_name: str
+        self, file_path: str, function_name: str, line_number: Optional[int] = None
     ) -> Optional[str]:
         root_node = self.get_ast(file_path)
         if not root_node:
@@ -83,35 +83,89 @@ class FileEditor:
             logger.warning(f"No language config found for extension {extension}")
             return None
 
-        # Recursively search for function definitions using language-specific node types
-        def find_function_node(node):
+        # Find all matching functions with their context
+        matching_functions = []
+        
+        def find_function_nodes(node, parent_class=None):
             if node.type in lang_config.function_node_types:
                 # Get the function name node using the 'name' field
                 name_node = node.child_by_field_name("name")
-                if (
-                    name_node
-                    and name_node.text
-                    and name_node.text.decode("utf-8") == function_name
-                ):
-                    return node
+                if name_node and name_node.text:
+                    func_name = name_node.text.decode("utf-8")
+                    
+                    # Check if this matches our target function
+                    qualified_name = f"{parent_class}.{func_name}" if parent_class else func_name
+                    
+                    # Match either simple name or qualified name
+                    if func_name == function_name or qualified_name == function_name:
+                        matching_functions.append({
+                            'node': node,
+                            'simple_name': func_name,
+                            'qualified_name': qualified_name,
+                            'parent_class': parent_class,
+                            'line_number': node.start_point[0] + 1  # 1-based line numbers
+                        })
+                    
+                    # Don't recurse into function bodies for nested functions
+                    return
+            
+            # Check if this is a class node to track context
+            current_class = parent_class
+            if node.type in lang_config.class_node_types:
+                name_node = node.child_by_field_name("name")
+                if name_node and name_node.text:
+                    current_class = name_node.text.decode("utf-8")
 
             # Recursively search children
             for child in node.children:
-                result = find_function_node(child)
-                if result:
-                    return result
+                find_function_nodes(child, current_class)
+
+        find_function_nodes(root_node)
+
+        # Handle different matching scenarios
+        if not matching_functions:
             return None
-
-        function_node = find_function_node(root_node)
-        if function_node:
-            return function_node.text.decode("utf-8")
-
-        return None
+        elif len(matching_functions) == 1:
+            return matching_functions[0]['node'].text.decode("utf-8")
+        else:
+            # Multiple functions found - try different disambiguation strategies
+            
+            # Strategy 1: Match by line number if provided
+            if line_number is not None:
+                for func in matching_functions:
+                    if func['line_number'] == line_number:
+                        return func['node'].text.decode("utf-8")
+                logger.warning(f"No function '{function_name}' found at line {line_number}")
+                return None
+            
+            # Strategy 2: Match by qualified name if function_name contains dot
+            if '.' in function_name:
+                for func in matching_functions:
+                    if func['qualified_name'] == function_name:
+                        return func['node'].text.decode("utf-8")
+                logger.warning(f"No function found with qualified name '{function_name}'")
+                return None
+            
+            # Strategy 3: Log ambiguity warning with details and return first match
+            function_details = []
+            for func in matching_functions:
+                details = f"'{func['qualified_name']}' at line {func['line_number']}"
+                function_details.append(details)
+            
+            logger.warning(
+                f"Ambiguous function name '{function_name}' in {file_path}. "
+                f"Found {len(matching_functions)} matches: {', '.join(function_details)}. "
+                f"Using first match. Consider using qualified name (e.g., 'ClassName.{function_name}') "
+                f"or specify line number for precise targeting."
+            )
+            
+            # Return the first match but warn the user
+            return matching_functions[0]['node'].text.decode("utf-8")
 
     def replace_function_source_code(
-        self, file_path: str, function_name: str, new_code: str
+        self, file_path: str, function_name: str, new_code: str, line_number: Optional[int] = None
     ) -> bool:
-        original_code = self.get_function_source_code(file_path, function_name)
+        original_code = self.get_function_source_code(file_path, function_name, line_number)
         if not original_code:
             logger.error(f"Function '{function_name}' not found in {file_path}.")
             return False
@@ -145,9 +199,9 @@ class FileEditor:
         return True
 
     def get_diff(
-        self, file_path: str, function_name: str, new_code: str
+        self, file_path: str, function_name: str, new_code: str, line_number: Optional[int] = None
     ) -> Optional[str]:
-        original_code = self.get_function_source_code(file_path, function_name)
+        original_code = self.get_function_source_code(file_path, function_name, line_number)
         if not original_code:
             return None
 
