@@ -23,6 +23,7 @@ from rich.text import Text
 
 from .config import settings
 from .graph_updater import GraphUpdater, MemgraphIngestor
+from .parser_loader import load_parsers
 from .services.llm import CypherGenerator, create_rag_orchestrator
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
@@ -367,7 +368,11 @@ def start(
                 console.print("[bold yellow]Cleaning database...[/bold yellow]")
                 ingestor.clean_database()
             ingestor.ensure_constraints()
-            updater = GraphUpdater(ingestor, repo_to_update)
+            
+            # Load parsers and queries
+            parsers, queries = load_parsers()
+            
+            updater = GraphUpdater(ingestor, repo_to_update, parsers, queries)
             updater.run()
 
             # Export graph if output file specified

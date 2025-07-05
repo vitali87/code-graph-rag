@@ -39,6 +39,10 @@ class GraphUpdater:
             "build",
             "dist",
             ".eggs",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            ".claude",
         }
 
     def run(self) -> None:
