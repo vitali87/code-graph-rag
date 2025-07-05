@@ -22,7 +22,7 @@ LANGUAGE_EXTENSIONS = {
 
 class EditResult(BaseModel):
     """Data model for file edit results."""
-    
+
     file_path: str
     success: bool
     error_message: str | None = None
@@ -39,14 +39,14 @@ class FileEditor:
     def get_parser(self, file_path: str) -> Optional[Parser]:
         file_path_obj = Path(file_path)
         extension = file_path_obj.suffix
-        
+
         # Handle .tmp files by looking at the base name before .tmp
-        if extension == '.tmp':
+        if extension == ".tmp":
             # Get the extension before .tmp (e.g., test_file.py.tmp -> .py)
             base_name = file_path_obj.stem
-            if '.' in base_name:
-                extension = '.' + base_name.split('.')[-1]
-        
+            if "." in base_name:
+                extension = "." + base_name.split(".")[-1]
+
         lang_name = LANGUAGE_EXTENSIONS.get(extension)
         if lang_name:
             return self.parsers.get(lang_name)
@@ -57,86 +57,99 @@ class FileEditor:
         if not parser:
             logger.warning(f"No parser available for {file_path}")
             return None
-        
+
         with open(file_path, "rb") as f:
             content = f.read()
-        
+
         tree = parser.parse(content)
         return tree.root_node
 
-    def get_function_source_code(self, file_path: str, function_name: str) -> Optional[str]:
+    def get_function_source_code(
+        self, file_path: str, function_name: str
+    ) -> Optional[str]:
         root_node = self.get_ast(file_path)
         if not root_node:
             return None
-        
+
         # Get language config for this file
         file_path_obj = Path(file_path)
         extension = file_path_obj.suffix
-        
+
         # Handle .tmp files by looking at the base name before .tmp
-        if extension == '.tmp':
+        if extension == ".tmp":
             base_name = file_path_obj.stem
-            if '.' in base_name:
-                extension = '.' + base_name.split('.')[-1]
-        
+            if "." in base_name:
+                extension = "." + base_name.split(".")[-1]
+
         lang_config = get_language_config(extension)
         if not lang_config:
             logger.warning(f"No language config found for extension {extension}")
             return None
-        
+
         # Recursively search for function definitions using language-specific node types
         def find_function_node(node):
             if node.type in lang_config.function_node_types:
                 # Get the function name node using the 'name' field
                 name_node = node.child_by_field_name("name")
-                if name_node and name_node.text and name_node.text.decode('utf-8') == function_name:
+                if (
+                    name_node
+                    and name_node.text
+                    and name_node.text.decode("utf-8") == function_name
+                ):
                     return node
-            
+
             # Recursively search children
             for child in node.children:
                 result = find_function_node(child)
                 if result:
                     return result
             return None
-        
+
         function_node = find_function_node(root_node)
         if function_node:
-            return function_node.text.decode('utf-8')
-            
+            return function_node.text.decode("utf-8")
+
         return None
 
-    def replace_function_source_code(self, file_path: str, function_name: str, new_code: str) -> bool:
+    def replace_function_source_code(
+        self, file_path: str, function_name: str, new_code: str
+    ) -> bool:
         original_code = self.get_function_source_code(file_path, function_name)
         if not original_code:
             logger.error(f"Function '{function_name}' not found in {file_path}.")
             return False
 
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             original_content = f.read()
-        
+
         # Create patches using diff-match-patch
         patches = self.dmp.patch_make(original_code, new_code)
-        
+
         # Apply patches to the original content
         new_content, results = self.dmp.patch_apply(patches, original_content)
-        
+
         # Check if all patches were applied successfully
         if not all(results):
-            logger.warning(f"Some patches failed to apply cleanly for function '{function_name}'")
-            # Fallback to simple string replacement
-            new_content = original_content.replace(original_code, new_code)
-        
+            logger.warning(
+                f"Patches for function '{function_name}' did not apply cleanly."
+            )
+            return False
+
         if original_content == new_content:
             logger.warning("No changes detected after replacement.")
             return False
-            
-        with open(file_path, 'w', encoding='utf-8') as f:
+
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        
-        logger.success(f"Successfully replaced function '{function_name}' in {file_path}.")
+
+        logger.success(
+            f"Successfully replaced function '{function_name}' in {file_path}."
+        )
         return True
 
-    def get_diff(self, file_path: str, function_name: str, new_code: str) -> Optional[str]:
+    def get_diff(
+        self, file_path: str, function_name: str, new_code: str
+    ) -> Optional[str]:
         original_code = self.get_function_source_code(file_path, function_name)
         if not original_code:
             return None
@@ -144,7 +157,7 @@ class FileEditor:
         # Use diff-match-patch for more sophisticated diff generation
         diffs = self.dmp.diff_main(original_code, new_code)
         self.dmp.diff_cleanupSemantic(diffs)
-        
+
         # Convert to unified diff format for readability
         diff = difflib.unified_diff(
             original_code.splitlines(keepends=True),
@@ -157,30 +170,61 @@ class FileEditor:
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
         """Apply a patch to a file using diff-match-patch."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 original_content = f.read()
-            
+
             # Parse the patch
             patches = self.dmp.patch_fromText(patch_text)
-            
+
             # Apply the patch
             new_content, results = self.dmp.patch_apply(patches, original_content)
-            
+
             # Check if all patches were applied successfully
             if not all(results):
                 logger.warning(f"Some patches failed to apply cleanly to {file_path}")
                 return False
-            
+
             # Write the updated content
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            
+
             logger.success(f"Successfully applied patch to {file_path}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error applying patch to {file_path}: {e}")
             return False
+
+    def _display_colored_diff(
+        self, original_content: str, new_content: str, file_path: str
+    ) -> None:
+        """Display a colored diff using diff-match-patch."""
+        # Generate diffs using diff-match-patch
+        diffs = self.dmp.diff_main(original_content, new_content)
+        self.dmp.diff_cleanupSemantic(diffs)
+
+        # ANSI color codes
+        RED = "\033[31m"
+        GREEN = "\033[32m"
+        CYAN = "\033[36m"
+        RESET = "\033[0m"
+
+        print(f"\n{CYAN}Changes to {file_path}:{RESET}")
+
+        for op, text in diffs:
+            lines = text.splitlines()
+            for line in lines:
+                if op == self.dmp.DIFF_DELETE:
+                    print(f"{RED}- {line}{RESET}")
+                elif op == self.dmp.DIFF_INSERT:
+                    print(f"{GREEN}+ {line}{RESET}")
+                elif op == self.dmp.DIFF_EQUAL:
+                    # Show some context lines but truncate if too many
+                    context_lines = line.split("\n") if "\n" in line else [line]
+                    for ctx_line in context_lines[:3]:  # Show max 3 context lines
+                        if ctx_line.strip():  # Skip empty lines
+                            print(f"  {ctx_line}")
+        print()  # Extra newline for spacing
 
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
         """Overwrites the content of a specified file with new content."""
@@ -188,21 +232,35 @@ class FileEditor:
         try:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)  # Security check
-            
-            with open(full_path, 'w', encoding='utf-8') as f:
+
+            # Read original content to show diff
+            original_content = ""
+            if full_path.exists():
+                with open(full_path, "r", encoding="utf-8") as f:
+                    original_content = f.read()
+
+            # Display colored diff
+            if original_content != new_content:
+                self._display_colored_diff(original_content, new_content, file_path)
+
+            with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            
+
             logger.success(f"[FileEditor] Successfully edited file: {file_path}")
             return EditResult(file_path=file_path, success=True)
-            
+
         except ValueError:
             error_msg = "Security risk: Attempted to edit file outside of project root."
             logger.error(f"[FileEditor] {error_msg}")
-            return EditResult(file_path=file_path, success=False, error_message=error_msg)
+            return EditResult(
+                file_path=file_path, success=False, error_message=error_msg
+            )
         except Exception as e:
             error_msg = f"An unexpected error occurred: {e}"
             logger.error(f"[FileEditor] Error editing file {file_path}: {e}")
-            return EditResult(file_path=file_path, success=False, error_message=error_msg)
+            return EditResult(
+                file_path=file_path, success=False, error_message=error_msg
+            )
 
 
 def create_file_editor_tool(file_editor: FileEditor) -> Tool:
