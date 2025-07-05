@@ -1,62 +1,13 @@
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Optional
 from loguru import logger
-from tree_sitter import Language, Parser, Node
+from tree_sitter import Parser, Node
 from pathlib import Path
 import difflib
 from pydantic import BaseModel
 from pydantic_ai import Tool
 import diff_match_patch
 from ..language_config import get_language_config
-
-# Define a type for the language library loaders
-LanguageLoader = Callable[[], object]
-
-# Import available Tree-sitter languages and correctly type them as Optional
-try:
-    from tree_sitter_python import language as python_language_so
-except ImportError:
-    python_language_so = None
-
-try:
-    from tree_sitter_javascript import language as javascript_language_so
-except ImportError:
-    javascript_language_so = None
-
-try:
-    from tree_sitter_typescript import language_typescript as typescript_language_so
-except ImportError:
-    typescript_language_so = None
-
-try:
-    from tree_sitter_rust import language as rust_language_so
-except ImportError:
-    rust_language_so = None
-
-try:
-    from tree_sitter_go import language as go_language_so
-except ImportError:
-    go_language_so = None
-
-try:
-    from tree_sitter_scala import language as scala_language_so
-except ImportError:
-    scala_language_so = None
-
-try:
-    from tree_sitter_java import language as java_language_so
-except ImportError:
-    java_language_so = None
-
-
-LANGUAGE_LIBRARIES: Dict[str, Optional[LanguageLoader]] = {
-    "python": python_language_so,
-    "javascript": javascript_language_so,
-    "typescript": typescript_language_so,
-    "rust": rust_language_so,
-    "go": go_language_so,
-    "scala": scala_language_so,
-    "java": java_language_so,
-}
+from ..parser_loader import load_parsers
 
 LANGUAGE_EXTENSIONS = {
     ".py": "python",
@@ -80,21 +31,10 @@ class EditResult(BaseModel):
 class FileEditor:
     def __init__(self, project_root: str = ".") -> None:
         self.project_root = Path(project_root).resolve()
-        self.parsers: Dict[str, Parser] = {}
         self.dmp = diff_match_patch.diff_match_patch()
-        self._initialize_parsers()
+        # Load parsers using the shared parser loader
+        self.parsers, _ = load_parsers()
         logger.info(f"FileEditor initialized with root: {self.project_root}")
-
-    def _initialize_parsers(self) -> None:
-        for lang_name, lang_lib in LANGUAGE_LIBRARIES.items():
-            if lang_lib:
-                try:
-                    language = Language(lang_lib())
-                    parser = Parser(language)
-                    parser.language = language
-                    self.parsers[lang_name] = parser
-                except Exception as e:
-                    logger.warning(f"Failed to load {lang_name} grammar: {e}")
 
     def get_parser(self, file_path: str) -> Optional[Parser]:
         file_path_obj = Path(file_path)
