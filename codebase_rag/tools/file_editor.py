@@ -233,11 +233,15 @@ class FileEditor:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)  # Security check
 
+            # Check if the file exists and is a file before proceeding
+            if not full_path.is_file():
+                error_msg = f"File not found or is a directory: {file_path}"
+                logger.warning(f"[FileEditor] {error_msg}")
+                return EditResult(file_path=file_path, success=False, error_message=error_msg)
+            
             # Read original content to show diff
-            original_content = ""
-            if full_path.exists():
-                with open(full_path, "r", encoding="utf-8") as f:
-                    original_content = f.read()
+            with open(full_path, "r", encoding="utf-8") as f:
+                original_content = f.read()
 
             # Display colored diff
             if original_content != new_content:
