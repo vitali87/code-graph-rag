@@ -6,6 +6,7 @@ import difflib
 from pydantic import BaseModel
 from pydantic_ai import Tool
 import diff_match_patch
+from ..language_config import get_language_config
 
 # Define a type for the language library loaders
 LanguageLoader = Callable[[], object]
@@ -128,13 +129,28 @@ class FileEditor:
         if not root_node:
             return None
         
-        # Recursively search for function definitions
+        # Get language config for this file
+        file_path_obj = Path(file_path)
+        extension = file_path_obj.suffix
+        
+        # Handle .tmp files by looking at the base name before .tmp
+        if extension == '.tmp':
+            base_name = file_path_obj.stem
+            if '.' in base_name:
+                extension = '.' + base_name.split('.')[-1]
+        
+        lang_config = get_language_config(extension)
+        if not lang_config:
+            logger.warning(f"No language config found for extension {extension}")
+            return None
+        
+        # Recursively search for function definitions using language-specific node types
         def find_function_node(node):
-            if node.type == "function_definition":
-                # Get the function name node (first child after 'def')
-                for child in node.children:
-                    if child.type == "identifier" and child.text.decode('utf-8') == function_name:
-                        return node
+            if node.type in lang_config.function_node_types:
+                # Get the function name node using the 'name' field
+                name_node = node.child_by_field_name("name")
+                if name_node and name_node.text and name_node.text.decode('utf-8') == function_name:
+                    return node
             
             # Recursively search children
             for child in node.children:
