@@ -403,7 +403,7 @@ Configuration is managed through environment variables in `.env` file:
 
 ### Gemini (Cloud) Configuration
 - `GEMINI_API_KEY`: Required when `LLM_PROVIDER=gemini`
-- `GEMINI_MODEL_ID`: Main model for orchestration (default: `gemini-2.5-pro-preview-06-05`)
+- `GEMINI_MODEL_ID`: Main model for orchestration (default: `gemini-2.5-pro`)
 - `MODEL_CYPHER_ID`: Model for Cypher generation (default: `gemini-2.5-flash-lite-preview-06-17`)
 
 ### Local Models Configuration
@@ -463,20 +463,20 @@ The agent has access to a suite of tools to understand and interact with the cod
 - **`get_code_snippet`**: Retrieves the exact source code for a specific function or class.
 - **`read_file_content`**: Reads the entire content of a specified file.
 - **`create_new_file`**: Creates a new file with specified content.
-- **`edit_existing_file`**: Applies changes to an existing file. Instead of overwriting, it uses a sophisticated `diff-match-patch` mechanism to apply targeted changes, making the process safer and more precise.
+- **`replace_code_surgically`**: Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.
 - **`execute_shell_command`**: Executes a shell command in the project's environment.
 
 ### Intelligent and Safe File Editing
 
-To prevent errors and misplaced code, the agent follows a sophisticated and interactive workflow before making any changes to the codebase. This process is far more advanced than simply overwriting a file.
+The agent follows a careful workflow when modifying files to ensure accuracy and transparency:
 
-1.  **AST-Based Targeting**: The agent uses `tree-sitter` to parse the source code into an Abstract Syntax Tree (AST). This allows it to precisely locate the exact function or method that needs to be modified, even in complex files. It can disambiguate functions with the same name by using qualified names (e.g., `ClassName.method_name`) or line numbers.
+-   **AST-Based Function Targeting**: For function-specific edits, the agent uses `tree-sitter` to parse source code into an Abstract Syntax Tree (AST). This allows it to precisely locate the exact function or method that needs to be modified, even in complex files. It can disambiguate functions with the same name by using qualified names (e.g., `ClassName.method_name`) or line numbers.
 
-2.  **Diff and Patch Application**: Instead of replacing the entire file, the agent uses a `diff-match-patch` algorithm. It calculates the specific differences between the old code and the new code and creates a "patch." This patch is then applied to the original file, ensuring that only the intended lines are changed. This is a surgical and safe approach.
+-   **Visual Diff Preview**: Before making any changes, the agent displays a colored diff showing exactly what will be modified. The diff uses concise formatting with limited context lines and truncation indicators for large files, making it easy to review changes.
 
-3.  **Visual Confirmation**: Before applying the patch, the agent displays a colored `diff` in the console. This visual feedback shows the user exactly which lines will be added, removed, or modified, allowing for a final check before the change is committed to the file.
+-   **Surgical Patching**: The `replace_code_surgically` tool performs a true surgical patch. It identifies the exact `target_code` block and replaces *only that section* with the `replacement_code`, leaving the rest of the file unchanged. This ensures precise, minimal modifications.
 
-This multi-step, interactive process ensures that file modifications are accurate, safe, and transparent, making the agent a reliable assistant for both analyzing and modifying your codebase.
+This process ensures that file modifications are transparent and reviewable, making the agent a reliable assistant for analyzing and modifying your codebase.
 
 ### Security Sandbox
 

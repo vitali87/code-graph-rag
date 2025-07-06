@@ -299,9 +299,66 @@ class FileEditor:
         
         print()  # Extra newline for spacing
 
+    def replace_code_block(self, file_path: str, target_block: str, replacement_block: str) -> bool:
+        """Surgically replace a specific code block in a file using diff-match-patch."""
+        logger.info(f"[FileEditor] Attempting surgical block replacement in: {file_path}")
+        try:
+            full_path = (self.project_root / file_path).resolve()
+            full_path.relative_to(self.project_root)  # Security check
+
+            if not full_path.is_file():
+                logger.error(f"File not found: {file_path}")
+                return False
+            
+            # Read original content
+            with open(full_path, "r", encoding="utf-8") as f:
+                original_content = f.read()
+
+            # Find the target block in the file
+            if target_block not in original_content:
+                logger.error(f"Target block not found in {file_path}")
+                logger.debug(f"Looking for: {repr(target_block)}")
+                return False
+
+            # Create surgical patch - replace only the target block
+            modified_content = original_content.replace(target_block, replacement_block, 1)
+            
+            # Verify only one replacement was made
+            if original_content.count(target_block) > 1:
+                logger.warning(f"Multiple occurrences of target block found. Only replacing first occurrence.")
+            
+            if original_content == modified_content:
+                logger.warning("No changes detected - target and replacement are identical")
+                return False
+
+            # Display the surgical diff
+            self._display_colored_diff(original_content, modified_content, file_path)
+
+            # Create and apply surgical patches
+            patches = self.dmp.patch_make(original_content, modified_content)
+            patched_content, results = self.dmp.patch_apply(patches, original_content)
+
+            if not all(results):
+                logger.error("Surgical patches failed to apply cleanly")
+                return False
+
+            # Write the surgically modified content
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(patched_content)
+
+            logger.success(f"[FileEditor] Successfully applied surgical block replacement in: {file_path}")
+            return True
+
+        except ValueError:
+            logger.error("Security risk: Attempted to edit file outside of project root.")
+            return False
+        except Exception as e:
+            logger.error(f"Error during surgical block replacement: {e}")
+            return False
+
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
-        """Overwrites the content of a specified file with new content."""
-        logger.info(f"[FileEditor] Attempting to edit file: {file_path}")
+        """Overwrites entire file with new content - use for full file replacement."""
+        logger.info(f"[FileEditor] Attempting full file replacement: {file_path}")
         try:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)  # Security check
@@ -320,10 +377,11 @@ class FileEditor:
             if original_content != new_content:
                 self._display_colored_diff(original_content, new_content, file_path)
 
+            # Write new content (full replacement)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
 
-            logger.success(f"[FileEditor] Successfully edited file: {file_path}")
+            logger.success(f"[FileEditor] Successfully replaced entire file: {file_path}")
             return EditResult(file_path=file_path, success=True)
 
         except ValueError:
@@ -343,21 +401,27 @@ class FileEditor:
 def create_file_editor_tool(file_editor: FileEditor) -> Tool:
     """Factory function to create the file editor tool."""
 
-    async def edit_existing_file(file_path: str, new_content: str) -> str:
+    async def replace_code_surgically(file_path: str, target_code: str, replacement_code: str) -> str:
         """
-        Edits an existing file with new content and shows a visual diff of changes.
-        This tool displays a concise diff showing exactly what changes will be made,
-        with 5 lines of context around modifications and truncation for large files.
-        Use this for modifying existing files when you want to see the changes.
-        The 'file_path' can be found from the 'path' property of nodes returned by the graph query tool.
+        Surgically replaces a specific code block in a file using diff-match-patch.
+        This tool finds the exact target code block and replaces only that section,
+        leaving the rest of the file completely unchanged. This is true surgical patching.
+        
+        Args:
+            file_path: Path to the file to modify
+            target_code: The exact code block to find and replace (must match exactly)
+            replacement_code: The new code to replace the target with
+            
+        Use this when you need to change specific functions, classes, or code blocks
+        without affecting the rest of the file. The target_code must be an exact match.
         """
-        result = await file_editor.edit_file(file_path, new_content)
-        if result.success:
-            return f"Successfully edited file: {file_path}"
+        success = file_editor.replace_code_block(file_path, target_code, replacement_code)
+        if success:
+            return f"Successfully applied surgical code replacement in: {file_path}"
         else:
-            return f"Error editing file: {result.error_message}"
+            return f"Failed to apply surgical replacement in {file_path}. Target code not found or patches failed."
 
     return Tool(
-        function=edit_existing_file,
-        description="Edits an existing file and shows a visual diff of changes. Displays concise diffs with context lines and truncation for large files. Preferred for modifying existing files.",
+        function=replace_code_surgically,
+        description="Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.",
     )
