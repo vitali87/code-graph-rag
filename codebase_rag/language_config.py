@@ -115,8 +115,8 @@ LANGUAGE_CONFIGS = {
     "cpp": LanguageConfig(
         name="cpp",
         file_extensions=[".cpp", ".h", ".hpp", ".cc"],
-        function_node_types=["function_definition"],
-        class_node_types=["class_specifier", "struct_specifier"],
+        function_node_types=["function_definition", "constructor_definition", "destructor_definition"],
+        class_node_types=["class_specifier", "struct_specifier", "union_specifier", "enum_specifier"],
         module_node_types=["translation_unit"],
         call_node_types=["call_expression"],
     ),

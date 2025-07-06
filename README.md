@@ -390,7 +390,7 @@ The knowledge graph uses the following node types and relationships:
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 - **Scala**: `function_definition`, `class_definition`, `object_definition`, `trait_definition`
 - **Java**: `method_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`
-- **C++**: `function_definition`, `class_specifier`, `struct_specifier`
+- **C++**: `function_definition`, `constructor_definition`, `destructor_definition`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
 
 ### Relationships
 - `CONTAINS_PACKAGE/MODULE/FILE/FOLDER`: Hierarchical containment
@@ -499,7 +499,7 @@ This process ensures that file modifications are transparent and reviewable, mak
 | Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                |
 | Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations |
 | Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations |
-| C++        | `.cpp`, `.h`, `.hpp`, `.cc` | ✅      | ✅ (classes/structs) | ✅      | -                |
+| C++        | `.cpp`, `.h`, `.hpp`, `.cc` | ✅      | ✅ (classes/structs/unions/enums) | ✅      | -                |
 
 ### Language-Specific Features
 
