@@ -123,9 +123,8 @@ LANGUAGE_CONFIGS = {
             "struct_specifier",
             "union_specifier",
             "enum_specifier",
-            "namespace_definition",
         ],
-        module_node_types=["translation_unit"],
+        module_node_types=["translation_unit", "namespace_definition"],
         call_node_types=["call_expression"],
     ),
 }
