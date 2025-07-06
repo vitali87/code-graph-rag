@@ -10,6 +10,7 @@ from loguru import logger
 @dataclass
 class GraphNode:
     """Represents a node in the exported graph."""
+
     node_id: int
     labels: list[str]
     properties: dict[str, Any]
@@ -18,6 +19,7 @@ class GraphNode:
 @dataclass
 class GraphRelationship:
     """Represents a relationship in the exported graph."""
+
     from_id: int
     to_id: int
     type: str
@@ -47,7 +49,7 @@ class GraphLoader:
             raise FileNotFoundError(f"Graph file not found: {self.file_path}")
 
         logger.info(f"Loading graph from {self.file_path}")
-        with open(self.file_path, encoding='utf-8') as f:
+        with open(self.file_path, encoding="utf-8") as f:
             self._data = json.load(f)
 
         if self._data is None:
@@ -55,11 +57,11 @@ class GraphLoader:
 
         # Parse nodes and build indexes
         self._nodes = []
-        for node_data in self._data['nodes']:
+        for node_data in self._data["nodes"]:
             node = GraphNode(
-                node_id=node_data['node_id'],
-                labels=node_data['labels'],
-                properties=node_data['properties']
+                node_id=node_data["node_id"],
+                labels=node_data["labels"],
+                properties=node_data["properties"],
             )
             self._nodes.append(node)
 
@@ -70,12 +72,12 @@ class GraphLoader:
 
         # Parse relationships and build indexes
         self._relationships = []
-        for rel_data in self._data['relationships']:
+        for rel_data in self._data["relationships"]:
             rel = GraphRelationship(
-                from_id=rel_data['from_id'],
-                to_id=rel_data['to_id'],
-                type=rel_data['type'],
-                properties=rel_data['properties']
+                from_id=rel_data["from_id"],
+                to_id=rel_data["to_id"],
+                type=rel_data["type"],
+                properties=rel_data["properties"],
             )
             self._relationships.append(rel)
 
@@ -83,8 +85,10 @@ class GraphLoader:
             self._outgoing_rels[rel.from_id].append(rel)
             self._incoming_rels[rel.to_id].append(rel)
 
-        logger.info(f"Loaded {len(self._nodes)} nodes and "
-                   f"{len(self._relationships)} relationships with indexes")
+        logger.info(
+            f"Loaded {len(self._nodes)} nodes and "
+            f"{len(self._relationships)} relationships with indexes"
+        )
 
     def _build_property_index(self, property_name: str) -> None:
         """Build index for a specific property."""
@@ -120,7 +124,7 @@ class GraphLoader:
         if self._data is None:
             self.load()
         assert self._data is not None, "Data should be loaded"
-        return self._data['metadata']  # type: ignore
+        return self._data["metadata"]  # type: ignore
 
     def find_nodes_by_label(self, label: str) -> list[GraphNode]:
         """Find all nodes with a specific label. O(1) lookup."""
@@ -144,8 +148,9 @@ class GraphLoader:
 
     def get_relationships_for_node(self, node_id: int) -> list[GraphRelationship]:
         """Get all relationships (incoming and outgoing) for a node. O(1) lookup."""
-        return (self.get_outgoing_relationships(node_id) +
-                self.get_incoming_relationships(node_id))
+        return self.get_outgoing_relationships(
+            node_id
+        ) + self.get_incoming_relationships(node_id)
 
     def get_outgoing_relationships(self, node_id: int) -> list[GraphRelationship]:
         """Get outgoing relationships for a specific node. O(1) lookup."""
@@ -161,7 +166,9 @@ class GraphLoader:
 
     def summary(self) -> dict[str, Any]:
         """Get a summary of the graph structure."""
-        node_labels = {label: len(nodes) for label, nodes in self._nodes_by_label.items()}
+        node_labels = {
+            label: len(nodes) for label, nodes in self._nodes_by_label.items()
+        }
 
         relationship_types: dict[str, int] = {}
         for rel in self.relationships:
@@ -172,7 +179,7 @@ class GraphLoader:
             "total_relationships": len(self.relationships),
             "node_labels": node_labels,
             "relationship_types": relationship_types,
-            "metadata": self.metadata
+            "metadata": self.metadata,
         }
 
 

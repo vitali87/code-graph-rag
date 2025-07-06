@@ -17,14 +17,16 @@ class MemgraphIngestor:
         self.node_buffer: list[tuple[str, dict[str, Any]]] = []
         self.relationship_buffer: list[tuple[tuple, str, tuple, dict | None]] = []
 
-    def __enter__(self) -> 'MemgraphIngestor':
+    def __enter__(self) -> "MemgraphIngestor":
         logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
         self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
         logger.info("Successfully connected to Memgraph.")
         return self
 
-    def __exit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any) -> None:
+    def __exit__(
+        self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any
+    ) -> None:
         if exc_type:
             logger.error(
                 f"An exception occurred: {exc_val}. Flushing remaining items...",
@@ -35,9 +37,7 @@ class MemgraphIngestor:
             self.conn.close()
             logger.info("\nDisconnected from Memgraph.")
 
-    def _execute_query(
-        self, query: str, params: dict[str, Any] | None = None
-    ) -> list:
+    def _execute_query(self, query: str, params: dict[str, Any] | None = None) -> list:
         if not self.conn:
             raise ConnectionError("Not connected to Memgraph.")
         params = params or {}
@@ -175,9 +175,7 @@ class MemgraphIngestor:
         logger.debug(f"Executing fetch query: {query} with params: {params}")
         return self._execute_query(query, params)
 
-    def execute_write(
-        self, query: str, params: dict[str, Any] | None = None
-    ) -> None:
+    def execute_write(self, query: str, params: dict[str, Any] | None = None) -> None:
         """Executes a write query without returning results."""
         logger.debug(f"Executing write query: {query} with params: {params}")
         self._execute_query(query, params)
@@ -206,11 +204,13 @@ class MemgraphIngestor:
             "metadata": {
                 "total_nodes": len(nodes_data),
                 "total_relationships": len(relationships_data),
-                "exported_at": self._get_current_timestamp()
-            }
+                "exported_at": self._get_current_timestamp(),
+            },
         }
 
-        logger.info(f"Exported {len(nodes_data)} nodes and {len(relationships_data)} relationships")
+        logger.info(
+            f"Exported {len(nodes_data)} nodes and {len(relationships_data)} relationships"
+        )
         return graph_data
 
     def _get_current_timestamp(self) -> str:

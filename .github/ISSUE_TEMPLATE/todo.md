@@ -23,10 +23,10 @@ Any additional information, screenshots, or context
 
 ## 🚦 Priority
 - [ ] High
-- [ ] Medium  
+- [ ] Medium
 - [ ] Low
 
 ## 📊 Estimated Effort
 - [ ] Small (< 2 hours)
 - [ ] Medium (2-8 hours)
-- [ ] Large (> 8 hours) 
+- [ ] Large (> 8 hours)
