@@ -116,7 +116,14 @@ class ShellCommander:
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
-            # Skip confirmation check since tool interface handles safety at agent level
+            # Check if command requires confirmation but wasn't pre-approved
+            requires_confirmation, reason = _requires_confirmation(cmd_parts)
+            if requires_confirmation and not confirmed:
+                # Return a special message that tells the agent to ask for confirmation
+                command_str = ' '.join(cmd_parts)
+                confirmation_msg = f"I will run `{command_str}`. Do you approve? [y/n]"
+                logger.info(f"Command requires confirmation: {command_str}")
+                return ShellCommandResult(return_code=-2, stdout=confirmation_msg, stderr="")
 
             process = await asyncio.create_subprocess_exec(
                 *cmd_parts,
@@ -164,9 +171,13 @@ class ShellCommander:
 def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     """Factory function to create the shell command tool."""
 
-    async def run_shell_command(command: str) -> ShellCommandResult:
+    async def run_shell_command(command: str, user_confirmed: bool = False) -> ShellCommandResult:
         """
         Executes a shell command from the approved allowlist only.
+        
+        Args:
+            command: The shell command to execute
+            user_confirmed: Set to True if user has explicitly confirmed this command
         
         AVAILABLE COMMANDS:
         - File operations: ls, cat, find, pwd
@@ -185,10 +196,12 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         - Git operations: add, commit, push, pull, merge, rebase, reset, checkout, branch, tag, stash, cherry-pick, revert
         - Safe git commands (no confirmation needed): status, log, diff, show, ls-files, remote, config
         
-        When a command requires confirmation, the tool will execute it directly without
-        additional confirmation prompts since the agent handles user approval.
+        For dangerous commands:
+        1. Call once to check if confirmation needed (will return error if required)
+        2. Ask user for approval
+        3. Call again with user_confirmed=True to execute
         """
-        return await shell_commander.execute(command, confirmed=True)
+        return await shell_commander.execute(command, confirmed=user_confirmed)
 
     return Tool(
         function=run_shell_command,
