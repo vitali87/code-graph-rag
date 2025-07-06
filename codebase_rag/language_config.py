@@ -19,7 +19,9 @@ class LanguageConfig:
     body_field: str = "body"
 
     # Package detection patterns
-    package_indicators: list[str] = field(default_factory=list)  # e.g., ["__init__.py"] for Python
+    package_indicators: list[str] = field(
+        default_factory=list
+    )  # e.g., ["__init__.py"] for Python
 
 
 # Language configurations
@@ -111,6 +113,19 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         package_indicators=[],  # Java uses package declarations
         call_node_types=["method_invocation"],
+    ),
+    "cpp": LanguageConfig(
+        name="cpp",
+        file_extensions=[".cpp", ".h", ".hpp", ".cc", ".cxx", ".hxx", ".hh"],
+        function_node_types=["function_definition"],
+        class_node_types=[
+            "class_specifier",
+            "struct_specifier",
+            "union_specifier",
+            "enum_specifier",
+        ],
+        module_node_types=["translation_unit", "namespace_definition"],
+        call_node_types=["call_expression"],
     ),
 }
 

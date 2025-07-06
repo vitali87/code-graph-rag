@@ -38,6 +38,7 @@ def build_binary():
         "--collect-all", "tree_sitter_go",
         "--collect-all", "tree_sitter_scala",
         "--collect-all", "tree_sitter_java",
+        "--collect-all", "tree_sitter_cpp",
         # Include pydantic-ai and dependencies
         "--collect-all", "pydantic_ai",
         "--collect-data", "pydantic_ai",
