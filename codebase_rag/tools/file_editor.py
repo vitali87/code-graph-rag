@@ -17,6 +17,10 @@ LANGUAGE_EXTENSIONS = {
     ".go": "go",
     ".java": "java",
     ".scala": "scala",
+    ".cpp": "cpp",
+    ".h": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
 }
 
 

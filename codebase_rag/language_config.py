@@ -112,6 +112,14 @@ LANGUAGE_CONFIGS = {
         package_indicators=[],  # Java uses package declarations
         call_node_types=["method_invocation"],
     ),
+    "cpp": LanguageConfig(
+        name="cpp",
+        file_extensions=[".cpp", ".h", ".hpp", ".cc"],
+        function_node_types=["function_definition"],
+        class_node_types=["class_specifier", "struct_specifier"],
+        module_node_types=["translation_unit"],
+        call_node_types=["call_expression"],
+    ),
 }
 
 

@@ -28,7 +28,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## 🚀 Features
 
-- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, and Java codebases
+- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, Java, and C++ codebases
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
@@ -99,6 +99,7 @@ This installs Tree-sitter grammars for:
 - **Go** (.go)
 - **Scala** (.scala, .sc)
 - **Java** (.java)
+- **C++** (.cpp, .h, .hpp, .cc)
 
 3. **Set up environment variables**:
 ```bash
@@ -179,6 +180,7 @@ python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
 - **Go**: `.go` files
 - **Scala**: `.scala`, `.sc` files
 - **Java**: `.java` files
+- **C++**: `.cpp`, `.h`, `.hpp`, `.cc` files
 
 ### Step 2: Query the Codebase
 
@@ -310,6 +312,7 @@ python -m codebase_rag.main optimize javascript \
 - `go` - Go projects
 - `java` - Java projects
 - `scala` - Scala projects
+- `cpp` - C++ projects
 
 **How It Works:**
 1. **Analysis Phase**: The agent analyzes your codebase structure using the knowledge graph
@@ -387,6 +390,7 @@ The knowledge graph uses the following node types and relationships:
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 - **Scala**: `function_definition`, `class_definition`, `object_definition`, `trait_definition`
 - **Java**: `method_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`
+- **C++**: `function_definition`, `class_specifier`, `struct_specifier`
 
 ### Relationships
 - `CONTAINS_PACKAGE/MODULE/FILE/FOLDER`: Hierarchical containment
@@ -495,6 +499,7 @@ This process ensures that file modifications are transparent and reviewable, mak
 | Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                |
 | Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations |
 | Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations |
+| C++        | `.cpp`, `.h`, `.hpp`, `.cc` | ✅      | ✅ (classes/structs) | ✅      | -                |
 
 ### Language-Specific Features
 
@@ -504,6 +509,7 @@ This process ensures that file modifications are transparent and reviewable, mak
 - **Go**: Functions, methods, type declarations, and struct definitions
 - **Scala**: Functions, methods, classes, objects, traits, case classes, and Scala 3 syntax
 - **Java**: Methods, constructors, classes, interfaces, enums, and annotation types
+- **C++**: Functions, classes, structs, and methods
 
 ### Installation Options
 
@@ -515,7 +521,7 @@ uv sync
 uv sync --extra treesitter-full
 
 # Individual language support (if needed)
-uv add tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-rust tree-sitter-go tree-sitter-scala tree-sitter-java
+uv add tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-rust tree-sitter-go tree-sitter-scala tree-sitter-java tree-sitter-cpp
 ```
 
 ### Language Configuration

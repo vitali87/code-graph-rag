@@ -565,7 +565,7 @@ async def main_optimize_async(
 
 @app.command()
 def optimize(
-    language: str = typer.Argument(..., help="Programming language to optimize for (e.g., python, java, javascript)"),
+    language: str = typer.Argument(..., help="Programming language to optimize for (e.g., python, java, javascript, cpp)"),
     repo_path: str | None = typer.Option(
         None, "--repo-path", help="Path to the repository to optimize"
     ),

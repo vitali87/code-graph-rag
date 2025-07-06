@@ -43,6 +43,11 @@ try:
 except ImportError:
     java_language_so = None
 
+try:
+    from tree_sitter_cpp import language as cpp_language_so
+except ImportError:
+    cpp_language_so = None
+
 
 LANGUAGE_LIBRARIES: Dict[str, Optional[LanguageLoader]] = {
     "python": python_language_so,
@@ -52,6 +57,7 @@ LANGUAGE_LIBRARIES: Dict[str, Optional[LanguageLoader]] = {
     "go": go_language_so,
     "scala": scala_language_so,
     "java": java_language_so,
+    "cpp": cpp_language_so,
 }
 
 
