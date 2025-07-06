@@ -3,19 +3,20 @@ import shlex
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 
 from ..schemas import ShellCommandResult
 
 # A strict list of commands the agent is allowed to execute.
 COMMAND_ALLOWLIST = {
     "ls",
+    "rg",
     "cat",
     "git",
     "echo",
-    "grep",
     "pwd",
     "pytest",
+    "mypy",
     "ruff",
     "uv",
     "find",
@@ -27,11 +28,55 @@ COMMAND_ALLOWLIST = {
     "rmdir",
 }
 
+# Git commands that require user confirmation
+GIT_CONFIRMATION_COMMANDS = {
+    "add",
+    "commit",
+    "push",
+    "pull",
+    "merge",
+    "rebase",
+    "reset",
+    "checkout",
+    "branch",
+    "tag",
+    "stash",
+    "cherry-pick",
+    "revert",
+}
+
 
 def _is_dangerous_command(cmd_parts: list[str]) -> bool:
     """Checks for dangerous command patterns."""
     command = cmd_parts[0]
     return command == "rm" and "-rf" in cmd_parts
+
+
+def _requires_confirmation(cmd_parts: list[str]) -> tuple[bool, str]:
+    """
+    Checks if a command requires user confirmation.
+    Returns (requires_confirmation, reason).
+    """
+    if not cmd_parts:
+        return False, ""
+    
+    command = cmd_parts[0]
+    
+    # File system modification commands
+    if command in {"rm", "cp", "mv", "mkdir", "rmdir"}:
+        return True, f"filesystem modification command '{command}'"
+    
+    # Package management commands
+    if command == "uv":
+        return True, "package management command 'uv'"
+    
+    # Git commands that modify state
+    if command == "git" and len(cmd_parts) > 1:
+        git_subcommand = cmd_parts[1]
+        if git_subcommand in GIT_CONFIRMATION_COMMANDS:
+            return True, f"git command 'git {git_subcommand}'"
+    
+    return False, ""
 
 
 class ShellCommander:
@@ -42,7 +87,35 @@ class ShellCommander:
         self.timeout = timeout
         logger.info(f"ShellCommander initialized with root: {self.project_root}")
 
-    async def execute(self, command: str) -> ShellCommandResult:
+import time
+from functools import wraps
+
+
+def timing_decorator(func):
+    """
+    A decorator that logs the execution time of the decorated asynchronous function.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = await func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = (end_time - start_time) * 1000  # Convert to milliseconds
+        logger.info(f"'{func.__qualname__}' executed in {execution_time:.2f}ms")
+        return result
+    return wrapper
+
+
+class ShellCommander:
+    """Service to execute shell commands."""
+
+    def __init__(self, project_root: str = ".", timeout: int = 30):
+        self.project_root = Path(project_root).resolve()
+        self.timeout = timeout
+        logger.info(f"ShellCommander initialized with root: {self.project_root}")
+
+    @timing_decorator
+    async def execute(self, command: str, confirmed: bool = False) -> ShellCommandResult:
         """
         Execute a shell command and return the status code, stdout, and stderr.
         """
@@ -56,7 +129,12 @@ class ShellCommander:
 
             # Security: Check if the command is in the allowlist
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
-                err_msg = f"Command '{cmd_parts[0]}' is not in the allowlist."
+                available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
+                suggestion = ""
+                if cmd_parts[0] == "grep":
+                    suggestion = " Use 'rg' instead of 'grep' for text searching."
+                
+                err_msg = f"Command '{cmd_parts[0]}' is not in the allowlist.{suggestion} Available commands: {available_commands}"
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
@@ -65,6 +143,15 @@ class ShellCommander:
                 err_msg = f"Rejected dangerous command: {' '.join(cmd_parts)}"
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
+
+            # Check if command requires confirmation but wasn't pre-approved
+            requires_confirmation, reason = _requires_confirmation(cmd_parts)
+            if requires_confirmation and not confirmed:
+                # Return a special message that tells the agent to ask for confirmation
+                command_str = ' '.join(cmd_parts)
+                confirmation_msg = f"I will run `{command_str}`. Do you approve? [y/n]"
+                logger.info(f"Command requires confirmation: {command_str}")
+                return ShellCommandResult(return_code=-2, stdout=confirmation_msg, stderr="")
 
             process = await asyncio.create_subprocess_exec(
                 *cmd_parts,
@@ -112,20 +199,40 @@ class ShellCommander:
 def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     """Factory function to create the shell command tool."""
 
-    async def run_shell_command(ctx: RunContext, command: str) -> ShellCommandResult:
+    async def run_shell_command(command: str, user_confirmed: bool = False) -> ShellCommandResult:
         """
-        Executes an allow-listed shell command.
-
-        For commands that modify the filesystem (rm, cp, mv, mkdir, rmdir) or the
-        python environment (`uv`), you MUST ask the user for confirmation before
-        executing.
-        For example: "I am about to run `uv pip install pytest`. Do you want to proceed?"
-        Only execute after the user has explicitly confirmed.
+        Executes a shell command from the approved allowlist only.
+        
+        Args:
+            command: The shell command to execute
+            user_confirmed: Set to True if user has explicitly confirmed this command
+        
+        AVAILABLE COMMANDS:
+        - File operations: ls, cat, find, pwd
+        - Text search: rg (ripgrep) - USE THIS INSTEAD OF grep
+        - Version control: git (some subcommands require confirmation)
+        - Testing: pytest, mypy, ruff  
+        - Package management: uv (requires confirmation)
+        - File system: rm, cp, mv, mkdir, rmdir (require confirmation)
+        - Other: echo
+        
+        IMPORTANT: Use 'rg' for text searching, NOT 'grep' (grep is not available).
+        
+        COMMANDS REQUIRING USER CONFIRMATION:
+        - File system: rm, cp, mv, mkdir, rmdir
+        - Package management: uv (any subcommand)
+        - Git operations: add, commit, push, pull, merge, rebase, reset, checkout, branch, tag, stash, cherry-pick, revert
+        - Safe git commands (no confirmation needed): status, log, diff, show, ls-files, remote, config
+        
+        For dangerous commands:
+        1. Call once to check if confirmation needed (will return error if required)
+        2. Ask user for approval
+        3. Call again with user_confirmed=True to execute
         """
-        return await shell_commander.execute(command)
+        return await shell_commander.execute(command, confirmed=user_confirmed)
 
     return Tool(
         function=run_shell_command,
         name="execute_shell_command",
-        description="Executes a shell command from an approved allowlist.",
+        description="Executes shell commands from allowlist. For dangerous commands, call twice: first to check if confirmation needed, then with user_confirmed=True after getting approval.",
     )

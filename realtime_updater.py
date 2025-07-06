@@ -8,8 +8,10 @@ from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from codebase_rag.graph_updater import GraphUpdater, MemgraphIngestor
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_config import get_language_config
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.graph_service import MemgraphIngestor
 
 
 class CodeChangeEventHandler(FileSystemEventHandler):
@@ -28,27 +30,19 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         path = Path(event.src_path)
 
-        # Simple robust strategy: on any change, remove the old file from the graph
-        # and re-ingest the new version.
-
-        # First, remove any existing data for this file
         logger.warning(
             f"Change detected: {event.event_type} on {path}. Updating graph."
         )
-        # This DETACH DELETE query is crucial
         query = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
         self.updater.ingestor.execute_write(
             query, {"path": str(path.relative_to(self.updater.repo_path))}
         )
 
         if event.event_type in ["modified", "created"]:
-            # If the file was created or modified, re-parse it
-            # First determine the language from the file extension
             lang_config = get_language_config(path.suffix)
             if lang_config and lang_config.name in self.updater.parsers:
                 self.updater.parse_and_ingest_file(path, lang_config.name)
 
-        # Flush changes to the database immediately
         self.updater.ingestor.flush_all()
         logger.success(f"Graph updated for: {path.name}")
 
@@ -56,11 +50,14 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 def start_watcher(repo_path: str, host: str, port: int) -> None:
     repo_path_obj = Path(repo_path).resolve()
 
+    parsers, queries = load_parsers()
+
     with MemgraphIngestor(host=host, port=port) as ingestor:
-        updater = GraphUpdater(ingestor, repo_path_obj)
+        updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
         event_handler = CodeChangeEventHandler(updater)
 
         observer = Observer()
+        # watchdog expects a string path, so we convert the Path object back to a string.
         observer.schedule(event_handler, str(repo_path_obj), recursive=True)
         observer.start()
         logger.info(f"Watching for changes in: {repo_path_obj}")

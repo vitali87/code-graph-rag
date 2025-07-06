@@ -1,5 +1,5 @@
 from loguru import logger
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -15,20 +15,31 @@ class GraphQueryError(Exception):
     pass
 
 
-def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -> Tool:
+def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator, console: Console | None = None) -> Tool:
     """
     Factory function that creates the knowledge graph query tool,
     injecting its dependencies.
     """
-    console = Console()
+    # Use provided console or create a default one
+    if console is None:
+        console = Console(width=None, force_terminal=True)
 
     async def query_codebase_knowledge_graph(
-        ctx: RunContext, natural_language_query: str
+        natural_language_query: str
     ) -> GraphData:
         """
-        Queries the codebase knowledge graph. Translates a natural language question
-        into a Cypher query, executes it against the Memgraph database, and returns
-        the structured results.
+        Queries the codebase knowledge graph using natural language.
+        
+        Provide your question in plain English about the codebase structure, 
+        functions, classes, dependencies, or relationships. The tool will
+        automatically translate your natural language question into the
+        appropriate database query and return the results.
+        
+        Examples:
+        - "Find all functions that call each other"
+        - "What classes are in the user authentication module"
+        - "Show me functions with the longest call chains"
+        - "Which files contain functions related to database operations"
         """
         logger.info(f"[Tool:QueryGraph] Received NL query: '{natural_language_query}'")
         cypher_query = "N/A"
@@ -51,11 +62,12 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
                     for value in row.values():
                         if value is None:
                             renderable_values.append("")
+                        elif isinstance(value, bool):
+                            # Check bool first since bool is a subclass of int in Python
+                            renderable_values.append("✓" if value else "✗")
                         elif isinstance(value, int | float):
                             # Let Rich handle number formatting by converting to string
                             renderable_values.append(str(value))
-                        elif isinstance(value, bool):
-                            renderable_values.append("✓" if value else "✗")
                         else:
                             renderable_values.append(str(value))
                     table.add_row(*renderable_values)
@@ -88,5 +100,5 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator) -
 
     return Tool(
         function=query_codebase_knowledge_graph,
-        description="Use this tool to query the codebase knowledge graph for specific information like classes, functions, methods, dependencies, or code structure.",
+        description="Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'.",
     )
