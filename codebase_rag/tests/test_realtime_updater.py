@@ -7,13 +7,14 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from realtime_updater import CodeChangeEventHandler
 from watchdog.events import (
     DirCreatedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
     FileModifiedEvent,
 )
+
+from realtime_updater import CodeChangeEventHandler
 
 
 @pytest.fixture

@@ -1,10 +1,10 @@
-import sys
 import os
 import shutil
+import sys
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock
-from typing import Generator
 
 import pytest
 

@@ -1,70 +1,79 @@
-from typing import Any, Dict, Optional, Callable
+from collections.abc import Callable
+from typing import Any
+
 from loguru import logger
 from tree_sitter import Language, Parser
 
 from .language_config import LANGUAGE_CONFIGS
 
 # Define a type for the language library loaders
-LanguageLoader = Callable[[], object]
+LanguageLoader = Callable[[], object] | None
 
 # Import available Tree-sitter languages and correctly type them as Optional
-try:
-    from tree_sitter_python import language as python_language_so
-except ImportError:
-    python_language_so = None
+def _import_language_loaders() -> dict[str, LanguageLoader]:
+    """Import language loaders with proper error handling and typing."""
+    loaders: dict[str, LanguageLoader] = {}
+    
+    try:
+        from tree_sitter_python import language as python_language_so
+        loaders["python"] = python_language_so
+    except ImportError:
+        loaders["python"] = None
+    
+    try:
+        from tree_sitter_javascript import language as javascript_language_so
+        loaders["javascript"] = javascript_language_so
+    except ImportError:
+        loaders["javascript"] = None
+    
+    try:
+        from tree_sitter_typescript import language_typescript as typescript_language_so
+        loaders["typescript"] = typescript_language_so
+    except ImportError:
+        loaders["typescript"] = None
+    
+    try:
+        from tree_sitter_rust import language as rust_language_so
+        loaders["rust"] = rust_language_so
+    except ImportError:
+        loaders["rust"] = None
+    
+    try:
+        from tree_sitter_go import language as go_language_so
+        loaders["go"] = go_language_so
+    except ImportError:
+        loaders["go"] = None
+    
+    try:
+        from tree_sitter_scala import language as scala_language_so
+        loaders["scala"] = scala_language_so
+    except ImportError:
+        loaders["scala"] = None
+    
+    try:
+        from tree_sitter_java import language as java_language_so
+        loaders["java"] = java_language_so
+    except ImportError:
+        loaders["java"] = None
+    
+    try:
+        from tree_sitter_cpp import language as cpp_language_so
+        loaders["cpp"] = cpp_language_so
+    except ImportError:
+        loaders["cpp"] = None
+    
+    return loaders
 
-try:
-    from tree_sitter_javascript import language as javascript_language_so
-except ImportError:
-    javascript_language_so = None
-
-try:
-    from tree_sitter_typescript import language_typescript as typescript_language_so
-except ImportError:
-    typescript_language_so = None
-
-try:
-    from tree_sitter_rust import language as rust_language_so
-except ImportError:
-    rust_language_so = None
-
-try:
-    from tree_sitter_go import language as go_language_so
-except ImportError:
-    go_language_so = None
-
-try:
-    from tree_sitter_scala import language as scala_language_so
-except ImportError:
-    scala_language_so = None
-
-try:
-    from tree_sitter_java import language as java_language_so
-except ImportError:
-    java_language_so = None
-
-try:
-    from tree_sitter_cpp import language as cpp_language_so
-except ImportError:
-    cpp_language_so = None
+_language_loaders = _import_language_loaders()
 
 
-LANGUAGE_LIBRARIES: Dict[str, Optional[LanguageLoader]] = {
-    "python": python_language_so,
-    "javascript": javascript_language_so,
-    "typescript": typescript_language_so,
-    "rust": rust_language_so,
-    "go": go_language_so,
-    "scala": scala_language_so,
-    "java": java_language_so,
-    "cpp": cpp_language_so,
-}
+LANGUAGE_LIBRARIES: dict[str, LanguageLoader | None] = _language_loaders
 
 
-def load_parsers() -> tuple[Dict[str, Parser], Dict[str, Any]]:
+def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
     """Loads all available Tree-sitter parsers and compiles their queries."""
-    parsers: Dict[str, Parser] = {}
-    queries: Dict[str, Any] = {}
+    parsers: dict[str, Parser] = {}
+    queries: dict[str, Any] = {}
     available_languages = []
 
     for lang_name, lang_config in LANGUAGE_CONFIGS.items():

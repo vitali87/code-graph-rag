@@ -1,13 +1,24 @@
-from typing import Optional
-from loguru import logger
-from tree_sitter import Parser, Node
-from pathlib import Path
 import difflib
+from pathlib import Path
+from typing import TypedDict
+
+import diff_match_patch
+from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Tool
-import diff_match_patch
+from tree_sitter import Node, Parser
+
 from ..language_config import get_language_config
 from ..parser_loader import load_parsers
+
+
+class FunctionMatch(TypedDict):
+    node: Node
+    simple_name: str
+    qualified_name: str
+    parent_class: str | None
+    line_number: int
+
 
 LANGUAGE_EXTENSIONS = {
     ".py": "python",
@@ -53,7 +64,7 @@ class FileEditor:
                 return "." + base_name.split(".")[-1]
         return extension
 
-    def get_parser(self, file_path: str) -> Optional[Parser]:
+    def get_parser(self, file_path: str) -> Parser | None:
         file_path_obj = Path(file_path)
         extension = self._get_real_extension(file_path_obj)
 
@@ -62,7 +73,7 @@ class FileEditor:
             return self.parsers.get(lang_name)
         return None
 
-    def get_ast(self, file_path: str) -> Optional[Node]:
+    def get_ast(self, file_path: str) -> Node | None:
         parser = self.get_parser(file_path)
         if not parser:
             logger.warning(f"No parser available for {file_path}")
@@ -75,8 +86,8 @@ class FileEditor:
         return tree.root_node
 
     def get_function_source_code(
-        self, file_path: str, function_name: str, line_number: Optional[int] = None
-    ) -> Optional[str]:
+        self, file_path: str, function_name: str, line_number: int | None = None
+    ) -> str | None:
         root_node = self.get_ast(file_path)
         if not root_node:
             return None
@@ -91,9 +102,9 @@ class FileEditor:
             return None
 
         # Find all matching functions with their context
-        matching_functions = []
+        matching_functions: list[FunctionMatch] = []
 
-        def find_function_nodes(node, parent_class=None):
+        def find_function_nodes(node: Node, parent_class: str | None = None) -> None:
             if node.type in lang_config.function_node_types:
                 # Get the function name node using the 'name' field
                 name_node = node.child_by_field_name("name")
@@ -138,7 +149,10 @@ class FileEditor:
         if not matching_functions:
             return None
         elif len(matching_functions) == 1:
-            return matching_functions[0]["node"].text.decode("utf-8")
+            node_text = matching_functions[0]["node"].text
+            if node_text is None:
+                return None
+            return str(node_text.decode("utf-8"))
         else:
             # Multiple functions found - try different disambiguation strategies
 
@@ -146,7 +160,10 @@ class FileEditor:
             if line_number is not None:
                 for func in matching_functions:
                     if func["line_number"] == line_number:
-                        return func["node"].text.decode("utf-8")
+                        node_text = func["node"].text
+                        if node_text is None:
+                            return None
+                        return str(node_text.decode("utf-8"))
                 logger.warning(
                     f"No function '{function_name}' found at line {line_number}"
                 )
@@ -156,7 +173,10 @@ class FileEditor:
             if "." in function_name:
                 for func in matching_functions:
                     if func["qualified_name"] == function_name:
-                        return func["node"].text.decode("utf-8")
+                        node_text = func["node"].text
+                        if node_text is None:
+                            return None
+                        return str(node_text.decode("utf-8"))
                 logger.warning(
                     f"No function found with qualified name '{function_name}'"
                 )
@@ -176,14 +196,17 @@ class FileEditor:
             )
 
             # Return the first match but warn the user
-            return matching_functions[0]["node"].text.decode("utf-8")
+            node_text = matching_functions[0]["node"].text
+            if node_text is None:
+                return None
+            return str(node_text.decode("utf-8"))
 
     def replace_function_source_code(
         self,
         file_path: str,
         function_name: str,
         new_code: str,
-        line_number: Optional[int] = None,
+        line_number: int | None = None,
     ) -> bool:
         original_code = self.get_function_source_code(
             file_path, function_name, line_number
@@ -192,7 +215,7 @@ class FileEditor:
             logger.error(f"Function '{function_name}' not found in {file_path}.")
             return False
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             original_content = f.read()
 
         # Create patches using diff-match-patch
@@ -225,8 +248,8 @@ class FileEditor:
         file_path: str,
         function_name: str,
         new_code: str,
-        line_number: Optional[int] = None,
-    ) -> Optional[str]:
+        line_number: int | None = None,
+    ) -> str | None:
         original_code = self.get_function_source_code(
             file_path, function_name, line_number
         )
@@ -249,7 +272,7 @@ class FileEditor:
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
         """Apply a patch to a file using diff-match-patch."""
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 original_content = f.read()
 
             # Parse the patch
@@ -343,7 +366,7 @@ class FileEditor:
                 return False
 
             # Read original content
-            with open(full_path, "r", encoding="utf-8") as f:
+            with open(full_path, encoding="utf-8") as f:
                 original_content = f.read()
 
             # Find the target block in the file
@@ -360,7 +383,7 @@ class FileEditor:
             # Verify only one replacement was made
             if original_content.count(target_block) > 1:
                 logger.warning(
-                    f"Multiple occurrences of target block found. Only replacing first occurrence."
+                    "Multiple occurrences of target block found. Only replacing first occurrence."
                 )
 
             if original_content == modified_content:
@@ -414,7 +437,7 @@ class FileEditor:
                 )
 
             # Read original content to show diff
-            with open(full_path, "r", encoding="utf-8") as f:
+            with open(full_path, encoding="utf-8") as f:
                 original_content = f.read()
 
             # Display colored diff

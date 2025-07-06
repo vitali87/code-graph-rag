@@ -15,7 +15,11 @@ class GraphQueryError(Exception):
     pass
 
 
-def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator, console: Console | None = None) -> Tool:
+def create_query_tool(
+    ingestor: MemgraphIngestor,
+    cypher_gen: CypherGenerator,
+    console: Console | None = None,
+) -> Tool:
     """
     Factory function that creates the knowledge graph query tool,
     injecting its dependencies.
@@ -24,17 +28,15 @@ def create_query_tool(ingestor: MemgraphIngestor, cypher_gen: CypherGenerator, c
     if console is None:
         console = Console(width=None, force_terminal=True)
 
-    async def query_codebase_knowledge_graph(
-        natural_language_query: str
-    ) -> GraphData:
+    async def query_codebase_knowledge_graph(natural_language_query: str) -> GraphData:
         """
         Queries the codebase knowledge graph using natural language.
-        
-        Provide your question in plain English about the codebase structure, 
+
+        Provide your question in plain English about the codebase structure,
         functions, classes, dependencies, or relationships. The tool will
         automatically translate your natural language question into the
         appropriate database query and return the results.
-        
+
         Examples:
         - "Find all functions that call each other"
         - "What classes are in the user authentication module"
