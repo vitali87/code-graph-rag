@@ -87,6 +87,34 @@ class ShellCommander:
         self.timeout = timeout
         logger.info(f"ShellCommander initialized with root: {self.project_root}")
 
+import time
+from functools import wraps
+
+
+def timing_decorator(func):
+    """
+    A decorator that logs the execution time of the decorated asynchronous function.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = await func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = (end_time - start_time) * 1000  # Convert to milliseconds
+        logger.info(f"'{func.__qualname__}' executed in {execution_time:.2f}ms")
+        return result
+    return wrapper
+
+
+class ShellCommander:
+    """Service to execute shell commands."""
+
+    def __init__(self, project_root: str = ".", timeout: int = 30):
+        self.project_root = Path(project_root).resolve()
+        self.timeout = timeout
+        logger.info(f"ShellCommander initialized with root: {self.project_root}")
+
+    @timing_decorator
     async def execute(self, command: str, confirmed: bool = False) -> ShellCommandResult:
         """
         Execute a shell command and return the status code, stdout, and stderr.
