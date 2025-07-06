@@ -59,6 +59,20 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 - **mypy**: Static type checking
 - **pytest**: Testing framework
 
+### Pre-commit Hooks
+This project uses `pre-commit` to automatically run checks before each commit, ensuring code quality and consistency.
+
+To get started, first make sure you have the development dependencies installed:
+```bash
+uv sync --extra treesitter-full --extra test --extra dev
+```
+Then, install the git hooks:
+```bash
+pre-commit install
+pre-commit autoupdate --repo https://github.com/pre-commit/pre-commit-hooks
+```
+Now, `pre-commit` will run automatically on `git commit`.
+
 ## Code Style
 
 - Follow Python PEP 8 guidelines

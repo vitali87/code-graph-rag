@@ -151,4 +151,3 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1
     ```
 """
-

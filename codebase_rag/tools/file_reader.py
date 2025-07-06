@@ -19,7 +19,17 @@ class FileReader:
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
         # Define extensions that should be treated as binary and not read by this tool
-        self.binary_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".tiff", ".webp"}
+        self.binary_extensions = {
+            ".pdf",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".ico",
+            ".tiff",
+            ".webp",
+        }
         logger.info(f"FileReader initialized with root: {self.project_root}")
 
     async def read_file(self, file_path: str) -> FileReadResult:
@@ -27,10 +37,12 @@ class FileReader:
         logger.info(f"[FileReader] Attempting to read file: {file_path}")
         try:
             full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root) # Security check
+            full_path.relative_to(self.project_root)  # Security check
 
             if not full_path.is_file():
-                return FileReadResult(file_path=file_path, error_message="File not found.")
+                return FileReadResult(
+                    file_path=file_path, error_message="File not found."
+                )
 
             # Check if the file has a binary extension
             if full_path.suffix.lower() in self.binary_extensions:

@@ -16,8 +16,6 @@ class FileCreationResult(BaseModel):
 class FileWriter:
     """Service to write file content to the filesystem."""
 
-
-
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
         logger.info(f"FileWriter initialized with root: {self.project_root}")
@@ -55,9 +53,7 @@ class FileWriter:
 def create_file_writer_tool(file_writer: FileWriter) -> Tool:
     """Factory function to create the file writer tool."""
 
-    async def create_new_file(
-        file_path: str, content: str
-    ) -> FileCreationResult:
+    async def create_new_file(file_path: str, content: str) -> FileCreationResult:
         """
         Creates a new file with the specified content.
         If the file already exists, it will be completely overwritten WITHOUT showing any diff.

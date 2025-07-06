@@ -6,7 +6,7 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import typer
 from loguru import logger
@@ -55,7 +55,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     except ValueError:
         # Fallback to simple split if shlex fails
         tokens = question.split()
-    
+
     # Find image files in tokens
     image_extensions = (".png", ".jpg", ".jpeg", ".gif")
     image_files = [
@@ -63,7 +63,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
         for token in tokens
         if token.startswith("/") and token.lower().endswith(image_extensions)
     ]
-    
+
     if not image_files:
         return question
 
@@ -88,30 +88,34 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             path_variants = [
                 # Backslash-escaped spaces: /path/with\ spaces.png
                 original_path_str.replace(" ", r"\ "),
-                # Single quoted: '/path/with spaces.png'  
+                # Single quoted: '/path/with spaces.png'
                 f"'{original_path_str}'",
                 # Double quoted: "/path/with spaces.png"
                 f'"{original_path_str}"',
                 # Unquoted: /path/with spaces.png
                 original_path_str,
             ]
-            
+
             # Try each variant and replace if found
             replaced = False
             for variant in path_variants:
                 if variant in updated_question:
-                    updated_question = updated_question.replace(variant, str(new_relative_path))
+                    updated_question = updated_question.replace(
+                        variant, str(new_relative_path)
+                    )
                     replaced = True
                     break
-            
+
             if not replaced:
-                logger.warning(f"Could not find original path in question for replacement: {original_path_str}")
+                logger.warning(
+                    f"Could not find original path in question for replacement: {original_path_str}"
+                )
 
             logger.info(f"Copied image to temporary path: {new_relative_path}")
         except Exception as e:
             logger.error(f"Failed to copy image to temporary directory: {e}")
 
-    return updated_question
+    return str(updated_question)
 
 
 def get_multiline_input(prompt_text: str = "Ask a question") -> str:
@@ -137,9 +141,11 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     clean_prompt = Text.from_markup(prompt_text).plain
 
     # Display the colored prompt first
-    print_formatted_text(HTML(
-        f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
-    ))
+    print_formatted_text(
+        HTML(
+            f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
+        )
+    )
 
     # Use simple prompt without formatting to avoid alignment issues
     result = prompt(
@@ -150,10 +156,12 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     )
     if result is None:
         raise EOFError
-    return result.strip()
+    return str(result).strip()
 
 
-async def run_chat_loop(rag_agent: Any, message_history: list[Any], project_root: Path) -> None:
+async def run_chat_loop(
+    rag_agent: Any, message_history: list[Any], project_root: Path
+) -> None:
     """Runs the main chat loop."""
     question = ""
     while True:
@@ -209,7 +217,12 @@ def _update_model_settings(
 ) -> None:
     """Update model settings based on command-line arguments."""
     if llm_provider:
-        settings.LLM_PROVIDER = llm_provider
+        if llm_provider not in ["gemini", "local"]:
+            console.print(
+                f"[bold red]Error: Invalid LLM provider '{llm_provider}'. Must be 'gemini' or 'local'.[/bold red]"
+            )
+            raise typer.Exit(1)
+        settings.LLM_PROVIDER = cast(Literal["gemini", "local"], llm_provider)
 
     provider = settings.LLM_PROVIDER
     if orchestrator_model:
@@ -386,7 +399,6 @@ def start(
     _update_model_settings(llm_provider, orchestrator_model, cypher_model)
 
     if update_graph:
-
         repo_to_update = Path(target_repo_path)
         console.print(
             f"[bold green]Updating knowledge graph for: {repo_to_update}[/bold green]"
@@ -399,10 +411,10 @@ def start(
                 console.print("[bold yellow]Cleaning database...[/bold yellow]")
                 ingestor.clean_database()
             ingestor.ensure_constraints()
-            
+
             # Load parsers and queries
             parsers, queries = load_parsers()
-            
+
             updater = GraphUpdater(ingestor, repo_to_update, parsers, queries)
             updater.run()
 
@@ -455,10 +467,22 @@ def export(
         raise typer.Exit(1) from e
 
 
-async def run_optimization_loop(rag_agent: Any, message_history: list[Any], project_root: Path, language: str, reference_document: str | None = None) -> None:
+async def run_optimization_loop(
+    rag_agent: Any,
+    message_history: list[Any],
+    project_root: Path,
+    language: str,
+    reference_document: str | None = None,
+) -> None:
     """Runs the optimization loop with the RAG agent."""
-    console.print(f"[bold green]Starting {language} optimization session...[/bold green]")
-    document_info = f" using the reference document: {reference_document}" if reference_document else ""
+    console.print(
+        f"[bold green]Starting {language} optimization session...[/bold green]"
+    )
+    document_info = (
+        f" using the reference document: {reference_document}"
+        if reference_document
+        else ""
+    )
     console.print(
         Panel(
             f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations.\n"
@@ -475,16 +499,22 @@ async def run_optimization_loop(rag_agent: Any, message_history: list[Any], proj
         "Read relevant source files to identify optimization opportunities",
     ]
     if reference_document:
-        instructions.append(f"Use the analyze_document tool to reference best practices from {reference_document}")
+        instructions.append(
+            f"Use the analyze_document tool to reference best practices from {reference_document}"
+        )
 
-    instructions.extend([
-        f"Reference established patterns and best practices for {language}",
-        "Propose specific, actionable optimizations with file references",
-        "Ask for my approval before implementing any changes",
-        "Use your file editing tools to implement approved changes",
-    ])
+    instructions.extend(
+        [
+            f"Reference established patterns and best practices for {language}",
+            "Propose specific, actionable optimizations with file references",
+            "Ask for my approval before implementing any changes",
+            "Use your file editing tools to implement approved changes",
+        ]
+    )
 
-    numbered_instructions = "\n".join(f"{i+1}. {inst}" for i, inst in enumerate(instructions))
+    numbered_instructions = "\n".join(
+        f"{i + 1}. {inst}" for i, inst in enumerate(instructions)
+    )
 
     initial_question = f"""
 I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
@@ -521,7 +551,9 @@ Start by analyzing the codebase structure and identifying the main areas that co
             # Handle images in the question
             question = _handle_chat_images(question, project_root)
 
-            with console.status("[bold green]Agent is analyzing codebase...[/bold green]"):
+            with console.status(
+                "[bold green]Agent is analyzing codebase...[/bold green]"
+            ):
                 response = await rag_agent.run(
                     question, message_history=message_history
                 )
@@ -559,7 +591,9 @@ async def main_optimize_async(
 
     _update_model_settings(llm_provider, orchestrator_model, cypher_model)
 
-    console.print(f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]")
+    console.print(
+        f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
+    )
 
     # Clean up temp directory on startup
     tmp_dir = project_root / ".tmp"
@@ -591,17 +625,24 @@ async def main_optimize_async(
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
 
         rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
-        await run_optimization_loop(rag_agent, [], project_root, language, reference_document)
+        await run_optimization_loop(
+            rag_agent, [], project_root, language, reference_document
+        )
 
 
 @app.command()
 def optimize(
-    language: str = typer.Argument(..., help="Programming language to optimize for (e.g., python, java, javascript, cpp)"),
+    language: str = typer.Argument(
+        ...,
+        help="Programming language to optimize for (e.g., python, java, javascript, cpp)",
+    ),
     repo_path: str | None = typer.Option(
         None, "--repo-path", help="Path to the repository to optimize"
     ),
     reference_document: str | None = typer.Option(
-        None, "--reference-document", help="Path to reference document/book for optimization guidance"
+        None,
+        "--reference-document",
+        help="Path to reference document/book for optimization guidance",
     ),
     llm_provider: str | None = typer.Option(
         None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
@@ -617,18 +658,22 @@ def optimize(
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
     if not Path(target_repo_path).exists():
-        console.print(f"[bold red]Error: Repository path '{target_repo_path}' does not exist.[/bold red]")
+        console.print(
+            f"[bold red]Error: Repository path '{target_repo_path}' does not exist.[/bold red]"
+        )
         raise typer.Exit(1)
 
     try:
-        asyncio.run(main_optimize_async(
-            language=language,
-            target_repo_path=target_repo_path,
-            reference_document=reference_document,
-            llm_provider=llm_provider,
-            orchestrator_model=orchestrator_model,
-            cypher_model=cypher_model,
-        ))
+        asyncio.run(
+            main_optimize_async(
+                language=language,
+                target_repo_path=target_repo_path,
+                reference_document=reference_document,
+                llm_provider=llm_provider,
+                orchestrator_model=orchestrator_model,
+                cypher_model=cypher_model,
+            )
+        )
     except KeyboardInterrupt:
         console.print("\n[bold red]Optimization session terminated by user.[/bold red]")
     except Exception as e:

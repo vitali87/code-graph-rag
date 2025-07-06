@@ -17,6 +17,7 @@ class DocumentAnalyzer:
     A tool to perform multimodal analysis on documents like PDFs
     by making a direct call to the Gemini API.
     """
+
     def __init__(self, project_root: str):
         self.project_root = Path(project_root).resolve()
         api_key = os.getenv("GEMINI_API_KEY")
@@ -31,7 +32,9 @@ class DocumentAnalyzer:
         Reads a document (e.g., PDF), sends it to the Gemini multimodal endpoint
         with a specific question, and returns the model's analysis.
         """
-        logger.info(f"[DocumentAnalyzer] Analyzing '{file_path}' with question: '{question}'")
+        logger.info(
+            f"[DocumentAnalyzer] Analyzing '{file_path}' with question: '{question}'"
+        )
         try:
             # Handle absolute paths by copying to .tmp folder
             if Path(file_path).is_absolute():
@@ -51,7 +54,7 @@ class DocumentAnalyzer:
             else:
                 # Handle relative paths as before
                 full_path = (self.project_root / file_path).resolve()
-                full_path.relative_to(self.project_root) # Security check
+                full_path.relative_to(self.project_root)  # Security check
 
             if not full_path.is_file():
                 return f"Error: File not found at '{file_path}'."
@@ -59,7 +62,9 @@ class DocumentAnalyzer:
             # Determine mime type dynamically
             mime_type, _ = mimetypes.guess_type(full_path)
             if not mime_type:
-                mime_type = "application/octet-stream"  # Default if type can't be guessed
+                mime_type = (
+                    "application/octet-stream"  # Default if type can't be guessed
+                )
 
             # Prepare the multimodal prompt
             file_bytes = full_path.read_bytes()
@@ -67,26 +72,25 @@ class DocumentAnalyzer:
             # Use the simpler format that the library expects
             prompt_parts = [
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-                f"Based on the document provided, please answer the following question: {question}"
+                f"Based on the document provided, please answer the following question: {question}",
             ]
 
             # Call the model and get the response
             response = self.client.models.generate_content(
-                model=settings.GEMINI_MODEL_ID,
-                contents=prompt_parts
+                model=settings.GEMINI_MODEL_ID, contents=prompt_parts
             )
 
             logger.success(f"Successfully received analysis for '{file_path}'.")
 
             # Check if response has text content
-            if hasattr(response, 'text') and response.text:
+            if hasattr(response, "text") and response.text:
                 return str(response.text)
-            elif hasattr(response, 'candidates') and response.candidates:
+            elif hasattr(response, "candidates") and response.candidates:
                 # Try to get text from candidates
                 for candidate in response.candidates:
-                    if hasattr(candidate, 'content') and candidate.content:
+                    if hasattr(candidate, "content") and candidate.content:
                         parts = candidate.content.parts
-                        if parts and hasattr(parts[0], 'text'):
+                        if parts and hasattr(parts[0], "text"):
                             return str(parts[0].text)
                 return "No valid text found in response candidates."
             else:
@@ -104,7 +108,9 @@ class DocumentAnalyzer:
                 logger.error(f"[DocumentAnalyzer] API validation error: {e}")
                 return f"Error: API validation failed: {e}"
         except Exception as e:
-            logger.error(f"Failed to analyze document '{file_path}': {e}", exc_info=True)
+            logger.error(
+                f"Failed to analyze document '{file_path}': {e}", exc_info=True
+            )
             return f"An error occurred during analysis: {e}"
 
 
@@ -122,14 +128,18 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
         """
         try:
             result = analyzer.analyze(file_path, question)
-            logger.debug(f"[analyze_document] Result type: {type(result)}, content: {result[:100] if result else 'None'}...")
+            logger.debug(
+                f"[analyze_document] Result type: {type(result)}, content: {result[:100] if result else 'None'}..."
+            )
             return result
         except Exception as e:
-            logger.error(f"[analyze_document] Exception during analysis: {e}", exc_info=True)
+            logger.error(
+                f"[analyze_document] Exception during analysis: {e}", exc_info=True
+            )
             return f"Error during document analysis: {e}"
 
     return Tool(
         function=analyze_document,
         name="analyze_document",
-        description="Analyzes documents (PDFs, images) to answer questions about their content."
+        description="Analyzes documents (PDFs, images) to answer questions about their content.",
     )

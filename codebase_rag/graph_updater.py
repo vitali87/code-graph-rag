@@ -1,13 +1,14 @@
 import os
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import toml
 from loguru import logger
 from tree_sitter import Node, Parser
 
 from codebase_rag.services.graph_service import MemgraphIngestor
+
 from .language_config import LanguageConfig, get_language_config
 
 
@@ -18,8 +19,8 @@ class GraphUpdater:
         self,
         ingestor: MemgraphIngestor,
         repo_path: Path,
-        parsers: Dict[str, Parser],
-        queries: Dict[str, Any],
+        parsers: dict[str, Parser],
+        queries: dict[str, Any],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -178,6 +179,7 @@ class GraphUpdater:
                     self.parse_and_ingest_file(filepath, lang_config.name)
                 elif file_name == "pyproject.toml":
                     self._parse_dependencies(filepath)
+
     def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""
         body_node = node.child_by_field_name("body")
@@ -190,7 +192,7 @@ class GraphUpdater:
         ):
             text = first_statement.children[0].text
             if text is not None:
-                return text.decode("utf-8").strip("'\" \n")
+                return str(text.decode("utf-8").strip("'\" \n"))
         return None
 
     def parse_and_ingest_file(self, file_path: Path, language: str) -> None:
@@ -259,7 +261,9 @@ class GraphUpdater:
         except Exception as e:
             logger.error(f"Failed to parse or ingest {file_path}: {e}")
 
-    def _ingest_top_level_functions(self, root_node: Node, module_qn: str, language: str) -> None:
+    def _ingest_top_level_functions(
+        self, root_node: Node, module_qn: str, language: str
+    ) -> None:
         lang_queries = self.queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
@@ -312,7 +316,11 @@ class GraphUpdater:
             )
 
     def _build_nested_qualified_name(
-        self, func_node: Node, module_qn: str, func_name: str, lang_config: LanguageConfig
+        self,
+        func_node: Node,
+        module_qn: str,
+        func_name: str,
+        lang_config: LanguageConfig,
     ) -> str | None:
         path_parts = []
         current = func_node.parent
@@ -375,7 +383,9 @@ class GraphUpdater:
 
         return "Module", module_qn
 
-    def _ingest_classes_and_methods(self, root_node: Node, module_qn: str, language: str) -> None:
+    def _ingest_classes_and_methods(
+        self, root_node: Node, module_qn: str, language: str
+    ) -> None:
         lang_queries = self.queries[language]
 
         class_captures = lang_queries["classes"].captures(root_node)
@@ -471,7 +481,9 @@ class GraphUpdater:
         for file_path, (root_node, language) in self.ast_cache.items():
             self._process_calls_in_file(file_path, root_node, language)
 
-    def _process_calls_in_file(self, file_path: Path, root_node: Node, language: str) -> None:
+    def _process_calls_in_file(
+        self, file_path: Path, root_node: Node, language: str
+    ) -> None:
         """Process function calls in a specific file using its cached AST."""
         relative_path = file_path.relative_to(self.repo_path)
         logger.debug(f"Processing calls in cached AST for: {relative_path}")
@@ -491,7 +503,9 @@ class GraphUpdater:
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
 
-    def _process_calls_in_functions(self, root_node: Node, module_qn: str, language: str) -> None:
+    def _process_calls_in_functions(
+        self, root_node: Node, module_qn: str, language: str
+    ) -> None:
         lang_queries = self.queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
@@ -519,7 +533,9 @@ class GraphUpdater:
                     func_node, func_qn, "Function", module_qn, language
                 )
 
-    def _process_calls_in_classes(self, root_node: Node, module_qn: str, language: str) -> None:
+    def _process_calls_in_classes(
+        self, root_node: Node, module_qn: str, language: str
+    ) -> None:
         lang_queries = self.queries[language]
 
         class_captures = lang_queries["classes"].captures(root_node)
@@ -565,25 +581,25 @@ class GraphUpdater:
             if func_child.type == "identifier":
                 text = func_child.text
                 if text is not None:
-                    return text.decode("utf8")
+                    return str(text.decode("utf8"))
             # Python: obj.method() -> attribute
             elif func_child.type == "attribute":
                 if attr_child := func_child.child_by_field_name("attribute"):
                     text = attr_child.text
                     if text is not None:
-                        return text.decode("utf8")
+                        return str(text.decode("utf8"))
             # JS/TS: obj.method() -> member_expression
             elif func_child.type == "member_expression":
                 if prop_child := func_child.child_by_field_name("property"):
                     text = prop_child.text
                     if text is not None:
-                        return text.decode("utf8")
+                        return str(text.decode("utf8"))
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
             text = name_node.text
             if text is not None:
-                return text.decode("utf8")
+                return str(text.decode("utf8"))
 
         return None
 

@@ -53,7 +53,7 @@ The system consists of two main components:
 ### Core Components
 
 - **🌳 Tree-sitter Integration**: Language-agnostic parsing using Tree-sitter grammars
-- **📊 Graph Database**: Memgraph for storing code structure as nodes and relationships  
+- **📊 Graph Database**: Memgraph for storing code structure as nodes and relationships
 - **🤖 LLM Integration**: Supports Google Gemini (cloud) and Ollama (local) for natural language processing
 - **🔍 Code Analysis**: Advanced AST traversal for extracting code elements across languages
 - **🛠️ Query Tools**: Specialized tools for graph querying and code retrieval
@@ -94,7 +94,7 @@ uv sync --extra treesitter-full --extra test
 
 This installs Tree-sitter grammars for:
 - **Python** (.py)
-- **JavaScript** (.js, .jsx) 
+- **JavaScript** (.js, .jsx)
 - **TypeScript** (.ts, .tsx)
 - **Rust** (.rs)
 - **Go** (.go)
@@ -154,7 +154,7 @@ docker-compose up -d
 
 The Graph-Code system offers four main modes of operation:
 1. **Parse & Ingest**: Build knowledge graph from your codebase
-2. **Interactive Query**: Ask questions about your code in natural language  
+2. **Interactive Query**: Ask questions about your code in natural language
 3. **Export & Analyze**: Export graph data for programmatic analysis
 4. **AI Optimization**: Get AI-powered optimization suggestions for your code
 
@@ -176,7 +176,7 @@ python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
 **Supported Languages**: The system automatically detects and processes files based on extensions:
 - **Python**: `.py` files
 - **JavaScript**: `.js`, `.jsx` files
-- **TypeScript**: `.ts`, `.tsx` files  
+- **TypeScript**: `.ts`, `.tsx` files
 - **Rust**: `.rs` files
 - **Go**: `.go` files
 - **Scala**: `.scala`, `.sc` files
@@ -307,7 +307,7 @@ python -m codebase_rag.main optimize javascript \
 
 **Supported Languages for Optimization:**
 - `python` - Python codebases
-- `javascript` - JavaScript/Node.js projects  
+- `javascript` - JavaScript/Node.js projects
 - `typescript` - TypeScript projects
 - `rust` - Rust projects
 - `go` - Go projects
@@ -338,7 +338,7 @@ Starting python optimization session...
    File: src/data_processor.py
    Issue: Using list comprehension in a loop can be optimized
    Suggestion: Replace with generator expression for memory efficiency
-   
+
    [y/n] Do you approve this optimization?
 ```
 
@@ -350,7 +350,7 @@ You can provide reference documentation (like coding standards, architectural gu
 python -m codebase_rag.main optimize python \
   --reference-document ./docs/coding_standards.md
 
-# Use architectural guidelines  
+# Use architectural guidelines
 python -m codebase_rag.main optimize java \
   --reference-document ./ARCHITECTURE.md
 
@@ -505,7 +505,7 @@ This process ensures that file modifications are transparent and reviewable, mak
 ### Language-Specific Features
 
 - **Python**: Full support including nested functions, methods, classes, and package structure
-- **JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions  
+- **JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions
 - **Rust**: Functions, structs, enums, impl blocks, and associated functions
 - **Go**: Functions, methods, type declarations, and struct definitions
 - **Scala**: Functions, methods, classes, objects, traits, case classes, and Scala 3 syntax
@@ -518,7 +518,7 @@ This process ensures that file modifications are transparent and reviewable, mak
 # Basic Python-only support
 uv sync
 
-# Full multi-language support  
+# Full multi-language support
 uv sync --extra treesitter-full
 
 # Individual language support (if needed)

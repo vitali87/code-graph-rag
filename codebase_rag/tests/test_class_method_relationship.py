@@ -1,7 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from unittest.mock import call
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -24,12 +24,13 @@ def temp_project(temp_repo: Path) -> Path:
 
 
 def test_defines_method_relationship_is_created(
-    temp_project: Path, mock_ingestor
+    temp_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that GraphUpdater correctly identifies and creates DEFINES_METHOD relationships.
     """
     from codebase_rag.parser_loader import load_parsers
+
     parsers, queries = load_parsers()
 
     updater = GraphUpdater(

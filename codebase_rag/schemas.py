@@ -20,7 +20,9 @@ class GraphData(BaseModel):
         for row in v:
             clean_row = {}
             for k, val in row.items():
-                if not isinstance(val, str | int | float | bool | list | dict | type(None)):
+                if not isinstance(
+                    val, str | int | float | bool | list | dict | type(None)
+                ):
                     clean_row[k] = str(val)
                 else:
                     clean_row[k] = val  # type: ignore
