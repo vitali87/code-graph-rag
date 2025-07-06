@@ -22,9 +22,10 @@
 
 An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships.
 
-<div align="center">
-  <img src="https://github.com/ChawlaAvi/code-graph-rag/blob/main/assets/code-rag-demo.gif" alt="ag-ui Logo" style="max-width: 20px; height: auto;" />
-</div>
+
+https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
+
+
 
 ## 🚀 Features
 
