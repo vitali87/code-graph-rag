@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import re
 import shlex
 import shutil
 import sys
@@ -85,10 +84,29 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             shutil.copy(original_path, new_path)
             new_relative_path = os.path.relpath(new_path, project_root)
 
-            # Replace both escaped and unescaped versions in the question
-            escaped_path = original_path_str.replace(" ", r"\ ")
-            updated_question = updated_question.replace(escaped_path, str(new_relative_path))
-            updated_question = updated_question.replace(original_path_str, str(new_relative_path))
+            # Find and replace all possible quoted/escaped versions of this path
+            # Try different forms the path might appear in the original question
+            path_variants = [
+                # Backslash-escaped spaces: /path/with\ spaces.png
+                original_path_str.replace(" ", r"\ "),
+                # Single quoted: '/path/with spaces.png'  
+                f"'{original_path_str}'",
+                # Double quoted: "/path/with spaces.png"
+                f'"{original_path_str}"',
+                # Unquoted: /path/with spaces.png
+                original_path_str,
+            ]
+            
+            # Try each variant and replace if found
+            replaced = False
+            for variant in path_variants:
+                if variant in updated_question:
+                    updated_question = updated_question.replace(variant, str(new_relative_path))
+                    replaced = True
+                    break
+            
+            if not replaced:
+                logger.warning(f"Could not find original path in question for replacement: {original_path_str}")
 
             logger.info(f"Copied image to temporary path: {new_relative_path}")
         except Exception as e:
