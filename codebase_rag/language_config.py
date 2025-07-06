@@ -19,7 +19,9 @@ class LanguageConfig:
     body_field: str = "body"
 
     # Package detection patterns
-    package_indicators: list[str] = field(default_factory=list)  # e.g., ["__init__.py"] for Python
+    package_indicators: list[str] = field(
+        default_factory=list
+    )  # e.g., ["__init__.py"] for Python
 
 
 # Language configurations
@@ -114,9 +116,15 @@ LANGUAGE_CONFIGS = {
     ),
     "cpp": LanguageConfig(
         name="cpp",
-        file_extensions=[".cpp", ".h", ".hpp", ".cc"],
-        function_node_types=["function_definition", "constructor_definition", "destructor_definition"],
-        class_node_types=["class_specifier", "struct_specifier", "union_specifier", "enum_specifier"],
+        file_extensions=[".cpp", ".h", ".hpp", ".cc", ".cxx", ".hxx", ".hh"],
+        function_node_types=["function_definition"],
+        class_node_types=[
+            "class_specifier",
+            "struct_specifier",
+            "union_specifier",
+            "enum_specifier",
+            "namespace_definition",
+        ],
         module_node_types=["translation_unit"],
         call_node_types=["call_expression"],
     ),

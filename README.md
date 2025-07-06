@@ -99,7 +99,7 @@ This installs Tree-sitter grammars for:
 - **Go** (.go)
 - **Scala** (.scala, .sc)
 - **Java** (.java)
-- **C++** (.cpp, .h, .hpp, .cc)
+- **C++** (.cpp, .h, .hpp, .cc, .cxx, .hxx, .hh)
 
 3. **Set up environment variables**:
 ```bash
@@ -180,7 +180,7 @@ python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
 - **Go**: `.go` files
 - **Scala**: `.scala`, `.sc` files
 - **Java**: `.java` files
-- **C++**: `.cpp`, `.h`, `.hpp`, `.cc` files
+- **C++**: `.cpp`, `.h`, `.hpp`, `.cc` , `.cxx`, `.hxx`, `.hh` files
 
 ### Step 2: Query the Codebase
 
@@ -499,7 +499,7 @@ This process ensures that file modifications are transparent and reviewable, mak
 | Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                |
 | Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations |
 | Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations |
-| C++        | `.cpp`, `.h`, `.hpp`, `.cc` | ✅      | ✅ (classes/structs/unions/enums) | ✅      | -                |
+| C++        | `.cpp`, `.h`, `.hpp`, `.cc` `.cxx`, `.hxx`, `.hh`| ✅      | ✅ (classes/structs/unions/enums) | ✅      | -                |
 
 ### Language-Specific Features
 
