@@ -180,7 +180,7 @@ python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
 - **Go**: `.go` files
 - **Scala**: `.scala`, `.sc` files
 - **Java**: `.java` files
-- **C++**: `.cpp`, `.h`, `.hpp`, `.cc` , `.cxx`, `.hxx`, `.hh` files
+- **C++**: `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh` files
 
 ### Step 2: Query the Codebase
 
