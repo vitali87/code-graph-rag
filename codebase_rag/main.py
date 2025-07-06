@@ -57,13 +57,12 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
         tokens = question.split()
     
     # Find image files in tokens
-    image_extensions = ['.png', '.jpg', '.jpeg', '.gif']
-    image_files = []
-    for token in tokens:
-        if any(token.lower().endswith(ext) for ext in image_extensions):
-            # Only process absolute paths to avoid false positives
-            if token.startswith('/'):
-                image_files.append(token)
+    image_extensions = (".png", ".jpg", ".jpeg", ".gif")
+    image_files = [
+        token
+        for token in tokens
+        if token.startswith("/") and token.lower().endswith(image_extensions)
+    ]
     
     if not image_files:
         return question
