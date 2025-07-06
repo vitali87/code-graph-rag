@@ -16,6 +16,7 @@ repos:
     rev: v1.16.1
     hooks:
     -   id: mypy
+        additional_dependencies: [types-toml]
 -   repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.2.0
     hooks:
