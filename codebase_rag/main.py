@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import uuid
@@ -49,17 +50,30 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     Checks for image file paths in the question, copies them to a temporary
     directory, and replaces the path in the question.
     """
-    # Find all potential absolute file paths with image extensions
-    image_paths = re.findall(r"(/[^/ ]*?/.*\.(png|jpg|jpeg|gif))", question)
-    if not image_paths:
+    # Use shlex to properly parse the question and handle escaped spaces
+    try:
+        tokens = shlex.split(question)
+    except ValueError:
+        # Fallback to simple split if shlex fails
+        tokens = question.split()
+    
+    # Find image files in tokens
+    image_extensions = ['.png', '.jpg', '.jpeg', '.gif']
+    image_files = []
+    for token in tokens:
+        if any(token.lower().endswith(ext) for ext in image_extensions):
+            # Only process absolute paths to avoid false positives
+            if token.startswith('/'):
+                image_files.append(token)
+    
+    if not image_files:
         return question
 
     updated_question = question
     tmp_dir = project_root / ".tmp"
     tmp_dir.mkdir(exist_ok=True)
 
-    for match in image_paths:
-        original_path_str = match[0] if isinstance(match, tuple) else match
+    for original_path_str in image_files:
         original_path = Path(original_path_str)
 
         if not original_path.exists() or not original_path.is_file():
@@ -71,10 +85,10 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             shutil.copy(original_path, new_path)
             new_relative_path = os.path.relpath(new_path, project_root)
 
-            # Replace the original path in the question with the new relative path
-            updated_question = updated_question.replace(
-                original_path_str, str(new_relative_path)
-            )
+            # Replace both escaped and unescaped versions in the question
+            escaped_path = original_path_str.replace(" ", r"\ ")
+            updated_question = updated_question.replace(escaped_path, str(new_relative_path))
+            updated_question = updated_question.replace(original_path_str, str(new_relative_path))
 
             logger.info(f"Copied image to temporary path: {new_relative_path}")
         except Exception as e:
