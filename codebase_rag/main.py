@@ -23,6 +23,7 @@ from rich.text import Text
 
 from .config import settings
 from .graph_updater import GraphUpdater, MemgraphIngestor
+from .parser_loader import load_parsers
 from .services.llm import CypherGenerator, create_rag_orchestrator
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
@@ -107,7 +108,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     # Display the colored prompt first
     print_formatted_text(HTML(
         f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
-    ), end="")
+    ))
 
     # Use simple prompt without formatting to avoid alignment issues
     result = prompt(
@@ -242,7 +243,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     directory_lister = DirectoryLister(project_root=repo_path)
     document_analyzer = DocumentAnalyzer(project_root=repo_path)
 
-    query_tool = create_query_tool(ingestor, cypher_generator)
+    query_tool = create_query_tool(ingestor, cypher_generator, console)
     code_tool = create_code_retrieval_tool(code_retriever)
     file_reader_tool = create_file_reader_tool(file_reader)
     file_writer_tool = create_file_writer_tool(file_writer)
@@ -367,7 +368,11 @@ def start(
                 console.print("[bold yellow]Cleaning database...[/bold yellow]")
                 ingestor.clean_database()
             ingestor.ensure_constraints()
-            updater = GraphUpdater(ingestor, repo_to_update)
+            
+            # Load parsers and queries
+            parsers, queries = load_parsers()
+            
+            updater = GraphUpdater(ingestor, repo_to_update, parsers, queries)
             updater.run()
 
             # Export graph if output file specified

@@ -9,13 +9,45 @@ This script shows:
 """
 
 import sys
+import argparse
 from pathlib import Path
+from typing import List
 
 # Add the parent directory to Python path so we can import codebase_rag
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from codebase_rag.graph_loader import load_graph
+from codebase_rag.graph_loader import load_graph, Graph
 
+def print_summary(summary: dict) -> None:
+    """Prints the high-level summary of the graph."""
+    print("\n📊 Graph Summary:")
+    print(f"   • Total nodes: {summary.get('total_nodes', 0):,}")
+    print(f"   • Total relationships: {summary.get('total_relationships', 0):,}")
+    if 'metadata' in summary and 'exported_at' in summary['metadata']:
+        print(f"   • Exported at: {summary['metadata']['exported_at']}")
+
+def print_node_and_relationship_types(summary: dict) -> None:
+    """Prints the breakdown of node and relationship labels."""
+    print("\n🏷️  Node Types:")
+    for label, count in summary.get('node_labels', {}).items():
+        print(f"   • {label}: {count:,} nodes")
+
+    print("\n🔗 Relationship Types:")
+    for rel_type, count in summary.get('relationship_types', {}).items():
+        print(f"   • {rel_type}: {count:,} relationships")
+
+def print_example_nodes(graph: Graph, node_label: str, limit: int = 5) -> None:
+    """Finds and prints a sample of nodes for a given label."""
+    nodes = graph.find_nodes_by_label(node_label)
+    print(f"\n🔍 Found {len(nodes)} '{node_label}' nodes.")
+
+    if nodes:
+        print(f"   📝 Example {node_label} names:")
+        for node in nodes[:limit]:
+            name = node.properties.get('name', 'Unknown')
+            print(f"      - {name}")
+        if len(nodes) > limit:
+            print(f"      ... and {len(nodes) - limit} more")
 
 def analyze_graph(graph_file: str) -> None:
     """Analyze the exported graph and show useful information."""
@@ -23,97 +55,44 @@ def analyze_graph(graph_file: str) -> None:
     print("=" * 60)
 
     try:
-        # Load the graph
         graph = load_graph(graph_file)
-
-        # Get summary
         summary = graph.summary()
-        print("\n📊 Graph Summary:")
-        print(f"   • Total nodes: {summary['total_nodes']:,}")
-        print(f"   • Total relationships: {summary['total_relationships']:,}")
-        print(f"   • Exported at: {summary['metadata']['exported_at']}")
 
-        # Show node types
-        print("\n🏷️  Node Types:")
-        for label, count in summary['node_labels'].items():
-            print(f"   • {label}: {count:,} nodes")
-
-        # Show relationship types
-        print("\n🔗 Relationship Types:")
-        for rel_type, count in summary['relationship_types'].items():
-            print(f"   • {rel_type}: {count:,} relationships")
-
-        # Find specific types of nodes
-        print("\n🔍 Example Queries:")
-
-        # Find all functions
-        functions = graph.find_nodes_by_label("Function")
-        print(f"   • Found {len(functions)} function nodes")
-
-        # Find all classes
-        classes = graph.find_nodes_by_label("Class")
-        print(f"   • Found {len(classes)} class nodes")
-
-        # Show some example function names (first 5)
-        if functions:
-            print("\n   📝 Example function names:")
-            for func in functions[:5]:
-                name = func.properties.get('name', 'Unknown')
-                print(f"      - {name}")
-            if len(functions) > 5:
-                print(f"      ... and {len(functions) - 5} more")
-
-        # Show some example class names (first 5)
-        if classes:
-            print("\n   📝 Example class names:")
-            for cls in classes[:5]:
-                name = cls.properties.get('name', 'Unknown')
-                print(f"      - {name}")
-            if len(classes) > 5:
-                print(f"      ... and {len(classes) - 5} more")
-
-        # Show relationship analysis for a random node
-        if functions:
-            example_func = functions[0]
-            relationships = graph.get_relationships_for_node(example_func.node_id)
-            print(f"\n🔗 Relationships for function '{example_func.properties.get('name', 'Unknown')}':")
-            print(f"   • Total relationships: {len(relationships)}")
-
-            outgoing = graph.get_outgoing_relationships(example_func.node_id)
-            incoming = graph.get_incoming_relationships(example_func.node_id)
-            print(f"   • Outgoing: {len(outgoing)}")
-            print(f"   • Incoming: {len(incoming)}")
-
-            if outgoing:
-                print("   • Example outgoing relationship types:")
-                rel_types = {rel.type for rel in outgoing[:3]}
-                for rel_type in rel_types:
-                    print(f"     - {rel_type}")
+        print_summary(summary)
+        print_node_and_relationship_types(summary)
+        
+        print_example_nodes(graph, "Function")
+        print_example_nodes(graph, "Class")
 
         print("\n✅ Analysis complete!")
 
     except Exception as e:
-        print(f"❌ Error analyzing graph: {e}")
+        print(f"❌ Error analyzing graph: {e}", file=sys.stderr)
         sys.exit(1)
 
 
 def main() -> None:
     """Main function to demonstrate graph analysis."""
-    if len(sys.argv) != 2:
-        print("Usage: python graph_export_example.py <exported_graph.json>")
-        print("\nTo create an exported graph file, run:")
-        print("python -m codebase_rag.main start --repo-path /path/to/repo --update-graph -o graph.json")
-        print("\nOr export an existing graph:")
-        print("python -m codebase_rag.main export -o graph.json")
+    parser = argparse.ArgumentParser(
+        description="Analyze an exported codebase graph.",
+        epilog="""
+To create an exported graph file, run:
+  python -m codebase_rag.main start --repo-path /path/to/repo --update-graph -o graph.json
+Or to export an existing graph:
+  python -m codebase_rag.main export -o graph.json
+""",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("graph_file", type=str, help="Path to the exported_graph.json file.")
+    
+    args = parser.parse_args()
+    
+    graph_path = Path(args.graph_file)
+    if not graph_path.exists():
+        print(f"❌ Graph file not found: {graph_path}", file=sys.stderr)
         sys.exit(1)
 
-    graph_file = sys.argv[1]
-
-    if not Path(graph_file).exists():
-        print(f"❌ Graph file not found: {graph_file}")
-        sys.exit(1)
-
-    analyze_graph(graph_file)
+    analyze_graph(str(graph_path))
 
 
 if __name__ == "__main__":

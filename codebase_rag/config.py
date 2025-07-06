@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from typing import Literal
@@ -30,9 +29,9 @@ class AppConfig(BaseSettings):
     LLM_PROVIDER: Literal["gemini", "local"] = "gemini"
     GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
 
-    GEMINI_MODEL_ID: str = "gemini-1.5-pro-latest"
-    GEMINI_VISION_MODEL_ID: str = "gemini-1.5-pro-latest"
-    MODEL_CYPHER_ID: str = "gemini-1.5-flash-latest"
+    GEMINI_MODEL_ID: str = "gemini-2.5-pro"  # DO NOT CHANGE THIS
+    GEMINI_VISION_MODEL_ID: str = "gemini-2.5-flash"  # DO NOT CHANGE THIS
+    MODEL_CYPHER_ID: str = "gemini-2.5-flash-lite-preview-06-17"  # DO NOT CHANGE THIS
     GEMINI_API_KEY: str | None = None
     GEMINI_THINKING_BUDGET: int | None = None
 
@@ -48,7 +47,7 @@ class AppConfig(BaseSettings):
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def check_required_fields(self) -> AppConfig:
         """Validate that required API keys and project IDs are set based on the provider."""
         if self.LLM_PROVIDER == "gemini":

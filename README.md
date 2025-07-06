@@ -403,7 +403,7 @@ Configuration is managed through environment variables in `.env` file:
 
 ### Gemini (Cloud) Configuration
 - `GEMINI_API_KEY`: Required when `LLM_PROVIDER=gemini`
-- `GEMINI_MODEL_ID`: Main model for orchestration (default: `gemini-2.5-pro-preview-06-05`)
+- `GEMINI_MODEL_ID`: Main model for orchestration (default: `gemini-2.5-pro`)
 - `MODEL_CYPHER_ID`: Model for Cypher generation (default: `gemini-2.5-flash-lite-preview-06-17`)
 
 ### Local Models Configuration
@@ -445,7 +445,7 @@ code-graph-rag/
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
-git - **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
+- **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
 - **pydantic-ai**: AI agent framework for RAG orchestration
 - **pymgclient**: Memgraph Python client for graph database operations
 - **loguru**: Advanced logging with structured output
@@ -463,19 +463,20 @@ The agent has access to a suite of tools to understand and interact with the cod
 - **`get_code_snippet`**: Retrieves the exact source code for a specific function or class.
 - **`read_file_content`**: Reads the entire content of a specified file.
 - **`create_new_file`**: Creates a new file with specified content.
-- **`edit_existing_file`**: Overwrites an existing file with new content.
+- **`replace_code_surgically`**: Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.
 - **`execute_shell_command`**: Executes a shell command in the project's environment.
 
-### The "Plan Before Writing" Workflow
+### Intelligent and Safe File Editing
 
-To prevent errors and misplaced code, the agent is explicitly instructed to follow a strict workflow before any write or edit operation:
+The agent follows a careful workflow when modifying files to ensure accuracy and transparency:
 
-1.  **Understand Goal**: First, it clarifies the user's objective.
-2.  **Query & Explore**: It uses `query_codebase_knowledge_graph` and `read_file_content` tools to explore the codebase. This step is crucial for finding the correct location and understanding the existing architectural patterns for any new code. The agent can also use `execute_shell_command` to run checks or use other CLI tools.
-3.  **Formulate a Plan**: Based on its exploration, the agent formulates a plan. It will state which file it intends to create or edit and provide a summary of the changes.
-4.  **Execute**: Only after this analysis does the agent use the `create_new_file` or `edit_existing_file` tools to execute the plan.
+-   **AST-Based Function Targeting**: For function-specific edits, the agent uses `tree-sitter` to parse source code into an Abstract Syntax Tree (AST). This allows it to precisely locate the exact function or method that needs to be modified, even in complex files. It can disambiguate functions with the same name by using qualified names (e.g., `ClassName.method_name`) or line numbers.
 
-This ensures the agent is a reliable assistant for both analyzing and modifying your codebase.
+-   **Visual Diff Preview**: Before making any changes, the agent displays a colored diff showing exactly what will be modified. The diff uses concise formatting with limited context lines and truncation indicators for large files, making it easy to review changes.
+
+-   **Surgical Patching**: The `replace_code_surgically` tool performs a true surgical patch. It identifies the exact `target_code` block and replaces *only that section* with the `replacement_code`, leaving the rest of the file unchanged. This ensures precise, minimal modifications.
+
+This process ensures that file modifications are transparent and reviewable, making the agent a reliable assistant for analyzing and modifying your codebase.
 
 ### Security Sandbox
 
@@ -528,6 +529,15 @@ The system uses a configuration-driven approach for language support. Each langu
 
 Adding support for new languages requires only configuration changes, no code modifications.
 
+## 📦 Building a binary
+
+You can build a binary of the application using the `build_binary.py` script. This script uses PyInstaller to package the application and its dependencies into a single executable.
+
+```bash
+python build_binary.py
+```
+The resulting binary will be located in the `dist` directory.
+
 ## 🐛 Debugging
 
 1. **Check Memgraph connection**:
@@ -547,10 +557,9 @@ Adding support for new languages requires only configuration changes, no code mo
 ## 🤝 Contributing
 
 1. Follow the established code structure
-2. Keep files under 100 lines (as per user rules)
-3. Use type annotations
-4. Follow conventional commit messages
-5. Use DRY principles
+2. Use type annotations
+3. Follow conventional commit messages
+4. Use DRY principles
 
 ## 🙋‍♂️ Support
 
