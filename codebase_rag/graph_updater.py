@@ -192,7 +192,7 @@ class GraphUpdater:
         ):
             text = first_statement.children[0].text
             if text is not None:
-                return text.decode("utf-8").strip("'\" \\n")  # type: ignore[no-any-return]
+                return text.decode("utf-8").strip("'\" \n")  # type: ignore[no-any-return]
         return None
 
     def parse_and_ingest_file(self, file_path: Path, language: str) -> None:
