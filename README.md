@@ -579,10 +579,7 @@ The resulting binary will be located in the `dist` directory.
 
 ## 🤝 Contributing
 
-1. Follow the established code structure
-2. Use type annotations
-3. Follow conventional commit messages
-4. Use DRY principles
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contribution guidelines.
 
 ## 🙋‍♂️ Support
 
