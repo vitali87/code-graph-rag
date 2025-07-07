@@ -81,7 +81,7 @@ uv sync --extra treesitter-full
 
 For development (including tests):
 ```bash
-uv sync --extra treesitter-full --extra test
+uv sync --extra treesitter-full --extra test --extra dev
 ```
 
 This installs Tree-sitter grammars for all supported languages (see Multi-Language Support section).
