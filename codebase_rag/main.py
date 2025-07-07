@@ -115,7 +115,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
         except Exception as e:
             logger.error(f"Failed to copy image to temporary directory: {e}")
 
-    return str(updated_question)
+    return updated_question
 
 
 def get_multiline_input(prompt_text: str = "Ask a question") -> str:
@@ -156,7 +156,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     )
     if result is None:
         raise EOFError
-    return str(result).strip()
+    return result.strip()  # type: ignore[no-any-return]
 
 
 async def run_chat_loop(

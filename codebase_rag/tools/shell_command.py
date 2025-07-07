@@ -174,9 +174,9 @@ class ShellCommander:
                 logger.warning(f"Stderr: {stderr_str}")
 
             return ShellCommandResult(
-                return_code=int(
-                    process.returncode if process.returncode is not None else -1
-                ),
+                return_code=process.returncode
+                if process.returncode is not None
+                else -1,
                 stdout=stdout_str,
                 stderr=stderr_str,
             )
