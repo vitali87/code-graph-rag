@@ -192,7 +192,7 @@ class GraphUpdater:
         ):
             text = first_statement.children[0].text
             if text is not None:
-                return str(text.decode("utf-8").strip("'\" \n"))
+                return text.decode("utf-8").strip("'\" \n")  # type: ignore[no-any-return]
         return None
 
     def parse_and_ingest_file(self, file_path: Path, language: str) -> None:
@@ -581,25 +581,25 @@ class GraphUpdater:
             if func_child.type == "identifier":
                 text = func_child.text
                 if text is not None:
-                    return str(text.decode("utf8"))
+                    return text.decode("utf8")  # type: ignore[no-any-return]
             # Python: obj.method() -> attribute
             elif func_child.type == "attribute":
                 if attr_child := func_child.child_by_field_name("attribute"):
                     text = attr_child.text
                     if text is not None:
-                        return str(text.decode("utf8"))
+                        return text.decode("utf8")  # type: ignore[no-any-return]
             # JS/TS: obj.method() -> member_expression
             elif func_child.type == "member_expression":
                 if prop_child := func_child.child_by_field_name("property"):
                     text = prop_child.text
                     if text is not None:
-                        return str(text.decode("utf8"))
+                        return text.decode("utf8")  # type: ignore[no-any-return]
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
             text = name_node.text
             if text is not None:
-                return str(text.decode("utf8"))
+                return text.decode("utf8")  # type: ignore[no-any-return]
 
         return None
 
