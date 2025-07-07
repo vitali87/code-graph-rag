@@ -50,14 +50,6 @@ The system consists of two main components:
 1. **Multi-language Parser**: Tree-sitter based parsing system that analyzes codebases and ingests data into Memgraph
 2. **RAG System** (`codebase_rag/`): Interactive CLI for querying the stored knowledge graph
 
-### Core Components
-
-- **🌳 Tree-sitter Integration**: Language-agnostic parsing using Tree-sitter grammars
-- **📊 Graph Database**: Memgraph for storing code structure as nodes and relationships
-- **🤖 LLM Integration**: Supports Google Gemini (cloud) and Ollama (local) for natural language processing
-- **🔍 Code Analysis**: Advanced AST traversal for extracting code elements across languages
-- **🛠️ Query Tools**: Specialized tools for graph querying and code retrieval
-- **⚙️ Language Configuration**: Configurable mappings for different programming languages
 
 ## 📋 Prerequisites
 
@@ -92,15 +84,7 @@ For development (including tests):
 uv sync --extra treesitter-full --extra test
 ```
 
-This installs Tree-sitter grammars for:
-- **Python** (.py)
-- **JavaScript** (.js, .jsx)
-- **TypeScript** (.ts, .tsx)
-- **Rust** (.rs)
-- **Go** (.go)
-- **Scala** (.scala, .sc)
-- **Java** (.java)
-- **C++** (.cpp, .h, .hpp, .cc, .cxx, .hxx, .hh)
+This installs Tree-sitter grammars for all supported languages (see Multi-Language Support section).
 
 3. **Set up environment variables**:
 ```bash
@@ -173,15 +157,7 @@ python -m codebase_rag.main start --repo-path /path/to/repo2 --update-graph
 python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
 ```
 
-**Supported Languages**: The system automatically detects and processes files based on extensions:
-- **Python**: `.py` files
-- **JavaScript**: `.js`, `.jsx` files
-- **TypeScript**: `.ts`, `.tsx` files
-- **Rust**: `.rs` files
-- **Go**: `.go` files
-- **Scala**: `.scala`, `.sc` files
-- **Java**: `.java` files
-- **C++**: `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh` files
+The system automatically detects and processes files for all supported languages (see Multi-Language Support section).
 
 ### Step 2: Query the Codebase
 
@@ -220,10 +196,6 @@ python -m codebase_rag.main start --repo-path /path/to/your/repo \
   --cypher-model gemini-2.5-flash-lite-preview-06-17
 ```
 
-**Available CLI Arguments:**
-- `--llm-provider`: Choose `gemini` or `local`
-- `--orchestrator-model`: Specify model for main RAG orchestration
-- `--cypher-model`: Specify model for Cypher query generation
 
 Example queries (works across all supported languages):
 - "Show me all classes that contain 'user' in their name"
@@ -306,14 +278,7 @@ python -m codebase_rag.main optimize javascript \
 ```
 
 **Supported Languages for Optimization:**
-- `python` - Python codebases
-- `javascript` - JavaScript/Node.js projects
-- `typescript` - TypeScript projects
-- `rust` - Rust projects
-- `go` - Go projects
-- `java` - Java projects
-- `scala` - Scala projects
-- `cpp` - C++ projects
+All supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `cpp`
 
 **How It Works:**
 1. **Analysis Phase**: The agent analyzes your codebase structure using the knowledge graph
@@ -361,13 +326,12 @@ python -m codebase_rag.main optimize rust \
 
 The agent will incorporate the guidance from your reference documents when suggesting optimizations, ensuring they align with your project's standards and architectural decisions.
 
-**CLI Arguments for Optimization:**
-- `language`: Target programming language (required)
-- `--repo-path`: Path to repository (defaults to current directory)
-- `--reference-document`: Path to reference documentation for guidance
+**Common CLI Arguments:**
 - `--llm-provider`: Choose `gemini` or `local` models
-- `--orchestrator-model`: Specify model for optimization analysis
+- `--orchestrator-model`: Specify model for main operations
 - `--cypher-model`: Specify model for graph queries
+- `--repo-path`: Path to repository (defaults to current directory)
+- `--reference-document`: Path to reference documentation (optimization only)
 
 ## 📊 Graph Schema
 
@@ -454,54 +418,14 @@ The agent has access to a suite of tools to understand and interact with the cod
 
 ### Intelligent and Safe File Editing
 
-The agent follows a careful workflow when modifying files to ensure accuracy and transparency:
+The agent uses AST-based function targeting with Tree-sitter for precise code modifications. Features include:
+- **Visual diff preview** before changes
+- **Surgical patching** that only modifies target code blocks
+- **Multi-language support** across all supported languages
+- **Security sandbox** preventing edits outside project directory
+- **Smart function matching** with qualified names and line numbers
 
--   **AST-Based Function Targeting**: For function-specific edits, the agent uses `tree-sitter` to parse source code into an Abstract Syntax Tree (AST). This allows it to precisely locate the exact function or method that needs to be modified, even in complex files. It can disambiguate functions with the same name by using qualified names (e.g., `ClassName.method_name`) or line numbers.
 
--   **Visual Diff Preview**: Before making any changes, the agent displays a colored diff showing exactly what will be modified. The diff uses concise formatting with limited context lines and truncation indicators for large files, making it easy to review changes.
-
--   **Surgical Patching**: The `replace_code_surgically` tool performs a true surgical patch. It identifies the exact `target_code` block and replaces *only that section* with the `replacement_code`, leaving the rest of the file unchanged. This ensures precise, minimal modifications.
-
--   **Multi-Language Support**: File editing works across all supported languages (Python, JavaScript, TypeScript, Rust, Go, Scala, Java, C++) with language-specific AST parsing for accurate function and class identification.
-
--   **Smart Function Matching**: The editor can handle complex scenarios like overloaded functions, nested classes, and method disambiguation using qualified names or line numbers for precise targeting.
-
-This process ensures that file modifications are transparent and reviewable, making the agent a reliable assistant for analyzing and modifying your codebase.
-
-#### File Editing Features
-
-The file editing system provides several powerful capabilities:
-
-**Function-Level Editing:**
-- **Precise Function Location**: Uses Tree-sitter AST parsing to locate specific functions, methods, or classes
-- **Qualified Name Support**: Handles `ClassName.method_name` syntax for disambiguation
-- **Line Number Targeting**: Specify exact line numbers for precise function targeting
-- **Nested Function Support**: Properly handles nested functions and complex class hierarchies
-
-**Code Block Replacement:**
-- **Surgical Patching**: Replace exact code blocks without affecting surrounding code
-- **Diff-Match-Patch**: Advanced patching algorithm ensures clean, reliable replacements
-- **Multiple Occurrence Handling**: Safely handles cases where target code appears multiple times
-
-**Visual Feedback:**
-- **Colored Diff Display**: Shows changes with clear color coding (red for removals, green for additions)
-- **Context-Aware Diffs**: Displays relevant context around changes with smart truncation
-- **Preview Before Apply**: See exactly what will change before committing modifications
-
-**Language-Specific Features:**
-- **Multi-Language AST**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, Java, and C++
-- **Language-Aware Parsing**: Uses appropriate Tree-sitter grammars for each language
-- **Extension Detection**: Automatically detects file types and applies correct parsing rules
-
-**Safety and Security:**
-- **Sandbox Protection**: All file operations are strictly sandboxed to the project root directory
-- **Path Traversal Prevention**: Prevents editing files outside the project directory
-- **Atomic Operations**: File changes are applied atomically to prevent partial updates
-- **Backup and Recovery**: Changes can be reverted if needed using version control integration
-
-### Security Sandbox
-
-**Important**: All file system operations (`create_new_file`, `edit_existing_file`) are **strictly sandboxed** to the project's root directory. The agent cannot write to or edit files outside of the repository it was tasked to analyze, preventing any potential harm from path traversal attacks.
 
 ## 🌍 Multi-Language Support
 
@@ -528,29 +452,10 @@ The file editing system provides several powerful capabilities:
 - **Java**: Methods, constructors, classes, interfaces, enums, and annotation types
 - **C++**: Functions, classes, structs, and methods
 
-### Installation Options
-
-```bash
-# Basic Python-only support
-uv sync
-
-# Full multi-language support
-uv sync --extra treesitter-full
-
-# Individual language support (if needed)
-uv add tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-rust tree-sitter-go tree-sitter-scala tree-sitter-java tree-sitter-cpp
-```
 
 ### Language Configuration
 
-The system uses a configuration-driven approach for language support. Each language is defined in `codebase_rag/language_config.py` with:
-
-- **File extensions**: Which files to process
-- **AST node types**: How to identify functions, classes, etc.
-- **Module structure**: How modules/packages are organized
-- **Name extraction**: How to extract names from AST nodes
-
-Adding support for new languages requires only configuration changes, no code modifications.
+The system uses a configuration-driven approach for language support. Each language is defined in `codebase_rag/language_config.py`.
 
 ## 📦 Building a binary
 
