@@ -205,6 +205,11 @@ Example queries (works across all supported languages):
 - "List all TypeScript components"
 - "Find Rust structs and their methods"
 - "Show me Go interfaces and implementations"
+- "Add logging to all database connection functions"
+- "Refactor the User class to use dependency injection"
+- "Convert these Python functions to async/await pattern"
+- "Add error handling to authentication methods"
+- "Optimize this function for better performance"
 
 ### Step 3: Export Graph Data (New!)
 
