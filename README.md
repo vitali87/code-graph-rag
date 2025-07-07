@@ -394,10 +394,14 @@ The knowledge graph uses the following node types and relationships:
 - **C++**: `function_definition`, `constructor_definition`, `destructor_definition`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
 
 ### Relationships
-- `CONTAINS_PACKAGE/MODULE/FILE/FOLDER`: Hierarchical containment
+- `CONTAINS_PACKAGE`: Project or Package contains Package nodes
+- `CONTAINS_FOLDER`: Project, Package, or Folder contains Folder nodes
+- `CONTAINS_FILE`: Project, Package, or Folder contains File nodes
+- `CONTAINS_MODULE`: Project, Package, or Folder contains Module nodes
 - `DEFINES`: Module defines classes/functions
 - `DEFINES_METHOD`: Class defines methods
 - `DEPENDS_ON_EXTERNAL`: Project depends on external packages
+- `CALLS`: Function or Method calls other functions/methods
 
 ## 🔧 Configuration
 
