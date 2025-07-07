@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import shlex
 import shutil
 import sys
@@ -81,7 +80,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
         try:
             new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
             shutil.copy(original_path, new_path)
-            new_relative_path = os.path.relpath(new_path, project_root)
+            new_relative_path = new_path.relative_to(project_root)
 
             # Find and replace all possible quoted/escaped versions of this path
             # Try different forms the path might appear in the original question
