@@ -428,29 +428,6 @@ Configuration is managed through environment variables in `.env` file:
 
 ## 🏃‍♂️ Development
 
-### Project Structure
-```
-code-graph-rag/
-├── codebase_rag/              # RAG system package
-│   ├── main.py                # CLI entry point
-│   ├── config.py              # Configuration management
-│   ├── graph_updater.py       # Tree-sitter based multi-language parser
-│   ├── language_config.py     # Language-specific configurations
-│   ├── prompts.py             # LLM prompts and schemas
-│   ├── schemas.py             # Pydantic models
-│   ├── services/              # Core services
-│   │   └── llm.py             # Gemini LLM integration
-│   └── tools/                 # RAG tools
-│       ├── codebase_query.py  # Graph querying tool
-│       ├── code_retrieval.py  # Code snippet retrieval
-│       ├── file_reader.py     # File content reading
-│       ├── file_writer.py     # File content creation
-│       ├── file_editor.py     # File content editing
-│       └── shell_command.py   # Shell command execution
-├── docker-compose.yaml        # Memgraph setup
-├── pyproject.toml            # Project dependencies & language extras
-└── README.md                 # This file
-```
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
