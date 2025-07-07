@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
 - **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini) and local models (Ollama) for natural language to Cypher translation
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
-- **✍️ File System Operations**: Full agentic control over file content creation, reading, and editing.
+- **✍️ Advanced File Editing**: Surgical code replacement with AST-based function targeting, visual diff previews, and exact code block modifications
 - **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
 - **🚀 Interactive Code Optimization**: AI-powered codebase optimization with language-specific best practices and interactive approval workflow
 - **📚 Reference-Guided Optimization**: Use your own coding standards and architectural documents to guide optimization suggestions
@@ -481,7 +481,42 @@ The agent follows a careful workflow when modifying files to ensure accuracy and
 
 -   **Surgical Patching**: The `replace_code_surgically` tool performs a true surgical patch. It identifies the exact `target_code` block and replaces *only that section* with the `replacement_code`, leaving the rest of the file unchanged. This ensures precise, minimal modifications.
 
+-   **Multi-Language Support**: File editing works across all supported languages (Python, JavaScript, TypeScript, Rust, Go, Scala, Java, C++) with language-specific AST parsing for accurate function and class identification.
+
+-   **Smart Function Matching**: The editor can handle complex scenarios like overloaded functions, nested classes, and method disambiguation using qualified names or line numbers for precise targeting.
+
 This process ensures that file modifications are transparent and reviewable, making the agent a reliable assistant for analyzing and modifying your codebase.
+
+#### File Editing Features
+
+The file editing system provides several powerful capabilities:
+
+**Function-Level Editing:**
+- **Precise Function Location**: Uses Tree-sitter AST parsing to locate specific functions, methods, or classes
+- **Qualified Name Support**: Handles `ClassName.method_name` syntax for disambiguation
+- **Line Number Targeting**: Specify exact line numbers for precise function targeting
+- **Nested Function Support**: Properly handles nested functions and complex class hierarchies
+
+**Code Block Replacement:**
+- **Surgical Patching**: Replace exact code blocks without affecting surrounding code
+- **Diff-Match-Patch**: Advanced patching algorithm ensures clean, reliable replacements
+- **Multiple Occurrence Handling**: Safely handles cases where target code appears multiple times
+
+**Visual Feedback:**
+- **Colored Diff Display**: Shows changes with clear color coding (red for removals, green for additions)
+- **Context-Aware Diffs**: Displays relevant context around changes with smart truncation
+- **Preview Before Apply**: See exactly what will change before committing modifications
+
+**Language-Specific Features:**
+- **Multi-Language AST**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, Java, and C++
+- **Language-Aware Parsing**: Uses appropriate Tree-sitter grammars for each language
+- **Extension Detection**: Automatically detects file types and applies correct parsing rules
+
+**Safety and Security:**
+- **Sandbox Protection**: All file operations are strictly sandboxed to the project root directory
+- **Path Traversal Prevention**: Prevents editing files outside the project directory
+- **Atomic Operations**: File changes are applied atomically to prevent partial updates
+- **Backup and Recovery**: Changes can be reverted if needed using version control integration
 
 ### Security Sandbox
 
