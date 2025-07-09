@@ -3,7 +3,7 @@ from typing import cast
 from loguru import logger
 from pydantic_ai import Agent, Tool
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -60,12 +60,20 @@ class CypherGenerator:
                     provider=provider,
                 )
                 system_prompt = GEMINI_LITE_CYPHER_SYSTEM_PROMPT
-            else:  # local provider
+            elif settings.LLM_PROVIDER == "local":
                 llm = OpenAIModel(  # type: ignore
                     settings.LOCAL_CYPHER_MODEL_ID,
                     provider=OpenAIProvider(
                         api_key=settings.LOCAL_MODEL_API_KEY,
                         base_url=str(settings.LOCAL_MODEL_ENDPOINT),
+                    ),
+                )
+                system_prompt = LOCAL_CYPHER_SYSTEM_PROMPT
+            else:  # openai provider
+                llm = OpenAIResponsesModel(
+                    settings.OPENAI_CYPHER_MODEL_ID,
+                    provider=OpenAIProvider(
+                        api_key=settings.OPENAI_API_KEY,
                     ),
                 )
                 system_prompt = LOCAL_CYPHER_SYSTEM_PROMPT
@@ -127,12 +135,19 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
                 settings.GEMINI_MODEL_ID,
                 provider=provider,
             )
-        else:  # local provider
+        elif settings.LLM_PROVIDER == "local":
             llm = OpenAIModel(  # type: ignore
                 settings.LOCAL_ORCHESTRATOR_MODEL_ID,
                 provider=OpenAIProvider(
                     api_key=settings.LOCAL_MODEL_API_KEY,
                     base_url=str(settings.LOCAL_MODEL_ENDPOINT),
+                ),
+            )
+        else:  # openai provider
+            llm = OpenAIResponsesModel(
+                settings.OPENAI_ORCHESTRATOR_MODEL_ID,
+                provider=OpenAIProvider(
+                    api_key=settings.OPENAI_API_KEY,
                 ),
             )
 

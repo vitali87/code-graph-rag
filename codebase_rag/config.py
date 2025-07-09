@@ -26,7 +26,7 @@ class AppConfig(BaseSettings):
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
 
-    LLM_PROVIDER: Literal["gemini", "local"] = "gemini"
+    LLM_PROVIDER: Literal["gemini", "local", "openai"] = "gemini"
     GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
 
     GEMINI_MODEL_ID: str = "gemini-2.5-pro"  # DO NOT CHANGE THIS
@@ -44,6 +44,10 @@ class AppConfig(BaseSettings):
     LOCAL_CYPHER_MODEL_ID: str = "llama3"
     LOCAL_MODEL_API_KEY: str = "ollama"
 
+    OPENAI_API_KEY: str | None = None
+    OPENAI_ORCHESTRATOR_MODEL_ID: str = "gpt-4o-mini"
+    OPENAI_CYPHER_MODEL_ID: str = "gpt-4o-mini"
+
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
@@ -58,6 +62,11 @@ class AppConfig(BaseSettings):
             if self.GEMINI_PROVIDER == "vertex" and not self.GCP_PROJECT_ID:
                 raise ValueError(
                     "Configuration Error: GCP_PROJECT_ID is required when GEMINI_PROVIDER is 'vertex'."
+                )
+        elif self.LLM_PROVIDER == "openai":
+            if not self.OPENAI_API_KEY:
+                raise ValueError(
+                    "Configuration Error: OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'."
                 )
         return self
 
