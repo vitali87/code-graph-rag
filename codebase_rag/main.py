@@ -350,15 +350,14 @@ async def main_async(repo_path: str) -> None:
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
     table.add_row("LLM Provider", settings.LLM_PROVIDER)
-    if settings.LLM_PROVIDER == "gemini":
-        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
-        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    elif settings.LLM_PROVIDER == "openai":
-        table.add_row("Orchestrator Model", settings.OPENAI_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.OPENAI_CYPHER_MODEL_ID)
-    else:  # local
-        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+
+    orchestrator_model = settings.active_orchestrator_model
+    table.add_row("Orchestrator Model", orchestrator_model)
+
+    _, cypher_model = settings.active_cypher_model_info
+    table.add_row("Cypher Model", cypher_model or "Not configured")
+
+    if settings.LLM_PROVIDER == "local":
         table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
     table.add_row("Target Repository", repo_path)
     console.print(table)
@@ -634,15 +633,12 @@ async def main_optimize_async(
     table.add_row("Target Language", language)
     table.add_row("Repository Path", str(project_root))
     table.add_row("LLM Provider", settings.LLM_PROVIDER)
-    if settings.LLM_PROVIDER == "gemini":
-        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
-        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    elif settings.LLM_PROVIDER == "openai":
-        table.add_row("Orchestrator Model", settings.OPENAI_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.OPENAI_CYPHER_MODEL_ID)
-    else:  # local
-        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+
+    orchestrator_model = settings.active_orchestrator_model
+    table.add_row("Orchestrator Model", orchestrator_model)
+
+    _, cypher_model = settings.active_cypher_model_info
+    table.add_row("Cypher Model", cypher_model or "Not configured")
     console.print(table)
 
     with MemgraphIngestor(

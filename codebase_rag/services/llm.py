@@ -39,32 +39,8 @@ class CypherGenerator:
         try:
             model_settings = None
             
-            # Determine the actual cypher model and provider to use
-            # Check all possible cypher model configurations
-            cypher_model_id = None
-            cypher_provider = None
-            
-            # Priority: Gemini > OpenAI > Local (based on actual model configs)
-            if settings.MODEL_CYPHER_ID and settings.MODEL_CYPHER_ID.startswith("gemini-"):
-                cypher_model_id = settings.MODEL_CYPHER_ID
-                cypher_provider = "gemini"
-            elif settings.OPENAI_CYPHER_MODEL_ID and (settings.OPENAI_CYPHER_MODEL_ID.startswith("gpt-") or settings.OPENAI_CYPHER_MODEL_ID.startswith("o1-")):
-                cypher_model_id = settings.OPENAI_CYPHER_MODEL_ID
-                cypher_provider = "openai"
-            elif settings.LOCAL_CYPHER_MODEL_ID:
-                cypher_model_id = settings.LOCAL_CYPHER_MODEL_ID
-                cypher_provider = "local"
-            else:
-                # Fallback to provider-based detection
-                if settings.LLM_PROVIDER == "gemini":
-                    cypher_model_id = settings.MODEL_CYPHER_ID
-                    cypher_provider = "gemini"
-                elif settings.LLM_PROVIDER == "openai":
-                    cypher_model_id = settings.OPENAI_CYPHER_MODEL_ID
-                    cypher_provider = "openai"
-                else:
-                    cypher_model_id = settings.LOCAL_CYPHER_MODEL_ID
-                    cypher_provider = "local"
+            # Use centralized configuration
+            cypher_provider, cypher_model_id = settings.active_cypher_model_info
             
             # Configure model based on detected provider
             if cypher_provider == "gemini":
