@@ -33,7 +33,8 @@ https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
-- **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini) and local models (Ollama) for natural language to Cypher translation
+- **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini), local models (Ollama), and OpenAI models for natural language to Cypher translation
+- **🤖 OpenAI Integration**: Leverage OpenAI models to enhance AI functionalities.
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
 - **✍️ Advanced File Editing**: Surgical code replacement with AST-based function targeting, visual diff previews, and exact code block modifications
 - **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
@@ -63,7 +64,9 @@ The system consists of two main components:
 
 1. **Clone the repository**:
 ```bash
-git clone https://github.com/vitali87/code-graph-rag.git
+git clone https://github.com/vitali87/code-graph-rag.git # Clone the repository
+
+# Set up the environment for OpenAI models (if applicable)
 cd code-graph-rag
 ```
 
@@ -95,6 +98,13 @@ cp .env.example .env
 ### Configuration Options
 
 #### Option 1: Cloud Models (Gemini)
+
+#### Option 2: OpenAI Models
+```bash
+# .env file
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
+```
 ```bash
 # .env file
 LLM_PROVIDER=gemini

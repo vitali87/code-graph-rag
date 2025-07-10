@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
 
-
 class AppConfig(BaseSettings):
     """
     Application Configuration using Pydantic for robust validation and type-safety.
@@ -70,5 +69,29 @@ class AppConfig(BaseSettings):
                 )
         return self
 
+    @property
+    def active_orchestrator_model(self) -> str:
+        """Determines the active orchestrator model ID."""
+        if self.LLM_PROVIDER == "gemini":
+            return self.GEMINI_MODEL_ID
+        elif self.LLM_PROVIDER == "openai":
+            return self.OPENAI_ORCHESTRATOR_MODEL_ID
+        return self.LOCAL_ORCHESTRATOR_MODEL_ID
 
+    @property
+    def active_cypher_model_info(self) -> tuple[str, str | None]:
+        """Determines the active cypher provider and model ID."""
+        if self.MODEL_CYPHER_ID and self.MODEL_CYPHER_ID.startswith("gemini-"):
+            return "gemini", self.MODEL_CYPHER_ID
+        elif self.OPENAI_CYPHER_MODEL_ID and (self.OPENAI_CYPHER_MODEL_ID.startswith("gpt-") or self.OPENAI_CYPHER_MODEL_ID.startswith("o1-")):
+            return "openai", self.OPENAI_CYPHER_MODEL_ID
+        elif self.LOCAL_CYPHER_MODEL_ID:
+            return "local", self.LOCAL_CYPHER_MODEL_ID
+        # Fallback to provider-based detection
+        if self.LLM_PROVIDER == "gemini":
+            return "gemini", self.MODEL_CYPHER_ID
+        elif self.LLM_PROVIDER == "openai":
+            return "openai", self.OPENAI_CYPHER_MODEL_ID
+        return "local", self.LOCAL_CYPHER_MODEL_ID
+    
 settings = AppConfig()
