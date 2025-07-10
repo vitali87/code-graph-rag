@@ -229,7 +229,9 @@ def _update_model_settings(
             settings.LLM_PROVIDER = "openai"
         elif orchestrator_model.startswith("gemini-"):
             settings.LLM_PROVIDER = "gemini"
-        # If no clear pattern, keep current provider
+        else:
+            # If no clear pattern, assume it's a local model
+            settings.LLM_PROVIDER = "local"
 
     provider = settings.LLM_PROVIDER
     if orchestrator_model:
