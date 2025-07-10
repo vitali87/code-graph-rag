@@ -10,7 +10,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..config import settings
 from ..prompts import (
-    GEMINI_LITE_CYPHER_SYSTEM_PROMPT,
+    CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
     RAG_ORCHESTRATOR_SYSTEM_PROMPT,
 )
@@ -38,7 +38,36 @@ class CypherGenerator:
     def __init__(self) -> None:
         try:
             model_settings = None
-            if settings.LLM_PROVIDER == "gemini":
+            
+            # Determine the actual cypher model and provider to use
+            # Check all possible cypher model configurations
+            cypher_model_id = None
+            cypher_provider = None
+            
+            # Priority: Gemini > OpenAI > Local (based on actual model configs)
+            if settings.MODEL_CYPHER_ID and settings.MODEL_CYPHER_ID.startswith("gemini-"):
+                cypher_model_id = settings.MODEL_CYPHER_ID
+                cypher_provider = "gemini"
+            elif settings.OPENAI_CYPHER_MODEL_ID and (settings.OPENAI_CYPHER_MODEL_ID.startswith("gpt-") or settings.OPENAI_CYPHER_MODEL_ID.startswith("o1-")):
+                cypher_model_id = settings.OPENAI_CYPHER_MODEL_ID
+                cypher_provider = "openai"
+            elif settings.LOCAL_CYPHER_MODEL_ID:
+                cypher_model_id = settings.LOCAL_CYPHER_MODEL_ID
+                cypher_provider = "local"
+            else:
+                # Fallback to provider-based detection
+                if settings.LLM_PROVIDER == "gemini":
+                    cypher_model_id = settings.MODEL_CYPHER_ID
+                    cypher_provider = "gemini"
+                elif settings.LLM_PROVIDER == "openai":
+                    cypher_model_id = settings.OPENAI_CYPHER_MODEL_ID
+                    cypher_provider = "openai"
+                else:
+                    cypher_model_id = settings.LOCAL_CYPHER_MODEL_ID
+                    cypher_provider = "local"
+            
+            # Configure model based on detected provider
+            if cypher_provider == "gemini":
                 if settings.GEMINI_PROVIDER == "vertex":
                     provider = GoogleVertexProvider(
                         project_id=settings.GCP_PROJECT_ID,
@@ -56,24 +85,24 @@ class CypherGenerator:
                     )
 
                 llm = GeminiModel(
-                    settings.MODEL_CYPHER_ID,
+                    cypher_model_id,
                     provider=provider,
                 )
-                system_prompt = GEMINI_LITE_CYPHER_SYSTEM_PROMPT
-            elif settings.LLM_PROVIDER == "local":
+                system_prompt = CYPHER_SYSTEM_PROMPT
+            elif cypher_provider == "openai":
+                llm = OpenAIResponsesModel(
+                    cypher_model_id,
+                    provider=OpenAIProvider(
+                        api_key=settings.OPENAI_API_KEY,
+                    ),
+                )
+                system_prompt = CYPHER_SYSTEM_PROMPT
+            else:  # local
                 llm = OpenAIModel(  # type: ignore
-                    settings.LOCAL_CYPHER_MODEL_ID,
+                    cypher_model_id,
                     provider=OpenAIProvider(
                         api_key=settings.LOCAL_MODEL_API_KEY,
                         base_url=str(settings.LOCAL_MODEL_ENDPOINT),
-                    ),
-                )
-                system_prompt = LOCAL_CYPHER_SYSTEM_PROMPT
-            else:  # openai provider
-                llm = OpenAIResponsesModel(
-                    settings.OPENAI_CYPHER_MODEL_ID,
-                    provider=OpenAIProvider(
-                        api_key=settings.OPENAI_API_KEY,
                     ),
                 )
                 system_prompt = LOCAL_CYPHER_SYSTEM_PROMPT

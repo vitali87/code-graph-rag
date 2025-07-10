@@ -242,12 +242,19 @@ def _update_model_settings(
         else:  # openai
             settings.OPENAI_ORCHESTRATOR_MODEL_ID = orchestrator_model
     if cypher_model:
-        if provider == "gemini":
+        # Auto-detect provider for cypher model based on model name
+        if cypher_model.startswith("gemini-"):
             settings.MODEL_CYPHER_ID = cypher_model
-        elif provider == "local":
-            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
-        else:  # openai
+        elif cypher_model.startswith("gpt-") or cypher_model.startswith("o1-"):
             settings.OPENAI_CYPHER_MODEL_ID = cypher_model
+        else:
+            # If no clear pattern, use the same provider as orchestrator
+            if provider == "gemini":
+                settings.MODEL_CYPHER_ID = cypher_model
+            elif provider == "local":
+                settings.LOCAL_CYPHER_MODEL_ID = cypher_model
+            else:  # openai
+                settings.OPENAI_CYPHER_MODEL_ID = cypher_model
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -346,7 +353,10 @@ async def main_async(repo_path: str) -> None:
     if settings.LLM_PROVIDER == "gemini":
         table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
         table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    else:
+    elif settings.LLM_PROVIDER == "openai":
+        table.add_row("Orchestrator Model", settings.OPENAI_ORCHESTRATOR_MODEL_ID)
+        table.add_row("Cypher Model", settings.OPENAI_CYPHER_MODEL_ID)
+    else:  # local
         table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
         table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
         table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
@@ -627,7 +637,10 @@ async def main_optimize_async(
     if settings.LLM_PROVIDER == "gemini":
         table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
         table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    else:
+    elif settings.LLM_PROVIDER == "openai":
+        table.add_row("Orchestrator Model", settings.OPENAI_ORCHESTRATOR_MODEL_ID)
+        table.add_row("Cypher Model", settings.OPENAI_CYPHER_MODEL_ID)
+    else:  # local
         table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
         table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
     console.print(table)
