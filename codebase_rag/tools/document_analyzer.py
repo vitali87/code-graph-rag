@@ -6,6 +6,7 @@ from pathlib import Path
 
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 from loguru import logger
 from pydantic_ai import Tool
 
@@ -20,12 +21,33 @@ class DocumentAnalyzer:
 
     def __init__(self, project_root: str):
         self.project_root = Path(project_root).resolve()
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY is not set in the environment.")
-
-        self.client = genai.Client(api_key=api_key)
-        logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
+        
+        # Check if using Vertex AI or regular Google AI API
+        use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+        
+        if use_vertex:
+            # Use Vertex AI authentication
+            project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+            location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+            if not project_id:
+                raise ValueError("GOOGLE_CLOUD_PROJECT is required when using Vertex AI.")
+            
+            self.client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location
+            )
+            logger.info(f"DocumentAnalyzer initialized with Vertex AI (project: {project_id}, location: {location})")
+        else:
+            # Use regular Google AI API
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY is not set in the environment.")
+            
+            self.client = genai.Client(api_key=api_key)
+            logger.info(f"DocumentAnalyzer initialized with Google AI API")
+        
+        logger.info(f"DocumentAnalyzer root: {self.project_root}")
 
     def analyze(self, file_path: str, question: str) -> str:
         """
@@ -107,6 +129,12 @@ class DocumentAnalyzer:
                 # API-related ValueError
                 logger.error(f"[DocumentAnalyzer] API validation error: {e}")
                 return f"Error: API validation failed: {e}"
+        except ClientError as e:
+            # Handle Google GenAI specific errors
+            logger.error(f"Google GenAI API error for '{file_path}': {e}")
+            if "Unable to process input image" in str(e):
+                return f"Error: Unable to process the image file. The image may be corrupted or in an unsupported format."
+            return f"API error: {e}"
         except Exception as e:
             logger.error(
                 f"Failed to analyze document '{file_path}': {e}", exc_info=True
@@ -136,6 +164,9 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
             logger.error(
                 f"[analyze_document] Exception during analysis: {e}", exc_info=True
             )
+            # Don't double-wrap error messages that are already formatted
+            if str(e).startswith("Error:") or str(e).startswith("API error:"):
+                return str(e)
             return f"Error during document analysis: {e}"
 
     return Tool(
