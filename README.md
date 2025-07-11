@@ -501,6 +501,8 @@ The resulting binary will be located in the `dist` directory.
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contribution guidelines.
 
+Good first PRs are from Issues TODOs.
+
 ## 🙋‍♂️ Support
 
 For issues or questions:
