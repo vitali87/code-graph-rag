@@ -216,24 +216,45 @@ def _update_model_settings(
 ) -> None:
     """Update model settings based on command-line arguments."""
     if llm_provider:
-        if llm_provider not in ["gemini", "local"]:
+        if llm_provider not in ["gemini", "local", "openai"]:
             console.print(
-                f"[bold red]Error: Invalid LLM provider '{llm_provider}'. Must be 'gemini' or 'local'.[/bold red]"
+                f"[bold red]Error: Invalid LLM provider '{llm_provider}'. Must be 'gemini', 'local', or 'openai'.[/bold red]"
             )
             raise typer.Exit(1)
-        settings.LLM_PROVIDER = cast(Literal["gemini", "local"], llm_provider)
+        settings.LLM_PROVIDER = cast(Literal["gemini", "local", "openai"], llm_provider)
+
+    # Auto-detect provider based on orchestrator model if not explicitly set
+    if orchestrator_model and not llm_provider:
+        if orchestrator_model.startswith("gpt-") or orchestrator_model.startswith("o1-"):
+            settings.LLM_PROVIDER = "openai"
+        elif orchestrator_model.startswith("gemini-"):
+            settings.LLM_PROVIDER = "gemini"
+        else:
+            # If no clear pattern, assume it's a local model
+            settings.LLM_PROVIDER = "local"
 
     provider = settings.LLM_PROVIDER
     if orchestrator_model:
         if provider == "gemini":
             settings.GEMINI_MODEL_ID = orchestrator_model
-        else:
+        elif provider == "local":
             settings.LOCAL_ORCHESTRATOR_MODEL_ID = orchestrator_model
+        else:  # openai
+            settings.OPENAI_ORCHESTRATOR_MODEL_ID = orchestrator_model
     if cypher_model:
-        if provider == "gemini":
+        # Auto-detect provider for cypher model based on model name
+        if cypher_model.startswith("gemini-"):
             settings.MODEL_CYPHER_ID = cypher_model
+        elif cypher_model.startswith("gpt-") or cypher_model.startswith("o1-"):
+            settings.OPENAI_CYPHER_MODEL_ID = cypher_model
         else:
-            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
+            # If no clear pattern, use the same provider as orchestrator
+            if provider == "gemini":
+                settings.MODEL_CYPHER_ID = cypher_model
+            elif provider == "local":
+                settings.LOCAL_CYPHER_MODEL_ID = cypher_model
+            else:  # openai
+                settings.OPENAI_CYPHER_MODEL_ID = cypher_model
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -329,12 +350,14 @@ async def main_async(repo_path: str) -> None:
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
     table.add_row("LLM Provider", settings.LLM_PROVIDER)
-    if settings.LLM_PROVIDER == "gemini":
-        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
-        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    else:
-        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+
+    orchestrator_model = settings.active_orchestrator_model
+    table.add_row("Orchestrator Model", orchestrator_model)
+
+    _, cypher_model = settings.active_cypher_model_info
+    table.add_row("Cypher Model", cypher_model or "Not configured")
+
+    if settings.LLM_PROVIDER == "local":
         table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
     table.add_row("Target Repository", repo_path)
     console.print(table)
@@ -610,12 +633,12 @@ async def main_optimize_async(
     table.add_row("Target Language", language)
     table.add_row("Repository Path", str(project_root))
     table.add_row("LLM Provider", settings.LLM_PROVIDER)
-    if settings.LLM_PROVIDER == "gemini":
-        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
-        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    else:
-        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+
+    orchestrator_model = settings.active_orchestrator_model
+    table.add_row("Orchestrator Model", orchestrator_model)
+
+    _, cypher_model = settings.active_cypher_model_info
+    table.add_row("Cypher Model", cypher_model or "Not configured")
     console.print(table)
 
     with MemgraphIngestor(

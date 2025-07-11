@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
 
-
 class AppConfig(BaseSettings):
     """
     Application Configuration using Pydantic for robust validation and type-safety.
@@ -26,7 +25,7 @@ class AppConfig(BaseSettings):
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
 
-    LLM_PROVIDER: Literal["gemini", "local"] = "gemini"
+    LLM_PROVIDER: Literal["gemini", "local", "openai"] = "gemini"
     GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
 
     GEMINI_MODEL_ID: str = "gemini-2.5-pro"  # DO NOT CHANGE THIS
@@ -44,6 +43,10 @@ class AppConfig(BaseSettings):
     LOCAL_CYPHER_MODEL_ID: str = "llama3"
     LOCAL_MODEL_API_KEY: str = "ollama"
 
+    OPENAI_API_KEY: str | None = None
+    OPENAI_ORCHESTRATOR_MODEL_ID: str = "gpt-4o-mini"
+    OPENAI_CYPHER_MODEL_ID: str = "gpt-4o-mini"
+
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
@@ -59,7 +62,36 @@ class AppConfig(BaseSettings):
                 raise ValueError(
                     "Configuration Error: GCP_PROJECT_ID is required when GEMINI_PROVIDER is 'vertex'."
                 )
+        elif self.LLM_PROVIDER == "openai":
+            if not self.OPENAI_API_KEY:
+                raise ValueError(
+                    "Configuration Error: OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'."
+                )
         return self
 
+    @property
+    def active_orchestrator_model(self) -> str:
+        """Determines the active orchestrator model ID."""
+        if self.LLM_PROVIDER == "gemini":
+            return self.GEMINI_MODEL_ID
+        elif self.LLM_PROVIDER == "openai":
+            return self.OPENAI_ORCHESTRATOR_MODEL_ID
+        return self.LOCAL_ORCHESTRATOR_MODEL_ID
 
+    @property
+    def active_cypher_model_info(self) -> tuple[str, str | None]:
+        """Determines the active cypher provider and model ID."""
+        if self.MODEL_CYPHER_ID and self.MODEL_CYPHER_ID.startswith("gemini-"):
+            return "gemini", self.MODEL_CYPHER_ID
+        elif self.OPENAI_CYPHER_MODEL_ID and (self.OPENAI_CYPHER_MODEL_ID.startswith("gpt-") or self.OPENAI_CYPHER_MODEL_ID.startswith("o1-")):
+            return "openai", self.OPENAI_CYPHER_MODEL_ID
+        elif self.LOCAL_CYPHER_MODEL_ID:
+            return "local", self.LOCAL_CYPHER_MODEL_ID
+        # Fallback to provider-based detection
+        if self.LLM_PROVIDER == "gemini":
+            return "gemini", self.MODEL_CYPHER_ID
+        elif self.LLM_PROVIDER == "openai":
+            return "openai", self.OPENAI_CYPHER_MODEL_ID
+        return "local", self.LOCAL_CYPHER_MODEL_ID
+    
 settings = AppConfig()

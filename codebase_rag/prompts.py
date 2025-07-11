@@ -65,7 +65,7 @@ You are an expert AI assistant for analyzing codebases. Your answers are based *
 # ======================================================================================
 #  CYPHER GENERATOR PROMPT
 # ======================================================================================
-GEMINI_LITE_CYPHER_SYSTEM_PROMPT = f"""
+CYPHER_SYSTEM_PROMPT = f"""
 You are an expert translator that converts natural language questions about code structure into precise Neo4j Cypher queries.
 
 {GRAPH_SCHEMA_AND_RULES}

@@ -3,14 +3,14 @@ from typing import cast
 from loguru import logger
 from pydantic_ai import Agent, Tool
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..config import settings
 from ..prompts import (
-    GEMINI_LITE_CYPHER_SYSTEM_PROMPT,
+    CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
     RAG_ORCHESTRATOR_SYSTEM_PROMPT,
 )
@@ -38,7 +38,12 @@ class CypherGenerator:
     def __init__(self) -> None:
         try:
             model_settings = None
-            if settings.LLM_PROVIDER == "gemini":
+            
+            # Use centralized configuration
+            cypher_provider, cypher_model_id = settings.active_cypher_model_info
+            
+            # Configure model based on detected provider
+            if cypher_provider == "gemini":
                 if settings.GEMINI_PROVIDER == "vertex":
                     provider = GoogleVertexProvider(
                         project_id=settings.GCP_PROJECT_ID,
@@ -56,13 +61,21 @@ class CypherGenerator:
                     )
 
                 llm = GeminiModel(
-                    settings.MODEL_CYPHER_ID,
+                    cypher_model_id,
                     provider=provider,
                 )
-                system_prompt = GEMINI_LITE_CYPHER_SYSTEM_PROMPT
-            else:  # local provider
+                system_prompt = CYPHER_SYSTEM_PROMPT
+            elif cypher_provider == "openai":
+                llm = OpenAIResponsesModel(
+                    cypher_model_id,
+                    provider=OpenAIProvider(
+                        api_key=settings.OPENAI_API_KEY,
+                    ),
+                )
+                system_prompt = CYPHER_SYSTEM_PROMPT
+            else:  # local
                 llm = OpenAIModel(  # type: ignore
-                    settings.LOCAL_CYPHER_MODEL_ID,
+                    cypher_model_id,
                     provider=OpenAIProvider(
                         api_key=settings.LOCAL_MODEL_API_KEY,
                         base_url=str(settings.LOCAL_MODEL_ENDPOINT),
@@ -127,12 +140,19 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
                 settings.GEMINI_MODEL_ID,
                 provider=provider,
             )
-        else:  # local provider
+        elif settings.LLM_PROVIDER == "local":
             llm = OpenAIModel(  # type: ignore
                 settings.LOCAL_ORCHESTRATOR_MODEL_ID,
                 provider=OpenAIProvider(
                     api_key=settings.LOCAL_MODEL_API_KEY,
                     base_url=str(settings.LOCAL_MODEL_ENDPOINT),
+                ),
+            )
+        else:  # openai provider
+            llm = OpenAIResponsesModel(
+                settings.OPENAI_ORCHESTRATOR_MODEL_ID,
+                provider=OpenAIProvider(
+                    api_key=settings.OPENAI_API_KEY,
                 ),
             )
 
