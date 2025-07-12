@@ -20,11 +20,21 @@ class DocumentAnalyzer:
 
     def __init__(self, project_root: str):
         self.project_root = Path(project_root).resolve()
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY is not set in the environment.")
-
-        self.client = genai.Client(api_key=api_key)
+        
+        # Initialize client based on provider
+        if settings.LLM_PROVIDER == "gemini":
+            settings.validate_for_usage()
+            api_key = os.getenv("GEMINI_API_KEY") or settings.GEMINI_API_KEY
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY is not set in the environment.")
+            self.client = genai.Client(api_key=api_key)
+            self.provider = "gemini"
+        else:
+            # For local provider, we'll use the same OpenAI-compatible client
+            # that supports vision models
+            self.client = None  # Will be initialized when needed
+            self.provider = "local"
+            
         logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
 
     def analyze(self, file_path: str, question: str) -> str:
