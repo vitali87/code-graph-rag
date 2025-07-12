@@ -24,10 +24,18 @@ class DocumentAnalyzer:
         # Initialize client based on provider
         if settings.LLM_PROVIDER == "gemini":
             settings.validate_for_usage()
-            api_key = os.getenv("GEMINI_API_KEY") or settings.GEMINI_API_KEY
-            if not api_key:
-                raise ValueError("GEMINI_API_KEY is not set in the environment.")
-            self.client = genai.Client(api_key=api_key)
+            if settings.GEMINI_PROVIDER == "gla":
+                api_key = os.getenv("GEMINI_API_KEY") or settings.GEMINI_API_KEY
+                if not api_key:
+                    raise ValueError("GEMINI_API_KEY is not set in the environment.")
+                self.client = genai.Client(api_key=api_key)
+            else:  # vertex provider
+                # For Vertex AI, use service account authentication
+                self.client = genai.Client(
+                    project=settings.GCP_PROJECT_ID,
+                    location=settings.GCP_REGION,
+                    credentials_path=settings.GCP_SERVICE_ACCOUNT_FILE
+                )
             self.provider = "gemini"
         else:
             # For local provider, we'll use the same OpenAI-compatible client
