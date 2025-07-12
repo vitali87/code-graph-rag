@@ -275,6 +275,9 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
 def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -> Any:
     """Initializes all services and creates the RAG agent."""
+    # Validate settings once before initializing any LLM services
+    settings.validate_for_usage()
+    
     cypher_generator = CypherGenerator()
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
     file_reader = FileReader(project_root=repo_path)

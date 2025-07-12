@@ -37,8 +37,6 @@ class CypherGenerator:
 
     def __init__(self) -> None:
         try:
-            # Validate settings before initializing LLM services
-            settings.validate_for_usage()
             model_settings = None
             if settings.LLM_PROVIDER == "gemini":
                 if settings.GEMINI_PROVIDER == "vertex":
@@ -107,8 +105,6 @@ class CypherGenerator:
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
-        # Validate settings before initializing LLM services
-        settings.validate_for_usage()
         model_settings = None
         if settings.LLM_PROVIDER == "gemini":
             if settings.GEMINI_PROVIDER == "vertex":
