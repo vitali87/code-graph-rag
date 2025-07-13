@@ -12,6 +12,14 @@ from pydantic_ai import Tool
 from ..config import settings
 
 
+class _NotSupportedClient:
+    """Placeholder client that raises NotImplementedError for unsupported providers."""
+    def __getattr__(self, name):
+        raise NotImplementedError(
+            "DocumentAnalyzer does not support the 'local' LLM provider."
+        )
+
+
 class DocumentAnalyzer:
     """
     A tool to perform multimodal analysis on documents like PDFs
@@ -35,12 +43,6 @@ class DocumentAnalyzer:
             self.provider = "gemini"
         else:
             # Local provider is not supported for document analysis yet.
-            class _NotSupportedClient:
-                def __getattr__(self, name):
-                    raise NotImplementedError(
-                        "DocumentAnalyzer does not support the 'local' LLM provider."
-                    )
-
             self.client = _NotSupportedClient()
             self.provider = "local"
             
