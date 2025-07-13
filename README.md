@@ -97,12 +97,6 @@ cp .env.example .env
 
 #### Option 1: Cloud Models (Gemini)
 
-#### Option 2: OpenAI Models
-```bash
-# .env file
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your_openai_api_key_here
-```
 ```bash
 # .env file
 LLM_PROVIDER=gemini
@@ -110,7 +104,14 @@ GEMINI_API_KEY=your_gemini_api_key_here
 ```
 Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
-#### Option 2: Local Models (Ollama)
+#### Option 2: OpenAI Models
+```bash
+# .env file
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+#### Option 3: Local Models (Ollama)
 ```bash
 # .env file
 LLM_PROVIDER=local
