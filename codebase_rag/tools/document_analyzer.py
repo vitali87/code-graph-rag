@@ -34,9 +34,14 @@ class DocumentAnalyzer:
                 )
             self.provider = "gemini"
         else:
-            # For local provider, we'll use the same OpenAI-compatible client
-            # that supports vision models
-            self.client = None  # Will be initialized when needed
+            # Local provider is not supported for document analysis yet.
+            class _NotSupportedClient:
+                def __getattr__(self, name):
+                    raise NotImplementedError(
+                        "DocumentAnalyzer does not support the 'local' LLM provider."
+                    )
+
+            self.client = _NotSupportedClient()
             self.provider = "local"
             
         logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
