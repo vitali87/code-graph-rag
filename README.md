@@ -62,11 +62,9 @@ The system consists of two main components:
 
 ## 🛠️ Installation
 
-1. **Clone the repository**:
 ```bash
 git clone https://github.com/vitali87/code-graph-rag.git # Clone the repository
 
-# Set up the environment for OpenAI models (if applicable)
 cd code-graph-rag
 ```
 
@@ -502,7 +500,7 @@ The resulting binary will be located in the `dist` directory.
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contribution guidelines.
 
-Good first PRs are from Issues TODOs.
+Good first PRs are from TODO issues.
 
 ## 🙋‍♂️ Support
 
