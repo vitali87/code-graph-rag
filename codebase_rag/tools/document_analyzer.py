@@ -164,7 +164,6 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
             logger.error(
                 f"[analyze_document] Exception during analysis: {e}", exc_info=True
             )
-            # Don't double-wrap error messages that are already formatted
             if str(e).startswith("Error:") or str(e).startswith("API error:"):
                 return str(e)
             return f"Error during document analysis: {e}"
