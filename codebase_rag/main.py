@@ -227,7 +227,9 @@ def _update_model_settings(
 
     # Auto-detect provider based on orchestrator model if not explicitly set
     if orchestrator_model and not llm_provider:
-        if orchestrator_model.startswith("gpt-") or orchestrator_model.startswith("o1-"):
+        if orchestrator_model.startswith("gpt-") or orchestrator_model.startswith(
+            "o1-"
+        ):
             settings.LLM_PROVIDER = "openai"
         elif orchestrator_model.startswith("gemini-"):
             settings.LLM_PROVIDER = "gemini"
@@ -300,7 +302,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     """Initializes all services and creates the RAG agent."""
     # Validate settings once before initializing any LLM services
     settings.validate_for_usage()
-    
+
     cypher_generator = CypherGenerator()
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
     file_reader = FileReader(project_root=repo_path)

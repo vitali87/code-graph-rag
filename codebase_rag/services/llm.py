@@ -3,7 +3,10 @@ from typing import cast
 from loguru import logger
 from pydantic_ai import Agent, Tool
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
-from pydantic_ai.models.openai import OpenAIModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.models.openai import (
+    OpenAIModel,
+    OpenAIResponsesModel,
+)
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -38,10 +41,10 @@ class CypherGenerator:
     def __init__(self) -> None:
         try:
             model_settings = None
-            
+
             # Use centralized configuration
             cypher_provider, cypher_model_id = settings.active_cypher_model_info
-            
+
             # Configure model based on detected provider
             if cypher_provider == "gemini":
                 if settings.GEMINI_PROVIDER == "vertex":

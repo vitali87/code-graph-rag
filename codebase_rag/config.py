@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import AnyHttpUrl, model_validator
+from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
@@ -67,7 +67,7 @@ class AppConfig(BaseSettings):
                 raise ValueError(
                     "Configuration Error: OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'."
                 )
-        return self
+        return
 
     @property
     def active_orchestrator_model(self) -> str:
@@ -88,7 +88,7 @@ class AppConfig(BaseSettings):
             return "gemini", self.MODEL_CYPHER_ID
         elif self.LLM_PROVIDER == "local":
             return "local", self.LOCAL_CYPHER_MODEL_ID
-        
+
         # Fallback (should not happen with current validation)
         return self.LLM_PROVIDER, None
 

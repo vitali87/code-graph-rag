@@ -1,5 +1,4 @@
 import mimetypes
-import os
 import shutil
 import uuid
 from pathlib import Path
@@ -16,7 +15,7 @@ from ..config import settings
 class _NotSupportedClient:
     """Placeholder client that raises NotImplementedError for unsupported providers."""
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> None:
         raise NotImplementedError(
             "DocumentAnalyzer does not support the 'local' LLM provider."
         )
@@ -28,7 +27,7 @@ class DocumentAnalyzer:
     by making a direct call to the Gemini API.
     """
 
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str) -> None:
         self.project_root = Path(project_root).resolve()
 
         # Initialize client based on provider
@@ -134,7 +133,7 @@ class DocumentAnalyzer:
             # Handle Google GenAI specific errors
             logger.error(f"Google GenAI API error for '{file_path}': {e}")
             if "Unable to process input image" in str(e):
-                return f"Error: Unable to process the image file. The image may be corrupted or in an unsupported format."
+                return "Error: Unable to process the image file. The image may be corrupted or in an unsupported format."
             return f"API error: {e}"
         except Exception as e:
             logger.error(
