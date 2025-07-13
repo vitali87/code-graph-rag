@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
 
+
 class AppConfig(BaseSettings):
     """
     Application Configuration using Pydantic for robust validation and type-safety.
@@ -50,8 +51,7 @@ class AppConfig(BaseSettings):
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
-    @model_validator(mode="after")
-    def check_required_fields(self) -> AppConfig:
+    def validate_for_usage(self) -> None:
         """Validate that required API keys and project IDs are set based on the provider."""
         if self.LLM_PROVIDER == "gemini":
             if self.GEMINI_PROVIDER == "gla" and not self.GEMINI_API_KEY:
@@ -83,7 +83,10 @@ class AppConfig(BaseSettings):
         """Determines the active cypher provider and model ID."""
         if self.MODEL_CYPHER_ID and self.MODEL_CYPHER_ID.startswith("gemini-"):
             return "gemini", self.MODEL_CYPHER_ID
-        elif self.OPENAI_CYPHER_MODEL_ID and (self.OPENAI_CYPHER_MODEL_ID.startswith("gpt-") or self.OPENAI_CYPHER_MODEL_ID.startswith("o1-")):
+        elif self.OPENAI_CYPHER_MODEL_ID and (
+            self.OPENAI_CYPHER_MODEL_ID.startswith("gpt-")
+            or self.OPENAI_CYPHER_MODEL_ID.startswith("o1-")
+        ):
             return "openai", self.OPENAI_CYPHER_MODEL_ID
         elif self.LOCAL_CYPHER_MODEL_ID:
             return "local", self.LOCAL_CYPHER_MODEL_ID
@@ -93,5 +96,6 @@ class AppConfig(BaseSettings):
         elif self.LLM_PROVIDER == "openai":
             return "openai", self.OPENAI_CYPHER_MODEL_ID
         return "local", self.LOCAL_CYPHER_MODEL_ID
-    
+
+
 settings = AppConfig()

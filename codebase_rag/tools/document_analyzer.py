@@ -13,6 +13,15 @@ from pydantic_ai import Tool
 from ..config import settings
 
 
+class _NotSupportedClient:
+    """Placeholder client that raises NotImplementedError for unsupported providers."""
+
+    def __getattr__(self, name):
+        raise NotImplementedError(
+            "DocumentAnalyzer does not support the 'local' LLM provider."
+        )
+
+
 class DocumentAnalyzer:
     """
     A tool to perform multimodal analysis on documents like PDFs
@@ -21,33 +30,25 @@ class DocumentAnalyzer:
 
     def __init__(self, project_root: str):
         self.project_root = Path(project_root).resolve()
-        
-        # Check if using Vertex AI or regular Google AI API
-        use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
-        
-        if use_vertex:
-            # Use Vertex AI authentication
-            project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-            location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-            if not project_id:
-                raise ValueError("GOOGLE_CLOUD_PROJECT is required when using Vertex AI.")
-            
-            self.client = genai.Client(
-                vertexai=True,
-                project=project_id,
-                location=location
-            )
-            logger.info(f"DocumentAnalyzer initialized with Vertex AI (project: {project_id}, location: {location})")
+
+        # Initialize client based on provider
+        # TODO: Consider extracting this to a shared factory function (create_gemini_client)
+        # to avoid code duplication with services/llm.py
+        if settings.LLM_PROVIDER == "gemini":
+            if settings.GEMINI_PROVIDER == "gla":
+                self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            else:  # vertex provider
+                # For Vertex AI, use service account authentication
+                self.client = genai.Client(
+                    project=settings.GCP_PROJECT_ID,
+                    location=settings.GCP_REGION,
+                    credentials_path=settings.GCP_SERVICE_ACCOUNT_FILE,
+                )
         else:
-            # Use regular Google AI API
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                raise ValueError("GEMINI_API_KEY is not set in the environment.")
-            
-            self.client = genai.Client(api_key=api_key)
-            logger.info(f"DocumentAnalyzer initialized with Google AI API")
-        
-        logger.info(f"DocumentAnalyzer root: {self.project_root}")
+            # Local provider is not supported for document analysis yet.
+            self.client = _NotSupportedClient()
+
+        logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
 
     def analyze(self, file_path: str, question: str) -> str:
         """
