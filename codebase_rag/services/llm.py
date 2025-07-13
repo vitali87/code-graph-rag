@@ -11,7 +11,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ..config import settings
+from ..config import detect_provider_from_model, settings
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
@@ -42,8 +42,9 @@ class CypherGenerator:
         try:
             model_settings = None
 
-            # Use centralized configuration
-            cypher_provider, cypher_model_id = settings.active_cypher_model_info
+            # Get active cypher model and detect its provider
+            cypher_model_id = settings.active_cypher_model
+            cypher_provider = detect_provider_from_model(cypher_model_id)
 
             # Configure model based on detected provider
             if cypher_provider == "gemini":
@@ -122,7 +123,12 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
         model_settings = None
-        if settings.LLM_PROVIDER == "gemini":
+
+        # Get active orchestrator model and detect its provider
+        orchestrator_model_id = settings.active_orchestrator_model
+        orchestrator_provider = detect_provider_from_model(orchestrator_model_id)
+
+        if orchestrator_provider == "gemini":
             if settings.GEMINI_PROVIDER == "vertex":
                 provider = GoogleVertexProvider(
                     project_id=settings.GCP_PROJECT_ID,
@@ -140,12 +146,12 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
                 )
 
             llm = GeminiModel(
-                settings.GEMINI_MODEL_ID,
+                orchestrator_model_id,
                 provider=provider,
             )
-        elif settings.LLM_PROVIDER == "local":
+        elif orchestrator_provider == "local":
             llm = OpenAIModel(  # type: ignore
-                settings.LOCAL_ORCHESTRATOR_MODEL_ID,
+                orchestrator_model_id,
                 provider=OpenAIProvider(
                     api_key=settings.LOCAL_MODEL_API_KEY,
                     base_url=str(settings.LOCAL_MODEL_ENDPOINT),
@@ -153,7 +159,7 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             )
         else:  # openai provider
             llm = OpenAIResponsesModel(
-                settings.OPENAI_ORCHESTRATOR_MODEL_ID,
+                orchestrator_model_id,
                 provider=OpenAIProvider(
                     api_key=settings.OPENAI_API_KEY,
                 ),

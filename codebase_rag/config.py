@@ -9,6 +9,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 load_dotenv()
 
 
+def detect_provider_from_model(model_name: str) -> Literal["gemini", "openai", "local"]:
+    """Detect the provider based on model name patterns."""
+    if model_name.startswith("gemini-"):
+        return "gemini"
+    elif model_name.startswith("gpt-") or model_name.startswith("o1-"):
+        return "openai"
+    else:
+        return "local"
+
+
 class AppConfig(BaseSettings):
     """
     Application Configuration using Pydantic for robust validation and type-safety.
@@ -26,7 +36,6 @@ class AppConfig(BaseSettings):
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
 
-    LLM_PROVIDER: Literal["gemini", "local", "openai"] = "gemini"
     GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
 
     GEMINI_MODEL_ID: str = "gemini-2.5-pro"  # DO NOT CHANGE THIS
@@ -51,46 +60,61 @@ class AppConfig(BaseSettings):
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
+    # Active models (set via CLI or defaults)
+    _active_orchestrator_model: str | None = None
+    _active_cypher_model: str | None = None
+
     def validate_for_usage(self) -> None:
-        """Validate that required API keys and project IDs are set based on the provider."""
-        if self.LLM_PROVIDER == "gemini":
+        """Validate that required API keys are set for the providers being used."""
+        # Get the providers for active models
+        orchestrator_provider = detect_provider_from_model(
+            self.active_orchestrator_model
+        )
+        cypher_provider = detect_provider_from_model(self.active_cypher_model)
+
+        # Check required API keys for each provider being used
+        providers_in_use = {orchestrator_provider, cypher_provider}
+
+        if "gemini" in providers_in_use:
             if self.GEMINI_PROVIDER == "gla" and not self.GEMINI_API_KEY:
                 raise ValueError(
-                    "Configuration Error: GEMINI_API_KEY is required when GEMINI_PROVIDER is 'gla'."
+                    "Configuration Error: GEMINI_API_KEY is required when using Gemini models with 'gla' provider."
                 )
             if self.GEMINI_PROVIDER == "vertex" and not self.GCP_PROJECT_ID:
                 raise ValueError(
-                    "Configuration Error: GCP_PROJECT_ID is required when GEMINI_PROVIDER is 'vertex'."
+                    "Configuration Error: GCP_PROJECT_ID is required when using Gemini models with 'vertex' provider."
                 )
-        elif self.LLM_PROVIDER == "openai":
+
+        if "openai" in providers_in_use:
             if not self.OPENAI_API_KEY:
                 raise ValueError(
-                    "Configuration Error: OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'."
+                    "Configuration Error: OPENAI_API_KEY is required when using OpenAI models."
                 )
         return
 
     @property
     def active_orchestrator_model(self) -> str:
         """Determines the active orchestrator model ID."""
-        if self.LLM_PROVIDER == "gemini":
-            return self.GEMINI_MODEL_ID
-        elif self.LLM_PROVIDER == "openai":
-            return self.OPENAI_ORCHESTRATOR_MODEL_ID
-        return self.LOCAL_ORCHESTRATOR_MODEL_ID
+        if self._active_orchestrator_model:
+            return self._active_orchestrator_model
+        # Default fallback to Gemini
+        return self.GEMINI_MODEL_ID
 
     @property
-    def active_cypher_model_info(self) -> tuple[str, str | None]:
-        """Determines the active cypher provider and model ID based on current LLM_PROVIDER."""
-        # Use the current provider setting to determine which model to use
-        if self.LLM_PROVIDER == "openai":
-            return "openai", self.OPENAI_CYPHER_MODEL_ID
-        elif self.LLM_PROVIDER == "gemini":
-            return "gemini", self.MODEL_CYPHER_ID
-        elif self.LLM_PROVIDER == "local":
-            return "local", self.LOCAL_CYPHER_MODEL_ID
+    def active_cypher_model(self) -> str:
+        """Determines the active cypher model ID."""
+        if self._active_cypher_model:
+            return self._active_cypher_model
+        # Default fallback to Gemini
+        return self.MODEL_CYPHER_ID
 
-        # Fallback (should not happen with current validation)
-        return self.LLM_PROVIDER, None
+    def set_orchestrator_model(self, model: str) -> None:
+        """Set the active orchestrator model."""
+        self._active_orchestrator_model = model
+
+    def set_cypher_model(self, model: str) -> None:
+        """Set the active cypher model."""
+        self._active_cypher_model = model
 
 
 settings = AppConfig()

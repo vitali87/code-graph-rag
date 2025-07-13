@@ -9,7 +9,7 @@ from google.genai.errors import ClientError
 from loguru import logger
 from pydantic_ai import Tool
 
-from ..config import settings
+from ..config import detect_provider_from_model, settings
 
 
 class _NotSupportedClient:
@@ -30,10 +30,12 @@ class DocumentAnalyzer:
     def __init__(self, project_root: str) -> None:
         self.project_root = Path(project_root).resolve()
 
-        # Initialize client based on provider
-        # TODO: Consider extracting this to a shared factory function (create_gemini_client)
-        # to avoid code duplication with services/llm.py
-        if settings.LLM_PROVIDER == "gemini":
+        # Initialize client based on the orchestrator model's provider
+        # Note: Document analysis uses the orchestrator model since it's the main reasoning model
+        orchestrator_model = settings.active_orchestrator_model
+        orchestrator_provider = detect_provider_from_model(orchestrator_model)
+
+        if orchestrator_provider == "gemini":
             if settings.GEMINI_PROVIDER == "gla":
                 self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
             else:  # vertex provider
@@ -44,7 +46,7 @@ class DocumentAnalyzer:
                     credentials_path=settings.GCP_SERVICE_ACCOUNT_FILE,
                 )
         else:
-            # Local provider is not supported for document analysis yet.
+            # Non-Gemini providers are not supported for document analysis yet.
             self.client = _NotSupportedClient()
 
         logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
