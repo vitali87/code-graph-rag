@@ -30,6 +30,8 @@ class DocumentAnalyzer:
         self.project_root = Path(project_root).resolve()
         
         # Initialize client based on provider
+        # TODO: Consider extracting this to a shared factory function (create_gemini_client)
+        # to avoid code duplication with services/llm.py
         if settings.LLM_PROVIDER == "gemini":
             if settings.GEMINI_PROVIDER == "gla":
                 self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -40,11 +42,9 @@ class DocumentAnalyzer:
                     location=settings.GCP_REGION,
                     credentials_path=settings.GCP_SERVICE_ACCOUNT_FILE
                 )
-            self.provider = "gemini"
         else:
             # Local provider is not supported for document analysis yet.
             self.client = _NotSupportedClient()
-            self.provider = "local"
             
         logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
 
