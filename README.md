@@ -63,7 +63,7 @@ The system consists of two main components:
 ## 🛠️ Installation
 
 ```bash
-git clone https://github.com/vitali87/code-graph-rag.git # Clone the repository
+git clone https://github.com/vitali87/code-graph-rag.git
 
 cd code-graph-rag
 ```
