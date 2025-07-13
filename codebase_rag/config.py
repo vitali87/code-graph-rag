@@ -80,22 +80,17 @@ class AppConfig(BaseSettings):
 
     @property
     def active_cypher_model_info(self) -> tuple[str, str | None]:
-        """Determines the active cypher provider and model ID."""
-        if self.MODEL_CYPHER_ID and self.MODEL_CYPHER_ID.startswith("gemini-"):
-            return "gemini", self.MODEL_CYPHER_ID
-        elif self.OPENAI_CYPHER_MODEL_ID and (
-            self.OPENAI_CYPHER_MODEL_ID.startswith("gpt-")
-            or self.OPENAI_CYPHER_MODEL_ID.startswith("o1-")
-        ):
+        """Determines the active cypher provider and model ID based on current LLM_PROVIDER."""
+        # Use the current provider setting to determine which model to use
+        if self.LLM_PROVIDER == "openai":
             return "openai", self.OPENAI_CYPHER_MODEL_ID
-        elif self.LOCAL_CYPHER_MODEL_ID:
+        elif self.LLM_PROVIDER == "gemini":
+            return "gemini", self.MODEL_CYPHER_ID
+        elif self.LLM_PROVIDER == "local":
             return "local", self.LOCAL_CYPHER_MODEL_ID
-        # Fallback to provider-based detection
-        if self.LLM_PROVIDER == "gemini":
-            return "gemini", self.MODEL_CYPHER_ID
-        elif self.LLM_PROVIDER == "openai":
-            return "openai", self.OPENAI_CYPHER_MODEL_ID
-        return "local", self.LOCAL_CYPHER_MODEL_ID
+        
+        # Fallback (should not happen with current validation)
+        return self.LLM_PROVIDER, None
 
 
 settings = AppConfig()

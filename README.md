@@ -150,7 +150,8 @@ The Graph-Code system offers four main modes of operation:
 1. **Parse & Ingest**: Build knowledge graph from your codebase
 2. **Interactive Query**: Ask questions about your code in natural language
 3. **Export & Analyze**: Export graph data for programmatic analysis
-4. **AI Optimization**: Get AI-powered optimization suggestions for your code
+4. **AI Optimization**: Get AI-powered optimization suggestions for your code.
+5. **Editing**: Perform surgical code replacements and modifications with precise targeting.
 
 ### Step 1: Parse a Repository
 
