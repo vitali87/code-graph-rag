@@ -252,13 +252,14 @@ def _update_model_settings(
         elif cypher_model.startswith("gpt-") or cypher_model.startswith("o1-"):
             settings.OPENAI_CYPHER_MODEL_ID = cypher_model
         else:
-            # If no clear pattern, use the same provider as orchestrator
-            if provider == "gemini":
-                settings.MODEL_CYPHER_ID = cypher_model
-            elif provider == "local":
-                settings.LOCAL_CYPHER_MODEL_ID = cypher_model
-            else:  # openai
-                settings.OPENAI_CYPHER_MODEL_ID = cypher_model
+            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
+        # Use the same provider as the orchestrator for the cypher model
+        if provider == "gemini":
+            settings.MODEL_CYPHER_ID = cypher_model
+        elif provider == "local":
+            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
+        else:  # openai
+            settings.OPENAI_CYPHER_MODEL_ID = cypher_model
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -514,8 +515,8 @@ async def run_optimization_loop(
     )
     console.print(
         Panel(
-            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations.\n"
-            f"You'll be asked to approve each suggestion before implementation.\n"
+            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations."
+            f"You'll be asked to approve each suggestion before implementation."
             f"Type 'exit' or 'quit' to end the session.[/bold yellow]",
             border_style="yellow",
         )
