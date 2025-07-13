@@ -39,6 +39,8 @@ app = typer.Typer(
     "multi-language codebases using Tree-sitter, builds comprehensive knowledge "
     "graphs, and enables natural language querying of codebase structure and "
     "relationships.",
+    no_args_is_help=True,
+    add_completion=False,
 )
 console = Console(width=None, force_terminal=True)
 
