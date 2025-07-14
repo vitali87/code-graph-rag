@@ -1,4 +1,4 @@
-.PHONY: help install dev test clean
+.PHONY: help install dev test clean python
 
 help: ## Show this help message
 	@echo "Available targets:"
