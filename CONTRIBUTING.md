@@ -16,8 +16,10 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
    ```bash
    git clone https://github.com/YOUR-USERNAME/code-graph-rag.git
    cd code-graph-rag
-   uv sync --extra treesitter-full --extra test --extra dev
+   make dev
    ```
+
+   The `make dev` command automatically installs all dependencies and sets up pre-commit hooks.
 
 2. **Make Your Changes**:
    - Follow the existing code style and patterns
@@ -25,8 +27,13 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
    - Update documentation if needed
 
 3. **Test Your Changes**:
-   - Run the existing tests to ensure nothing is broken
-   - Test your new functionality thoroughly
+   ```bash
+   # Run all tests
+   make test
+
+   # Run specific tests
+   uv run pytest path/to/test_file.py
+   ```
 
 4. **Submit a Pull Request**:
    - Push your branch to your fork
@@ -59,19 +66,34 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 - **mypy**: Static type checking
 - **pytest**: Testing framework
 
-### Pre-commit Hooks
-This project uses `pre-commit` to automatically run checks before each commit, ensuring code quality and consistency.
+### Makefile Commands
 
-To get started, first make sure you have the development dependencies installed:
+This project uses a Makefile for streamlined development workflow:
+
 ```bash
-uv sync --extra treesitter-full --extra test --extra dev
+# Set up complete development environment (recommended for new contributors)
+make dev
+
+# Run all tests
+make test
+
+# Clean up build artifacts and cache
+make clean
+
+# View all available commands
+make help
 ```
-Then, install the git hooks:
-```bash
-pre-commit install
-pre-commit autoupdate --repo https://github.com/pre-commit/pre-commit-hooks
-```
-Now, `pre-commit` will run automatically on `git commit`.
+
+### Pre-commit Hooks
+
+Pre-commit hooks are automatically installed when you run `make dev`. These hooks ensure code quality by running checks before each commit:
+
+- **Code formatting** with `ruff format`
+- **Linting** with `ruff check`
+- **Type checking** with `mypy`
+- **Commit message validation** for conventional commits
+
+The hooks run automatically on `git commit` and will prevent commits that don't meet quality standards.
 
 ## Code Style
 

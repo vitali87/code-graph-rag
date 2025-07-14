@@ -80,10 +80,12 @@ For full multi-language support:
 uv sync --extra treesitter-full
 ```
 
-For development (including tests):
+For development (including tests and pre-commit hooks):
 ```bash
-uv sync --extra treesitter-full --extra test --extra dev
+make dev
 ```
+
+This installs all dependencies and sets up pre-commit hooks automatically.
 
 This installs Tree-sitter grammars for all supported languages (see Multi-Language Support section).
 
@@ -407,6 +409,28 @@ Configuration is managed through environment variables in `.env` file:
 
 ## 🏃‍♂️ Development
 
+### Quick Start
+
+For contributors, use the Makefile for streamlined development setup:
+
+```bash
+# Set up complete development environment
+make dev
+
+# Run tests
+make test
+
+# Clean up build artifacts
+make clean
+
+# View all available commands
+make help
+```
+
+The `make dev` command will:
+- Install all dependencies (including dev and test extras)
+- Set up pre-commit hooks automatically
+- Prepare your environment for immediate development
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
