@@ -5,6 +5,7 @@ from typing import Literal
 from dotenv import load_dotenv
 from pydantic import AnyHttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
 load_dotenv()
 
@@ -49,6 +50,13 @@ class AppConfig(BaseSettings):
 
     def validate_for_usage(self) -> None:
         """Validate that required API keys and project IDs are set based on the provider."""
+        
+         # Checking if `LLM_PROVIDER` is set in the environment
+        if "LLM_PROVIDER" not in os.environ:
+            raise ValueError(
+                "Configuration Error: LLM_PROVIDER environment variable is required."
+            )
+        
         if self.LLM_PROVIDER == "gemini":
             if self.GEMINI_PROVIDER == "gla" and not self.GEMINI_API_KEY:
                 raise ValueError(
