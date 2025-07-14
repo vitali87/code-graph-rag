@@ -27,6 +27,16 @@ https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
 
 
 
+## 🛠️ Makefile Updates
+
+Use the Makefile for:
+- **make install**: Install project dependencies with full language support.
+- **make python**: Install dependencies for Python only.
+- **make dev**: Setup dev environment (install deps + pre-commit hooks).
+- **make test**: Run all tests.
+- **make clean**: Clean up build artifacts and cache.
+- **make help**: Show available commands.
+
 ## 🚀 Features
 
 - **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, Java, and C++ codebases
@@ -406,31 +416,6 @@ Configuration is managed through environment variables in `.env` file:
 - `MEMGRAPH_HOST`: Memgraph hostname (default: `localhost`)
 - `MEMGRAPH_PORT`: Memgraph port (default: `7687`)
 - `TARGET_REPO_PATH`: Default repository path (default: `.`)
-
-## 🏃‍♂️ Development
-
-### Quick Start
-
-For contributors, use the Makefile for streamlined development setup:
-
-```bash
-# Set up complete development environment
-make dev
-
-# Run tests
-make test
-
-# Clean up build artifacts
-make clean
-
-# View all available commands
-make help
-```
-
-The `make dev` command will:
-- Install all dependencies (including dev and test extras)
-- Set up pre-commit hooks automatically
-- Prepare your environment for immediate development
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
