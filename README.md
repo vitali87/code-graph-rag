@@ -27,13 +27,24 @@ https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
 
 
 
+## 🛠️ Makefile Updates
+
+Use the Makefile for:
+- **make install**: Install project dependencies with full language support.
+- **make python**: Install dependencies for Python only.
+- **make dev**: Setup dev environment (install deps + pre-commit hooks).
+- **make test**: Run all tests.
+- **make clean**: Clean up build artifacts and cache.
+- **make help**: Show available commands.
+
 ## 🚀 Features
 
 - **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, Java, and C++ codebases
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
-- **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini) and local models (Ollama) for natural language to Cypher translation
+- **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini), local models (Ollama), and OpenAI models for natural language to Cypher translation
+- **🤖 OpenAI Integration**: Leverage OpenAI models to enhance AI functionalities.
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
 - **✍️ Advanced File Editing**: Surgical code replacement with AST-based function targeting, visual diff previews, and exact code block modifications
 - **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
@@ -61,9 +72,9 @@ The system consists of two main components:
 
 ## 🛠️ Installation
 
-1. **Clone the repository**:
 ```bash
 git clone https://github.com/vitali87/code-graph-rag.git
+
 cd code-graph-rag
 ```
 
@@ -79,10 +90,12 @@ For full multi-language support:
 uv sync --extra treesitter-full
 ```
 
-For development (including tests):
+For development (including tests and pre-commit hooks):
 ```bash
-uv sync --extra treesitter-full --extra test --extra dev
+make dev
 ```
+
+This installs all dependencies and sets up pre-commit hooks automatically.
 
 This installs Tree-sitter grammars for all supported languages (see Multi-Language Support section).
 
@@ -95,6 +108,7 @@ cp .env.example .env
 ### Configuration Options
 
 #### Option 1: Cloud Models (Gemini)
+
 ```bash
 # .env file
 LLM_PROVIDER=gemini
@@ -102,7 +116,14 @@ GEMINI_API_KEY=your_gemini_api_key_here
 ```
 Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
-#### Option 2: Local Models (Ollama)
+#### Option 2: OpenAI Models
+```bash
+# .env file
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+#### Option 3: Local Models (Ollama)
 ```bash
 # .env file
 LLM_PROVIDER=local
@@ -140,7 +161,8 @@ The Graph-Code system offers four main modes of operation:
 1. **Parse & Ingest**: Build knowledge graph from your codebase
 2. **Interactive Query**: Ask questions about your code in natural language
 3. **Export & Analyze**: Export graph data for programmatic analysis
-4. **AI Optimization**: Get AI-powered optimization suggestions for your code
+4. **AI Optimization**: Get AI-powered optimization suggestions for your code.
+5. **Editing**: Perform surgical code replacements and modifications with precise targeting.
 
 ### Step 1: Parse a Repository
 
@@ -395,9 +417,6 @@ Configuration is managed through environment variables in `.env` file:
 - `MEMGRAPH_PORT`: Memgraph port (default: `7687`)
 - `TARGET_REPO_PATH`: Default repository path (default: `.`)
 
-## 🏃‍♂️ Development
-
-
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
 - **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
@@ -490,6 +509,8 @@ The resulting binary will be located in the `dist` directory.
 ## 🤝 Contributing
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contribution guidelines.
+
+Good first PRs are from TODO issues.
 
 ## 🙋‍♂️ Support
 

@@ -89,3 +89,28 @@ If you have questions about contributing, feel free to:
 - Reach out to the maintainers
 
 We appreciate your contributions!
+
+If you have questions about contributing, feel free to:
+- Open a discussion on GitHub
+- Comment on the relevant issue
+- Reach out to the maintainers
+
+We appreciate your contributions!
+
+## Makefile Commands
+
+This project uses a Makefile for streamlined development workflow:
+
+```bash
+# Set up complete development environment (recommended for new contributors)
+make dev
+
+# Run all tests
+make test
+
+# Clean up build artifacts and cache
+make clean
+
+# View all available commands
+make help
+```

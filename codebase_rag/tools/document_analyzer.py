@@ -1,20 +1,21 @@
 import mimetypes
-import os
 import shutil
 import uuid
 from pathlib import Path
 
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 from loguru import logger
 from pydantic_ai import Tool
 
-from ..config import settings
+from ..config import detect_provider_from_model, settings
 
 
 class _NotSupportedClient:
     """Placeholder client that raises NotImplementedError for unsupported providers."""
-    def __getattr__(self, name):
+
+    def __getattr__(self, name: str) -> None:
         raise NotImplementedError(
             "DocumentAnalyzer does not support the 'local' LLM provider."
         )
@@ -26,13 +27,15 @@ class DocumentAnalyzer:
     by making a direct call to the Gemini API.
     """
 
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str) -> None:
         self.project_root = Path(project_root).resolve()
-        
-        # Initialize client based on provider
-        # TODO: Consider extracting this to a shared factory function (create_gemini_client)
-        # to avoid code duplication with services/llm.py
-        if settings.LLM_PROVIDER == "gemini":
+
+        # Initialize client based on the orchestrator model's provider
+        # Note: Document analysis uses the orchestrator model since it's the main reasoning model
+        orchestrator_model = settings.active_orchestrator_model
+        orchestrator_provider = detect_provider_from_model(orchestrator_model)
+
+        if orchestrator_provider == "gemini":
             if settings.GEMINI_PROVIDER == "gla":
                 self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
             else:  # vertex provider
@@ -40,12 +43,12 @@ class DocumentAnalyzer:
                 self.client = genai.Client(
                     project=settings.GCP_PROJECT_ID,
                     location=settings.GCP_REGION,
-                    credentials_path=settings.GCP_SERVICE_ACCOUNT_FILE
+                    credentials_path=settings.GCP_SERVICE_ACCOUNT_FILE,
                 )
         else:
-            # Local provider is not supported for document analysis yet.
+            # Non-Gemini providers are not supported for document analysis yet.
             self.client = _NotSupportedClient()
-            
+
         logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
 
     def analyze(self, file_path: str, question: str) -> str:
@@ -128,6 +131,12 @@ class DocumentAnalyzer:
                 # API-related ValueError
                 logger.error(f"[DocumentAnalyzer] API validation error: {e}")
                 return f"Error: API validation failed: {e}"
+        except ClientError as e:
+            # Handle Google GenAI specific errors
+            logger.error(f"Google GenAI API error for '{file_path}': {e}")
+            if "Unable to process input image" in str(e):
+                return "Error: Unable to process the image file. The image may be corrupted or in an unsupported format."
+            return f"API error: {e}"
         except Exception as e:
             logger.error(
                 f"Failed to analyze document '{file_path}': {e}", exc_info=True
@@ -157,6 +166,8 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
             logger.error(
                 f"[analyze_document] Exception during analysis: {e}", exc_info=True
             )
+            if str(e).startswith("Error:") or str(e).startswith("API error:"):
+                return str(e)
             return f"Error during document analysis: {e}"
 
     return Tool(

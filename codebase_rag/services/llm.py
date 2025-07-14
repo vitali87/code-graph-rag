@@ -3,14 +3,17 @@ from typing import cast
 from loguru import logger
 from pydantic_ai import Agent, Tool
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import (
+    OpenAIModel,
+    OpenAIResponsesModel,
+)
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ..config import settings
+from ..config import detect_provider_from_model, settings
 from ..prompts import (
-    GEMINI_LITE_CYPHER_SYSTEM_PROMPT,
+    CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
     RAG_ORCHESTRATOR_SYSTEM_PROMPT,
 )
@@ -38,7 +41,13 @@ class CypherGenerator:
     def __init__(self) -> None:
         try:
             model_settings = None
-            if settings.LLM_PROVIDER == "gemini":
+
+            # Get active cypher model and detect its provider
+            cypher_model_id = settings.active_cypher_model
+            cypher_provider = detect_provider_from_model(cypher_model_id)
+
+            # Configure model based on detected provider
+            if cypher_provider == "gemini":
                 if settings.GEMINI_PROVIDER == "vertex":
                     provider = GoogleVertexProvider(
                         project_id=settings.GCP_PROJECT_ID,
@@ -56,13 +65,21 @@ class CypherGenerator:
                     )
 
                 llm = GeminiModel(
-                    settings.MODEL_CYPHER_ID,
+                    cypher_model_id,
                     provider=provider,
                 )
-                system_prompt = GEMINI_LITE_CYPHER_SYSTEM_PROMPT
-            else:  # local provider
+                system_prompt = CYPHER_SYSTEM_PROMPT
+            elif cypher_provider == "openai":
+                llm = OpenAIResponsesModel(
+                    cypher_model_id,
+                    provider=OpenAIProvider(
+                        api_key=settings.OPENAI_API_KEY,
+                    ),
+                )
+                system_prompt = CYPHER_SYSTEM_PROMPT
+            else:  # local
                 llm = OpenAIModel(  # type: ignore
-                    settings.LOCAL_CYPHER_MODEL_ID,
+                    cypher_model_id,
                     provider=OpenAIProvider(
                         api_key=settings.LOCAL_MODEL_API_KEY,
                         base_url=str(settings.LOCAL_MODEL_ENDPOINT),
@@ -106,7 +123,12 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
         model_settings = None
-        if settings.LLM_PROVIDER == "gemini":
+
+        # Get active orchestrator model and detect its provider
+        orchestrator_model_id = settings.active_orchestrator_model
+        orchestrator_provider = detect_provider_from_model(orchestrator_model_id)
+
+        if orchestrator_provider == "gemini":
             if settings.GEMINI_PROVIDER == "vertex":
                 provider = GoogleVertexProvider(
                     project_id=settings.GCP_PROJECT_ID,
@@ -124,15 +146,22 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
                 )
 
             llm = GeminiModel(
-                settings.GEMINI_MODEL_ID,
+                orchestrator_model_id,
                 provider=provider,
             )
-        else:  # local provider
+        elif orchestrator_provider == "local":
             llm = OpenAIModel(  # type: ignore
-                settings.LOCAL_ORCHESTRATOR_MODEL_ID,
+                orchestrator_model_id,
                 provider=OpenAIProvider(
                     api_key=settings.LOCAL_MODEL_API_KEY,
                     base_url=str(settings.LOCAL_MODEL_ENDPOINT),
+                ),
+            )
+        else:  # openai provider
+            llm = OpenAIResponsesModel(
+                orchestrator_model_id,
+                provider=OpenAIProvider(
+                    api_key=settings.OPENAI_API_KEY,
                 ),
             )
 

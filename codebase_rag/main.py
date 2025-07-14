@@ -5,7 +5,7 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
 import typer
 from loguru import logger
@@ -20,7 +20,7 @@ from rich.prompt import Confirm
 from rich.table import Table
 from rich.text import Text
 
-from .config import settings
+from .config import detect_provider_from_model, settings
 from .graph_updater import GraphUpdater, MemgraphIngestor
 from .parser_loader import load_parsers
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -212,30 +212,17 @@ async def run_chat_loop(
 
 
 def _update_model_settings(
-    llm_provider: str | None,
     orchestrator_model: str | None,
     cypher_model: str | None,
 ) -> None:
     """Update model settings based on command-line arguments."""
-    if llm_provider:
-        if llm_provider not in ["gemini", "local"]:
-            console.print(
-                f"[bold red]Error: Invalid LLM provider '{llm_provider}'. Must be 'gemini' or 'local'.[/bold red]"
-            )
-            raise typer.Exit(1)
-        settings.LLM_PROVIDER = cast(Literal["gemini", "local"], llm_provider)
-
-    provider = settings.LLM_PROVIDER
+    # Set orchestrator model if provided
     if orchestrator_model:
-        if provider == "gemini":
-            settings.GEMINI_MODEL_ID = orchestrator_model
-        else:
-            settings.LOCAL_ORCHESTRATOR_MODEL_ID = orchestrator_model
+        settings.set_orchestrator_model(orchestrator_model)
+
+    # Set cypher model if provided
     if cypher_model:
-        if provider == "gemini":
-            settings.MODEL_CYPHER_ID = cypher_model
-        else:
-            settings.LOCAL_CYPHER_MODEL_ID = cypher_model
+        settings.set_cypher_model(cypher_model)
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -279,7 +266,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     """Initializes all services and creates the RAG agent."""
     # Validate settings once before initializing any LLM services
     settings.validate_for_usage()
-    
+
     cypher_generator = CypherGenerator()
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
     file_reader = FileReader(project_root=repo_path)
@@ -333,13 +320,19 @@ async def main_async(repo_path: str) -> None:
     table = Table(title="[bold green]Graph-Code Initializing...[/bold green]")
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
-    table.add_row("LLM Provider", settings.LLM_PROVIDER)
-    if settings.LLM_PROVIDER == "gemini":
-        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
-        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    else:
-        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+
+    orchestrator_model = settings.active_orchestrator_model
+    orchestrator_provider = detect_provider_from_model(orchestrator_model)
+    table.add_row(
+        "Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})"
+    )
+
+    cypher_model = settings.active_cypher_model
+    cypher_provider = detect_provider_from_model(cypher_model)
+    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
+
+    # Show local endpoint if any model is using local provider
+    if orchestrator_provider == "local" or cypher_provider == "local":
         table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
     table.add_row("Target Repository", repo_path)
     console.print(table)
@@ -380,9 +373,6 @@ def start(
         "--output",
         help="Export graph to JSON file after updating (requires --update-graph)",
     ),
-    llm_provider: str | None = typer.Option(
-        None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
-    ),
     orchestrator_model: str | None = typer.Option(
         None, "--orchestrator-model", help="Specify the orchestrator model ID"
     ),
@@ -400,7 +390,7 @@ def start(
         )
         raise typer.Exit(1)
 
-    _update_model_settings(llm_provider, orchestrator_model, cypher_model)
+    _update_model_settings(orchestrator_model, cypher_model)
 
     if update_graph:
         repo_to_update = Path(target_repo_path)
@@ -489,8 +479,8 @@ async def run_optimization_loop(
     )
     console.print(
         Panel(
-            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations.\n"
-            f"You'll be asked to approve each suggestion before implementation.\n"
+            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations."
+            f"You'll be asked to approve each suggestion before implementation."
             f"Type 'exit' or 'quit' to end the session.[/bold yellow]",
             border_style="yellow",
         )
@@ -586,14 +576,13 @@ async def main_optimize_async(
     language: str,
     target_repo_path: str,
     reference_document: str | None = None,
-    llm_provider: str | None = None,
     orchestrator_model: str | None = None,
     cypher_model: str | None = None,
 ) -> None:
     """Async wrapper for the optimization functionality."""
     project_root = Path(target_repo_path).resolve()
 
-    _update_model_settings(llm_provider, orchestrator_model, cypher_model)
+    _update_model_settings(orchestrator_model, cypher_model)
 
     console.print(
         f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
@@ -614,13 +603,16 @@ async def main_optimize_async(
     table.add_column("Value", style="magenta")
     table.add_row("Target Language", language)
     table.add_row("Repository Path", str(project_root))
-    table.add_row("LLM Provider", settings.LLM_PROVIDER)
-    if settings.LLM_PROVIDER == "gemini":
-        table.add_row("Orchestrator Model", settings.GEMINI_MODEL_ID)
-        table.add_row("Cypher Model", settings.MODEL_CYPHER_ID)
-    else:
-        table.add_row("Orchestrator Model", settings.LOCAL_ORCHESTRATOR_MODEL_ID)
-        table.add_row("Cypher Model", settings.LOCAL_CYPHER_MODEL_ID)
+
+    orchestrator_model = settings.active_orchestrator_model
+    orchestrator_provider = detect_provider_from_model(orchestrator_model)
+    table.add_row(
+        "Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})"
+    )
+
+    cypher_model = settings.active_cypher_model
+    cypher_provider = detect_provider_from_model(cypher_model)
+    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
     console.print(table)
 
     with MemgraphIngestor(
@@ -648,9 +640,6 @@ def optimize(
         "--reference-document",
         help="Path to reference document/book for optimization guidance",
     ),
-    llm_provider: str | None = typer.Option(
-        None, "--llm-provider", help="Choose the LLM provider: 'gemini' or 'local'"
-    ),
     orchestrator_model: str | None = typer.Option(
         None, "--orchestrator-model", help="Specify the orchestrator model ID"
     ),
@@ -673,7 +662,6 @@ def optimize(
                 language=language,
                 target_repo_path=target_repo_path,
                 reference_document=reference_document,
-                llm_provider=llm_provider,
                 orchestrator_model=orchestrator_model,
                 cypher_model=cypher_model,
             )
