@@ -111,7 +111,6 @@ cp .env.example .env
 
 ```bash
 # .env file
-LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
@@ -119,14 +118,12 @@ Get your free API key from [Google AI Studio](https://aistudio.google.com/app/ap
 #### Option 2: OpenAI Models
 ```bash
 # .env file
-LLM_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 #### Option 3: Local Models (Ollama)
 ```bash
 # .env file
-LLM_PROVIDER=local
 LOCAL_MODEL_ENDPOINT=http://localhost:11434/v1
 LOCAL_ORCHESTRATOR_MODEL_ID=llama3
 LOCAL_CYPHER_MODEL_ID=llama3
@@ -398,11 +395,8 @@ The knowledge graph uses the following node types and relationships:
 
 Configuration is managed through environment variables in `.env` file:
 
-### Required Settings
-- `LLM_PROVIDER`: Set to `"gemini"` for cloud models or `"local"` for local models
-
 ### Gemini (Cloud) Configuration
-- `GEMINI_API_KEY`: Required when `LLM_PROVIDER=gemini`
+- `GEMINI_API_KEY`: Required when  using Google models.
 - `GEMINI_MODEL_ID`: Main model for orchestration (default: `gemini-2.5-pro`)
 - `MODEL_CYPHER_ID`: Model for Cypher generation (default: `gemini-2.5-flash-lite-preview-06-17`)
 
