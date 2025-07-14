@@ -48,16 +48,15 @@ class AppConfig(BaseSettings):
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
-    @model_validator(mode="after")
-    def check_required_fields(self) -> AppConfig:
-        """Validate that the LLM provider, required API keys and project IDs are set based on the provider."""
+    def validate_for_usage(self) -> None:
+        """Validate that required API keys and project IDs are set based on the provider."""
         
-        # Checking if `LLM_PROVIDER` is set in the environment
+         # Checking if `LLM_PROVIDER` is set in the environment
         if "LLM_PROVIDER" not in os.environ:
             raise ValueError(
                 "Configuration Error: LLM_PROVIDER environment variable is required."
             )
-
+        
         if self.LLM_PROVIDER == "gemini":
             if self.GEMINI_PROVIDER == "gla" and not self.GEMINI_API_KEY:
                 raise ValueError(
@@ -67,7 +66,6 @@ class AppConfig(BaseSettings):
                 raise ValueError(
                     "Configuration Error: GCP_PROJECT_ID is required when GEMINI_PROVIDER is 'vertex'."
                 )
-        return self
 
 
 settings = AppConfig()
