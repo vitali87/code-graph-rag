@@ -18,7 +18,7 @@
 </p>
 </div>
 
-# Graph-Code: A Multi-Language Graph-Based RAG System
+# Graph-Code: A Multi-Language Graph-Based AI assistant
 
 An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
