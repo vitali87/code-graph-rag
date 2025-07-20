@@ -13,6 +13,7 @@ from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -32,6 +33,9 @@ from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
 from .tools.shell_command import ShellCommander, create_shell_command_tool
+
+# Style constants
+ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})  # Orange color for input text
 
 app = typer.Typer(
     name="graph-code",
@@ -154,6 +158,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
         multiline=True,
         key_bindings=bindings,
         wrap_lines=True,
+        style=ORANGE_STYLE,
     )
     if result is None:
         raise EOFError
