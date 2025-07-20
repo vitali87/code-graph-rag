@@ -48,6 +48,59 @@ app = typer.Typer(
 )
 console = Console(width=None, force_terminal=True)
 
+# Session logging
+session_log_file = None
+session_cancelled = False
+
+
+def init_session_log(project_root: Path) -> Path:
+    """Initialize session log file."""
+    global session_log_file
+    log_dir = project_root / ".tmp"
+    log_dir.mkdir(exist_ok=True)
+    session_log_file = log_dir / f"session_{uuid.uuid4().hex[:8]}.log"
+    with open(session_log_file, "w") as f:
+        f.write("=== CODE-GRAPH RAG SESSION LOG ===\n\n")
+    return session_log_file
+
+
+def log_session_event(event: str) -> None:
+    """Log an event to the session file."""
+    global session_log_file
+    if session_log_file:
+        with open(session_log_file, "a") as f:
+            f.write(f"{event}\n")
+
+
+def get_session_context() -> str:
+    """Get the full session context for cancelled operations."""
+    global session_log_file
+    if session_log_file and session_log_file.exists():
+        with open(session_log_file) as f:
+            content = f.read()
+        return f"\n\n[SESSION CONTEXT - Previous conversation in this session]:\n{content}\n[END SESSION CONTEXT]\n\n"
+    return ""
+
+
+async def run_with_cancellation(console: Console, coro: Any) -> Any:
+    """Run a coroutine with proper Ctrl+C cancellation that doesn't exit the program."""
+    task = asyncio.create_task(coro)
+
+    try:
+        result = await task
+        return result
+    except asyncio.CancelledError:
+        console.print("\n[bold yellow]Thinking cancelled.[/bold yellow]")
+        return {"cancelled": True}
+    except KeyboardInterrupt:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        console.print("\n[bold yellow]Thinking cancelled.[/bold yellow]")
+        return {"cancelled": True}
+
 
 def _handle_chat_images(question: str, project_root: Path) -> str:
     """
@@ -169,6 +222,11 @@ async def run_chat_loop(
     rag_agent: Any, message_history: list[Any], project_root: Path
 ) -> None:
     """Runs the main chat loop."""
+    global session_cancelled
+
+    # Initialize session logging
+    init_session_log(project_root)
+
     question = ""
     while True:
         try:
@@ -189,13 +247,35 @@ async def run_chat_loop(
             if not question.strip():
                 continue
 
-            # Handle images in the question
-            question = _handle_chat_images(question, project_root)
+            # Log user question
+            log_session_event(f"USER: {question}")
 
-            with console.status("[bold green]Thinking...[/bold green]"):
-                response = await rag_agent.run(
-                    question, message_history=message_history
+            # If previous thinking was cancelled, add session context
+            if session_cancelled:
+                question_with_context = question + get_session_context()
+                session_cancelled = False
+            else:
+                question_with_context = question
+
+            # Handle images in the question
+            question_with_context = _handle_chat_images(
+                question_with_context, project_root
+            )
+
+            with console.status(
+                "[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]"
+            ):
+                response = await run_with_cancellation(
+                    console,
+                    rag_agent.run(
+                        question_with_context, message_history=message_history
+                    ),
                 )
+
+                if isinstance(response, dict) and response.get("cancelled"):
+                    log_session_event("ASSISTANT: [Thinking was cancelled]")
+                    session_cancelled = True
+                    continue
 
             # Store the agent's raw output to check for confirmation requests
             question = response.output
@@ -207,6 +287,10 @@ async def run_chat_loop(
                     border_style="green",
                 )
             )
+
+            # Log assistant response
+            log_session_event(f"ASSISTANT: {response.output}")
+
             message_history.extend(response.new_messages())
 
         except KeyboardInterrupt:
@@ -474,6 +558,10 @@ async def run_optimization_loop(
     reference_document: str | None = None,
 ) -> None:
     """Runs the optimization loop with the RAG agent."""
+    global session_cancelled
+
+    # Initialize session logging
+    init_session_log(project_root)
     console.print(
         f"[bold green]Starting {language} optimization session...[/bold green]"
     )
@@ -547,15 +635,35 @@ Start by analyzing the codebase structure and identifying the main areas that co
             if not question.strip():
                 continue
 
+            # Log user question
+            log_session_event(f"USER: {question}")
+
+            # If previous thinking was cancelled, add session context
+            if session_cancelled:
+                question_with_context = question + get_session_context()
+                session_cancelled = False
+            else:
+                question_with_context = question
+
             # Handle images in the question
-            question = _handle_chat_images(question, project_root)
+            question_with_context = _handle_chat_images(
+                question_with_context, project_root
+            )
 
             with console.status(
-                "[bold green]Agent is analyzing codebase...[/bold green]"
+                "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
             ):
-                response = await rag_agent.run(
-                    question, message_history=message_history
+                response = await run_with_cancellation(
+                    console,
+                    rag_agent.run(
+                        question_with_context, message_history=message_history
+                    ),
                 )
+
+                if isinstance(response, dict) and response.get("cancelled"):
+                    log_session_event("ASSISTANT: [Analysis was cancelled]")
+                    session_cancelled = True
+                    continue
 
             # Store the agent's raw output to check for confirmation requests
             question = response.output
@@ -567,6 +675,10 @@ Start by analyzing the codebase structure and identifying the main areas that co
                     border_style="green",
                 )
             )
+
+            # Log assistant response
+            log_session_event(f"ASSISTANT: {response.output}")
+
             message_history.extend(response.new_messages())
             first_run = False
 
