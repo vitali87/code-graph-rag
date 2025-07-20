@@ -384,7 +384,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
 
-    rag_agent = create_rag_orchestrator(
+    return create_rag_orchestrator(
         tools=[
             query_tool,
             code_tool,
@@ -396,7 +396,6 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
             document_analyzer_tool,
         ]
     )
-    return rag_agent
 
 
 async def main_async(repo_path: str) -> None:
