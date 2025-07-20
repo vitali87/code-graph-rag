@@ -13,6 +13,7 @@ from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -149,11 +150,18 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     )
 
     # Use simple prompt without formatting to avoid alignment issues
+    orange_style = Style.from_dict(
+        {
+            "": "#ff8c00",  # Orange color for input text
+        }
+    )
+
     result = prompt(
         "",
         multiline=True,
         key_bindings=bindings,
         wrap_lines=True,
+        style=orange_style,
     )
     if result is None:
         raise EOFError
