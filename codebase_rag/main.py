@@ -34,6 +34,9 @@ from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
+# Style constants
+ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})  # Orange color for input text
+
 app = typer.Typer(
     name="graph-code",
     help="An accurate Retrieval-Augmented Generation (RAG) system that analyzes "
@@ -150,18 +153,12 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     )
 
     # Use simple prompt without formatting to avoid alignment issues
-    orange_style = Style.from_dict(
-        {
-            "": "#ff8c00",  # Orange color for input text
-        }
-    )
-
     result = prompt(
         "",
         multiline=True,
         key_bindings=bindings,
         wrap_lines=True,
-        style=orange_style,
+        style=ORANGE_STYLE,
     )
     if result is None:
         raise EOFError
