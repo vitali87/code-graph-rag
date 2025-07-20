@@ -76,28 +76,36 @@ def get_session_context() -> str:
     """Get the full session context for cancelled operations."""
     global session_log_file
     if session_log_file and session_log_file.exists():
-        with open(session_log_file) as f:
-            content = f.read()
+        content = Path(session_log_file).read_text()
         return f"\n\n[SESSION CONTEXT - Previous conversation in this session]:\n{content}\n[END SESSION CONTEXT]\n\n"
     return ""
 
 
-async def run_with_cancellation(console: Console, coro: Any) -> Any:
+async def run_with_cancellation(
+    console: Console, coro: Any, timeout: float | None = None
+) -> Any:
     """Run a coroutine with proper Ctrl+C cancellation that doesn't exit the program."""
     task = asyncio.create_task(coro)
 
     try:
-        result = await task
-        return result
-    except asyncio.CancelledError:
-        console.print("\n[bold yellow]Thinking cancelled.[/bold yellow]")
-        return {"cancelled": True}
-    except KeyboardInterrupt:
+        return await asyncio.wait_for(task, timeout=timeout) if timeout else await task
+    except TimeoutError:
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
+        console.print(
+            f"\n[bold yellow]Operation timed out after {timeout} seconds.[/bold yellow]"
+        )
+        return {"cancelled": True, "timeout": True}
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         console.print("\n[bold yellow]Thinking cancelled.[/bold yellow]")
         return {"cancelled": True}
 
