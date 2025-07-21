@@ -367,14 +367,14 @@ def add_grammar(
             config_content = f.read()
 
         # Generate the new config entry
-        config_entry = f'''    "{language_name}": LanguageConfig(
+        config_entry = f"""    "{language_name}": LanguageConfig(
         name="{new_language_config.name}",
         file_extensions={new_language_config.file_extensions},
         function_node_types={new_language_config.function_node_types},
         class_node_types={new_language_config.class_node_types},
         module_node_types={new_language_config.module_node_types},
         call_node_types={new_language_config.call_node_types},
-    ),'''
+    ),"""
 
         # Find the end of the LANGUAGE_CONFIGS dictionary
         closing_brace_pos = config_content.rfind("}")
