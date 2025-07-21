@@ -1,6 +1,7 @@
 import asyncio
 import json
 import shlex
+import re
 import shutil
 import sys
 import uuid
@@ -36,6 +37,32 @@ from .tools.shell_command import ShellCommander, create_shell_command_tool
 
 # Style constants
 ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})  # Orange color for input text
+confirm_edits_globally = True
+
+# Edit operation constants
+_EDIT_REQUEST_KEYWORDS = frozenset([
+    "modify", "update", "change", "edit", "fix", "refactor", "optimize",
+    "add", "remove", "delete", "create", "write", "implement", "replace"
+])
+
+_EDIT_TOOLS = frozenset([
+    "edit_file", "write_file", "file_editor", "file_writer", "create_file"
+])
+
+_EDIT_INDICATORS = frozenset([
+    "modifying", "updating", "changing", "replacing", "adding to", "deleting from",
+    "created file", "editing", "writing to", "file has been", "successfully modified",
+    "successfully updated", "successfully created", "changes have been made",
+    "file modified", "file updated", "file created"
+])
+
+# Pre-compile regex patterns
+_FILE_MODIFICATION_PATTERNS = [
+    re.compile(r'(modified|updated|created|edited):\s*[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)'),
+    re.compile(r'file\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)\s+(modified|updated|created|edited)'),
+    re.compile(r'writing\s+to\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)')
+]
+
 
 app = typer.Typer(
     name="graph-code",
@@ -51,6 +78,8 @@ console = Console(width=None, force_terminal=True)
 # Session logging
 session_log_file = None
 session_cancelled = False
+# # Global flag to control edit confirmation
+# confirm_edits = True
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -79,6 +108,244 @@ def get_session_context() -> str:
         content = Path(session_log_file).read_text()
         return f"\n\n[SESSION CONTEXT - Previous conversation in this session]:\n{content}\n[END SESSION CONTEXT]\n\n"
     return ""
+
+def is_edit_operation_request(question: str) -> bool:
+    """Check if the user's question/request would likely result in edit operations."""
+    question_lower = question.lower()
+    return any(keyword in question_lower for keyword in _EDIT_REQUEST_KEYWORDS)
+
+
+async def _handle_rejection(rag_agent: Any, message_history: list[Any], console: Console) -> Any:
+    """Handle user rejection of edits with agent acknowledgment."""
+    rejection_message = "The user has rejected the changes that were made. Please acknowledge this and consider if any changes need to be reverted."
+    
+    with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
+        rejection_response = await run_with_cancellation(
+            console,
+            rag_agent.run(rejection_message, message_history=message_history),
+        )
+    
+    if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
+        rejection_markdown = Markdown(rejection_response.output)
+        console.print(
+            Panel(
+                rejection_markdown,
+                title="[bold yellow]Response to Rejection[/bold yellow]",
+                border_style="yellow",
+            )
+        )
+        message_history.extend(rejection_response.new_messages())
+    
+    return rejection_response
+
+
+def is_edit_operation_response(response_text: str) -> bool:
+    """Enhanced check if the response contains edit operations that need confirmation."""
+    response_lower = response_text.lower()
+    
+    # Check for tool usage
+    tool_usage = any(tool in response_lower for tool in _EDIT_TOOLS)
+    
+    # Check for content indicators
+    content_indicators = any(indicator in response_lower for indicator in _EDIT_INDICATORS)
+    
+    # Check for regex patterns
+    pattern_match = any(pattern.search(response_lower) for pattern in _FILE_MODIFICATION_PATTERNS)
+    
+    return tool_usage or content_indicators or pattern_match
+
+
+def _setup_common_initialization(repo_path: str) -> Path:
+    """Common setup logic for both main and optimize functions."""
+    # Logger initialization
+    logger.remove()
+    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    
+    # Temporary directory cleanup
+    project_root = Path(repo_path).resolve()
+    tmp_dir = project_root / ".tmp"
+    if tmp_dir.exists():
+        if tmp_dir.is_dir():
+            shutil.rmtree(tmp_dir)
+        else:
+            tmp_dir.unlink()
+    tmp_dir.mkdir()
+    
+    return project_root
+
+
+def _create_configuration_table(repo_path: str, title: str = "Graph-Code Initializing...", language: str | None = None) -> Table:
+    """Create and return a configuration table."""
+    table = Table(title=f"[bold green]{title}[/bold green]")
+    table.add_column("Configuration", style="cyan")
+    table.add_column("Value", style="magenta")
+
+    # Add language row if provided (for optimization sessions)
+    if language:
+        table.add_row("Target Language", language)
+
+    orchestrator_model = settings.active_orchestrator_model
+    orchestrator_provider = detect_provider_from_model(orchestrator_model)
+    table.add_row("Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})")
+
+    cypher_model = settings.active_cypher_model
+    cypher_provider = detect_provider_from_model(cypher_model)
+    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
+
+    # Show local endpoint if any model is using local provider
+    if orchestrator_provider == "local" or cypher_provider == "local":
+        table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
+    
+    # Show edit confirmation status
+    confirmation_status = "Enabled" if confirm_edits_globally else "Disabled (YOLO Mode)"
+    table.add_row("Edit Confirmation", confirmation_status)
+    table.add_row("Target Repository", repo_path)
+    
+    return table
+
+
+async def run_optimization_loop(
+    rag_agent: Any,
+    message_history: list[Any],
+    project_root: Path,
+    language: str,
+    reference_document: str | None = None,
+) -> None:
+    """Runs the optimization loop with proper confirmation handling."""
+    global session_cancelled
+
+    # Initialize session logging
+    init_session_log(project_root)
+    console.print(
+        f"[bold green]Starting {language} optimization session...[/bold green]"
+    )
+    document_info = (
+        f" using the reference document: {reference_document}"
+        if reference_document
+        else ""
+    )
+    console.print(
+        Panel(
+            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations."
+            f" You'll be asked to approve each suggestion before implementation."
+            f" Type 'exit' or 'quit' to end the session.[/bold yellow]",
+            border_style="yellow",
+        )
+    )
+
+    # Initial optimization analysis
+    instructions = [
+        "Use your code retrieval and graph querying tools to understand the codebase structure",
+        "Read relevant source files to identify optimization opportunities",
+    ]
+    if reference_document:
+        instructions.append(
+            f"Use the analyze_document tool to reference best practices from {reference_document}"
+        )
+
+    instructions.extend(
+        [
+            f"Reference established patterns and best practices for {language}",
+            "Propose specific, actionable optimizations with file references",
+            "IMPORTANT: Do not make any changes yet - just propose them and wait for approval",
+            "After approval, use your file editing tools to implement the changes",
+        ]
+    )
+
+    numbered_instructions = "\n".join(
+        f"{i + 1}. {inst}" for i, inst in enumerate(instructions)
+    )
+
+    initial_question = f"""
+I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
+
+Please:
+{numbered_instructions}
+
+Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
+Remember: Propose changes first, wait for my approval, then implement.
+"""
+
+    first_run = True
+    question = initial_question
+
+    while True:
+        try:
+            if not first_run:
+                # Ask for user input on subsequent iterations
+                question = await asyncio.to_thread(
+                    get_multiline_input, "[bold cyan]Your response[/bold cyan]"
+                )
+
+            if question.lower() in ["exit", "quit"]:
+                break
+            if not question.strip():
+                continue
+
+            # Log user question
+            log_session_event(f"USER: {question}")
+
+            # If previous thinking was cancelled, add session context
+            if session_cancelled:
+                question_with_context = question + get_session_context()
+                session_cancelled = False
+            else:
+                question_with_context = question
+
+            # Handle images in the question
+            question_with_context = _handle_chat_images(
+                question_with_context, project_root
+            )
+
+            with console.status(
+                "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
+            ):
+                response = await run_with_cancellation(
+                    console,
+                    rag_agent.run(
+                        question_with_context, message_history=message_history
+                    ),
+                )
+
+                if isinstance(response, dict) and response.get("cancelled"):
+                    log_session_event("ASSISTANT: [Analysis was cancelled]")
+                    session_cancelled = True
+                    continue
+
+            # Display the response
+            markdown_response = Markdown(response.output)
+            console.print(
+                Panel(
+                    markdown_response,
+                    title="[bold green]Optimization Agent[/bold green]",
+                    border_style="green",
+                )
+            )
+
+            # Check if confirmation is needed for edit operations
+            if confirm_edits_globally and is_edit_operation_response(response.output):
+                console.print("\n[bold yellow]⚠️  This optimization has performed file modifications.[/bold yellow]")
+                
+                if not Confirm.ask("[bold cyan]Do you want to keep these optimizations?[/bold cyan]"):
+                    console.print("[bold red]❌ Optimizations rejected by user.[/bold red]")
+                    await _handle_rejection(rag_agent, message_history, console)
+                    first_run = False
+                    continue
+                else:
+                    console.print("[bold green]✅ Optimizations approved by user.[/bold green]")
+
+            # Log assistant response
+            log_session_event(f"ASSISTANT: {response.output}")
+
+            # Add the original response to message history only if not rejected
+            message_history.extend(response.new_messages())
+            first_run = False
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            logger.error("An unexpected error occurred: {}", e, exc_info=True)
+            console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
 
 
 async def run_with_cancellation(
@@ -229,26 +496,18 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
 async def run_chat_loop(
     rag_agent: Any, message_history: list[Any], project_root: Path
 ) -> None:
-    """Runs the main chat loop."""
+    """Runs the main chat loop with proper edit confirmation."""
     global session_cancelled
 
     # Initialize session logging
     init_session_log(project_root)
 
-    question = ""
     while True:
         try:
-            # If the last response was a confirmation request, use a confirm prompt
-            if "[y/n]" in question:
-                if Confirm.ask("Do you approve?"):
-                    question = "yes"
-                else:
-                    question = "no"
-                    console.print("[bold yellow]Operation cancelled.[/bold yellow]")
-            else:
-                question = await asyncio.to_thread(
-                    get_multiline_input, "[bold cyan]Ask a question[/bold cyan]"
-                )
+            # Get user input
+            question = await asyncio.to_thread(
+                get_multiline_input, "[bold cyan]Ask a question[/bold cyan]"
+            )
 
             if question.lower() in ["exit", "quit"]:
                 break
@@ -270,6 +529,14 @@ async def run_chat_loop(
                 question_with_context, project_root
             )
 
+            # Check if this might be an edit operation and warn user upfront
+            might_edit = is_edit_operation_request(question)
+            if confirm_edits_globally and might_edit:
+                console.print("\n[bold yellow]⚠️  This request might result in file modifications.[/bold yellow]")
+                if not Confirm.ask("[bold cyan]Do you want to proceed with this request?[/bold cyan]"):
+                    console.print("[bold red]❌ Request cancelled by user.[/bold red]")
+                    continue
+
             with console.status(
                 "[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]"
             ):
@@ -285,20 +552,31 @@ async def run_chat_loop(
                     session_cancelled = True
                     continue
 
-            # Store the agent's raw output to check for confirmation requests
-            question = response.output
-            markdown_response = Markdown(question)
+            # Display the response
+            markdown_response = Markdown(response.output)
             console.print(
                 Panel(
                     markdown_response,
-                    title="[bold green]Final Answer[/bold green]",
+                    title="[bold green]Assistant[/bold green]",
                     border_style="green",
                 )
             )
 
+            # Check if the response actually contains edit operations
+            if confirm_edits_globally and is_edit_operation_response(response.output):
+                console.print("\n[bold yellow]⚠️  The assistant has performed file modifications.[/bold yellow]")
+                
+                if not Confirm.ask("[bold cyan]Do you want to keep these changes?[/bold cyan]"):
+                    console.print("[bold red]❌ User rejected the changes.[/bold red]")
+                    await _handle_rejection(rag_agent, message_history, console)
+                    continue
+                else:
+                    console.print("[bold green]✅ Changes accepted by user.[/bold green]")
+
             # Log assistant response
             log_session_event(f"ASSISTANT: {response.output}")
 
+            # Add the response to message history only if it wasn't rejected
             message_history.extend(response.new_messages())
 
         except KeyboardInterrupt:
@@ -384,7 +662,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
 
-    return create_rag_orchestrator(
+    rag_agent = create_rag_orchestrator(
         tools=[
             query_tool,
             code_tool,
@@ -396,41 +674,14 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
             document_analyzer_tool,
         ]
     )
+    return rag_agent
 
 
 async def main_async(repo_path: str) -> None:
     """Initializes services and runs the main application loop."""
-    logger.remove()
-    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    project_root = _setup_common_initialization(repo_path)
 
-    # Clean up temp directory on startup
-    project_root = Path(repo_path).resolve()
-    tmp_dir = project_root / ".tmp"
-    if tmp_dir.exists():
-        if tmp_dir.is_dir():
-            shutil.rmtree(tmp_dir)
-        else:
-            tmp_dir.unlink()
-    tmp_dir.mkdir()
-
-    table = Table(title="[bold green]Graph-Code Initializing...[/bold green]")
-    table.add_column("Configuration", style="cyan")
-    table.add_column("Value", style="magenta")
-
-    orchestrator_model = settings.active_orchestrator_model
-    orchestrator_provider = detect_provider_from_model(orchestrator_model)
-    table.add_row(
-        "Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})"
-    )
-
-    cypher_model = settings.active_cypher_model
-    cypher_provider = detect_provider_from_model(cypher_model)
-    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
-
-    # Show local endpoint if any model is using local provider
-    if orchestrator_provider == "local" or cypher_provider == "local":
-        table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
-    table.add_row("Target Repository", repo_path)
+    table = _create_configuration_table(repo_path)
     console.print(table)
 
     with MemgraphIngestor(
@@ -475,8 +726,18 @@ def start(
     cypher_model: str | None = typer.Option(
         None, "--cypher-model", help="Specify the Cypher generator model ID"
     ),
+    no_confirm: bool = typer.Option(
+        False,
+        "--no-confirm",
+        help="Disable confirmation prompts for edit operations (YOLO mode)",
+    ),
 ) -> None:
     """Starts the Codebase RAG CLI."""
+    global confirm_edits_globally
+    
+    # Set confirmation mode based on flag
+    confirm_edits_globally = not no_confirm
+    
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
     # Validate output option usage
@@ -517,9 +778,8 @@ def start(
         console.print("[bold green]Graph update completed![/bold green]")
         return
 
-    # If not updating the graph, just start the chat
     try:
-        asyncio.run(main_async(str(target_repo_path)))
+        asyncio.run(main_async(target_repo_path))
     except KeyboardInterrupt:
         console.print("\n[bold red]Application terminated by user.[/bold red]")
     except ValueError as e:
@@ -558,145 +818,6 @@ def export(
         raise typer.Exit(1) from e
 
 
-async def run_optimization_loop(
-    rag_agent: Any,
-    message_history: list[Any],
-    project_root: Path,
-    language: str,
-    reference_document: str | None = None,
-) -> None:
-    """Runs the optimization loop with the RAG agent."""
-    global session_cancelled
-
-    # Initialize session logging
-    init_session_log(project_root)
-    console.print(
-        f"[bold green]Starting {language} optimization session...[/bold green]"
-    )
-    document_info = (
-        f" using the reference document: {reference_document}"
-        if reference_document
-        else ""
-    )
-    console.print(
-        Panel(
-            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations."
-            f"You'll be asked to approve each suggestion before implementation."
-            f"Type 'exit' or 'quit' to end the session.[/bold yellow]",
-            border_style="yellow",
-        )
-    )
-
-    # Initial optimization analysis
-
-    instructions = [
-        "Use your code retrieval and graph querying tools to understand the codebase structure",
-        "Read relevant source files to identify optimization opportunities",
-    ]
-    if reference_document:
-        instructions.append(
-            f"Use the analyze_document tool to reference best practices from {reference_document}"
-        )
-
-    instructions.extend(
-        [
-            f"Reference established patterns and best practices for {language}",
-            "Propose specific, actionable optimizations with file references",
-            "Ask for my approval before implementing any changes",
-            "Use your file editing tools to implement approved changes",
-        ]
-    )
-
-    numbered_instructions = "\n".join(
-        f"{i + 1}. {inst}" for i, inst in enumerate(instructions)
-    )
-
-    initial_question = f"""
-I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
-
-Please:
-{numbered_instructions}
-
-Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
-"""
-
-    question = initial_question
-    first_run = True
-
-    while True:
-        try:
-            # If the last response was a confirmation request, use a confirm prompt
-            if "[y/n]" in question:
-                if Confirm.ask("Do you approve?"):
-                    question = "yes"
-                else:
-                    question = "no"
-                    console.print("[bold yellow]Operation cancelled.[/bold yellow]")
-            elif not first_run:
-                # Ask for user input on subsequent iterations
-                question = await asyncio.to_thread(
-                    get_multiline_input, "[bold cyan]Your response[/bold cyan]"
-                )
-
-            if question.lower() in ["exit", "quit"]:
-                break
-            if not question.strip():
-                continue
-
-            # Log user question
-            log_session_event(f"USER: {question}")
-
-            # If previous thinking was cancelled, add session context
-            if session_cancelled:
-                question_with_context = question + get_session_context()
-                session_cancelled = False
-            else:
-                question_with_context = question
-
-            # Handle images in the question
-            question_with_context = _handle_chat_images(
-                question_with_context, project_root
-            )
-
-            with console.status(
-                "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
-            ):
-                response = await run_with_cancellation(
-                    console,
-                    rag_agent.run(
-                        question_with_context, message_history=message_history
-                    ),
-                )
-
-                if isinstance(response, dict) and response.get("cancelled"):
-                    log_session_event("ASSISTANT: [Analysis was cancelled]")
-                    session_cancelled = True
-                    continue
-
-            # Store the agent's raw output to check for confirmation requests
-            question = response.output
-            markdown_response = Markdown(question)
-            console.print(
-                Panel(
-                    markdown_response,
-                    title="[bold green]Optimization Agent[/bold green]",
-                    border_style="green",
-                )
-            )
-
-            # Log assistant response
-            log_session_event(f"ASSISTANT: {response.output}")
-
-            message_history.extend(response.new_messages())
-            first_run = False
-
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            logger.error("An unexpected error occurred: {}", e, exc_info=True)
-            console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
-
-
 async def main_optimize_async(
     language: str,
     target_repo_path: str,
@@ -705,7 +826,7 @@ async def main_optimize_async(
     cypher_model: str | None = None,
 ) -> None:
     """Async wrapper for the optimization functionality."""
-    project_root = Path(target_repo_path).resolve()
+    project_root = _setup_common_initialization(target_repo_path)
 
     _update_model_settings(orchestrator_model, cypher_model)
 
@@ -713,31 +834,12 @@ async def main_optimize_async(
         f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
     )
 
-    # Clean up temp directory on startup
-    tmp_dir = project_root / ".tmp"
-    if tmp_dir.exists():
-        if tmp_dir.is_dir():
-            shutil.rmtree(tmp_dir)
-        else:
-            tmp_dir.unlink()
-    tmp_dir.mkdir()
-
-    # Display configuration
-    table = Table(title="[bold green]Optimization Session Configuration[/bold green]")
-    table.add_column("Setting", style="cyan")
-    table.add_column("Value", style="magenta")
-    table.add_row("Target Language", language)
-    table.add_row("Repository Path", str(project_root))
-
-    orchestrator_model = settings.active_orchestrator_model
-    orchestrator_provider = detect_provider_from_model(orchestrator_model)
-    table.add_row(
-        "Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})"
+    # Display configuration with language included
+    table = _create_configuration_table(
+        str(project_root), 
+        "Optimization Session Configuration", 
+        language
     )
-
-    cypher_model = settings.active_cypher_model
-    cypher_provider = detect_provider_from_model(cypher_model)
-    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
     console.print(table)
 
     with MemgraphIngestor(
@@ -749,7 +851,6 @@ async def main_optimize_async(
         await run_optimization_loop(
             rag_agent, [], project_root, language, reference_document
         )
-
 
 @app.command()
 def optimize(
@@ -771,32 +872,34 @@ def optimize(
     cypher_model: str | None = typer.Option(
         None, "--cypher-model", help="Specify the Cypher generator model ID"
     ),
+    no_confirm: bool = typer.Option(
+        False,
+        "--no-confirm",
+        help="Disable confirmation prompts for edit operations (YOLO mode)",
+    ),
 ) -> None:
-    """Interactive codebase optimization using RAG agent with best practices guidance."""
+    """Optimize a codebase for a specific programming language."""
+    global confirm_edits_globally
+    
+    # Set confirmation mode based on flag
+    confirm_edits_globally = not no_confirm
+    
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
-
-    if not Path(target_repo_path).exists():
-        console.print(
-            f"[bold red]Error: Repository path '{target_repo_path}' does not exist.[/bold red]"
-        )
-        raise typer.Exit(1)
 
     try:
         asyncio.run(
             main_optimize_async(
-                language=language,
-                target_repo_path=target_repo_path,
-                reference_document=reference_document,
-                orchestrator_model=orchestrator_model,
-                cypher_model=cypher_model,
+                language,
+                target_repo_path,
+                reference_document,
+                orchestrator_model,
+                cypher_model,
             )
         )
     except KeyboardInterrupt:
         console.print("\n[bold red]Optimization session terminated by user.[/bold red]")
-    except Exception as e:
-        console.print(f"[bold red]Failed to start optimization session: {e}[/bold red]")
-        logger.error(f"Optimization error: {e}", exc_info=True)
-        raise typer.Exit(1) from e
+    except ValueError as e:
+        console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
 if __name__ == "__main__":
