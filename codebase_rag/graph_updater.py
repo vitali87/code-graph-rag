@@ -689,8 +689,11 @@ class GraphUpdater:
         caller_parts = caller_module_qn.split(".")
         registered_parts = registered_qn.split(".")
 
-        if len(caller_parts) >= 2 and len(registered_parts) >= 2:
-            if caller_parts[:2] == registered_parts[:2]:
-                return True
+        if (
+            len(caller_parts) >= 2
+            and len(registered_parts) >= 2
+            and caller_parts[:2] == registered_parts[:2]
+        ):
+            return True
 
         return False
