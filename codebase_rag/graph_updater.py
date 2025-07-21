@@ -5,7 +5,7 @@ from typing import Any
 
 import toml
 from loguru import logger
-from tree_sitter import Node, Parser
+from tree_sitter import Node, Parser, QueryCursor
 
 from codebase_rag.services.graph_service import MemgraphIngestor
 
@@ -267,7 +267,8 @@ class GraphUpdater:
         lang_queries = self.queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
-        captures = lang_queries["functions"].captures(root_node)
+        cursor = QueryCursor(lang_queries["functions"])
+        captures = cursor.captures(root_node)
         func_nodes = captures.get("function", [])
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
@@ -388,7 +389,8 @@ class GraphUpdater:
     ) -> None:
         lang_queries = self.queries[language]
 
-        class_captures = lang_queries["classes"].captures(root_node)
+        class_cursor = QueryCursor(lang_queries["classes"])
+        class_captures = class_cursor.captures(root_node)
         class_nodes = class_captures.get("class", [])
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
@@ -421,7 +423,8 @@ class GraphUpdater:
             if not body_node:
                 continue
 
-            method_captures = lang_queries["functions"].captures(body_node)
+            method_cursor = QueryCursor(lang_queries["functions"])
+            method_captures = method_cursor.captures(body_node)
             method_nodes = method_captures.get("function", [])
             for method_node in method_nodes:
                 if not isinstance(method_node, Node):
@@ -509,7 +512,8 @@ class GraphUpdater:
         lang_queries = self.queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
-        captures = lang_queries["functions"].captures(root_node)
+        cursor = QueryCursor(lang_queries["functions"])
+        captures = cursor.captures(root_node)
         func_nodes = captures.get("function", [])
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
@@ -538,7 +542,8 @@ class GraphUpdater:
     ) -> None:
         lang_queries = self.queries[language]
 
-        class_captures = lang_queries["classes"].captures(root_node)
+        class_cursor = QueryCursor(lang_queries["classes"])
+        class_captures = class_cursor.captures(root_node)
         class_nodes = class_captures.get("class", [])
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
@@ -556,7 +561,8 @@ class GraphUpdater:
             if not body_node:
                 continue
 
-            method_captures = lang_queries["functions"].captures(body_node)
+            method_cursor = QueryCursor(lang_queries["functions"])
+            method_captures = method_cursor.captures(body_node)
             method_nodes = method_captures.get("function", [])
             for method_node in method_nodes:
                 if not isinstance(method_node, Node):
@@ -615,7 +621,8 @@ class GraphUpdater:
         if not calls_query:
             return
 
-        call_captures = calls_query.captures(caller_node)
+        call_cursor = QueryCursor(calls_query)
+        call_captures = call_cursor.captures(caller_node)
         call_nodes = call_captures.get("call", [])
         for call_node in call_nodes:
             if not isinstance(call_node, Node):
