@@ -36,9 +36,8 @@ from .tools.file_writer import FileWriter, create_file_writer_tool
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
 # Style constants
-# Style constants
 ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})  # Orange color for input text
-CONFIRM_EDITS_GLOBALLY = True
+confirm_edits_globally = True
 
 # Edit operation constants
 _EDIT_REQUEST_KEYWORDS = frozenset([
@@ -154,6 +153,55 @@ def is_edit_operation_response(response_text: str) -> bool:
     pattern_match = any(pattern.search(response_lower) for pattern in _FILE_MODIFICATION_PATTERNS)
     
     return tool_usage or content_indicators or pattern_match
+
+
+def _setup_common_initialization(repo_path: str) -> Path:
+    """Common setup logic for both main and optimize functions."""
+    # Logger initialization
+    logger.remove()
+    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    
+    # Temporary directory cleanup
+    project_root = Path(repo_path).resolve()
+    tmp_dir = project_root / ".tmp"
+    if tmp_dir.exists():
+        if tmp_dir.is_dir():
+            shutil.rmtree(tmp_dir)
+        else:
+            tmp_dir.unlink()
+    tmp_dir.mkdir()
+    
+    return project_root
+
+
+def _create_configuration_table(repo_path: str, title: str = "Graph-Code Initializing...", language: str | None = None) -> Table:
+    """Create and return a configuration table."""
+    table = Table(title=f"[bold green]{title}[/bold green]")
+    table.add_column("Configuration", style="cyan")
+    table.add_column("Value", style="magenta")
+
+    # Add language row if provided (for optimization sessions)
+    if language:
+        table.add_row("Target Language", language)
+
+    orchestrator_model = settings.active_orchestrator_model
+    orchestrator_provider = detect_provider_from_model(orchestrator_model)
+    table.add_row("Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})")
+
+    cypher_model = settings.active_cypher_model
+    cypher_provider = detect_provider_from_model(cypher_model)
+    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
+
+    # Show local endpoint if any model is using local provider
+    if orchestrator_provider == "local" or cypher_provider == "local":
+        table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
+    
+    # Show edit confirmation status
+    confirmation_status = "Enabled" if confirm_edits_globally else "Disabled (YOLO Mode)"
+    table.add_row("Edit Confirmation", confirmation_status)
+    table.add_row("Target Repository", repo_path)
+    
+    return table
 
 
 async def run_optimization_loop(
@@ -275,7 +323,7 @@ Remember: Propose changes first, wait for my approval, then implement.
             )
 
             # Check if confirmation is needed for edit operations
-            if CONFIRM_EDITS_GLOBALLY and is_edit_operation_response(response.output):
+            if confirm_edits_globally and is_edit_operation_response(response.output):
                 console.print("\n[bold yellow]⚠️  This optimization has performed file modifications.[/bold yellow]")
                 
                 if not Confirm.ask("[bold cyan]Do you want to keep these optimizations?[/bold cyan]"):
@@ -283,30 +331,6 @@ Remember: Propose changes first, wait for my approval, then implement.
                     await _handle_rejection(rag_agent, message_history, console)
                     first_run = False
                     continue
-                    
-                    # Ask the agent to acknowledge the rejection
-                    # rejection_message = "The user has rejected the optimizations that were implemented. Please acknowledge this and consider reverting the changes if possible."
-                    
-                    # with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
-                    #     rejection_response = await run_with_cancellation(
-                    #         console,
-                    #         rag_agent.run(rejection_message, message_history=message_history),
-                    #     )
-                    
-                    # if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
-                    #     rejection_markdown = Markdown(rejection_response.output)
-                    #     console.print(
-                    #         Panel(
-                    #             rejection_markdown,
-                    #             title="[bold yellow]Response to Rejection[/bold yellow]",
-                    #             border_style="yellow",
-                    #         )
-                    #     )
-                    #     # Only add rejection response to history
-                    #     message_history.extend(rejection_response.new_messages())
-                    
-                    # first_run = False
-                    # continue
                 else:
                     console.print("[bold green]✅ Optimizations approved by user.[/bold green]")
 
@@ -507,7 +531,7 @@ async def run_chat_loop(
 
             # Check if this might be an edit operation and warn user upfront
             might_edit = is_edit_operation_request(question)
-            if CONFIRM_EDITS_GLOBALLY and might_edit:
+            if confirm_edits_globally and might_edit:
                 console.print("\n[bold yellow]⚠️  This request might result in file modifications.[/bold yellow]")
                 if not Confirm.ask("[bold cyan]Do you want to proceed with this request?[/bold cyan]"):
                     console.print("[bold red]❌ Request cancelled by user.[/bold red]")
@@ -539,35 +563,12 @@ async def run_chat_loop(
             )
 
             # Check if the response actually contains edit operations
-            if CONFIRM_EDITS_GLOBALLY and is_edit_operation_response(response.output):
+            if confirm_edits_globally and is_edit_operation_response(response.output):
                 console.print("\n[bold yellow]⚠️  The assistant has performed file modifications.[/bold yellow]")
                 
                 if not Confirm.ask("[bold cyan]Do you want to keep these changes?[/bold cyan]"):
                     console.print("[bold red]❌ User rejected the changes.[/bold red]")
                     await _handle_rejection(rag_agent, message_history, console)
-                    continue
-                    
-                    # Ask the agent to acknowledge and potentially revert
-                    # rejection_message = "The user has rejected the changes that were made. Please acknowledge this and consider if any changes need to be reverted."
-                    
-                    # with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
-                    #     rejection_response = await run_with_cancellation(
-                    #         console,
-                    #         rag_agent.run(rejection_message, message_history=message_history),
-                    #     )
-                    
-                    # if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
-                    #     rejection_markdown = Markdown(rejection_response.output)
-                    #     console.print(
-                    #         Panel(
-                    #             rejection_markdown,
-                    #             title="[bold yellow]Response to Rejection[/bold yellow]",
-                    #             border_style="yellow",
-                    #         )
-                    #     )
-                    #     # Only add rejection response to history, not the original rejected response
-                    #     message_history.extend(rejection_response.new_messages())
-                    
                     continue
                 else:
                     console.print("[bold green]✅ Changes accepted by user.[/bold green]")
@@ -678,41 +679,9 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
 
 async def main_async(repo_path: str) -> None:
     """Initializes services and runs the main application loop."""
-    logger.remove()
-    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    project_root = _setup_common_initialization(repo_path)
 
-    # Clean up temp directory on startup
-    project_root = Path(repo_path).resolve()
-    tmp_dir = project_root / ".tmp"
-    if tmp_dir.exists():
-        if tmp_dir.is_dir():
-            shutil.rmtree(tmp_dir)
-        else:
-            tmp_dir.unlink()
-    tmp_dir.mkdir()
-
-    table = Table(title="[bold green]Graph-Code Initializing...[/bold green]")
-    table.add_column("Configuration", style="cyan")
-    table.add_column("Value", style="magenta")
-
-    orchestrator_model = settings.active_orchestrator_model
-    orchestrator_provider = detect_provider_from_model(orchestrator_model)
-    table.add_row(
-        "Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})"
-    )
-
-    cypher_model = settings.active_cypher_model
-    cypher_provider = detect_provider_from_model(cypher_model)
-    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
-
-    # Show local endpoint if any model is using local provider
-    if orchestrator_provider == "local" or cypher_provider == "local":
-        table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
-    
-    # Show edit confirmation status with better labeling
-    confirmation_status = "Enabled" if CONFIRM_EDITS_GLOBALLY else "Disabled (YOLO Mode)"
-    table.add_row("Edit Confirmation", confirmation_status)
-    table.add_row("Target Repository", repo_path)
+    table = _create_configuration_table(repo_path)
     console.print(table)
 
     with MemgraphIngestor(
@@ -764,10 +733,10 @@ def start(
     ),
 ) -> None:
     """Starts the Codebase RAG CLI."""
-    global CONFIRM_EDITS_GLOBALLY
+    global confirm_edits_globally
     
     # Set confirmation mode based on flag
-    CONFIRM_EDITS_GLOBALLY = not no_confirm
+    confirm_edits_globally = not no_confirm
     
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
@@ -857,7 +826,7 @@ async def main_optimize_async(
     cypher_model: str | None = None,
 ) -> None:
     """Async wrapper for the optimization functionality."""
-    project_root = Path(target_repo_path).resolve()
+    project_root = _setup_common_initialization(target_repo_path)
 
     _update_model_settings(orchestrator_model, cypher_model)
 
@@ -865,35 +834,12 @@ async def main_optimize_async(
         f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
     )
 
-    # Clean up temp directory on startup
-    tmp_dir = project_root / ".tmp"
-    if tmp_dir.exists():
-        if tmp_dir.is_dir():
-            shutil.rmtree(tmp_dir)
-        else:
-            tmp_dir.unlink()
-    tmp_dir.mkdir()
-
-    # Display configuration
-    table = Table(title="[bold green]Optimization Session Configuration[/bold green]")
-    table.add_column("Setting", style="cyan")
-    table.add_column("Value", style="magenta")
-    table.add_row("Target Language", language)
-    table.add_row("Repository Path", str(project_root))
-
-    orchestrator_model = settings.active_orchestrator_model
-    orchestrator_provider = detect_provider_from_model(orchestrator_model)
-    table.add_row(
-        "Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})"
+    # Display configuration with language included
+    table = _create_configuration_table(
+        str(project_root), 
+        "Optimization Session Configuration", 
+        language
     )
-
-    cypher_model = settings.active_cypher_model
-    cypher_provider = detect_provider_from_model(cypher_model)
-    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
-    
-    # Show edit confirmation status with better labeling
-    confirmation_status = "Enabled" if CONFIRM_EDITS_GLOBALLY else "Disabled (YOLO Mode)"
-    table.add_row("Edit Confirmation", confirmation_status)
     console.print(table)
 
     with MemgraphIngestor(
@@ -933,10 +879,10 @@ def optimize(
     ),
 ) -> None:
     """Optimize a codebase for a specific programming language."""
-    global CONFIRM_EDITS_GLOBALLY
+    global confirm_edits_globally
     
     # Set confirmation mode based on flag
-    CONFIRM_EDITS_GLOBALLY = not no_confirm
+    confirm_edits_globally = not no_confirm
     
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
