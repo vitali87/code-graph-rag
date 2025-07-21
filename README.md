@@ -190,15 +190,9 @@ python -m codebase_rag.main start --repo-path /path/to/your/repo
 
 You can switch between cloud and local models at runtime using CLI arguments:
 
-**Use Local Models:**
-```bash
-python -m codebase_rag.main start --repo-path /path/to/your/repo --llm-provider local
-```
 
-**Use Cloud Models:**
-```bash
-python -m codebase_rag.main start --repo-path /path/to/your/repo --llm-provider gemini
-```
+
+
 
 **Specify Custom Models:**
 ```bash
@@ -351,7 +345,6 @@ python -m codebase_rag.main optimize rust \
 The agent will incorporate the guidance from your reference documents when suggesting optimizations, ensuring they align with your project's standards and architectural decisions.
 
 **Common CLI Arguments:**
-- `--llm-provider`: Choose `gemini` or `local` models
 - `--orchestrator-model`: Specify model for main operations
 - `--cypher-model`: Specify model for graph queries
 - `--repo-path`: Path to repository (defaults to current directory)
