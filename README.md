@@ -539,7 +539,7 @@ Calls: ['invocation_expression']
 # List all configured languages
 python -m codebase_rag.tools.language list-languages
 
-# Remove a language (removes from config, but manual cleanup required for git submodule)
+# Remove a language (this also removes the git submodule unless --keep-submodule is specified)
 python -m codebase_rag.tools.language remove-language <language-name>
 ```
 
