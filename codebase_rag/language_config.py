@@ -24,7 +24,12 @@ class LanguageConfig:
     )  # e.g., ["__init__.py"] for Python
 
 
-# Language configurations
+######################## Language configurations ###############################
+# Automatic generation might add types that are too broad or inaccurate.
+# You have to manually check and adjust the configurations after running the
+# automatic generation.
+################################################################################
+
 LANGUAGE_CONFIGS = {
     "python": LanguageConfig(
         name="python",
@@ -139,26 +144,10 @@ LANGUAGE_CONFIGS = {
             "method_declaration",
         ],
         class_node_types=[
-            "reftype_expression",
-            "anonymous_object_creation_expression",
-            "type_pattern",
-            "predefined_type",
             "class_declaration",
-            "typeof_expression",
-            "array_type",
-            "implicit_type",
-            "scoped_type",
-            "tuple_type",
             "struct_declaration",
-            "pointer_type",
-            "implicit_array_creation_expression",
             "enum_declaration",
             "interface_declaration",
-            "implicit_object_creation_expression",
-            "object_creation_expression",
-            "ref_type",
-            "implicit_stackalloc_expression",
-            "nullable_type",
         ],
         module_node_types=["compilation_unit"],
         call_node_types=["invocation_expression"],
@@ -173,17 +162,10 @@ LANGUAGE_CONFIGS = {
             "arrow_function",
         ],
         class_node_types=[
-            "named_type",
-            "intersection_type",
-            "optional_type",
             "trait_declaration",
             "enum_declaration",
             "interface_declaration",
-            "object_creation_expression",
             "class_declaration",
-            "disjunctive_normal_form_type",
-            "primitive_type",
-            "union_type",
         ],
         module_node_types=["program"],
         call_node_types=[
