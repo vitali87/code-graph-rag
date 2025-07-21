@@ -146,11 +146,8 @@ LANGUAGE_CONFIGS = {
         class_node_types=[
             "class_declaration",
             "struct_declaration",
-            "pointer_type",
             "enum_declaration",
             "interface_declaration",
-            "object_creation_expression",
-            "ref_type",
         ],
         module_node_types=["compilation_unit"],
         call_node_types=["invocation_expression"],
