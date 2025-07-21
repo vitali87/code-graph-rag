@@ -421,14 +421,13 @@ def start(
         console.print("[bold green]Graph update completed![/bold green]")
         return
 
-    if not update_graph:
-        # If not updating the graph, just start the chat
-        try:
-            asyncio.run(main_async(str(target_repo_path)))
-        except KeyboardInterrupt:
-            console.print("\n[bold red]Application terminated by user.[/bold red]")
-        except ValueError as e:
-            console.print(f"[bold red]Startup Error: {e}[/bold red]")
+    # If not updating the graph, just start the chat
+    try:
+        asyncio.run(main_async(str(target_repo_path)))
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Application terminated by user.[/bold red]")
+    except ValueError as e:
+        console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
 @app.command()
