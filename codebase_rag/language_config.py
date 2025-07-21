@@ -86,7 +86,6 @@ LANGUAGE_CONFIGS = {
             "class_definition",
             "object_definition",
             "trait_definition",
-            "case_class_definition",
         ],
         module_node_types=["compilation_unit"],
         call_node_types=[
@@ -126,6 +125,45 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["translation_unit", "namespace_definition"],
         call_node_types=["call_expression"],
+    ),
+    "c-sharp": LanguageConfig(
+        name="c-sharp",
+        file_extensions=["cs"],
+        function_node_types=[
+            "constructor_declaration",
+            "destructor_declaration",
+            "method_declaration",
+        ],
+        class_node_types=[
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "struct_declaration",
+        ],
+        module_node_types=[
+            "compilation_unit",
+            "file_scoped_namespace_declaration",
+            "namespace_declaration",
+        ],
+        call_node_types=["invocation_expression"],
+    ),
+    "php": LanguageConfig(
+        name="php",
+        file_extensions=["php"],
+        function_node_types=["method_declaration"],
+        class_node_types=[
+            "enum_declaration",
+            "class_declaration",
+            "enum_declaration_list",
+            "interface_declaration",
+        ],
+        module_node_types=["program"],
+        call_node_types=[
+            "nullsafe_member_call_expression",
+            "scoped_call_expression",
+            "function_call_expression",
+            "member_call_expression",
+        ],
     ),
 }
 
