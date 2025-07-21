@@ -75,7 +75,7 @@ def add_grammar(
         )
         click.echo(f"✅ Successfully added submodule at {grammar_path}")
     except subprocess.CalledProcessError as e:
-        error_output = e.stderr if e.stderr else str(e)
+        error_output = e.stderr or str(e)
         if "already exists in the index" in error_output:
             click.echo(
                 f"⚠️  Submodule already exists at {grammar_path}. Continuing with configuration..."
