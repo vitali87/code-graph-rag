@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 
 import click
@@ -100,8 +101,6 @@ def add_grammar(
                 # Clean up .git/modules directory
                 modules_path = f".git/modules/{grammar_path}"
                 if os.path.exists(modules_path):
-                    import shutil
-
                     shutil.rmtree(modules_path)
 
                 click.echo("   -> Re-adding submodule...")
