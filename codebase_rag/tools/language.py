@@ -38,6 +38,16 @@ def add_grammar(
         grammar_url = f"https://github.com/tree-sitter/tree-sitter-{language_name}"
         click.echo(f"🔍 Using default tree-sitter URL: {grammar_url}")
 
+    # Security check for custom URLs
+    if grammar_url and "github.com/tree-sitter/tree-sitter" not in grammar_url:
+        click.secho(
+            "⚠️ WARNING: You are adding a grammar from a custom URL. This may execute code from the repository. Only proceed if you trust the source.",
+            fg="yellow",
+            bold=True,
+        )
+        if not click.confirm("Do you want to continue?"):
+            return
+
     # Step 1: Clone the grammar into the grammars/ directory as a Git submodule
     grammars_dir = "grammars"
     if not os.path.exists(grammars_dir):
