@@ -186,35 +186,18 @@ Start the interactive RAG CLI:
 python -m codebase_rag.main start --repo-path /path/to/your/repo
 ```
 
-### Runtime Model Switching
-
-You can switch between cloud and local models at runtime using CLI arguments:
-
-**Use Local Models:**
-```bash
-python -m codebase_rag.main start --repo-path /path/to/your/repo --llm-provider local
-```
-
-**Use Cloud Models:**
-```bash
-python -m codebase_rag.main start --repo-path /path/to/your/repo --llm-provider gemini
-```
-
 **Specify Custom Models:**
 ```bash
 # Use specific local models
 python -m codebase_rag.main start --repo-path /path/to/your/repo \
-  --llm-provider local \
   --orchestrator-model llama3.1 \
   --cypher-model codellama
 
 # Use specific Gemini models
 python -m codebase_rag.main start --repo-path /path/to/your/repo \
-  --llm-provider gemini \
   --orchestrator-model gemini-2.0-flash-thinking-exp-01-21 \
   --cypher-model gemini-2.5-flash-lite-preview-06-17
 ```
-
 
 Example queries (works across all supported languages):
 - "Show me all classes that contain 'user' in their name"
@@ -297,7 +280,6 @@ python -m codebase_rag.main optimize python \
 ```bash
 python -m codebase_rag.main optimize javascript \
   --repo-path /path/to/frontend \
-  --llm-provider gemini \
   --orchestrator-model gemini-2.0-flash-thinking-exp-01-21
 ```
 
@@ -351,7 +333,6 @@ python -m codebase_rag.main optimize rust \
 The agent will incorporate the guidance from your reference documents when suggesting optimizations, ensuring they align with your project's standards and architectural decisions.
 
 **Common CLI Arguments:**
-- `--llm-provider`: Choose `gemini` or `local` models
 - `--orchestrator-model`: Specify model for main operations
 - `--cypher-model`: Specify model for graph queries
 - `--repo-path`: Path to repository (defaults to current directory)
