@@ -23,6 +23,6 @@ clean: ## Clean up build artifacts and cache
 	rm -rf .pytest_cache/ .mypy_cache/ .ruff_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -name "*.pyc" -delete
-build-grammars:
-	git submodule update --init --recursive
+build-grammars: ## Build grammar submodules
+	git submodule update --init --recursive --depth 1
 	@echo "Grammars built!"
