@@ -18,7 +18,7 @@
 </p>
 </div>
 
-# Graph-Code: A Multi-Language Graph-Based RAG System
+# Graph-Code: A Multi-Language Graph-Based AI Assistant
 
 An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
@@ -539,7 +539,7 @@ Calls: ['invocation_expression']
 # List all configured languages
 python -m codebase_rag.tools.language list-languages
 
-# Remove a language (removes from config, but manual cleanup required for git submodule)
+# Remove a language (this also removes the git submodule unless --keep-submodule is specified)
 python -m codebase_rag.tools.language remove-language <language-name>
 ```
 

@@ -166,8 +166,7 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
     available_languages = []
 
     for lang_name, lang_config in LANGUAGE_CONFIGS.items():
-        lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
-        if lang_lib:
+        if lang_lib := LANGUAGE_LIBRARIES.get(lang_name):
             try:
                 language = Language(lang_lib())
                 parser = Parser(language)
