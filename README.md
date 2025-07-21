@@ -471,9 +471,106 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 - **C++**: Functions, classes, structs, and methods
 
 
-### Language Configuration
+### Adding New Languages
 
-The system uses a configuration-driven approach for language support. Each language is defined in `codebase_rag/language_config.py`.
+Graph-Code makes it easy to add support for any language that has a Tree-sitter grammar. The system automatically handles grammar compilation and integration.
+
+#### Quick Start: Add a Language
+
+Use the built-in language management tool to add any Tree-sitter supported language:
+
+```bash
+# Add a language using the standard tree-sitter repository
+python -m codebase_rag.tools.language add-grammar <language-name>
+
+# Examples:
+python -m codebase_rag.tools.language add-grammar c-sharp
+python -m codebase_rag.tools.language add-grammar php
+python -m codebase_rag.tools.language add-grammar ruby
+python -m codebase_rag.tools.language add-grammar kotlin
+```
+
+#### Custom Grammar Repositories
+
+For languages hosted outside the standard tree-sitter organization:
+
+```bash
+# Add a language from a custom repository
+python -m codebase_rag.tools.language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+```
+
+#### What Happens Automatically
+
+When you add a language, the tool automatically:
+
+1. **Downloads the Grammar**: Clones the tree-sitter grammar repository as a git submodule
+2. **Detects Configuration**: Auto-extracts language metadata from `tree-sitter.json`
+3. **Analyzes Node Types**: Automatically identifies AST node types for:
+   - Functions/methods (`method_declaration`, `function_definition`, etc.)
+   - Classes/structs (`class_declaration`, `struct_declaration`, etc.)
+   - Modules/files (`compilation_unit`, `source_file`, etc.)
+   - Function calls (`call_expression`, `method_invocation`, etc.)
+4. **Compiles Bindings**: Builds Python bindings from the grammar source
+5. **Updates Configuration**: Adds the language to `codebase_rag/language_config.py`
+6. **Enables Parsing**: Makes the language immediately available for codebase analysis
+
+#### Example: Adding C# Support
+
+```bash
+$ python -m codebase_rag.tools.language add-grammar c-sharp
+🔍 Using default tree-sitter URL: https://github.com/tree-sitter/tree-sitter-c-sharp
+🔄 Adding submodule from https://github.com/tree-sitter/tree-sitter-c-sharp...
+✅ Successfully added submodule at grammars/tree-sitter-c-sharp
+Auto-detected language: c-sharp
+Auto-detected file extensions: ['cs']
+Auto-detected node types:
+Functions: ['destructor_declaration', 'method_declaration', 'constructor_declaration']
+Classes: ['struct_declaration', 'enum_declaration', 'interface_declaration', 'class_declaration']
+Modules: ['compilation_unit', 'file_scoped_namespace_declaration', 'namespace_declaration']
+Calls: ['invocation_expression']
+
+✅ Language 'c-sharp' has been added to the configuration!
+📝 Updated codebase_rag/language_config.py
+```
+
+#### Managing Languages
+
+```bash
+# List all configured languages
+python -m codebase_rag.tools.language list-languages
+
+# Remove a language (this also removes the git submodule unless --keep-submodule is specified)
+python -m codebase_rag.tools.language remove-language <language-name>
+```
+
+#### Language Configuration
+
+The system uses a configuration-driven approach for language support. Each language is defined in `codebase_rag/language_config.py` with the following structure:
+
+```python
+"language-name": LanguageConfig(
+    name="language-name",
+    file_extensions=[".ext1", ".ext2"],
+    function_node_types=["function_declaration", "method_declaration"],
+    class_node_types=["class_declaration", "struct_declaration"],
+    module_node_types=["compilation_unit", "source_file"],
+    call_node_types=["call_expression", "method_invocation"],
+),
+```
+
+#### Troubleshooting
+
+**Grammar not found**: If the automatic URL doesn't work, use a custom URL:
+```bash
+python -m codebase_rag.tools.language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+```
+
+**Version incompatibility**: If you get "Incompatible Language version" errors, update your tree-sitter package:
+```bash
+uv add tree-sitter@latest
+```
+
+**Missing node types**: The tool automatically detects common node patterns, but you can manually adjust the configuration in `language_config.py` if needed.
 
 ## 📦 Building a binary
 

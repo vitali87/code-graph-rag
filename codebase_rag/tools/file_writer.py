@@ -56,6 +56,11 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
     async def create_new_file(file_path: str, content: str) -> FileCreationResult:
         """
         Creates a new file with the specified content.
+
+        IMPORTANT: Before using this tool, you MUST check if the file already exists using
+        the file reader or directory listing tools. If the file exists, use edit_existing_file
+        instead to preserve existing content and show diffs.
+
         If the file already exists, it will be completely overwritten WITHOUT showing any diff.
         Use this ONLY for creating entirely new files, not for modifying existing ones.
         For modifying existing files with diff preview, use edit_existing_file instead.
@@ -64,5 +69,5 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
 
     return Tool(
         function=create_new_file,
-        description="Creates a new file with content. Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications.",
+        description="Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications.",
     )

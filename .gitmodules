@@ -1,0 +1,9 @@
+[submodule "grammars/tree-sitter-c-sharp"]
+	path = grammars/tree-sitter-c-sharp
+	url = https://github.com/tree-sitter/tree-sitter-c-sharp
+[submodule "grammars/tree-sitter-php"]
+	path = grammars/tree-sitter-php
+	url = https://github.com/tree-sitter/tree-sitter-php
+[submodule "grammars/tree-sitter-lua"]
+	path = grammars/tree-sitter-lua
+	url = https://github.com/tree-sitter-grammars/tree-sitter-lua

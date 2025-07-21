@@ -5,7 +5,7 @@ from typing import Any
 
 import toml
 from loguru import logger
-from tree_sitter import Node, Parser
+from tree_sitter import Node, Parser, QueryCursor
 
 from codebase_rag.services.graph_service import MemgraphIngestor
 
@@ -267,8 +267,12 @@ class GraphUpdater:
         lang_queries = self.queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
-        captures = lang_queries["functions"].captures(root_node)
+        query = lang_queries["functions"]
+        cursor = QueryCursor(query)
+        captures = cursor.captures(root_node)
+
         func_nodes = captures.get("function", [])
+
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
                 logger.warning(
@@ -285,14 +289,10 @@ class GraphUpdater:
             if text is None:
                 continue
             func_name = text.decode("utf8")
-            func_qn = self._build_nested_qualified_name(
-                func_node, module_qn, func_name, lang_config
-            )
+            func_qn = f"{module_qn}.{func_name}"
 
-            if not func_qn:
-                continue
-
-            props: dict[str, Any] = {
+            # Extract function properties
+            func_props: dict[str, Any] = {
                 "qualified_name": func_qn,
                 "name": func_name,
                 "decorators": [],
@@ -301,16 +301,14 @@ class GraphUpdater:
                 "docstring": self._get_docstring(func_node),
             }
             logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
-            self.ingestor.ensure_node_batch("Function", props)
+            self.ingestor.ensure_node_batch("Function", func_props)
 
             self.function_registry[func_qn] = "Function"
             self.simple_name_lookup[func_name].add(func_qn)
 
-            parent_type, parent_qn = self._determine_function_parent(
-                func_node, module_qn, lang_config
-            )
+            # Link Function to Module
             self.ingestor.ensure_relationship_batch(
-                (parent_type, "qualified_name", parent_qn),
+                ("Module", "qualified_name", module_qn),
                 "DEFINES",
                 ("Function", "qualified_name", func_qn),
             )
@@ -388,8 +386,11 @@ class GraphUpdater:
     ) -> None:
         lang_queries = self.queries[language]
 
-        class_captures = lang_queries["classes"].captures(root_node)
-        class_nodes = class_captures.get("class", [])
+        query = lang_queries["classes"]
+        cursor = QueryCursor(query)
+        captures = cursor.captures(root_node)
+        class_nodes = captures.get("class", [])
+
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
@@ -421,7 +422,9 @@ class GraphUpdater:
             if not body_node:
                 continue
 
-            method_captures = lang_queries["functions"].captures(body_node)
+            method_query = lang_queries["functions"]
+            method_cursor = QueryCursor(method_query)
+            method_captures = method_cursor.captures(body_node)
             method_nodes = method_captures.get("function", [])
             for method_node in method_nodes:
                 if not isinstance(method_node, Node):
@@ -509,7 +512,9 @@ class GraphUpdater:
         lang_queries = self.queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
-        captures = lang_queries["functions"].captures(root_node)
+        query = lang_queries["functions"]
+        cursor = QueryCursor(query)
+        captures = cursor.captures(root_node)
         func_nodes = captures.get("function", [])
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
@@ -538,8 +543,11 @@ class GraphUpdater:
     ) -> None:
         lang_queries = self.queries[language]
 
-        class_captures = lang_queries["classes"].captures(root_node)
-        class_nodes = class_captures.get("class", [])
+        query = lang_queries["classes"]
+        cursor = QueryCursor(query)
+        captures = cursor.captures(root_node)
+        class_nodes = captures.get("class", [])
+
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
@@ -556,7 +564,9 @@ class GraphUpdater:
             if not body_node:
                 continue
 
-            method_captures = lang_queries["functions"].captures(body_node)
+            method_query = lang_queries["functions"]
+            method_cursor = QueryCursor(method_query)
+            method_captures = method_cursor.captures(body_node)
             method_nodes = method_captures.get("function", [])
             for method_node in method_nodes:
                 if not isinstance(method_node, Node):
@@ -615,8 +625,10 @@ class GraphUpdater:
         if not calls_query:
             return
 
-        call_captures = calls_query.captures(caller_node)
-        call_nodes = call_captures.get("call", [])
+        cursor = QueryCursor(calls_query)
+        captures = cursor.captures(caller_node)
+        call_nodes = captures.get("call", [])
+
         for call_node in call_nodes:
             if not isinstance(call_node, Node):
                 continue
@@ -677,8 +689,11 @@ class GraphUpdater:
         caller_parts = caller_module_qn.split(".")
         registered_parts = registered_qn.split(".")
 
-        if len(caller_parts) >= 2 and len(registered_parts) >= 2:
-            if caller_parts[:2] == registered_parts[:2]:
-                return True
+        if (
+            len(caller_parts) >= 2
+            and len(registered_parts) >= 2
+            and caller_parts[:2] == registered_parts[:2]
+        ):
+            return True
 
         return False
