@@ -16,6 +16,17 @@ class MemgraphIngestor:
         self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, Any]]] = []
         self.relationship_buffer: list[tuple[tuple, str, tuple, dict | None]] = []
+        self.unique_constraints = {
+            "Project": "name",
+            "Package": "qualified_name",
+            "Folder": "path",
+            "Module": "qualified_name",
+            "Class": "qualified_name",
+            "Function": "qualified_name",
+            "Method": "qualified_name",
+            "File": "path",
+            "ExternalPackage": "name",
+        }
 
     def __enter__(self) -> "MemgraphIngestor":
         logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
@@ -84,18 +95,7 @@ class MemgraphIngestor:
 
     def ensure_constraints(self) -> None:
         logger.info("Ensuring constraints...")
-        constraints = {
-            "Project": "name",
-            "Package": "qualified_name",
-            "Folder": "path",
-            "Module": "qualified_name",
-            "Class": "qualified_name",
-            "Function": "qualified_name",
-            "Method": "qualified_name",
-            "File": "path",
-            "ExternalPackage": "name",
-        }
-        for label, prop in constraints.items():
+        for label, prop in self.unique_constraints.items():
             try:
                 self._execute_query(
                     f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
@@ -105,22 +105,30 @@ class MemgraphIngestor:
         logger.info("Constraints checked/created.")
 
     def ensure_node_batch(self, label: str, properties: dict[str, Any]) -> None:
+        """Adds a node to the buffer."""
         self.node_buffer.append((label, properties))
-        if len(self.node_buffer) >= self.batch_size:
-            self.flush_nodes()
 
     def ensure_relationship_batch(
         self,
-        from_node: tuple,
+        from_spec: tuple[str, str, Any],
         rel_type: str,
-        to_node: tuple,
+        to_spec: tuple[str, str, Any],
         properties: dict[str, Any] | None = None,
     ) -> None:
-        self.relationship_buffer.append((from_node, rel_type, to_node, properties))
-        if len(self.relationship_buffer) >= self.batch_size:
-            self.flush_relationships()
+        """Adds a relationship to the buffer."""
+        from_label, from_key, from_val = from_spec
+        to_label, to_key, to_val = to_spec
+        self.relationship_buffer.append(
+            (
+                (from_label, from_key, from_val),
+                rel_type,
+                (to_label, to_key, to_val),
+                properties,
+            )
+        )
 
     def flush_nodes(self) -> None:
+        """Flushes the buffered nodes to the database."""
         if not self.node_buffer:
             return
 
@@ -130,7 +138,13 @@ class MemgraphIngestor:
         for label, props_list in nodes_by_label.items():
             if not props_list:
                 continue
-            id_key = next(iter(props_list[0]))
+            id_key = self.unique_constraints.get(label)
+            if not id_key:
+                logger.warning(
+                    f"No unique constraint defined for label '{label}'. Skipping flush."
+                )
+                continue
+
             prop_keys = list(props_list[0].keys())
             set_clause = ", ".join([f"n.{key} = row.{key}" for key in prop_keys])
             query = (
