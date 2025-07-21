@@ -186,29 +186,18 @@ Start the interactive RAG CLI:
 python -m codebase_rag.main start --repo-path /path/to/your/repo
 ```
 
-### Runtime Model Switching
-
-You can switch between cloud and local models at runtime using CLI arguments:
-
-
-
-
-
 **Specify Custom Models:**
 ```bash
 # Use specific local models
 python -m codebase_rag.main start --repo-path /path/to/your/repo \
-  --llm-provider local \
   --orchestrator-model llama3.1 \
   --cypher-model codellama
 
 # Use specific Gemini models
 python -m codebase_rag.main start --repo-path /path/to/your/repo \
-  --llm-provider gemini \
   --orchestrator-model gemini-2.0-flash-thinking-exp-01-21 \
   --cypher-model gemini-2.5-flash-lite-preview-06-17
 ```
-
 
 Example queries (works across all supported languages):
 - "Show me all classes that contain 'user' in their name"
@@ -291,7 +280,6 @@ python -m codebase_rag.main optimize python \
 ```bash
 python -m codebase_rag.main optimize javascript \
   --repo-path /path/to/frontend \
-  --llm-provider gemini \
   --orchestrator-model gemini-2.0-flash-thinking-exp-01-21
 ```
 
