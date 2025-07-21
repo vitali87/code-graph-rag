@@ -24,7 +24,12 @@ class LanguageConfig:
     )  # e.g., ["__init__.py"] for Python
 
 
-# Language configurations
+######################## Language configurations ###############################
+# Automatic generation might add types that are too broad or inaccurate.
+# You have to manually check and adjust the configurations after running the
+# automatic generation.
+################################################################################
+
 LANGUAGE_CONFIGS = {
     "python": LanguageConfig(
         name="python",
