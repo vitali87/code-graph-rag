@@ -1,9 +1,11 @@
 import json
 import os
 import subprocess
-from dataclasses import asdict
 
 import click
+import diff_match_patch as dmp
+from rich.console import Console
+from rich.table import Table
 
 from ..language_config import LANGUAGE_CONFIGS, LanguageConfig
 
@@ -105,7 +107,11 @@ def add_grammar(
         if "grammars" in tree_sitter_config and len(tree_sitter_config["grammars"]) > 0:
             grammar_info = tree_sitter_config["grammars"][0]
             detected_name = grammar_info.get("name", grammar_dir_name)
-            file_extension = grammar_info.get("file-types", [])
+            raw_extensions = grammar_info.get("file-types", [])
+            # Ensure all extensions start with a dot
+            file_extension = [
+                ext if ext.startswith(".") else f".{ext}" for ext in raw_extensions
+            ]
 
             # Use provided language_name or fall back to detected name
             if not language_name:
@@ -156,25 +162,25 @@ def add_grammar(
         click.echo(f"Functions: {function_nodes}")
         click.echo(f"Classes: {class_nodes}")
 
-        selected_function_nodes = [
+        functions = [
             node.strip()
             for node in click.prompt(
                 "Select nodes representing FUNCTIONS (comma-separated)", type=str
             ).split(",")
         ]
-        selected_class_nodes = [
+        classes = [
             node.strip()
             for node in click.prompt(
                 "Select nodes representing CLASSES (comma-separated)", type=str
             ).split(",")
         ]
-        selected_module_nodes = [
+        modules = [
             node.strip()
             for node in click.prompt(
                 "Select nodes representing MODULES (comma-separated)", type=str
             ).split(",")
         ]
-        selected_call_nodes = [
+        calls = [
             node.strip()
             for node in click.prompt(
                 "Select nodes representing FUNCTION CALLS (comma-separated)", type=str
@@ -203,75 +209,153 @@ def add_grammar(
 
             extract_types(node_types)
 
-            # Common patterns for different node types
-            function_patterns = [
-                "method_declaration",
-                "function_declaration",
-                "constructor_declaration",
-                "destructor_declaration",
-            ]
-            class_patterns = [
-                "class_declaration",
-                "interface_declaration",
-                "struct_declaration",
-                "enum_declaration",
-            ]
-            module_patterns = [
-                "compilation_unit",
-                "source_file",
-                "program",
-                "namespace_declaration",
-            ]
-            call_patterns = [
-                "call_expression",
-                "method_invocation",
-                "invocation_expression",
-            ]
+            # Use tree-sitter's official semantic hierarchy
+            def extract_semantic_categories(
+                node_types_json: list[dict],
+            ) -> dict[str, list[str]]:
+                """Extract semantic categories from tree-sitter's official hierarchy."""
+                categories: dict[str, list[str]] = {}
 
-            # Match patterns to actual node types
-            selected_function_nodes = [
-                name
-                for name in all_node_names
-                if any(pattern in name for pattern in function_patterns)
-            ]
-            selected_class_nodes = [
-                name
-                for name in all_node_names
-                if any(pattern in name for pattern in class_patterns)
-            ]
-            selected_module_nodes = [
-                name
-                for name in all_node_names
-                if any(pattern in name for pattern in module_patterns)
-            ]
-            selected_call_nodes = [
-                name
-                for name in all_node_names
-                if any(pattern in name for pattern in call_patterns)
-            ]
+                for node in node_types_json:
+                    if isinstance(node, dict) and "type" in node:
+                        node_type = node["type"]
 
-            click.echo("Auto-detected node types:")
-            click.echo(f"Functions: {selected_function_nodes}")
-            click.echo(f"Classes: {selected_class_nodes}")
-            click.echo(f"Modules: {selected_module_nodes}")
-            click.echo(f"Calls: {selected_call_nodes}")
+                        # If this node has subtypes, it's a semantic category
+                        if "subtypes" in node:
+                            subtypes = [
+                                subtype["type"]
+                                for subtype in node["subtypes"]
+                                if "type" in subtype
+                            ]
+                            if node_type in categories:
+                                categories[node_type].extend(subtypes)
+                            else:
+                                categories[node_type] = subtypes
+
+                # Remove duplicates
+                for category in categories:
+                    categories[category] = list(set(categories[category]))
+
+                return categories
+
+            semantic_categories = extract_semantic_categories(node_types)
+
+            # Debug: show all available node types
+            click.echo(f"📊 Found {len(all_node_names)} total node types in grammar")
+
+            # Show tree-sitter's official semantic categories
+            click.echo("🌳 Tree-sitter semantic categories:")
+            for category, subtypes in semantic_categories.items():
+                click.echo(
+                    f"  {category}: {subtypes[:5]}{'...' if len(subtypes) > 5 else ''} ({len(subtypes)} total)"
+                )
+
+            # Map to our simplified categories - search ALL semantic categories
+            functions = []
+            classes = []
+            modules = []
+            calls = []
+
+            # Search ALL semantic categories for relevant types
+            for category, subtypes in semantic_categories.items():
+                for subtype in subtypes:
+                    subtype_lower = subtype.lower()
+
+                    # Function-like patterns
+                    if (
+                        any(
+                            kw in subtype_lower
+                            for kw in [
+                                "function",
+                                "method",
+                                "constructor",
+                                "destructor",
+                                "lambda",
+                                "arrow_function",
+                                "anonymous_function",
+                                "closure",
+                            ]
+                        )
+                        and "call" not in subtype_lower
+                    ):
+                        functions.append(subtype)
+
+                    # Class-like patterns
+                    elif (
+                        any(
+                            kw in subtype_lower
+                            for kw in [
+                                "class",
+                                "interface",
+                                "struct",
+                                "enum",
+                                "trait",
+                                "object",
+                                "type",
+                                "impl",
+                                "union",
+                            ]
+                        )
+                        and "access" not in subtype_lower
+                        and "call" not in subtype_lower
+                    ):
+                        classes.append(subtype)
+
+                    # Call patterns
+                    elif any(
+                        kw in subtype_lower for kw in ["call", "invoke", "invocation"]
+                    ):
+                        calls.append(subtype)
+
+                    # Module patterns
+                    elif any(
+                        kw in subtype_lower
+                        for kw in [
+                            "program",
+                            "source_file",
+                            "compilation_unit",
+                            "module",
+                            "chunk",
+                        ]
+                    ):
+                        modules.append(subtype)
+
+            # Also check root nodes for modules
+            root_nodes = [
+                node["type"]
+                for node in node_types
+                if isinstance(node, dict) and node.get("root")
+            ]
+            modules.extend(root_nodes)
+
+            # Remove duplicates
+            functions = list(set(functions))
+            classes = list(set(classes))
+            modules = list(set(modules))
+            calls = list(set(calls))
+
+            click.echo("\n🎯 Mapped to our categories:")
+            click.echo(f"Functions: {functions}")
+            click.echo(f"Classes: {classes}")
+            click.echo(f"Modules: {modules}")
+            click.echo(f"Calls: {calls}")
 
         except Exception as e:
             click.echo(f"Error parsing node-types.json: {e}")
             # Fallback to manual input
-            selected_function_nodes = ["method_declaration"]
-            selected_class_nodes = ["class_declaration"]
-            selected_module_nodes = ["compilation_unit"]
-            selected_call_nodes = ["invocation_expression"]
+            functions = ["method_declaration"]
+            classes = ["class_declaration"]
+            modules = ["compilation_unit"]
+            calls = ["invocation_expression"]
 
     # Step 4: Generate LanguageConfig object
     new_language_config = LanguageConfig(
         name=language_name,
         file_extensions=file_extension,
-        function_node_types=selected_function_nodes,
-        class_node_types=selected_class_nodes,
-        module_node_types=selected_module_nodes,
-        call_node_types=selected_call_nodes,
+        function_node_types=functions,
+        class_node_types=classes,
+        module_node_types=modules,
+        call_node_types=calls,
     )
 
     LANGUAGE_CONFIGS[language_name] = new_language_config
@@ -310,6 +394,30 @@ def add_grammar(
                 f"\n✅ Language '{language_name}' has been added to the configuration!"
             )
             click.echo(f"📝 Updated {config_file_path}")
+
+            # User verification note
+            click.echo()
+            click.echo(
+                click.style(
+                    "📋 Please review the detected node types:", bold=True, fg="yellow"
+                )
+            )
+            click.echo("   The auto-detection is good but may need manual adjustments.")
+            click.echo(f"   Edit the configuration in: {config_file_path}")
+            click.echo()
+            click.echo("🎯 Look for these common issues:")
+            click.echo(
+                "   • Remove misclassified types (e.g., table_constructor in functions)"
+            )
+            click.echo("   • Add missing types that should be included")
+            click.echo(
+                "   • Verify class_node_types includes all relevant class-like constructs"
+            )
+            click.echo("   • Check call_node_types covers all function call patterns")
+            click.echo()
+            click.echo(
+                "💡 You can run 'python -m codebase_rag.tools.language list-languages' to see the current config."
+            )
         else:
             raise ValueError("Could not find LANGUAGE_CONFIGS dictionary end")
 
@@ -327,37 +435,156 @@ def add_grammar(
 @cli.command()
 def list_languages() -> None:
     """List all currently configured languages."""
+    console = Console()
+
+    table = Table(
+        title="📋 Configured Languages", show_header=True, header_style="bold magenta"
+    )
+    table.add_column("Language", style="cyan", width=12)
+    table.add_column("Extensions", style="green", width=20)
+    table.add_column("Function Types", style="yellow", width=30)
+    table.add_column("Class Types", style="blue", width=35)
+    table.add_column("Call Types", style="red", width=30)
+
     for lang_name, config in LANGUAGE_CONFIGS.items():
-        click.echo(f"{lang_name}: {asdict(config)}")
+        extensions = ", ".join(config.file_extensions)
+        function_types = (
+            ", ".join(config.function_node_types) if config.function_node_types else "—"
+        )
+        class_types = (
+            ", ".join(config.class_node_types) if config.class_node_types else "—"
+        )
+        call_types = (
+            ", ".join(config.call_node_types) if config.call_node_types else "—"
+        )
+
+        table.add_row(lang_name, extensions, function_types, class_types, call_types)
+
+    console.print(table)
 
 
 @cli.command()
 @click.argument("language_name")
-def remove_language(language_name: str) -> None:
+@click.option(
+    "--keep-submodule", is_flag=True, help="Keep the git submodule (default: remove it)"
+)
+def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     """Remove a language from the project."""
-    if language_name in LANGUAGE_CONFIGS:
-        del LANGUAGE_CONFIGS[language_name]
-        click.echo(f"Removed language '{language_name}' from the current session.")
-        click.echo(
-            click.style(
-                "To permanently remove it, you must perform these steps manually:",
-                bold=True,
-            )
-        )
-        click.echo(
-            f"1. Delete the '{language_name}' entry from 'LANGUAGE_CONFIGS' in 'codebase_rag/language_config.py'."
-        )
-        click.echo(
-            "2. Manually remove the submodule. The exact path is in your '.gitmodules' file. Example commands:"
-        )
-        click.echo(
-            click.style(
-                "   git submodule deinit -f -- <path-to-submodule>", fg="yellow"
-            )
-        )
-        click.echo(click.style("   git rm -f <path-to-submodule>", fg="yellow"))
+    if language_name not in LANGUAGE_CONFIGS:
+        available_langs = ", ".join(LANGUAGE_CONFIGS.keys())
+        click.echo(f"❌ Language '{language_name}' not found.")
+        click.echo(f"📋 Available languages: {available_langs}")
+        return
+
+    # Step 1: Remove from config file using diff-match-patch
+    config_file = "codebase_rag/language_config.py"
+    try:
+        with open(config_file) as f:
+            original_content = f.read()
+
+        # Find and remove the language config entry with better pattern
+        import re
+
+        # Match the entire language config entry including multiline content
+        pattern = rf'    "{language_name}": LanguageConfig\([\s\S]*?\),\n'
+        new_content = re.sub(pattern, "", original_content)
+
+        # Use diff-match-patch for safer editing
+        dmp_obj = dmp.diff_match_patch()
+        patches = dmp_obj.patch_make(original_content, new_content)
+        result, _ = dmp_obj.patch_apply(patches, original_content)
+
+        with open(config_file, "w") as f:
+            f.write(result)
+
+        click.echo(f"✅ Removed language '{language_name}' from configuration file.")
+
+    except Exception as e:
+        click.echo(f"❌ Failed to update config file: {e}")
+        return
+
+    # Step 2: Remove git submodule automatically (unless --keep-submodule flag is used)
+    if not keep_submodule:
+        submodule_path = f"grammars/tree-sitter-{language_name}"
+        if os.path.exists(submodule_path):
+            try:
+                click.echo(f"🔄 Removing git submodule '{submodule_path}'...")
+                # Remove submodule completely
+                subprocess.run(
+                    ["git", "submodule", "deinit", "-f", submodule_path],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "rm", "-f", submodule_path], check=True, capture_output=True
+                )
+
+                # Clean up .git/modules directory (this is crucial!)
+                modules_path = f".git/modules/{submodule_path}"
+                if os.path.exists(modules_path):
+                    import shutil
+
+                    shutil.rmtree(modules_path)
+                    click.echo(f"🧹 Cleaned up git modules directory: {modules_path}")
+
+                click.echo(f"🗑️  Successfully removed submodule '{submodule_path}'")
+            except subprocess.CalledProcessError as e:
+                click.echo(f"❌ Failed to remove submodule: {e}")
+                click.echo("💡 You may need to remove it manually:")
+                click.echo(f"   git submodule deinit -f {submodule_path}")
+                click.echo(f"   git rm -f {submodule_path}")
+        else:
+            click.echo(f"ℹ️  No submodule found at '{submodule_path}'")
     else:
-        click.echo(f"Language not found: {language_name}")
+        click.echo("ℹ️  Keeping submodule (--keep-submodule flag used)")
+
+    click.echo(f"🎉 Language '{language_name}' has been removed successfully!")
+
+
+@cli.command()
+def cleanup_orphaned_modules() -> None:
+    """Clean up orphaned git modules that weren't properly removed."""
+    modules_dir = ".git/modules/grammars"
+    if not os.path.exists(modules_dir):
+        click.echo("📂 No grammars modules directory found.")
+        return
+
+    # Read .gitmodules to see what should exist
+    gitmodules_submodules = set()
+    try:
+        with open(".gitmodules") as f:
+            content = f.read()
+            import re
+
+            # Find all submodule paths
+            paths = re.findall(r"path = (grammars/tree-sitter-[^\\n]+)", content)
+            gitmodules_submodules = set(paths)
+    except FileNotFoundError:
+        click.echo("📄 No .gitmodules file found.")
+
+    # Check what modules exist
+    orphaned = []
+    for item in os.listdir(modules_dir):
+        module_path = f"grammars/{item}"
+        if module_path not in gitmodules_submodules:
+            orphaned.append(item)
+
+    if not orphaned:
+        click.echo("✨ No orphaned modules found!")
+        return
+
+    click.echo(f"🔍 Found {len(orphaned)} orphaned module(s): {', '.join(orphaned)}")
+
+    if click.confirm("Do you want to remove these orphaned modules?"):
+        import shutil
+
+        for module in orphaned:
+            module_path = os.path.join(modules_dir, module)
+            shutil.rmtree(module_path)
+            click.echo(f"🗑️  Removed orphaned module: {module}")
+        click.echo("🎉 Cleanup complete!")
+    else:
+        click.echo("❌ Cleanup cancelled.")
 
 
 if __name__ == "__main__":
