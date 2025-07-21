@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import subprocess
 
 import click
@@ -363,9 +364,7 @@ def add_grammar(
     # Step 5: Automatically add to language_config.py
     config_file_path = "codebase_rag/language_config.py"
     try:
-        with open(config_file_path) as f:
-            config_content = f.read()
-
+        config_content = pathlib.Path(config_file_path).read_text()
         # Generate the new config entry
         config_entry = f"""    "{language_name}": LanguageConfig(
         name="{new_language_config.name}",
