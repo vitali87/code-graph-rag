@@ -478,9 +478,7 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     # Step 1: Remove from config file using diff-match-patch
     config_file = "codebase_rag/language_config.py"
     try:
-        with open(config_file) as f:
-            original_content = f.read()
-
+        original_content = pathlib.Path(config_file).read_text()
         # Find and remove the language config entry with better pattern
         import re
 
