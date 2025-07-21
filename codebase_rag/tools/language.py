@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 
 import click
@@ -77,9 +78,58 @@ def add_grammar(
     except subprocess.CalledProcessError as e:
         error_output = e.stderr or str(e)
         if "already exists in the index" in error_output:
-            click.echo(
-                f"⚠️  Submodule already exists at {grammar_path}. Continuing with configuration..."
+            click.secho(
+                f"⚠️  Submodule already exists at {grammar_path}. Forcing re-installation...",
+                fg="yellow",
             )
+            try:
+                # Force remove and re-add
+                click.echo("   -> Removing existing submodule entry...")
+                subprocess.run(
+                    ["git", "submodule", "deinit", "-f", grammar_path],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                subprocess.run(
+                    ["git", "rm", "-f", grammar_path],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+                # Clean up .git/modules directory
+                modules_path = f".git/modules/{grammar_path}"
+                if os.path.exists(modules_path):
+                    shutil.rmtree(modules_path)
+
+                click.echo("   -> Re-adding submodule...")
+                subprocess.run(
+                    [
+                        "git",
+                        "submodule",
+                        "add",
+                        "--force",
+                        grammar_url,
+                        grammar_path,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                click.echo(f"✅ Successfully re-installed submodule at {grammar_path}")
+            except (subprocess.CalledProcessError, OSError) as reinstall_e:
+                error_msg = (
+                    reinstall_e.stderr
+                    if hasattr(reinstall_e, "stderr")
+                    else str(reinstall_e)
+                )
+                click.secho(f"❌ Failed to reinstall submodule: {error_msg}", fg="red")
+                click.echo("💡 You may need to remove it manually and try again:")
+                click.echo(f"   git submodule deinit -f {grammar_path}")
+                click.echo(f"   git rm -f {grammar_path}")
+                click.echo(f"   rm -rf .git/modules/{grammar_path}")
+                return
         elif "does not exist" in error_output or "not found" in error_output:
             click.echo(f"❌ Error: Repository not found at {grammar_url}")
             click.echo("💡 Try using a custom URL with: --grammar-url <your-repo-url>")
