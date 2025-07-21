@@ -1,6 +1,7 @@
 import asyncio
 import json
 import shlex
+import re
 import shutil
 import sys
 import uuid
@@ -35,8 +36,34 @@ from .tools.file_writer import FileWriter, create_file_writer_tool
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
 # Style constants
-ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})  
-CONFIRM_EDITS_GLOBALLY = True # Orange color for input text
+# Style constants
+ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})  # Orange color for input text
+CONFIRM_EDITS_GLOBALLY = True
+
+# Edit operation constants
+_EDIT_REQUEST_KEYWORDS = frozenset([
+    "modify", "update", "change", "edit", "fix", "refactor", "optimize",
+    "add", "remove", "delete", "create", "write", "implement", "replace"
+])
+
+_EDIT_TOOLS = frozenset([
+    "edit_file", "write_file", "file_editor", "file_writer", "create_file"
+])
+
+_EDIT_INDICATORS = frozenset([
+    "modifying", "updating", "changing", "replacing", "adding to", "deleting from",
+    "created file", "editing", "writing to", "file has been", "successfully modified",
+    "successfully updated", "successfully created", "changes have been made",
+    "file modified", "file updated", "file created"
+])
+
+# Pre-compile regex patterns
+_FILE_MODIFICATION_PATTERNS = [
+    re.compile(r'(modified|updated|created|edited):\s*[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)'),
+    re.compile(r'file\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)\s+(modified|updated|created|edited)'),
+    re.compile(r'writing\s+to\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)')
+]
+
 
 app = typer.Typer(
     name="graph-code",
@@ -52,8 +79,8 @@ console = Console(width=None, force_terminal=True)
 # Session logging
 session_log_file = None
 session_cancelled = False
-# Global flag to control edit confirmation
-confirm_edits = True
+# # Global flag to control edit confirmation
+# confirm_edits = True
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -84,80 +111,49 @@ def get_session_context() -> str:
     return ""
 
 def is_edit_operation_request(question: str) -> bool:
-    """
-    Check if the user's question/request would likely result in edit operations.
-    This helps determine if we should warn about potential file modifications upfront.
-    """
-    edit_keywords = [
-        "modify", "update", "change", "edit", "fix", "refactor", "optimize",
-        "add", "remove", "delete", "create", "write", "implement", "replace"
-    ]
-    
+    """Check if the user's question/request would likely result in edit operations."""
     question_lower = question.lower()
-    return any(keyword in question_lower for keyword in edit_keywords)
+    return any(keyword in question_lower for keyword in _EDIT_REQUEST_KEYWORDS)
+
+
+async def _handle_rejection(rag_agent: Any, message_history: list[Any], console: Console) -> Any:
+    """Handle user rejection of edits with agent acknowledgment."""
+    rejection_message = "The user has rejected the changes that were made. Please acknowledge this and consider if any changes need to be reverted."
+    
+    with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
+        rejection_response = await run_with_cancellation(
+            console,
+            rag_agent.run(rejection_message, message_history=message_history),
+        )
+    
+    if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
+        rejection_markdown = Markdown(rejection_response.output)
+        console.print(
+            Panel(
+                rejection_markdown,
+                title="[bold yellow]Response to Rejection[/bold yellow]",
+                border_style="yellow",
+            )
+        )
+        message_history.extend(rejection_response.new_messages())
+    
+    return rejection_response
 
 
 def is_edit_operation_response(response_text: str) -> bool:
-    """
-    Enhanced check if the response contains edit operations that need confirmation.
-    Looks for both tool usage and content indicators.
-    """
-    # Tool names that indicate file modifications
-    edit_tools = [
-        "edit_file",
-        "write_file",
-        "file_editor",
-        "file_writer",
-        "create_file",
-    ]
-    
-    # Content indicators for edit operations
-    edit_indicators = [
-        "modifying",
-        "updating",
-        "changing",
-        "replacing",
-        "adding to",
-        "deleting from",
-        "created file",
-        "editing",
-        "writing to",
-        "file has been",
-        "successfully modified",
-        "successfully updated",
-        "successfully created",
-        "changes have been made",
-        "file modified",
-        "file updated",
-        "file created",
-    ]
-    
+    """Enhanced check if the response contains edit operations that need confirmation."""
     response_lower = response_text.lower()
     
     # Check for tool usage
-    tool_usage = any(tool in response_lower for tool in edit_tools)
+    tool_usage = any(tool in response_lower for tool in _EDIT_TOOLS)
     
     # Check for content indicators
-    content_indicators = any(indicator in response_lower for indicator in edit_indicators)
+    content_indicators = any(indicator in response_lower for indicator in _EDIT_INDICATORS)
     
-    # Also check for common patterns like file paths with modifications
-    import re
-    file_modification_patterns = [
-        r'(modified|updated|created|edited):\s*[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)',
-        r'file\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)\s+(modified|updated|created|edited)',
-        r'writing\s+to\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)',
-    ]
-    
-    pattern_match = any(re.search(pattern, response_lower) for pattern in file_modification_patterns)
+    # Check for regex patterns
+    pattern_match = any(pattern.search(response_lower) for pattern in _FILE_MODIFICATION_PATTERNS)
     
     return tool_usage or content_indicators or pattern_match
-
-
-def format_confirmation_request(response_text: str) -> str:
-    """
-    This function is now deprecated - confirmation is handled in the chat loop
-    """
-    return response_text
 
 
 async def run_optimization_loop(
@@ -284,30 +280,33 @@ Remember: Propose changes first, wait for my approval, then implement.
                 
                 if not Confirm.ask("[bold cyan]Do you want to keep these optimizations?[/bold cyan]"):
                     console.print("[bold red]❌ Optimizations rejected by user.[/bold red]")
-                    
-                    # Ask the agent to acknowledge the rejection
-                    rejection_message = "The user has rejected the optimizations that were implemented. Please acknowledge this and consider reverting the changes if possible."
-                    
-                    with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
-                        rejection_response = await run_with_cancellation(
-                            console,
-                            rag_agent.run(rejection_message, message_history=message_history),
-                        )
-                    
-                    if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
-                        rejection_markdown = Markdown(rejection_response.output)
-                        console.print(
-                            Panel(
-                                rejection_markdown,
-                                title="[bold yellow]Response to Rejection[/bold yellow]",
-                                border_style="yellow",
-                            )
-                        )
-                        # Only add rejection response to history
-                        message_history.extend(rejection_response.new_messages())
-                    
+                    await _handle_rejection(rag_agent, message_history, console)
                     first_run = False
                     continue
+                    
+                    # Ask the agent to acknowledge the rejection
+                    # rejection_message = "The user has rejected the optimizations that were implemented. Please acknowledge this and consider reverting the changes if possible."
+                    
+                    # with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
+                    #     rejection_response = await run_with_cancellation(
+                    #         console,
+                    #         rag_agent.run(rejection_message, message_history=message_history),
+                    #     )
+                    
+                    # if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
+                    #     rejection_markdown = Markdown(rejection_response.output)
+                    #     console.print(
+                    #         Panel(
+                    #             rejection_markdown,
+                    #             title="[bold yellow]Response to Rejection[/bold yellow]",
+                    #             border_style="yellow",
+                    #         )
+                    #     )
+                    #     # Only add rejection response to history
+                    #     message_history.extend(rejection_response.new_messages())
+                    
+                    # first_run = False
+                    # continue
                 else:
                     console.print("[bold green]✅ Optimizations approved by user.[/bold green]")
 
@@ -545,27 +544,29 @@ async def run_chat_loop(
                 
                 if not Confirm.ask("[bold cyan]Do you want to keep these changes?[/bold cyan]"):
                     console.print("[bold red]❌ User rejected the changes.[/bold red]")
+                    await _handle_rejection(rag_agent, message_history, console)
+                    continue
                     
                     # Ask the agent to acknowledge and potentially revert
-                    rejection_message = "The user has rejected the changes that were made. Please acknowledge this and consider if any changes need to be reverted."
+                    # rejection_message = "The user has rejected the changes that were made. Please acknowledge this and consider if any changes need to be reverted."
                     
-                    with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
-                        rejection_response = await run_with_cancellation(
-                            console,
-                            rag_agent.run(rejection_message, message_history=message_history),
-                        )
+                    # with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
+                    #     rejection_response = await run_with_cancellation(
+                    #         console,
+                    #         rag_agent.run(rejection_message, message_history=message_history),
+                    #     )
                     
-                    if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
-                        rejection_markdown = Markdown(rejection_response.output)
-                        console.print(
-                            Panel(
-                                rejection_markdown,
-                                title="[bold yellow]Response to Rejection[/bold yellow]",
-                                border_style="yellow",
-                            )
-                        )
-                        # Only add rejection response to history, not the original rejected response
-                        message_history.extend(rejection_response.new_messages())
+                    # if not (isinstance(rejection_response, dict) and rejection_response.get("cancelled")):
+                    #     rejection_markdown = Markdown(rejection_response.output)
+                    #     console.print(
+                    #         Panel(
+                    #             rejection_markdown,
+                    #             title="[bold yellow]Response to Rejection[/bold yellow]",
+                    #             border_style="yellow",
+                    #         )
+                    #     )
+                    #     # Only add rejection response to history, not the original rejected response
+                    #     message_history.extend(rejection_response.new_messages())
                     
                     continue
                 else:
