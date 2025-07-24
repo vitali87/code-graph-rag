@@ -68,6 +68,48 @@ class GraphUpdater:
         logger.info("\n--- Analysis complete. Flushing all data to database... ---")
         self.ingestor.flush_all()
 
+    def remove_file_from_state(self, file_path: Path) -> None:
+        """Removes all state associated with a file from the updater's memory."""
+        logger.debug(f"Removing in-memory state for: {file_path}")
+
+        # Clear AST cache
+        if file_path in self.ast_cache:
+            del self.ast_cache[file_path]
+            logger.debug("  - Removed from ast_cache")
+
+        # Determine the module qualified name prefix for the file
+        relative_path = file_path.relative_to(self.repo_path)
+        if file_path.name == "__init__.py":
+            module_qn_prefix = ".".join(
+                [self.project_name] + list(relative_path.parent.parts)
+            )
+        else:
+            module_qn_prefix = ".".join(
+                [self.project_name] + list(relative_path.with_suffix("").parts)
+            )
+
+        # We need to find all qualified names that belong to this file/module
+        qns_to_remove = set()
+
+        # Clean function_registry and collect qualified names to remove
+        for qn in list(self.function_registry.keys()):
+            if qn.startswith(module_qn_prefix + ".") or qn == module_qn_prefix:
+                qns_to_remove.add(qn)
+                del self.function_registry[qn]
+
+        if qns_to_remove:
+            logger.debug(
+                f"  - Removing {len(qns_to_remove)} QNs from function_registry"
+            )
+
+        # Clean simple_name_lookup
+        for simple_name, qn_set in self.simple_name_lookup.items():
+            original_count = len(qn_set)
+            new_qn_set = qn_set - qns_to_remove
+            if len(new_qn_set) < original_count:
+                self.simple_name_lookup[simple_name] = new_qn_set
+                logger.debug(f"  - Cleaned simple_name '{simple_name}'")
+
     def _identify_structure(self) -> None:
         """First pass: Walks the directory to find all packages and folders."""
         for root_str, dirs, _ in os.walk(self.repo_path, topdown=True):
