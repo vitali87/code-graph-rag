@@ -118,3 +118,23 @@ class AppConfig(BaseSettings):
 
 
 settings = AppConfig()
+
+# --- Global Ignore Patterns ---
+# Directories and files to ignore during codebase scanning and real-time updates.
+IGNORE_PATTERNS = {
+    ".git",
+    "venv",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "build",
+    "dist",
+    ".eggs",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".claude",
+    ".idea",
+    ".vscode",
+}
+IGNORE_SUFFIXES = {".tmp", "~"}

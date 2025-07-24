@@ -8,6 +8,7 @@ from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from codebase_rag.config import IGNORE_PATTERNS, IGNORE_SUFFIXES
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_config import get_language_config
 from codebase_rag.parser_loader import load_parsers
@@ -19,9 +20,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
     def __init__(self, updater: GraphUpdater):
         self.updater = updater
-        # Expanded ignore patterns to include common temporary/junk files
-        self.ignore_patterns = {".git", "__pycache__", ".venv", ".idea", ".vscode"}
-        self.ignore_suffixes = {".tmp", "~"}
+        # Using centralized ignore patterns from config
+        self.ignore_patterns = IGNORE_PATTERNS
+        self.ignore_suffixes = IGNORE_SUFFIXES
         logger.info("File watcher is now active.")
 
     def _is_relevant(self, path_str: str) -> bool:

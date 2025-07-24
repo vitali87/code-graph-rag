@@ -9,6 +9,7 @@ from tree_sitter import Node, Parser, QueryCursor
 
 from codebase_rag.services.graph_service import MemgraphIngestor
 
+from .config import IGNORE_PATTERNS
 from .language_config import LanguageConfig, get_language_config
 
 
@@ -31,20 +32,8 @@ class GraphUpdater:
         self.function_registry: dict[str, str] = {}  # {qualified_name: type}
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
         self.ast_cache: dict[Path, tuple[Node, str]] = {}
-        self.ignore_dirs = {
-            ".git",
-            "venv",
-            ".venv",
-            "__pycache__",
-            "node_modules",
-            "build",
-            "dist",
-            ".eggs",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".ruff_cache",
-            ".claude",
-        }
+        # Using centralized ignore patterns from config
+        self.ignore_dirs = IGNORE_PATTERNS
 
     def run(self) -> None:
         """Orchestrates the parsing and ingestion process."""
