@@ -5,6 +5,7 @@ from typing import Literal
 from dotenv import load_dotenv
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from rich.style import Style
 
 load_dotenv()
 
@@ -118,3 +119,84 @@ class AppConfig(BaseSettings):
 
 
 settings = AppConfig()
+
+# --- Global Ignore Patterns ---
+# Directories and files to ignore during codebase scanning and real-time updates.
+IGNORE_PATTERNS = {
+    ".git",
+    "venv",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "build",
+    "dist",
+    ".eggs",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".claude",
+    ".idea",
+    ".vscode",
+}
+IGNORE_SUFFIXES = {".tmp", "~"}
+
+
+# --- Edit Operation Constants ---
+# Keywords that might indicate a user wants to perform an edit operation.
+EDIT_REQUEST_KEYWORDS = frozenset(
+    [
+        "modify",
+        "update",
+        "change",
+        "edit",
+        "fix",
+        "refactor",
+        "optimize",
+        "add",
+        "remove",
+        "delete",
+        "create",
+        "write",
+        "implement",
+        "replace",
+    ]
+)
+
+# Tool names that are considered edit operations.
+EDIT_TOOLS = frozenset(
+    [
+        "edit_file",
+        "write_file",
+        "file_editor",
+        "file_writer",
+        "create_file",
+        "replace_code_surgically",
+    ]
+)
+
+# Phrases in a model's response that indicate an edit has been performed.
+EDIT_INDICATORS = frozenset(
+    [
+        "modifying",
+        "updating",
+        "changing",
+        "replacing",
+        "adding to",
+        "deleting from",
+        "created file",
+        "editing",
+        "writing to",
+        "file has been",
+        "successfully modified",
+        "successfully updated",
+        "successfully created",
+        "changes have been made",
+        "file modified",
+        "file updated",
+        "file created",
+    ]
+)
+
+# --- UI Styles ---
+# Style for user input prompts in the terminal.
+ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})
