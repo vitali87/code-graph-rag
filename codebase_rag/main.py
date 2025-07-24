@@ -14,7 +14,6 @@ from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
-from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -22,7 +21,14 @@ from rich.prompt import Confirm
 from rich.table import Table
 from rich.text import Text
 
-from .config import detect_provider_from_model, settings
+from .config import (
+    EDIT_INDICATORS,
+    EDIT_REQUEST_KEYWORDS,
+    EDIT_TOOLS,
+    ORANGE_STYLE,
+    detect_provider_from_model,
+    settings,
+)
 from .graph_updater import GraphUpdater, MemgraphIngestor
 from .parser_loader import load_parsers
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -36,54 +42,7 @@ from .tools.file_writer import FileWriter, create_file_writer_tool
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
 # Style constants
-ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})  # Orange color for input text
 confirm_edits_globally = True
-
-# Edit operation constants
-_EDIT_REQUEST_KEYWORDS = frozenset(
-    [
-        "modify",
-        "update",
-        "change",
-        "edit",
-        "fix",
-        "refactor",
-        "optimize",
-        "add",
-        "remove",
-        "delete",
-        "create",
-        "write",
-        "implement",
-        "replace",
-    ]
-)
-
-_EDIT_TOOLS = frozenset(
-    ["edit_file", "write_file", "file_editor", "file_writer", "create_file"]
-)
-
-_EDIT_INDICATORS = frozenset(
-    [
-        "modifying",
-        "updating",
-        "changing",
-        "replacing",
-        "adding to",
-        "deleting from",
-        "created file",
-        "editing",
-        "writing to",
-        "file has been",
-        "successfully modified",
-        "successfully updated",
-        "successfully created",
-        "changes have been made",
-        "file modified",
-        "file updated",
-        "file created",
-    ]
-)
 
 # Pre-compile regex patterns
 _FILE_MODIFICATION_PATTERNS = [
@@ -146,7 +105,7 @@ def get_session_context() -> str:
 def is_edit_operation_request(question: str) -> bool:
     """Check if the user's question/request would likely result in edit operations."""
     question_lower = question.lower()
-    return any(keyword in question_lower for keyword in _EDIT_REQUEST_KEYWORDS)
+    return any(keyword in question_lower for keyword in EDIT_REQUEST_KEYWORDS)
 
 
 async def _handle_rejection(
@@ -182,11 +141,11 @@ def is_edit_operation_response(response_text: str) -> bool:
     response_lower = response_text.lower()
 
     # Check for tool usage
-    tool_usage = any(tool in response_lower for tool in _EDIT_TOOLS)
+    tool_usage = any(tool in response_lower for tool in EDIT_TOOLS)
 
     # Check for content indicators
     content_indicators = any(
-        indicator in response_lower for indicator in _EDIT_INDICATORS
+        indicator in response_lower for indicator in EDIT_INDICATORS
     )
 
     # Check for regex patterns
