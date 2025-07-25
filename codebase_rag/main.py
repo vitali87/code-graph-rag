@@ -235,7 +235,7 @@ async def run_optimization_loop(
     )
     console.print(
         Panel(
-            f"[bold yellow]The agent will analyze your {language} codebase{document_info} and propose specific optimizations."
+            f"[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
             f" You'll be asked to approve each suggestion before implementation."
             f" Type 'exit' or 'quit' to end the session.[/bold yellow]",
             border_style="yellow",
