@@ -32,6 +32,9 @@ class GraphUpdater:
         self.function_registry: dict[str, str] = {}  # {qualified_name: type}
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
         self.ast_cache: dict[Path, tuple[Node, str]] = {}
+        self.import_mapping: dict[
+            str, dict[str, str]
+        ] = {}  # {module_qn: {local_name: fully_qualified_name}}
         # Using centralized ignore patterns from config
         self.ignore_dirs = IGNORE_PATTERNS
 
@@ -286,11 +289,456 @@ class GraphUpdater:
                 ("Module", "qualified_name", module_qn),
             )
 
+            self._parse_imports(root_node, module_qn, language)
             self._ingest_top_level_functions(root_node, module_qn, language)
             self._ingest_classes_and_methods(root_node, module_qn, language)
 
         except Exception as e:
             logger.error(f"Failed to parse or ingest {file_path}: {e}")
+
+    def _parse_imports(self, root_node: Node, module_qn: str, language: str) -> None:
+        """Parse import statements and build import mapping for the module."""
+        if language not in self.queries or not self.queries[language].get("imports"):
+            return
+
+        lang_config = self.queries[language]["config"]
+        imports_query = self.queries[language]["imports"]
+
+        self.import_mapping[module_qn] = {}
+
+        try:
+            from tree_sitter import QueryCursor
+
+            cursor = QueryCursor(imports_query)
+            captures = cursor.captures(root_node)
+
+            # Handle different language import patterns
+            if language == "python":
+                self._parse_python_imports(captures, module_qn)
+            elif language in ["javascript", "typescript"]:
+                self._parse_js_ts_imports(captures, module_qn)
+            elif language == "java":
+                self._parse_java_imports(captures, module_qn)
+            elif language == "rust":
+                self._parse_rust_imports(captures, module_qn)
+            elif language == "go":
+                self._parse_go_imports(captures, module_qn)
+            else:
+                # Generic fallback for other languages
+                self._parse_generic_imports(captures, module_qn, lang_config)
+
+            logger.debug(
+                f"Parsed {len(self.import_mapping[module_qn])} imports in {module_qn}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to parse imports in {module_qn}: {e}")
+
+    def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse Python import statements with full support for all import types."""
+        for import_node in captures.get("import", []) + captures.get("import_from", []):
+            if import_node.type == "import_statement":
+                self._handle_python_import_statement(import_node, module_qn)
+            elif import_node.type == "import_from_statement":
+                self._handle_python_import_from_statement(import_node, module_qn)
+
+    def _handle_python_import_statement(
+        self, import_node: Node, module_qn: str
+    ) -> None:
+        """Handle 'import module' statements."""
+        for child in import_node.children:
+            if child.type == "dotted_name":
+                module_name = child.text.decode("utf-8")
+                parts = module_name.split(".")
+                local_name = parts[-1]  # Last part becomes the local name
+                full_name = f"{self.project_name}.{module_name}"
+                self.import_mapping[module_qn][local_name] = full_name
+                logger.debug(f"  Import: {local_name} -> {full_name}")
+            elif child.type == "aliased_import":
+                # Handle 'import module as alias'
+                module_name = None
+                alias = None
+                for grandchild in child.children:
+                    if grandchild.type == "dotted_name":
+                        module_name = grandchild.text.decode("utf-8")
+                    elif grandchild.type == "identifier":
+                        alias = grandchild.text.decode("utf-8")
+
+                if module_name and alias:
+                    full_name = f"{self.project_name}.{module_name}"
+                    self.import_mapping[module_qn][alias] = full_name
+                    logger.debug(f"  Aliased import: {alias} -> {full_name}")
+
+    def _handle_python_import_from_statement(
+        self, import_node: Node, module_qn: str
+    ) -> None:
+        """Handle 'from module import name' statements."""
+        module_name = None
+        imported_names = []
+
+        for child in import_node.children:
+            if child.type == "dotted_name" and module_name is None:
+                # First dotted_name is the module
+                module_name = child.text.decode("utf-8")
+            elif child.type == "dotted_name" and module_name is not None:
+                # Subsequent dotted_names are imported items
+                imported_names.append(child.text.decode("utf-8"))
+            elif child.type == "relative_import":
+                # Handle relative imports like 'from .module import name'
+                module_name = self._resolve_relative_import(child, module_qn)
+
+        if module_name:
+            base_module = (
+                f"{self.project_name}.{module_name}"
+                if not module_name.startswith(self.project_name)
+                else module_name
+            )
+            for imported_name in imported_names:
+                full_name = f"{base_module}.{imported_name}"
+                self.import_mapping[module_qn][imported_name] = full_name
+                logger.debug(f"  From import: {imported_name} -> {full_name}")
+
+    def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
+        """Resolve relative imports like '.module' or '..parent.module'."""
+        module_parts = module_qn.split(".")[1:]  # Remove project name
+
+        # Count the dots to determine how many levels to go up
+        dots = 0
+        module_name = ""
+
+        for child in relative_node.children:
+            if child.type == "import_prefix":
+                dots = len(child.text.decode("utf-8"))
+            elif child.type == "dotted_name":
+                module_name = child.text.decode("utf-8")
+
+        # Calculate the target module
+        if dots == 1:  # from .module
+            target_parts = module_parts[:-1]  # Current package
+        else:  # from ..module (go up dots-1 levels)
+            target_parts = module_parts[: -(dots - 1)] if dots > 1 else module_parts
+
+        if module_name:
+            target_parts.extend(module_name.split("."))
+
+        return ".".join(target_parts)
+
+    def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse JavaScript/TypeScript import statements."""
+        if module_qn not in self.import_mapping:
+            self.import_mapping[module_qn] = {}
+
+        for import_node in captures.get("import", []):
+            if import_node.type == "import_statement":
+                # Find the source module
+                source_module = None
+                for child in import_node.children:
+                    if child.type == "string":
+                        # Extract module path from string (remove quotes)
+                        source_text = child.text.decode("utf-8").strip("'\"")
+                        source_module = self._resolve_js_module_path(
+                            source_text, module_qn
+                        )
+                        break
+
+                if not source_module:
+                    continue
+
+                # Parse import clause to extract imported names
+                for child in import_node.children:
+                    if child.type == "import_clause":
+                        self._parse_js_import_clause(child, source_module, module_qn)
+
+            elif import_node.type == "lexical_declaration":
+                # Handle CommonJS require() statements
+                self._parse_js_require(import_node, module_qn)
+
+    def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
+        """Resolve JavaScript module path to qualified name."""
+        if import_path.startswith("./") or import_path.startswith("../"):
+            # Relative import - resolve relative to current module
+            current_parts = current_module.split(".")
+            if import_path.startswith("./"):
+                # Same directory
+                base_parts = current_parts[:-1]  # Remove file name
+                rel_path = import_path[2:]  # Remove './'
+            else:
+                # Parent directory(s)
+                dots = 0
+                for char in import_path:
+                    if char == ".":
+                        dots += 1
+                    elif char == "/":
+                        break
+                levels_up = (dots - 1) // 2  # Each '../' is 2 dots and a slash
+                base_parts = current_parts[: -(levels_up + 1)]
+                rel_path = import_path[levels_up * 3 + 1 :]  # Remove '../' parts
+
+            if rel_path:
+                base_parts.extend(rel_path.replace("/", ".").split("."))
+            return ".".join(base_parts)
+        else:
+            # Absolute import (package)
+            return import_path.replace("/", ".")
+
+    def _parse_js_import_clause(
+        self, clause_node: Node, source_module: str, current_module: str
+    ) -> None:  # type: ignore
+        """Parse JavaScript import clause (named, default, namespace imports)."""
+        for child in clause_node.children:
+            if child.type == "identifier":
+                # Default import: import React from 'react'
+                imported_name = child.text.decode("utf-8")
+                self.import_mapping[current_module][imported_name] = (
+                    f"{source_module}.default"
+                )
+                logger.debug(
+                    f"JS default import: {imported_name} -> {source_module}.default"
+                )
+
+            elif child.type == "named_imports":
+                # Named imports: import { func1, func2 } from './module'
+                for grandchild in child.children:
+                    if grandchild.type == "import_specifier":
+                        # Get the imported name
+                        for spec_child in grandchild.children:
+                            if spec_child.type == "identifier":
+                                imported_name = spec_child.text.decode("utf-8")
+                                self.import_mapping[current_module][imported_name] = (
+                                    f"{source_module}.{imported_name}"
+                                )
+                                logger.debug(
+                                    f"JS named import: {imported_name} -> {source_module}.{imported_name}"
+                                )
+                                break
+
+            elif child.type == "namespace_import":
+                # Namespace import: import * as utils from './utils'
+                for grandchild in child.children:
+                    if grandchild.type == "identifier":
+                        namespace_name = grandchild.text.decode("utf-8")
+                        self.import_mapping[current_module][namespace_name] = (
+                            source_module
+                        )
+                        logger.debug(
+                            f"JS namespace import: {namespace_name} -> {source_module}"
+                        )
+                        break
+
+    def _parse_js_require(self, decl_node: Node, current_module: str) -> None:  # type: ignore
+        """Parse CommonJS require() statements."""
+        # Look for: const name = require('module')
+        var_name = None
+        required_module = None
+
+        for child in decl_node.children:
+            if child.type == "variable_declarator":
+                for grandchild in child.children:
+                    if grandchild.type == "identifier":
+                        var_name = grandchild.text.decode("utf-8")
+                    elif grandchild.type == "call_expression":
+                        # Check if it's require()
+                        for call_child in grandchild.children:
+                            if (
+                                call_child.type == "identifier"
+                                and call_child.text.decode("utf-8") == "require"
+                            ):
+                                # Find the argument
+                                for arg_child in grandchild.children:
+                                    if arg_child.type == "arguments":
+                                        for arg in arg_child.children:
+                                            if arg.type == "string":
+                                                required_module = arg.text.decode(
+                                                    "utf-8"
+                                                ).strip("'\"")
+                                                break
+
+        if var_name and required_module:
+            resolved_module = self._resolve_js_module_path(
+                required_module, current_module
+            )
+            self.import_mapping[current_module][var_name] = resolved_module
+            logger.debug(f"JS require: {var_name} -> {resolved_module}")
+
+    def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse Java import statements."""
+        if module_qn not in self.import_mapping:
+            self.import_mapping[module_qn] = {}
+
+        for import_node in captures.get("import", []):
+            if import_node.type == "import_declaration":
+                is_static = False
+                imported_path = None
+                is_wildcard = False
+
+                # Parse import declaration
+                for child in import_node.children:
+                    if child.type == "static":
+                        is_static = True
+                    elif child.type == "scoped_identifier":
+                        imported_path = child.text.decode("utf-8")
+                    elif child.type == "asterisk":
+                        is_wildcard = True
+
+                if not imported_path:
+                    continue
+
+                if is_wildcard:
+                    # import java.util.*; - wildcard import
+                    # For wildcard imports, we can't pre-map specific names
+                    # but we can store the package for later resolution
+                    logger.debug(f"Java wildcard import: {imported_path}.*")
+                    # Store wildcard import for potential future use
+                    self.import_mapping[module_qn][f"*{imported_path}"] = imported_path
+                else:
+                    # import java.util.List; or import static java.lang.Math.PI;
+                    parts = imported_path.split(".")
+                    if parts:
+                        imported_name = parts[-1]  # Last part is the class/method name
+                        if is_static:
+                            # Static import - method/field can be used directly
+                            self.import_mapping[module_qn][imported_name] = (
+                                imported_path
+                            )
+                            logger.debug(
+                                f"Java static import: {imported_name} -> {imported_path}"
+                            )
+                        else:
+                            # Regular class import
+                            self.import_mapping[module_qn][imported_name] = (
+                                imported_path
+                            )
+                            logger.debug(
+                                f"Java import: {imported_name} -> {imported_path}"
+                            )
+
+    def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse Rust use declarations."""
+        if module_qn not in self.import_mapping:
+            self.import_mapping[module_qn] = {}
+
+        for import_node in captures.get("import", []):
+            if import_node.type == "use_declaration":
+                self._parse_rust_use_declaration(import_node, module_qn)
+
+    def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:  # type: ignore
+        """Parse a single Rust use declaration."""
+        for child in use_node.children:
+            if child.type == "scoped_identifier":
+                # Simple use: use std::collections::HashMap;
+                full_path = child.text.decode("utf-8")
+                parts = full_path.split("::")
+                if parts:
+                    imported_name = parts[-1]
+                    self.import_mapping[module_qn][imported_name] = full_path
+                    logger.debug(f"Rust use: {imported_name} -> {full_path}")
+
+            elif child.type == "use_as_clause":
+                # Aliased use: use std::collections::HashMap as Map;
+                original_path = None
+                alias_name = None
+                for grandchild in child.children:
+                    if grandchild.type == "scoped_identifier":
+                        original_path = grandchild.text.decode("utf-8")
+                    elif grandchild.type == "identifier":
+                        alias_name = grandchild.text.decode("utf-8")
+
+                if original_path and alias_name:
+                    self.import_mapping[module_qn][alias_name] = original_path
+                    logger.debug(f"Rust use as: {alias_name} -> {original_path}")
+
+            elif child.type == "scoped_use_list":
+                # Multiple use: use std::{fs, io};
+                base_path = None
+                imported_names = []
+
+                for grandchild in child.children:
+                    if grandchild.type == "identifier":
+                        base_path = grandchild.text.decode("utf-8")
+                    elif grandchild.type == "use_list":
+                        # Extract names from the list
+                        for list_child in grandchild.children:
+                            if list_child.type == "identifier":
+                                imported_names.append(list_child.text.decode("utf-8"))
+
+                if base_path:
+                    for name in imported_names:
+                        full_path = f"{base_path}::{name}"
+                        self.import_mapping[module_qn][name] = full_path
+                        logger.debug(f"Rust use list: {name} -> {full_path}")
+
+            elif child.type == "use_wildcard":
+                # Glob use: use crate::utils::*;
+                for grandchild in child.children:
+                    if (
+                        grandchild.type == "scoped_identifier"
+                        or grandchild.type == "crate"
+                    ):
+                        base_path = grandchild.text.decode("utf-8")
+                        # Store wildcard import for potential future use
+                        self.import_mapping[module_qn][f"*{base_path}"] = base_path
+                        logger.debug(f"Rust glob use: {base_path}::*")
+
+    def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse Go import declarations."""
+        if module_qn not in self.import_mapping:
+            self.import_mapping[module_qn] = {}
+
+        for import_node in captures.get("import", []):
+            if import_node.type == "import_declaration":
+                # Handle both single and multiple imports
+                self._parse_go_import_declaration(import_node, module_qn)
+
+    def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:  # type: ignore
+        """Parse a Go import declaration."""
+        for child in import_node.children:
+            if child.type == "import_spec":
+                # Single import or import in a list
+                self._parse_go_import_spec(child, module_qn)
+            elif child.type == "import_spec_list":
+                # Multiple imports in parentheses
+                for grandchild in child.children:
+                    if grandchild.type == "import_spec":
+                        self._parse_go_import_spec(grandchild, module_qn)
+
+    def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:  # type: ignore
+        """Parse a single Go import spec."""
+        alias_name = None
+        import_path = None
+
+        for child in spec_node.children:
+            if child.type == "package_identifier":
+                # Aliased import: import f "fmt"
+                alias_name = child.text.decode("utf-8")
+            elif child.type == "interpreted_string_literal":
+                # Extract import path from string literal
+                import_path = child.text.decode("utf-8").strip('"')
+
+        if import_path:
+            # Determine the package name
+            if alias_name:
+                # Explicit alias
+                package_name = alias_name
+            else:
+                # Use last part of path as package name
+                parts = import_path.split("/")
+                package_name = parts[-1] if parts else import_path
+
+            # Map package name to full import path
+            self.import_mapping[module_qn][package_name] = import_path
+            logger.debug(f"Go import: {package_name} -> {import_path}")
+
+    def _parse_generic_imports(
+        self, captures: dict, module_qn: str, lang_config: LanguageConfig
+    ) -> None:
+        """Generic fallback import parsing for other languages."""
+        if module_qn not in self.import_mapping:
+            self.import_mapping[module_qn] = {}
+
+        for import_node in captures.get("import", []):
+            logger.debug(
+                f"Generic import parsing for {lang_config.name}: {import_node.type}"
+            )
 
     def _ingest_top_level_functions(
         self, root_node: Node, module_qn: str, language: str
@@ -685,7 +1133,26 @@ class GraphUpdater:
     def _resolve_function_call(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        # First, try to resolve with fully qualified names in order of likelihood
+        # Phase 1: Check import mapping for 100% accurate resolution
+        if module_qn in self.import_mapping:
+            import_map = self.import_mapping[module_qn]
+            if call_name in import_map:
+                imported_qn = import_map[call_name]
+                if imported_qn in self.function_registry:
+                    logger.debug(f"Import-resolved call: {call_name} -> {imported_qn}")
+                    return self.function_registry[imported_qn], imported_qn
+                # Check if it's a method call on imported class
+                for registered_qn in self.function_registry:
+                    if registered_qn.startswith(f"{imported_qn}."):
+                        # This might be a method call like User.get_name where User was imported
+                        method_name = registered_qn[len(imported_qn) + 1 :]
+                        if method_name == call_name:
+                            logger.debug(
+                                f"Import-resolved method call: {call_name} -> {registered_qn}"
+                            )
+                            return self.function_registry[registered_qn], registered_qn
+
+        # Phase 2: Try to resolve with fully qualified names in order of likelihood
         module_parts = module_qn.split(".")
         possible_qns = []
 
@@ -720,7 +1187,7 @@ class GraphUpdater:
             if qn in self.function_registry:
                 return self.function_registry[qn], qn
 
-        # If not found with FQN, use simple name lookup with improved matching
+        # Phase 3: If not found with FQN, use simple name lookup with improved matching
         if call_name in self.simple_name_lookup:
             candidates = list(self.simple_name_lookup[call_name])
 
