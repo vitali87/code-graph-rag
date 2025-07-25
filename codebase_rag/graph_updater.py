@@ -685,46 +685,87 @@ class GraphUpdater:
     def _resolve_function_call(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        # First, try to resolve with fully qualified names
-        possible_qns = [
-            f"{module_qn}.{call_name}",
-            f"{self.project_name}.{call_name}",
-            (
-                f"{'.'.join(module_qn.split('.')[:-1])}.{call_name}"
-                if "." in module_qn
-                else None
-            ),
-        ]
-        possible_qns = [qn for qn in possible_qns if qn]
+        # First, try to resolve with fully qualified names in order of likelihood
+        module_parts = module_qn.split(".")
+        possible_qns = []
 
+        # 1. Same module (most common for local calls)
+        possible_qns.append(f"{module_qn}.{call_name}")
+
+        # 2. Parent modules (for sibling imports)
+        for i in range(len(module_parts) - 1, 0, -1):
+            parent_module = ".".join(module_parts[:i])
+            possible_qns.append(f"{parent_module}.{call_name}")
+
+        # 3. All submodules of parent modules (for cross-package imports)
+        for i in range(len(module_parts) - 1, 0, -1):
+            parent_module = ".".join(module_parts[:i])
+            # Check all registered functions that start with this parent
+            for registered_qn in self.function_registry:
+                if registered_qn.startswith(
+                    f"{parent_module}."
+                ) and registered_qn.endswith(f".{call_name}"):
+                    possible_qns.append(registered_qn)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_qns = []
         for qn in possible_qns:
+            if qn not in seen:
+                seen.add(qn)
+                unique_qns.append(qn)
+
+        # Try each possible qualified name
+        for qn in unique_qns:
             if qn in self.function_registry:
                 return self.function_registry[qn], qn
 
-        # If not found, use the simple name lookup as a fallback
+        # If not found with FQN, use simple name lookup with improved matching
         if call_name in self.simple_name_lookup:
-            # This is a simplification.
-            for registered_qn in self.simple_name_lookup[call_name]:
-                if self._is_likely_same_function(call_name, registered_qn, module_qn):
-                    return self.function_registry[registered_qn], registered_qn
+            candidates = list(self.simple_name_lookup[call_name])
+
+            # Sort candidates by likelihood (prioritize closer modules)
+            candidates.sort(
+                key=lambda qn: self._calculate_import_distance(qn, module_qn)
+            )
+
+            # Return the most likely candidate
+            if candidates:
+                best_candidate = candidates[0]
+                return self.function_registry[best_candidate], best_candidate
 
         return None
 
-    # TODO: (VA) This is a hack to resolve function calls. We need to improve this.
-    def _is_likely_same_function(
-        self, call_name: str, registered_qn: str, caller_module_qn: str
-    ) -> bool:
-        if len(call_name) > 10 or "_" in call_name:
-            return True
-
+    def _calculate_import_distance(
+        self, candidate_qn: str, caller_module_qn: str
+    ) -> int:
+        """
+        Calculate the 'distance' between a candidate function and the calling module.
+        Lower values indicate more likely imports (closer modules, common prefixes).
+        """
         caller_parts = caller_module_qn.split(".")
-        registered_parts = registered_qn.split(".")
+        candidate_parts = candidate_qn.split(".")
 
-        if (
-            len(caller_parts) >= 2
-            and len(registered_parts) >= 2
-            and caller_parts[:2] == registered_parts[:2]
-        ):
-            return True
+        # Find common prefix length (how many package levels they share)
+        common_prefix = 0
+        for i in range(min(len(caller_parts), len(candidate_parts))):
+            if caller_parts[i] == candidate_parts[i]:
+                common_prefix += 1
+            else:
+                break
 
-        return False
+        # Calculate base distance (inverse of common prefix)
+        base_distance = max(len(caller_parts), len(candidate_parts)) - common_prefix
+
+        # Bonus for same package (sibling modules)
+        if len(caller_parts) > 1 and len(candidate_parts) > 1:
+            if (
+                caller_parts[:-1] == candidate_parts[:-2]
+            ):  # Same package, different module
+                base_distance -= 2
+
+        # Bonus for parent-child relationship
+        if candidate_qn.startswith(".".join(caller_parts[:-1]) + "."):
+            base_distance -= 1
+
+        return base_distance
