@@ -483,7 +483,7 @@ class GraphUpdater:
 
     def _parse_js_import_clause(
         self, clause_node: Node, source_module: str, current_module: str
-    ) -> None:  # type: ignore
+    ) -> None:
         """Parse JavaScript import clause (named, default, namespace imports)."""
         for child in clause_node.children:
             if child.type == "identifier":
@@ -525,7 +525,7 @@ class GraphUpdater:
                         )
                         break
 
-    def _parse_js_require(self, decl_node: Node, current_module: str) -> None:  # type: ignore
+    def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
         """Parse CommonJS require() statements."""
         # Look for: const name = require('module')
         var_name = None
@@ -621,7 +621,7 @@ class GraphUpdater:
             if import_node.type == "use_declaration":
                 self._parse_rust_use_declaration(import_node, module_qn)
 
-    def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:  # type: ignore
+    def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
         """Parse a single Rust use declaration."""
         for child in use_node.children:
             if child.type == "scoped_identifier":
@@ -689,7 +689,7 @@ class GraphUpdater:
                 # Handle both single and multiple imports
                 self._parse_go_import_declaration(import_node, module_qn)
 
-    def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:  # type: ignore
+    def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:
         """Parse a Go import declaration."""
         for child in import_node.children:
             if child.type == "import_spec":
@@ -701,7 +701,7 @@ class GraphUpdater:
                     if grandchild.type == "import_spec":
                         self._parse_go_import_spec(grandchild, module_qn)
 
-    def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:  # type: ignore
+    def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:
         """Parse a single Go import spec."""
         alias_name = None
         import_path = None

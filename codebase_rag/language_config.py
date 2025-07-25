@@ -113,6 +113,10 @@ LANGUAGE_CONFIGS = {
             "field_expression",
             "infix_expression",
         ],
+        import_node_types=["import_declaration"],
+        import_from_node_types=[
+            "import_declaration"
+        ],  # Scala uses same node for imports
         package_indicators=[],  # Scala uses package declarations
     ),
     "java": LanguageConfig(
@@ -148,6 +152,8 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["translation_unit", "namespace_definition"],
         call_node_types=["call_expression"],
+        import_node_types=["preproc_include"],
+        import_from_node_types=["preproc_include"],  # C++ uses #include
     ),
     "c-sharp": LanguageConfig(
         name="c-sharp",
@@ -169,6 +175,8 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["compilation_unit"],
         call_node_types=["invocation_expression"],
+        import_node_types=["using_directive"],
+        import_from_node_types=["using_directive"],  # C# uses using directives
     ),
     "php": LanguageConfig(
         name="php",
