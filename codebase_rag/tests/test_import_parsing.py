@@ -15,7 +15,7 @@ class TestImportParsing:
     """Test import parsing functionality across different languages."""
 
     @pytest.fixture
-    def graph_updater(self):
+    def graph_updater(self) -> GraphUpdater:
         """Create a GraphUpdater instance for testing."""
         mock_ingestor = MagicMock()
         parsers, queries = load_parsers()
@@ -26,101 +26,105 @@ class TestImportParsing:
             queries=queries,
         )
 
-    def test_python_import_parsing(self, graph_updater):
+    def test_python_import_parsing(self, graph_updater: GraphUpdater) -> None:
         """Test Python import statement parsing."""
         # Test that Python import parsing doesn't crash
-        module_qn = "test.module"
-        
+
         # Test various Python import patterns
         import_patterns = [
             "import os",
-            "import sys, json", 
+            "import sys, json",
             "from pathlib import Path",
             "from collections import defaultdict, Counter",
             "from . import local_module",
-            "from ..parent import something"
+            "from ..parent import something",
         ]
-        
+
         for pattern in import_patterns:
             # This should not raise an exception
             try:
                 # Simulate parsing an import statement
                 # The actual parsing happens in _parse_python_imports
                 # We're testing that the method exists and handles basic cases
-                assert hasattr(graph_updater, '_parse_python_imports')
-                assert hasattr(graph_updater, '_handle_python_import_statement')
-                assert hasattr(graph_updater, '_handle_python_import_from_statement')
+                assert hasattr(graph_updater, "_parse_python_imports")
+                assert hasattr(graph_updater, "_handle_python_import_statement")
+                assert hasattr(graph_updater, "_handle_python_import_from_statement")
             except Exception as e:
                 pytest.fail(f"Python import parsing failed for '{pattern}': {e}")
 
-    def test_import_mapping_functionality(self, graph_updater):
+    def test_import_mapping_functionality(self, graph_updater: GraphUpdater) -> None:
         """Test that import mapping works correctly."""
         module_qn = "test.services.user_service"
-        
+
         # Set up import mapping
         graph_updater.import_mapping[module_qn] = {
             "User": "test.models.user.User",
-            "Logger": "test.utils.logger.Logger"
+            "Logger": "test.utils.logger.Logger",
         }
-        
+
         # Test that mappings are stored correctly
         assert module_qn in graph_updater.import_mapping
         assert "User" in graph_updater.import_mapping[module_qn]
-        assert graph_updater.import_mapping[module_qn]["User"] == "test.models.user.User"
+        assert (
+            graph_updater.import_mapping[module_qn]["User"] == "test.models.user.User"
+        )
 
-    def test_function_registry_integration(self, graph_updater):
+    def test_function_registry_integration(self, graph_updater: GraphUpdater) -> None:
         """Test integration between import parsing and function registry."""
         # Set up function registry
         graph_updater.function_registry["test.models.user.User"] = "CLASS"
         graph_updater.function_registry["test.models.user.User.get_name"] = "FUNCTION"
         graph_updater.function_registry["test.utils.logger.Logger.info"] = "FUNCTION"
-        
+
         # Test that registry is accessible
         assert "test.models.user.User" in graph_updater.function_registry
         assert graph_updater.function_registry["test.models.user.User"] == "CLASS"
 
-    def test_relative_import_resolution(self, graph_updater):
+    def test_relative_import_resolution(self, graph_updater: GraphUpdater) -> None:
         """Test relative import resolution methods exist."""
         # These methods should exist for handling relative imports
-        assert hasattr(graph_updater, '_resolve_relative_import')
-        
+        assert hasattr(graph_updater, "_resolve_relative_import")
+
         # Test that the method can be called without crashing
         try:
             # This tests the method signature, not full functionality
             # since we'd need actual tree-sitter nodes
-            method = getattr(graph_updater, '_resolve_relative_import')
+            method = getattr(graph_updater, "_resolve_relative_import")
             assert callable(method)
         except Exception as e:
             pytest.fail(f"Relative import resolution method check failed: {e}")
 
-    def test_language_specific_import_methods(self, graph_updater):
+    def test_language_specific_import_methods(
+        self, graph_updater: GraphUpdater
+    ) -> None:
         """Test that language-specific import parsing methods exist."""
         expected_methods = [
-            '_parse_python_imports',
-            '_parse_js_ts_imports', 
-            '_parse_java_imports',
-            '_parse_rust_imports',
-            '_parse_go_imports',
-            '_parse_generic_imports'
+            "_parse_python_imports",
+            "_parse_js_ts_imports",
+            "_parse_java_imports",
+            "_parse_rust_imports",
+            "_parse_go_imports",
+            "_parse_generic_imports",
         ]
-        
+
         for method_name in expected_methods:
             assert hasattr(graph_updater, method_name), f"Missing method: {method_name}"
             method = getattr(graph_updater, method_name)
             assert callable(method), f"Method {method_name} is not callable"
 
-    def test_import_processing_doesnt_crash(self, graph_updater):
+    def test_import_processing_doesnt_crash(self, graph_updater: GraphUpdater) -> None:
         """Test that import processing methods handle edge cases gracefully."""
         module_qn = "test.module"
-        
+
         # Test with empty import mapping
         assert graph_updater.import_mapping.get(module_qn) is None
-        
+
         # Test with empty function registry
         from codebase_rag.graph_updater import FunctionRegistryTrie
+
         graph_updater.function_registry = FunctionRegistryTrie()
         assert len(graph_updater.function_registry) == 0
-        
+
         # These operations should not crash
         try:
             result = graph_updater._resolve_function_call("nonexistent", module_qn)
@@ -128,3 +132,63 @@ class TestImportParsing:
             assert result is None
         except Exception as e:
             pytest.fail(f"Function resolution crashed unexpectedly: {e}")
+
+    def test_python_alias_import_parsing(self, graph_updater: GraphUpdater) -> None:
+        """Test Python aliased import parsing functionality."""
+        import tree_sitter_python as tsp
+        from tree_sitter import Language, Parser
+
+        # Set up tree-sitter for Python
+        PY_LANGUAGE = Language(tsp.language())
+        parser = Parser(PY_LANGUAGE)
+
+        module_qn = "test.project.main"
+        graph_updater.project_name = "test"
+        graph_updater.import_mapping[module_qn] = {}
+
+        # Test cases for aliased imports
+        test_cases = [
+            # Regular import aliases
+            ("import module as alias", {"alias": "test.module"}),
+            ("import utils.helper as helper", {"helper": "test.utils.helper"}),
+            # From-import aliases
+            ("from utils import func as helper", {"helper": "test.utils.func"}),
+            ("from data import Class as DataClass", {"DataClass": "test.data.Class"}),
+            # Mixed imports
+            (
+                "from module import func, Class as MyClass",
+                {"func": "test.module.func", "MyClass": "test.module.Class"},
+            ),
+            (
+                "from utils import process, transform as convert",
+                {"process": "test.utils.process", "convert": "test.utils.transform"},
+            ),
+        ]
+
+        for import_statement, expected_mappings in test_cases:
+            # Clear previous mappings
+            graph_updater.import_mapping[module_qn] = {}
+
+            # Parse the import statement
+            tree = parser.parse(bytes(import_statement, "utf8"))
+            import_node = tree.root_node.children[0]
+
+            # Process the import based on type
+            if import_node.type == "import_statement":
+                graph_updater._handle_python_import_statement(import_node, module_qn)
+            elif import_node.type == "import_from_statement":
+                graph_updater._handle_python_import_from_statement(
+                    import_node, module_qn
+                )
+
+            # Verify the mappings
+            actual_mappings = graph_updater.import_mapping[module_qn]
+
+            for local_name, expected_full_name in expected_mappings.items():
+                assert local_name in actual_mappings, (
+                    f"Missing alias '{local_name}' for statement: {import_statement}"
+                )
+                assert actual_mappings[local_name] == expected_full_name, (
+                    f"Incorrect mapping for '{local_name}' in '{import_statement}': "
+                    f"expected {expected_full_name}, got {actual_mappings[local_name]}"
+                )

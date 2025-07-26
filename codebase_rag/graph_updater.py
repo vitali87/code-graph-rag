@@ -469,7 +469,7 @@ class GraphUpdater:
     ) -> None:
         """Handle 'from module import name' statements."""
         module_name = None
-        imported_names = []
+        imported_items = []  # Store tuples of (local_name, original_name)
 
         for child in import_node.children:
             if child.type == "dotted_name" and module_name is None:
@@ -477,7 +477,16 @@ class GraphUpdater:
                 module_name = child.text.decode("utf-8")
             elif child.type == "dotted_name" and module_name is not None:
                 # Subsequent dotted_names are imported items
-                imported_names.append(child.text.decode("utf-8"))
+                name = child.text.decode("utf-8")
+                imported_items.append((name, name))  # local_name = original_name
+            elif child.type == "aliased_import":
+                # Handle 'from module import name as alias'
+                original_name_node = child.child_by_field_name("name")
+                alias_node = child.child_by_field_name("alias")
+                if original_name_node and alias_node:
+                    original_name = original_name_node.text.decode("utf-8")
+                    alias = alias_node.text.decode("utf-8")
+                    imported_items.append((alias, original_name))  # local_name = alias
             elif child.type == "relative_import":
                 # Handle relative imports like 'from .module import name'
                 module_name = self._resolve_relative_import(child, module_qn)
@@ -488,10 +497,10 @@ class GraphUpdater:
                 if not module_name.startswith(self.project_name)
                 else module_name
             )
-            for imported_name in imported_names:
-                full_name = f"{base_module}.{imported_name}"
-                self.import_mapping[module_qn][imported_name] = full_name
-                logger.debug(f"  From import: {imported_name} -> {full_name}")
+            for local_name, original_name in imported_items:
+                full_name = f"{base_module}.{original_name}"
+                self.import_mapping[module_qn][local_name] = full_name
+                logger.debug(f"  From import: {local_name} -> {full_name}")
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         """Resolve relative imports like '.module' or '..parent.module'."""
