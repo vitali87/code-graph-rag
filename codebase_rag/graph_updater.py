@@ -56,7 +56,12 @@ class FunctionRegistryTrie:
         self.insert(qualified_name, func_type)
 
     def __delitem__(self, qualified_name: str) -> None:
-        """Remove qualified name from registry."""
+        """Remove qualified name from registry.
+
+        Note: This only removes the entry from the dictionary-like interface for performance
+        and simplicity. The node is not removed from the underlying trie structure, which
+        may lead to memory growth in long-running sessions with many file deletions.
+        """
         if qualified_name in self._entries:
             del self._entries[qualified_name]
             # Note: We don't remove from trie to avoid complexity,
