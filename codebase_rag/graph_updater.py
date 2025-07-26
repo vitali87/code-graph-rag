@@ -15,96 +15,98 @@ from .language_config import LanguageConfig, get_language_config
 
 class FunctionRegistryTrie:
     """Trie data structure optimized for function qualified name lookups."""
-    
-    def __init__(self):
-        self.root = {}
-        self._entries = {}  # qualified_name -> type mapping for compatibility
-    
+
+    def __init__(self) -> None:
+        self.root: dict[str, Any] = {}
+        self._entries: dict[
+            str, str
+        ] = {}  # qualified_name -> type mapping for compatibility
+
     def insert(self, qualified_name: str, func_type: str) -> None:
         """Insert a function into the trie."""
         self._entries[qualified_name] = func_type
-        
+
         # Build trie path from qualified name parts
-        parts = qualified_name.split('.')
+        parts = qualified_name.split(".")
         current = self.root
-        
+
         for part in parts:
             if part not in current:
                 current[part] = {}
             current = current[part]
-        
+
         # Mark end of qualified name
-        current['__type__'] = func_type
-        current['__qn__'] = qualified_name
-    
+        current["__type__"] = func_type
+        current["__qn__"] = qualified_name
+
     def get(self, qualified_name: str) -> str | None:
         """Get function type by exact qualified name."""
         return self._entries.get(qualified_name)
-    
+
     def __contains__(self, qualified_name: str) -> bool:
         """Check if qualified name exists in registry."""
         return qualified_name in self._entries
-    
+
     def __getitem__(self, qualified_name: str) -> str:
         """Get function type by qualified name."""
         return self._entries[qualified_name]
-    
+
     def __setitem__(self, qualified_name: str, func_type: str) -> None:
         """Set function type for qualified name."""
         self.insert(qualified_name, func_type)
-    
+
     def __delitem__(self, qualified_name: str) -> None:
         """Remove qualified name from registry."""
         if qualified_name in self._entries:
             del self._entries[qualified_name]
-            # Note: We don't remove from trie to avoid complexity, 
+            # Note: We don't remove from trie to avoid complexity,
             # but this could be optimized if needed
-    
-    def keys(self):
+
+    def keys(self) -> Any:
         """Return all qualified names."""
         return self._entries.keys()
-    
-    def items(self):
+
+    def items(self) -> Any:
         """Return all (qualified_name, type) pairs."""
         return self._entries.items()
-    
+
     def __len__(self) -> int:
         """Return number of entries."""
         return len(self._entries)
-    
+
     def find_with_prefix_and_suffix(self, prefix: str, suffix: str) -> list[str]:
         """Find all qualified names that start with prefix and end with suffix.
-        
+
         This is optimized for the common pattern in function resolution:
         finding functions like "parent.module.*.function_name"
         """
         results = []
-        prefix_parts = prefix.split('.') if prefix else []
-        
+        prefix_parts = prefix.split(".") if prefix else []
+
         # Navigate to prefix in trie
         current = self.root
         for part in prefix_parts:
             if part not in current:
                 return []  # Prefix doesn't exist
             current = current[part]
-        
+
         # DFS to find all entries under this prefix that end with suffix
-        def dfs(node, path_parts):
-            if '__qn__' in node:
-                qn = node['__qn__']
-                if qn.endswith(f'.{suffix}'):
+        def dfs(node: dict[str, Any], path_parts: list[str]) -> None:
+            if "__qn__" in node:
+                qn = node["__qn__"]
+                if qn.endswith(f".{suffix}"):
                     results.append(qn)
-            
+
             for key, child in node.items():
-                if not key.startswith('__'):  # Skip metadata keys
+                if not key.startswith("__"):  # Skip metadata keys
                     dfs(child, path_parts + [key])
-        
+
         dfs(current, prefix_parts)
         return results
-    
+
     def find_ending_with(self, suffix: str) -> list[str]:
         """Find all qualified names ending with the given suffix."""
-        return [qn for qn in self._entries.keys() if qn.endswith(f'.{suffix}')]
+        return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
 
 class GraphUpdater:
@@ -123,7 +125,9 @@ class GraphUpdater:
         self.queries = queries
         self.project_name = repo_path.name
         self.structural_elements: dict[Path, str | None] = {}
-        self.function_registry = FunctionRegistryTrie()  # Optimized trie for function lookups
+        self.function_registry = (
+            FunctionRegistryTrie()
+        )  # Optimized trie for function lookups
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
         self.ast_cache: dict[Path, tuple[Node, str]] = {}
         self.import_mapping: dict[
@@ -440,25 +444,22 @@ class GraphUpdater:
         self, import_node: Node, module_qn: str
     ) -> None:
         """Handle 'import module' statements."""
-        for child in import_node.children:
+        for child in import_node.named_children:
             if child.type == "dotted_name":
                 module_name = child.text.decode("utf-8")
-                parts = module_name.split(".")
-                local_name = parts[-1]  # Last part becomes the local name
+                # For 'import a.b.c', the local name available in the scope is 'a'
+                local_name = module_name.split(".")[0]
                 full_name = f"{self.project_name}.{module_name}"
                 self.import_mapping[module_qn][local_name] = full_name
                 logger.debug(f"  Import: {local_name} -> {full_name}")
             elif child.type == "aliased_import":
                 # Handle 'import module as alias'
-                module_name = None
-                alias = None
-                for grandchild in child.children:
-                    if grandchild.type == "dotted_name":
-                        module_name = grandchild.text.decode("utf-8")
-                    elif grandchild.type == "identifier":
-                        alias = grandchild.text.decode("utf-8")
+                module_name_node = child.child_by_field_name("name")
+                alias_node = child.child_by_field_name("alias")
 
-                if module_name and alias:
+                if module_name_node and alias_node:
+                    module_name = module_name_node.text.decode("utf-8")
+                    alias = alias_node.text.decode("utf-8")
                     full_name = f"{self.project_name}.{module_name}"
                     self.import_mapping[module_qn][alias] = full_name
                     logger.debug(f"  Aliased import: {alias} -> {full_name}")
@@ -552,7 +553,9 @@ class GraphUpdater:
             return import_path.replace("/", ".")
 
         # Relative import - resolve relative to current module
-        current_parts = current_module.split(".")[:-1]  # Start from the current directory
+        current_parts = current_module.split(".")[
+            :-1
+        ]  # Start from the current directory
         import_parts = import_path.split("/")
 
         for part in import_parts:
@@ -1235,7 +1238,9 @@ class GraphUpdater:
         for i in range(len(module_parts) - 1, 0, -1):
             parent_module = ".".join(module_parts[:i])
             # Use trie to efficiently find functions with prefix and suffix
-            matches = self.function_registry.find_with_prefix_and_suffix(parent_module, call_name)
+            matches = self.function_registry.find_with_prefix_and_suffix(
+                parent_module, call_name
+            )
             possible_qns.extend(matches)
 
         # Remove duplicates while preserving order
