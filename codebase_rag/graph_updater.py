@@ -13,6 +13,100 @@ from .config import IGNORE_PATTERNS
 from .language_config import LanguageConfig, get_language_config
 
 
+class FunctionRegistryTrie:
+    """Trie data structure optimized for function qualified name lookups."""
+    
+    def __init__(self):
+        self.root = {}
+        self._entries = {}  # qualified_name -> type mapping for compatibility
+    
+    def insert(self, qualified_name: str, func_type: str) -> None:
+        """Insert a function into the trie."""
+        self._entries[qualified_name] = func_type
+        
+        # Build trie path from qualified name parts
+        parts = qualified_name.split('.')
+        current = self.root
+        
+        for part in parts:
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+        
+        # Mark end of qualified name
+        current['__type__'] = func_type
+        current['__qn__'] = qualified_name
+    
+    def get(self, qualified_name: str) -> str | None:
+        """Get function type by exact qualified name."""
+        return self._entries.get(qualified_name)
+    
+    def __contains__(self, qualified_name: str) -> bool:
+        """Check if qualified name exists in registry."""
+        return qualified_name in self._entries
+    
+    def __getitem__(self, qualified_name: str) -> str:
+        """Get function type by qualified name."""
+        return self._entries[qualified_name]
+    
+    def __setitem__(self, qualified_name: str, func_type: str) -> None:
+        """Set function type for qualified name."""
+        self.insert(qualified_name, func_type)
+    
+    def __delitem__(self, qualified_name: str) -> None:
+        """Remove qualified name from registry."""
+        if qualified_name in self._entries:
+            del self._entries[qualified_name]
+            # Note: We don't remove from trie to avoid complexity, 
+            # but this could be optimized if needed
+    
+    def keys(self):
+        """Return all qualified names."""
+        return self._entries.keys()
+    
+    def items(self):
+        """Return all (qualified_name, type) pairs."""
+        return self._entries.items()
+    
+    def __len__(self) -> int:
+        """Return number of entries."""
+        return len(self._entries)
+    
+    def find_with_prefix_and_suffix(self, prefix: str, suffix: str) -> list[str]:
+        """Find all qualified names that start with prefix and end with suffix.
+        
+        This is optimized for the common pattern in function resolution:
+        finding functions like "parent.module.*.function_name"
+        """
+        results = []
+        prefix_parts = prefix.split('.') if prefix else []
+        
+        # Navigate to prefix in trie
+        current = self.root
+        for part in prefix_parts:
+            if part not in current:
+                return []  # Prefix doesn't exist
+            current = current[part]
+        
+        # DFS to find all entries under this prefix that end with suffix
+        def dfs(node, path_parts):
+            if '__qn__' in node:
+                qn = node['__qn__']
+                if qn.endswith(f'.{suffix}'):
+                    results.append(qn)
+            
+            for key, child in node.items():
+                if not key.startswith('__'):  # Skip metadata keys
+                    dfs(child, path_parts + [key])
+        
+        dfs(current, prefix_parts)
+        return results
+    
+    def find_ending_with(self, suffix: str) -> list[str]:
+        """Find all qualified names ending with the given suffix."""
+        return [qn for qn in self._entries.keys() if qn.endswith(f'.{suffix}')]
+
+
 class GraphUpdater:
     """Parses code using Tree-sitter and updates the graph."""
 
@@ -29,7 +123,7 @@ class GraphUpdater:
         self.queries = queries
         self.project_name = repo_path.name
         self.structural_elements: dict[Path, str | None] = {}
-        self.function_registry: dict[str, str] = {}  # {qualified_name: type}
+        self.function_registry = FunctionRegistryTrie()  # Optimized trie for function lookups
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
         self.ast_cache: dict[Path, tuple[Node, str]] = {}
         self.import_mapping: dict[
@@ -1137,15 +1231,12 @@ class GraphUpdater:
             parent_module = ".".join(module_parts[:i])
             possible_qns.append(f"{parent_module}.{call_name}")
 
-        # 3. All submodules of parent modules (for cross-package imports)
+        # 3. All submodules of parent modules (for cross-package imports) - Optimized with Trie
         for i in range(len(module_parts) - 1, 0, -1):
             parent_module = ".".join(module_parts[:i])
-            # Check all registered functions that start with this parent
-            for registered_qn in self.function_registry:
-                if registered_qn.startswith(
-                    f"{parent_module}."
-                ) and registered_qn.endswith(f".{call_name}"):
-                    possible_qns.append(registered_qn)
+            # Use trie to efficiently find functions with prefix and suffix
+            matches = self.function_registry.find_with_prefix_and_suffix(parent_module, call_name)
+            possible_qns.extend(matches)
 
         # Remove duplicates while preserving order
         seen = set()

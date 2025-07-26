@@ -71,11 +71,9 @@ class TestImportParsing:
     def test_function_registry_integration(self, graph_updater):
         """Test integration between import parsing and function registry."""
         # Set up function registry
-        graph_updater.function_registry = {
-            "test.models.user.User": "CLASS",
-            "test.models.user.User.get_name": "FUNCTION",
-            "test.utils.logger.Logger.info": "FUNCTION"
-        }
+        graph_updater.function_registry["test.models.user.User"] = "CLASS"
+        graph_updater.function_registry["test.models.user.User.get_name"] = "FUNCTION"
+        graph_updater.function_registry["test.utils.logger.Logger.info"] = "FUNCTION"
         
         # Test that registry is accessible
         assert "test.models.user.User" in graph_updater.function_registry
@@ -119,7 +117,8 @@ class TestImportParsing:
         assert graph_updater.import_mapping.get(module_qn) is None
         
         # Test with empty function registry
-        graph_updater.function_registry = {}
+        from codebase_rag.graph_updater import FunctionRegistryTrie
+        graph_updater.function_registry = FunctionRegistryTrie()
         assert len(graph_updater.function_registry) == 0
         
         # These operations should not crash
