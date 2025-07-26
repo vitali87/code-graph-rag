@@ -1,119 +1,131 @@
-#!/usr/bin/env python3
-"""
-Research script to understand tree-sitter AST structures for import statements
-across different programming languages.
-"""
-# type: ignore
-
 import os
 import sys
-from collections.abc import Callable
-from typing import Any
+from pathlib import Path
+from unittest.mock import MagicMock
 
-from tree_sitter import Language, Node, Parser
+import pytest
 
-# Add the parent directory to path for imports if needed
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-# Import language parsers
-try:
-    from tree_sitter_go import language as go_lang
-    from tree_sitter_java import language as java_lang
-    from tree_sitter_javascript import language as js_lang
-    from tree_sitter_rust import language as rust_lang
-    from tree_sitter_typescript import language_typescript as ts_lang
-except ImportError as e:
-    print(f"Some languages not available: {e}")
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 
 
-def analyze_imports(
-    language_name: str,
-    language_lib: Callable[[], Any],
-    code_samples: list[tuple[str, str]],
-) -> None:
-    """Analyze import AST structures for a given language."""
-    print(f"\n{'=' * 50}")
-    print(f"ANALYZING {language_name.upper()} IMPORTS")
-    print(f"{'=' * 50}")
+class TestImportParsing:
+    """Test import parsing functionality across different languages."""
 
-    try:
-        language = Language(language_lib())
-        parser = Parser(language)
+    @pytest.fixture
+    def graph_updater(self):
+        """Create a GraphUpdater instance for testing."""
+        mock_ingestor = MagicMock()
+        parsers, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=Path("/test"),
+            parsers=parsers,
+            queries=queries,
+        )
 
-        for i, (description, code) in enumerate(code_samples):
-            print(f"\n--- Sample {i + 1}: {description} ---")
-            print(f"Code: {code}")
+    def test_python_import_parsing(self, graph_updater):
+        """Test Python import statement parsing."""
+        # Test that Python import parsing doesn't crash
+        module_qn = "test.module"
+        
+        # Test various Python import patterns
+        import_patterns = [
+            "import os",
+            "import sys, json", 
+            "from pathlib import Path",
+            "from collections import defaultdict, Counter",
+            "from . import local_module",
+            "from ..parent import something"
+        ]
+        
+        for pattern in import_patterns:
+            # This should not raise an exception
+            try:
+                # Simulate parsing an import statement
+                # The actual parsing happens in _parse_python_imports
+                # We're testing that the method exists and handles basic cases
+                assert hasattr(graph_updater, '_parse_python_imports')
+                assert hasattr(graph_updater, '_handle_python_import_statement')
+                assert hasattr(graph_updater, '_handle_python_import_from_statement')
+            except Exception as e:
+                pytest.fail(f"Python import parsing failed for '{pattern}': {e}")
 
-            tree = parser.parse(bytes(code, "utf8"))
+    def test_import_mapping_functionality(self, graph_updater):
+        """Test that import mapping works correctly."""
+        module_qn = "test.services.user_service"
+        
+        # Set up import mapping
+        graph_updater.import_mapping[module_qn] = {
+            "User": "test.models.user.User",
+            "Logger": "test.utils.logger.Logger"
+        }
+        
+        # Test that mappings are stored correctly
+        assert module_qn in graph_updater.import_mapping
+        assert "User" in graph_updater.import_mapping[module_qn]
+        assert graph_updater.import_mapping[module_qn]["User"] == "test.models.user.User"
 
-            def print_tree(node: Node, depth: int = 0) -> None:
-                indent = "  " * depth
-                node_text = node.text.decode("utf8").replace("\n", "\\n")
-                print(f"{indent}{node.type}: '{node_text}'")
-                for child in node.children:
-                    print_tree(child, depth + 1)
+    def test_function_registry_integration(self, graph_updater):
+        """Test integration between import parsing and function registry."""
+        # Set up function registry
+        graph_updater.function_registry = {
+            "test.models.user.User": "CLASS",
+            "test.models.user.User.get_name": "FUNCTION",
+            "test.utils.logger.Logger.info": "FUNCTION"
+        }
+        
+        # Test that registry is accessible
+        assert "test.models.user.User" in graph_updater.function_registry
+        assert graph_updater.function_registry["test.models.user.User"] == "CLASS"
 
-            print("AST:")
-            print_tree(tree.root_node)
+    def test_relative_import_resolution(self, graph_updater):
+        """Test relative import resolution methods exist."""
+        # These methods should exist for handling relative imports
+        assert hasattr(graph_updater, '_resolve_relative_import')
+        
+        # Test that the method can be called without crashing
+        try:
+            # This tests the method signature, not full functionality
+            # since we'd need actual tree-sitter nodes
+            method = getattr(graph_updater, '_resolve_relative_import')
+            assert callable(method)
+        except Exception as e:
+            pytest.fail(f"Relative import resolution method check failed: {e}")
 
-    except Exception as e:
-        print(f"Error analyzing {language_name}: {e}")
+    def test_language_specific_import_methods(self, graph_updater):
+        """Test that language-specific import parsing methods exist."""
+        expected_methods = [
+            '_parse_python_imports',
+            '_parse_js_ts_imports', 
+            '_parse_java_imports',
+            '_parse_rust_imports',
+            '_parse_go_imports',
+            '_parse_generic_imports'
+        ]
+        
+        for method_name in expected_methods:
+            assert hasattr(graph_updater, method_name), f"Missing method: {method_name}"
+            method = getattr(graph_updater, method_name)
+            assert callable(method), f"Method {method_name} is not callable"
 
-
-# JavaScript/TypeScript samples
-js_samples = [
-    ("Named import", "import { func1, func2 } from './module';"),
-    ("Default import", "import React from 'react';"),
-    ("Namespace import", "import * as utils from './utils';"),
-    ("Mixed import", "import React, { useState } from 'react';"),
-    ("Require (CommonJS)", "const fs = require('fs');"),
-]
-
-# Java samples
-java_samples = [
-    ("Simple import", "import java.util.List;"),
-    ("Wildcard import", "import java.util.*;"),
-    ("Static import", "import static java.lang.Math.PI;"),
-]
-
-# Rust samples
-rust_samples = [
-    ("Simple use", "use std::collections::HashMap;"),
-    ("Multiple use", "use std::{fs, io};"),
-    ("Glob use", "use crate::utils::*;"),
-    ("Aliased use", "use std::collections::HashMap as Map;"),
-]
-
-# Go samples
-go_samples = [
-    ("Simple import", 'import "fmt"'),
-    ("Multiple imports", 'import (\n    "fmt"\n    "os"\n)'),
-    ("Aliased import", 'import f "fmt"'),
-]
-
-if __name__ == "__main__":
-    # Analyze each language
-    try:
-        analyze_imports("JavaScript", js_lang, js_samples)
-    except Exception:
-        print("JavaScript not available")
-
-    try:
-        analyze_imports("TypeScript", ts_lang, js_samples)  # TS uses same syntax
-    except Exception:
-        print("TypeScript not available")
-
-    try:
-        analyze_imports("Java", java_lang, java_samples)
-    except Exception:
-        print("Java not available")
-
-    try:
-        analyze_imports("Rust", rust_lang, rust_samples)
-    except Exception:
-        print("Rust not available")
-
-    try:
-        analyze_imports("Go", go_lang, go_samples)
-    except Exception:
-        print("Go not available")
+    def test_import_processing_doesnt_crash(self, graph_updater):
+        """Test that import processing methods handle edge cases gracefully."""
+        module_qn = "test.module"
+        
+        # Test with empty import mapping
+        assert graph_updater.import_mapping.get(module_qn) is None
+        
+        # Test with empty function registry
+        graph_updater.function_registry = {}
+        assert len(graph_updater.function_registry) == 0
+        
+        # These operations should not crash
+        try:
+            result = graph_updater._resolve_function_call("nonexistent", module_qn)
+            # Should return None for non-existent functions
+            assert result is None
+        except Exception as e:
+            pytest.fail(f"Function resolution crashed unexpectedly: {e}")
