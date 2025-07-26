@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Literal
 
 from dotenv import load_dotenv
+from prompt_toolkit.styles import Style
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from prompt_toolkit.styles import Style
 
 load_dotenv()
 

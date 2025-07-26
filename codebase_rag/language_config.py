@@ -14,6 +14,10 @@ class LanguageConfig:
     module_node_types: list[str]
     call_node_types: list[str] = field(default_factory=list)
 
+    # Import statement node types for precise import resolution
+    import_node_types: list[str] = field(default_factory=list)
+    import_from_node_types: list[str] = field(default_factory=list)
+
     # Field names for extracting names
     name_field: str = "name"
     body_field: str = "body"
@@ -38,6 +42,8 @@ LANGUAGE_CONFIGS = {
         class_node_types=["class_definition"],
         module_node_types=["module"],
         call_node_types=["call"],
+        import_node_types=["import_statement"],
+        import_from_node_types=["import_from_statement"],
         package_indicators=["__init__.py"],
     ),
     "javascript": LanguageConfig(
@@ -51,6 +57,8 @@ LANGUAGE_CONFIGS = {
         class_node_types=["class_declaration"],
         module_node_types=["program"],
         call_node_types=["call_expression"],
+        import_node_types=["import_statement", "lexical_declaration"],
+        import_from_node_types=["import_statement", "lexical_declaration"],  # Include CommonJS require
     ),
     "typescript": LanguageConfig(
         name="typescript",
@@ -63,6 +71,8 @@ LANGUAGE_CONFIGS = {
         class_node_types=["class_declaration"],
         module_node_types=["program"],
         call_node_types=["call_expression"],
+        import_node_types=["import_statement", "lexical_declaration"],
+        import_from_node_types=["import_statement", "lexical_declaration"],  # Include CommonJS require
     ),
     "rust": LanguageConfig(
         name="rust",
@@ -71,6 +81,8 @@ LANGUAGE_CONFIGS = {
         class_node_types=["struct_item", "enum_item", "impl_item"],
         module_node_types=["source_file"],
         call_node_types=["call_expression"],
+        import_node_types=["use_declaration"],
+        import_from_node_types=["use_declaration"],  # Rust uses 'use' for all imports
     ),
     "go": LanguageConfig(
         name="go",
@@ -79,6 +91,8 @@ LANGUAGE_CONFIGS = {
         class_node_types=["type_declaration"],  # Go structs
         module_node_types=["source_file"],
         call_node_types=["call_expression"],
+        import_node_types=["import_declaration"],
+        import_from_node_types=["import_declaration"],  # Go uses same node for imports
     ),
     "scala": LanguageConfig(
         name="scala",
@@ -99,6 +113,10 @@ LANGUAGE_CONFIGS = {
             "field_expression",
             "infix_expression",
         ],
+        import_node_types=["import_declaration"],
+        import_from_node_types=[
+            "import_declaration"
+        ],  # Scala uses same node for imports
         package_indicators=[],  # Scala uses package declarations
     ),
     "java": LanguageConfig(
@@ -117,6 +135,10 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         package_indicators=[],  # Java uses package declarations
         call_node_types=["method_invocation"],
+        import_node_types=["import_declaration"],
+        import_from_node_types=[
+            "import_declaration"
+        ],  # Java uses same node for imports
     ),
     "cpp": LanguageConfig(
         name="cpp",
@@ -130,6 +152,8 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["translation_unit", "namespace_definition"],
         call_node_types=["call_expression"],
+        import_node_types=["preproc_include"],
+        import_from_node_types=["preproc_include"],  # C++ uses #include
     ),
     "c-sharp": LanguageConfig(
         name="c-sharp",
@@ -151,6 +175,8 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["compilation_unit"],
         call_node_types=["invocation_expression"],
+        import_node_types=["using_directive"],
+        import_from_node_types=["using_directive"],  # C# uses using directives
     ),
     "php": LanguageConfig(
         name="php",
