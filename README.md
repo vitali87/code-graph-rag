@@ -66,9 +66,30 @@ The system consists of two main components:
 
 - Python 3.12+
 - Docker & Docker Compose (for Memgraph)
+- **cmake** (required for building pymgclient dependency)
 - **For cloud models**: Google Gemini API key
 - **For local models**: Ollama installed and running
 - `uv` package manager
+
+### Installing cmake
+
+On macOS:
+```bash
+brew install cmake
+```
+
+On Linux (Ubuntu/Debian):
+```bash
+sudo apt-get update
+sudo apt-get install cmake
+```
+
+On Linux (CentOS/RHEL):
+```bash
+sudo yum install cmake
+# or on newer versions:
+sudo dnf install cmake
+```
 
 ## 🛠️ Installation
 
