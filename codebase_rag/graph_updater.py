@@ -1134,16 +1134,6 @@ class GraphUpdater:
                 if imported_qn in self.function_registry:
                     logger.debug(f"Import-resolved call: {call_name} -> {imported_qn}")
                     return self.function_registry[imported_qn], imported_qn
-                # Check if it's a method call on imported class
-                for registered_qn in self.function_registry:
-                    if registered_qn.startswith(f"{imported_qn}."):
-                        # This might be a method call like User.get_name where User was imported
-                        method_name = registered_qn[len(imported_qn) + 1 :]
-                        if method_name == call_name:
-                            logger.debug(
-                                f"Import-resolved method call: {call_name} -> {registered_qn}"
-                            )
-                            return self.function_registry[registered_qn], registered_qn
 
         # Phase 2: Try to resolve with fully qualified names in order of likelihood
         module_parts = module_qn.split(".")
