@@ -410,8 +410,6 @@ class GraphUpdater:
         self.import_mapping[module_qn] = {}
 
         try:
-            from tree_sitter import QueryCursor
-
             cursor = QueryCursor(imports_query)
             captures = cursor.captures(root_node)
 
