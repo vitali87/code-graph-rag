@@ -58,7 +58,7 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         call_node_types=["call_expression"],
         import_node_types=["import_statement", "lexical_declaration"],
-        import_from_node_types=["import_statement"],  # JS uses same node for both
+        import_from_node_types=["import_statement", "lexical_declaration"],  # Include CommonJS require
     ),
     "typescript": LanguageConfig(
         name="typescript",
@@ -72,7 +72,7 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         call_node_types=["call_expression"],
         import_node_types=["import_statement", "lexical_declaration"],
-        import_from_node_types=["import_statement"],  # TS uses same node for both
+        import_from_node_types=["import_statement", "lexical_declaration"],  # Include CommonJS require
     ),
     "rust": LanguageConfig(
         name="rust",
