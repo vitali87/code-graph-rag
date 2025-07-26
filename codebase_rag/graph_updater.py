@@ -455,31 +455,24 @@ class GraphUpdater:
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         """Resolve JavaScript module path to qualified name."""
-        if import_path.startswith("./") or import_path.startswith("../"):
-            # Relative import - resolve relative to current module
-            current_parts = current_module.split(".")
-            if import_path.startswith("./"):
-                # Same directory
-                base_parts = current_parts[:-1]  # Remove file name
-                rel_path = import_path[2:]  # Remove './'
-            else:
-                # Parent directory(s)
-                dots = 0
-                for char in import_path:
-                    if char == ".":
-                        dots += 1
-                    elif char == "/":
-                        break
-                levels_up = (dots - 1) // 2  # Each '../' is 2 dots and a slash
-                base_parts = current_parts[: -(levels_up + 1)]
-                rel_path = import_path[levels_up * 3 + 1 :]  # Remove '../' parts
-
-            if rel_path:
-                base_parts.extend(rel_path.replace("/", ".").split("."))
-            return ".".join(base_parts)
-        else:
+        if not import_path.startswith("."):
             # Absolute import (package)
             return import_path.replace("/", ".")
+
+        # Relative import - resolve relative to current module
+        current_parts = current_module.split(".")[:-1]  # Start from the current directory
+        import_parts = import_path.split("/")
+
+        for part in import_parts:
+            if part == ".":
+                continue  # Stays in the current directory
+            if part == "..":
+                if current_parts:
+                    current_parts.pop()  # Go up one level
+            elif part:
+                current_parts.append(part)
+
+        return ".".join(current_parts)
 
     def _parse_js_import_clause(
         self, clause_node: Node, source_module: str, current_module: str
