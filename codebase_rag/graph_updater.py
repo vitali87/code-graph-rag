@@ -425,8 +425,6 @@ class GraphUpdater:
 
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
         """Parse JavaScript/TypeScript import statements."""
-        if module_qn not in self.import_mapping:
-            self.import_mapping[module_qn] = {}
 
         for import_node in captures.get("import", []):
             if import_node.type == "import_statement":
@@ -555,8 +553,6 @@ class GraphUpdater:
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         """Parse Java import statements."""
-        if module_qn not in self.import_mapping:
-            self.import_mapping[module_qn] = {}
 
         for import_node in captures.get("import", []):
             if import_node.type == "import_declaration":
@@ -607,8 +603,6 @@ class GraphUpdater:
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         """Parse Rust use declarations."""
-        if module_qn not in self.import_mapping:
-            self.import_mapping[module_qn] = {}
 
         for import_node in captures.get("import", []):
             if import_node.type == "use_declaration":
@@ -674,8 +668,6 @@ class GraphUpdater:
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         """Parse Go import declarations."""
-        if module_qn not in self.import_mapping:
-            self.import_mapping[module_qn] = {}
 
         for import_node in captures.get("import", []):
             if import_node.type == "import_declaration":
@@ -725,8 +717,6 @@ class GraphUpdater:
         self, captures: dict, module_qn: str, lang_config: LanguageConfig
     ) -> None:
         """Generic fallback import parsing for other languages."""
-        if module_qn not in self.import_mapping:
-            self.import_mapping[module_qn] = {}
 
         for import_node in captures.get("import", []):
             logger.debug(
