@@ -526,11 +526,8 @@ class GraphUpdater:
             elif child.type == "dotted_name":
                 module_name = child.text.decode("utf-8")
 
-        # Calculate the target module
-        if dots == 1:  # from .module
-            target_parts = module_parts[:-1]  # Current package
-        else:  # from ..module (go up dots-1 levels)
-            target_parts = module_parts[: -(dots - 1)] if dots > 1 else module_parts
+        # Calculate the target module - dots corresponds to levels to go up
+        target_parts = module_parts[:-dots] if dots > 0 else module_parts
 
         if module_name:
             target_parts.extend(module_name.split("."))
