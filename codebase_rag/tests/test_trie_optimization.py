@@ -99,8 +99,6 @@ class TestTrieOptimization:
                         method_qn = f"{class_qn}.{method}"
                         trie.insert(method_qn, "FUNCTION")
 
-        print(f"Created trie with {len(trie)} entries")
-
         # Test prefix+suffix search (this would be O(n) with naive approach)
         results = trie.find_with_prefix_and_suffix("com.example.services", "create")
         assert len(results) > 0
