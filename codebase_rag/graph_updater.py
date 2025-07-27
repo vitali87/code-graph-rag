@@ -502,11 +502,17 @@ class GraphUpdater:
                     imported_items.append((alias, original_name))
 
         if module_name and imported_items:
-            base_module = (
-                f"{self.project_name}.{module_name}"
-                if not module_name.startswith(self.project_name)
-                else module_name
-            )
+            # Only prepend project name for local modules, not standard library or third-party
+            if module_name.startswith(self.project_name):
+                base_module = module_name
+            else:
+                top_level_module = module_name.split(".")[0]
+                if (self.repo_path / top_level_module).is_dir() or (
+                    self.repo_path / f"{top_level_module}.py"
+                ).is_file():
+                    base_module = f"{self.project_name}.{module_name}"
+                else:
+                    base_module = module_name
             for local_name, original_name in imported_items:
                 full_name = f"{base_module}.{original_name}"
                 self.import_mapping[module_qn][local_name] = full_name
