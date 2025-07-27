@@ -1301,21 +1301,8 @@ class GraphUpdater:
         # Calculate base distance (inverse of common prefix)
         base_distance = max(len(caller_parts), len(candidate_parts)) - common_prefix
 
-        # Bonus for same package (sibling modules)
-        if len(caller_parts) > 1 and len(candidate_parts) > 1:
-            # Extract module path based on whether candidate is a function or method
-            candidate_type = self.function_registry.get(candidate_qn, "Function")
-            if candidate_type == "Method":
-                # For methods: proj.pkg.mod.Class.method -> proj.pkg.mod
-                candidate_module_parts = candidate_parts[:-2]
-            else:
-                # For functions: proj.pkg.mod.func -> proj.pkg.mod
-                candidate_module_parts = candidate_parts[:-1]
-
-            if caller_parts[:-1] == candidate_module_parts:
-                base_distance -= 2
-
-        # Bonus for parent-child relationship
+        # Bonus for candidates that are "close" in the module hierarchy (e.g., in the
+        # same package or subpackages).
         if candidate_qn.startswith(".".join(caller_parts[:-1]) + "."):
             base_distance -= 1
 

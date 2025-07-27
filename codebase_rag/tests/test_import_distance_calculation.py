@@ -32,7 +32,7 @@ class TestImportDistanceCalculation:
     def test_sibling_module_bonus_for_functions(
         self, mock_updater: GraphUpdater
     ) -> None:
-        """Test that functions in sibling modules receive the sibling bonus."""
+        """Test that functions in sibling modules receive the proximity bonus."""
         # Set up function registry
         function_qn = "proj.pkg.sibling_mod.some_func"
         mock_updater.function_registry[function_qn] = "Function"
@@ -42,14 +42,14 @@ class TestImportDistanceCalculation:
         # Calculate distance
         distance = mock_updater._calculate_import_distance(function_qn, caller_module)
 
-        # Function should get sibling bonus (-2)
-        # Base distance: max(3, 4) - 2 = 2, then -2 bonus = 0, then +1 parent-child = 1
+        # Function should get proximity bonus (-1)
+        # Base distance: max(3, 4) - 2 = 2, then -1 proximity bonus = 1
         assert distance == 1, (
             f"Function in sibling module should have distance 1, got {distance}"
         )
 
     def test_sibling_module_bonus_for_methods(self, mock_updater: GraphUpdater) -> None:
-        """Test that methods in sibling modules receive the sibling bonus."""
+        """Test that methods in sibling modules receive the proximity bonus."""
         # Set up function registry
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
         mock_updater.function_registry[method_qn] = "Method"
@@ -59,8 +59,8 @@ class TestImportDistanceCalculation:
         # Calculate distance
         distance = mock_updater._calculate_import_distance(method_qn, caller_module)
 
-        # Method should get sibling bonus (-2)
-        # Base distance: max(3, 5) - 2 = 3, then -2 bonus = 1, then +1 parent-child = 2
+        # Method should get proximity bonus (-1)
+        # Base distance: max(3, 5) - 2 = 3, then -1 proximity bonus = 2
         assert distance == 2, (
             f"Method in sibling module should have distance 2, got {distance}"
         )
@@ -85,7 +85,7 @@ class TestImportDistanceCalculation:
             method_qn, caller_module
         )
 
-        # After fix: both should get sibling bonus, difference should only be from nesting
+        # Both get the same proximity bonus, difference should only be from nesting level
         distance_diff = method_distance - func_distance
         assert distance_diff == 1, (
             f"Expected method distance to be exactly 1 higher than function distance "
@@ -93,7 +93,7 @@ class TestImportDistanceCalculation:
         )
 
     def test_non_sibling_modules_no_bonus(self, mock_updater: GraphUpdater) -> None:
-        """Test that non-sibling modules don't receive the sibling bonus."""
+        """Test that non-sibling modules don't receive the proximity bonus."""
         # Set up function registry
         function_qn = "proj.other_pkg.other_mod.some_func"
         method_qn = "proj.other_pkg.other_mod.SomeClass.some_method"
@@ -110,9 +110,9 @@ class TestImportDistanceCalculation:
             method_qn, caller_module
         )
 
-        # Neither should get sibling bonus since they're in different packages
+        # Neither should get proximity bonus since they're in different packages
         assert func_distance > 0, (
-            "Function in different package should not get sibling bonus"
+            "Function in different package should not get proximity bonus"
         )
         assert method_distance > func_distance, (
             "Method should have higher distance than function"
@@ -136,7 +136,7 @@ class TestImportDistanceCalculation:
             method_qn, caller_module
         )
 
-        # Functions in same module: distance 0, Methods: distance 1
+        # Same module gets best proximity: Functions=0, Methods=1 (due to nesting)
         assert func_distance == 0, (
             f"Function in same module should have distance 0, got {func_distance}"
         )
@@ -168,7 +168,7 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        # Both should get the sibling bonus now
+        # Both should get the same proximity bonus
         func_distance = mock_updater._calculate_import_distance(
             function_qn, caller_module
         )
@@ -176,7 +176,7 @@ class TestImportDistanceCalculation:
             method_qn, caller_module
         )
 
-        # Verify both got the bonus
+        # Verify both got the same proximity bonus with expected nesting difference
         # Function: distance=1; Method: distance=2 (1 higher due to extra nesting)
         assert func_distance == 1, (
             f"Function should have distance 1, got {func_distance}"
