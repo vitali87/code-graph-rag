@@ -1229,11 +1229,36 @@ class GraphUpdater:
         # Phase 1: Check import mapping for 100% accurate resolution
         if module_qn in self.import_mapping:
             import_map = self.import_mapping[module_qn]
+
+            # 1a. Check exact import mappings
             if call_name in import_map:
                 imported_qn = import_map[call_name]
                 if imported_qn in self.function_registry:
                     logger.debug(f"Import-resolved call: {call_name} -> {imported_qn}")
                     return self.function_registry[imported_qn], imported_qn
+
+            # 1b. Check wildcard imports (e.g., import java.util.* or use std::collections::*)
+            for local_name, imported_qn in import_map.items():
+                if local_name.startswith("*"):
+                    # Construct potential qualified name from wildcard import
+                    # Try both separators to handle different languages
+                    potential_qns = []
+
+                    # If the imported_qn contains '::', use '::' separator
+                    if "::" in imported_qn:
+                        potential_qns.append(f"{imported_qn}::{call_name}")
+                    else:
+                        # For languages like Java/Python/Scala that use '.'
+                        potential_qns.append(f"{imported_qn}.{call_name}")
+                        # Also try '::' in case the imported name is from a C++ style namespace
+                        potential_qns.append(f"{imported_qn}::{call_name}")
+
+                    for wildcard_qn in potential_qns:
+                        if wildcard_qn in self.function_registry:
+                            logger.debug(
+                                f"Wildcard-resolved call: {call_name} -> {wildcard_qn}"
+                            )
+                            return self.function_registry[wildcard_qn], wildcard_qn
 
         # Phase 2: Try to resolve with fully qualified names in order of likelihood
         module_parts = module_qn.split(".")
