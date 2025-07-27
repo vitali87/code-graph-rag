@@ -39,9 +39,9 @@ class FunctionRegistryTrie:
         current["__type__"] = func_type
         current["__qn__"] = qualified_name
 
-    def get(self, qualified_name: str) -> str | None:
+    def get(self, qualified_name: str, default: str | None = None) -> str | None:
         """Get function type by exact qualified name."""
-        return self._entries.get(qualified_name)
+        return self._entries.get(qualified_name, default)
 
     def __contains__(self, qualified_name: str) -> bool:
         """Check if qualified name exists in registry."""
@@ -96,7 +96,7 @@ class FunctionRegistryTrie:
             current = current[part]
 
         # DFS to find all entries under this prefix that end with suffix
-        def dfs(node: dict[str, Any], path_parts: list[str]) -> None:
+        def dfs(node: dict[str, Any]) -> None:
             if "__qn__" in node:
                 qn = node["__qn__"]
                 if qn.endswith(f".{suffix}"):
@@ -104,9 +104,9 @@ class FunctionRegistryTrie:
 
             for key, child in node.items():
                 if not key.startswith("__"):  # Skip metadata keys
-                    dfs(child, path_parts + [key])
+                    dfs(child)
 
-        dfs(current, prefix_parts)
+        dfs(current)
         return results
 
     def find_ending_with(self, suffix: str) -> list[str]:
