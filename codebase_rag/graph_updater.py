@@ -1256,12 +1256,7 @@ class GraphUpdater:
             possible_qns.extend(matches)
 
         # Remove duplicates while preserving order
-        seen = set()
-        unique_qns = []
-        for qn in possible_qns:
-            if qn not in seen:
-                seen.add(qn)
-                unique_qns.append(qn)
+        unique_qns = list(dict.fromkeys(possible_qns))
 
         # Try each possible qualified name
         for qn in unique_qns:
