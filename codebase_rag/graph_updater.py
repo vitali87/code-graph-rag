@@ -633,39 +633,46 @@ class GraphUpdater:
                         break
 
     def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
-        """Parse CommonJS require() statements."""
-        # Look for: const name = require('module')
-        var_name = None
-        required_module = None
+        """Parse CommonJS require() statements using field-based access."""
+        # Look for: const/let/var name = require('module')
+        for declarator in decl_node.children:
+            if declarator.type == "variable_declarator":
+                # Use field-based access for robustness
+                name_node = declarator.child_by_field_name("name")
+                value_node = declarator.child_by_field_name("value")
 
-        for child in decl_node.children:
-            if child.type == "variable_declarator":
-                for grandchild in child.children:
-                    if grandchild.type == "identifier":
-                        var_name = grandchild.text.decode("utf-8")
-                    elif grandchild.type == "call_expression":
-                        # Check if it's require()
-                        for call_child in grandchild.children:
-                            if (
-                                call_child.type == "identifier"
-                                and call_child.text.decode("utf-8") == "require"
-                            ):
-                                # Find the argument
-                                for arg_child in grandchild.children:
-                                    if arg_child.type == "arguments":
-                                        for arg in arg_child.children:
-                                            if arg.type == "string":
-                                                required_module = arg.text.decode(
-                                                    "utf-8"
-                                                ).strip("'\"")
-                                                break
+                if (
+                    name_node
+                    and value_node
+                    and name_node.type == "identifier"
+                    and value_node.type == "call_expression"
+                ):
+                    # Check if it's require()
+                    func_node = value_node.child_by_field_name("function")
+                    args_node = value_node.child_by_field_name("arguments")
 
-        if var_name and required_module:
-            resolved_module = self._resolve_js_module_path(
-                required_module, current_module
-            )
-            self.import_mapping[current_module][var_name] = resolved_module
-            logger.debug(f"JS require: {var_name} -> {resolved_module}")
+                    if (
+                        func_node
+                        and args_node
+                        and func_node.type == "identifier"
+                        and func_node.text.decode("utf-8") == "require"
+                    ):
+                        # Extract module path from first argument
+                        for arg in args_node.children:
+                            if arg.type == "string":
+                                var_name = name_node.text.decode("utf-8")
+                                required_module = arg.text.decode("utf-8").strip("'\"")
+
+                                resolved_module = self._resolve_js_module_path(
+                                    required_module, current_module
+                                )
+                                self.import_mapping[current_module][var_name] = (
+                                    resolved_module
+                                )
+                                logger.debug(
+                                    f"JS require: {var_name} -> {resolved_module}"
+                                )
+                                break
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         """Parse Java import statements."""
