@@ -472,30 +472,36 @@ class GraphUpdater:
         self, import_node: Node, module_qn: str
     ) -> None:
         """Handle 'from module import name' statements."""
-        module_name = None
-        imported_items = []  # Store tuples of (local_name, original_name)
+        # Use field-based parsing for robustness
+        module_name_node = import_node.child_by_field_name("module_name")
+        if not module_name_node:
+            return
 
-        for child in import_node.children:
-            if child.type == "dotted_name" and module_name is None:
-                # First dotted_name is the module
-                module_name = child.text.decode("utf-8")
-            elif child.type == "dotted_name" and module_name is not None:
-                # Subsequent dotted_names are imported items
-                name = child.text.decode("utf-8")
-                imported_items.append((name, name))  # local_name = original_name
-            elif child.type == "aliased_import":
-                # Handle 'from module import name as alias'
-                original_name_node = child.child_by_field_name("name")
-                alias_node = child.child_by_field_name("alias")
+        # Extract module name
+        if module_name_node.type == "dotted_name":
+            module_name = module_name_node.text.decode("utf-8")
+        elif module_name_node.type == "relative_import":
+            module_name = self._resolve_relative_import(module_name_node, module_qn)
+        else:
+            return
+
+        # Extract imported items using field names
+        imported_items = []
+        for name_node in import_node.children_by_field_name("name"):
+            if name_node.type == "dotted_name":
+                # Simple import: from module import name
+                name = name_node.text.decode("utf-8")
+                imported_items.append((name, name))
+            elif name_node.type == "aliased_import":
+                # Aliased import: from module import name as alias
+                original_name_node = name_node.child_by_field_name("name")
+                alias_node = name_node.child_by_field_name("alias")
                 if original_name_node and alias_node:
                     original_name = original_name_node.text.decode("utf-8")
                     alias = alias_node.text.decode("utf-8")
-                    imported_items.append((alias, original_name))  # local_name = alias
-            elif child.type == "relative_import":
-                # Handle relative imports like 'from .module import name'
-                module_name = self._resolve_relative_import(child, module_qn)
+                    imported_items.append((alias, original_name))
 
-        if module_name:
+        if module_name and imported_items:
             base_module = (
                 f"{self.project_name}.{module_name}"
                 if not module_name.startswith(self.project_name)
