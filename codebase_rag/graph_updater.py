@@ -453,7 +453,15 @@ class GraphUpdater:
                 module_name = child.text.decode("utf-8")
                 # For 'import a.b.c', the local name available in the scope is 'a'
                 local_name = module_name.split(".")[0]
-                full_name = f"{self.project_name}.{module_name}"
+
+                # Check if it's a local module to prefix with project name
+                if (self.repo_path / local_name).is_dir() or (
+                    self.repo_path / f"{local_name}.py"
+                ).is_file():
+                    full_name = f"{self.project_name}.{module_name}"
+                else:
+                    full_name = module_name  # For stdlib or third-party
+
                 self.import_mapping[module_qn][local_name] = full_name
                 logger.debug(f"  Import: {local_name} -> {full_name}")
             elif child.type == "aliased_import":
@@ -464,7 +472,16 @@ class GraphUpdater:
                 if module_name_node and alias_node:
                     module_name = module_name_node.text.decode("utf-8")
                     alias = alias_node.text.decode("utf-8")
-                    full_name = f"{self.project_name}.{module_name}"
+
+                    # Determine the fully qualified name of the imported module
+                    top_level_module = module_name.split(".")[0]
+                    if (self.repo_path / top_level_module).is_dir() or (
+                        self.repo_path / f"{top_level_module}.py"
+                    ).is_file():
+                        full_name = f"{self.project_name}.{module_name}"
+                    else:
+                        full_name = module_name
+
                     self.import_mapping[module_qn][alias] = full_name
                     logger.debug(f"  Aliased import: {alias} -> {full_name}")
 

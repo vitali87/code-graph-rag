@@ -225,3 +225,123 @@ class TestStandardLibraryImports:
         # SHOULD have project prefix because src/ exists in repo
         expected_mapping = {"database": "myproject.src.helpers.database"}
         assert mock_updater.import_mapping[module_qn] == expected_mapping
+
+    def test_regular_import_standard_library(self, mock_updater: GraphUpdater) -> None:
+        """Test that regular imports of standard library are not prefixed."""
+        module_qn = "myproject.main"
+        mock_updater.import_mapping[module_qn] = {}
+
+        # Simulate parsing: import os
+        mock_import_node = MagicMock()
+        mock_dotted_name = MagicMock()
+        mock_dotted_name.type = "dotted_name"
+        mock_dotted_name.text.decode.return_value = "os"
+
+        mock_import_node.named_children = [mock_dotted_name]
+
+        # Call the method
+        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+
+        # Should NOT have project prefix
+        expected_mapping = {"os": "os"}
+        assert mock_updater.import_mapping[module_qn] == expected_mapping
+
+    def test_regular_import_local_module(self, mock_updater: GraphUpdater) -> None:
+        """Test that regular imports of local modules ARE prefixed."""
+        module_qn = "myproject.main"
+        mock_updater.import_mapping[module_qn] = {}
+
+        # Simulate parsing: import utils
+        mock_import_node = MagicMock()
+        mock_dotted_name = MagicMock()
+        mock_dotted_name.type = "dotted_name"
+        mock_dotted_name.text.decode.return_value = "utils"
+
+        mock_import_node.named_children = [mock_dotted_name]
+
+        # Call the method
+        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+
+        # SHOULD have project prefix because utils/ exists in repo
+        expected_mapping = {"utils": "myproject.utils"}
+        assert mock_updater.import_mapping[module_qn] == expected_mapping
+
+    def test_regular_import_dotted_local_module(
+        self, mock_updater: GraphUpdater
+    ) -> None:
+        """Test that dotted imports of local modules are correctly handled."""
+        module_qn = "myproject.main"
+        mock_updater.import_mapping[module_qn] = {}
+
+        # Simulate parsing: import src.helpers
+        mock_import_node = MagicMock()
+        mock_dotted_name = MagicMock()
+        mock_dotted_name.type = "dotted_name"
+        mock_dotted_name.text.decode.return_value = "src.helpers"
+
+        mock_import_node.named_children = [mock_dotted_name]
+
+        # Call the method
+        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+
+        # SHOULD have project prefix, local name should be 'src'
+        expected_mapping = {"src": "myproject.src.helpers"}
+        assert mock_updater.import_mapping[module_qn] == expected_mapping
+
+    def test_aliased_import_standard_library(self, mock_updater: GraphUpdater) -> None:
+        """Test that aliased imports of standard library are not prefixed."""
+        module_qn = "myproject.main"
+        mock_updater.import_mapping[module_qn] = {}
+
+        # Simulate parsing: import os as operating_system
+        mock_import_node = MagicMock()
+        mock_aliased_import = MagicMock()
+        mock_aliased_import.type = "aliased_import"
+
+        mock_name_node = MagicMock()
+        mock_name_node.text.decode.return_value = "os"
+        mock_alias_node = MagicMock()
+        mock_alias_node.text.decode.return_value = "operating_system"
+
+        mock_aliased_import.child_by_field_name.side_effect = lambda field: {
+            "name": mock_name_node,
+            "alias": mock_alias_node,
+        }.get(field)
+
+        mock_import_node.named_children = [mock_aliased_import]
+
+        # Call the method
+        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+
+        # Should NOT have project prefix
+        expected_mapping = {"operating_system": "os"}
+        assert mock_updater.import_mapping[module_qn] == expected_mapping
+
+    def test_aliased_import_local_module(self, mock_updater: GraphUpdater) -> None:
+        """Test that aliased imports of local modules ARE prefixed."""
+        module_qn = "myproject.main"
+        mock_updater.import_mapping[module_qn] = {}
+
+        # Simulate parsing: import utils as helpers
+        mock_import_node = MagicMock()
+        mock_aliased_import = MagicMock()
+        mock_aliased_import.type = "aliased_import"
+
+        mock_name_node = MagicMock()
+        mock_name_node.text.decode.return_value = "utils"
+        mock_alias_node = MagicMock()
+        mock_alias_node.text.decode.return_value = "helpers"
+
+        mock_aliased_import.child_by_field_name.side_effect = lambda field: {
+            "name": mock_name_node,
+            "alias": mock_alias_node,
+        }.get(field)
+
+        mock_import_node.named_children = [mock_aliased_import]
+
+        # Call the method
+        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+
+        # SHOULD have project prefix because utils/ exists in repo
+        expected_mapping = {"helpers": "myproject.utils"}
+        assert mock_updater.import_mapping[module_qn] == expected_mapping
