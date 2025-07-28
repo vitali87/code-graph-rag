@@ -135,6 +135,8 @@ class TestImportParsing:
 
     def test_python_alias_import_parsing(self, graph_updater: GraphUpdater) -> None:
         """Test Python aliased import parsing functionality."""
+        import tempfile
+
         import tree_sitter_python as tsp
         from tree_sitter import Language, Parser
 
@@ -142,53 +144,77 @@ class TestImportParsing:
         PY_LANGUAGE = Language(tsp.language())
         parser = Parser(PY_LANGUAGE)
 
-        module_qn = "test.project.main"
-        graph_updater.project_name = "test"
-        graph_updater.import_mapping[module_qn] = {}
+        # Create a temporary directory with expected module structure
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
 
-        # Test cases for aliased imports
-        test_cases = [
-            # Regular import aliases
-            ("import module as alias", {"alias": "test.module"}),
-            ("import utils.helper as helper", {"helper": "test.utils.helper"}),
-            # From-import aliases
-            ("from utils import func as helper", {"helper": "test.utils.func"}),
-            ("from data import Class as DataClass", {"DataClass": "test.data.Class"}),
-            # Mixed imports
-            (
-                "from module import func, Class as MyClass",
-                {"func": "test.module.func", "MyClass": "test.module.Class"},
-            ),
-            (
-                "from utils import process, transform as convert",
-                {"process": "test.utils.process", "convert": "test.utils.transform"},
-            ),
-        ]
+            # Create the expected module directories/files
+            (temp_path / "module").mkdir()
+            (temp_path / "module" / "__init__.py").touch()
+            (temp_path / "utils").mkdir()
+            (temp_path / "utils" / "__init__.py").touch()
+            (temp_path / "utils" / "helper.py").touch()
+            (temp_path / "data").mkdir()
+            (temp_path / "data" / "__init__.py").touch()
 
-        for import_statement, expected_mappings in test_cases:
-            # Clear previous mappings
+            # Update the graph_updater to use the temporary directory
+            graph_updater.repo_path = temp_path
+
+            module_qn = "test.project.main"
+            graph_updater.project_name = "test"
             graph_updater.import_mapping[module_qn] = {}
 
-            # Parse the import statement
-            tree = parser.parse(bytes(import_statement, "utf8"))
-            import_node = tree.root_node.children[0]
+            # Test cases for aliased imports
+            test_cases = [
+                # Regular import aliases
+                ("import module as alias", {"alias": "test.module"}),
+                ("import utils.helper as helper", {"helper": "test.utils.helper"}),
+                # From-import aliases
+                ("from utils import func as helper", {"helper": "test.utils.func"}),
+                (
+                    "from data import Class as DataClass",
+                    {"DataClass": "test.data.Class"},
+                ),
+                # Mixed imports
+                (
+                    "from module import func, Class as MyClass",
+                    {"func": "test.module.func", "MyClass": "test.module.Class"},
+                ),
+                (
+                    "from utils import process, transform as convert",
+                    {
+                        "process": "test.utils.process",
+                        "convert": "test.utils.transform",
+                    },
+                ),
+            ]
 
-            # Process the import based on type
-            if import_node.type == "import_statement":
-                graph_updater._handle_python_import_statement(import_node, module_qn)
-            elif import_node.type == "import_from_statement":
-                graph_updater._handle_python_import_from_statement(
-                    import_node, module_qn
-                )
+            for import_statement, expected_mappings in test_cases:
+                # Clear previous mappings
+                graph_updater.import_mapping[module_qn] = {}
 
-            # Verify the mappings
-            actual_mappings = graph_updater.import_mapping[module_qn]
+                # Parse the import statement
+                tree = parser.parse(bytes(import_statement, "utf8"))
+                import_node = tree.root_node.children[0]
 
-            for local_name, expected_full_name in expected_mappings.items():
-                assert local_name in actual_mappings, (
-                    f"Missing alias '{local_name}' for statement: {import_statement}"
-                )
-                assert actual_mappings[local_name] == expected_full_name, (
-                    f"Incorrect mapping for '{local_name}' in '{import_statement}': "
-                    f"expected {expected_full_name}, got {actual_mappings[local_name]}"
-                )
+                # Process the import based on type
+                if import_node.type == "import_statement":
+                    graph_updater._handle_python_import_statement(
+                        import_node, module_qn
+                    )
+                elif import_node.type == "import_from_statement":
+                    graph_updater._handle_python_import_from_statement(
+                        import_node, module_qn
+                    )
+
+                # Verify the mappings
+                actual_mappings = graph_updater.import_mapping[module_qn]
+
+                for local_name, expected_full_name in expected_mappings.items():
+                    assert local_name in actual_mappings, (
+                        f"Missing alias '{local_name}' for statement: {import_statement}"
+                    )
+                    assert actual_mappings[local_name] == expected_full_name, (
+                        f"Incorrect mapping for '{local_name}' in '{import_statement}': "
+                        f"expected {expected_full_name}, got {actual_mappings[local_name]}"
+                    )
