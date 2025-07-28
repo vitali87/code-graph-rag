@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Parser, Query
 
 from .language_config import LANGUAGE_CONFIGS
 
@@ -193,10 +193,38 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                     ]
                 )
 
+                # Create import query patterns
+                import_patterns = " ".join(
+                    [
+                        f"({node_type}) @import"
+                        for node_type in lang_config.import_node_types
+                    ]
+                )
+                import_from_patterns = " ".join(
+                    [
+                        f"({node_type}) @import_from"
+                        for node_type in lang_config.import_from_node_types
+                    ]
+                )
+
+                # Combine import patterns (remove duplicates)
+                all_import_patterns = []
+                if import_patterns.strip():
+                    all_import_patterns.append(import_patterns)
+                if (
+                    import_from_patterns.strip()
+                    and import_from_patterns != import_patterns
+                ):
+                    all_import_patterns.append(import_from_patterns)
+                combined_import_patterns = " ".join(all_import_patterns)
+
                 queries[lang_name] = {
-                    "functions": language.query(function_patterns),
-                    "classes": language.query(class_patterns),
-                    "calls": language.query(call_patterns) if call_patterns else None,
+                    "functions": Query(language, function_patterns),
+                    "classes": Query(language, class_patterns),
+                    "calls": Query(language, call_patterns) if call_patterns else None,
+                    "imports": Query(language, combined_import_patterns)
+                    if combined_import_patterns
+                    else None,
                     "config": lang_config,
                 }
 
