@@ -246,7 +246,11 @@ class GraphUpdater:
                 parent_label, parent_key, parent_val = (
                     ("Project", "name", self.project_name)
                     if parent_rel_path == Path(".")
-                    else ("Package", "qualified_name", parent_container_qn)
+                    else (
+                        ("Package", "qualified_name", parent_container_qn)
+                        if parent_container_qn
+                        else ("Folder", "path", str(parent_rel_path))
+                    )
                 )
                 self.ingestor.ensure_relationship_batch(
                     (parent_label, parent_key, parent_val),
@@ -296,27 +300,28 @@ class GraphUpdater:
                 filepath = root / file_name
                 relative_filepath = str(filepath.relative_to(self.repo_path))
 
-                # Create generic File node for all files
-                self.ingestor.ensure_node_batch(
-                    "File",
-                    {
-                        "path": relative_filepath,
-                        "name": file_name,
-                        "extension": filepath.suffix,
-                    },
-                )
-                self.ingestor.ensure_relationship_batch(
-                    (parent_label, parent_key, parent_val),
-                    "CONTAINS_FILE",
-                    ("File", "path", relative_filepath),
-                )
-
                 # Check if this file type is supported for parsing
                 lang_config = get_language_config(filepath.suffix)
                 if lang_config and lang_config.name in self.parsers:
+                    # Parse as Module (which will create the Module node and relationships)
                     self.parse_and_ingest_file(filepath, lang_config.name)
                 elif file_name == "pyproject.toml":
                     self._parse_dependencies(filepath)
+                else:
+                    # Create generic File node for non-parseable files
+                    self.ingestor.ensure_node_batch(
+                        "File",
+                        {
+                            "path": relative_filepath,
+                            "name": file_name,
+                            "extension": filepath.suffix,
+                        },
+                    )
+                    self.ingestor.ensure_relationship_batch(
+                        (parent_label, parent_key, parent_val),
+                        "CONTAINS_FILE",
+                        ("File", "path", relative_filepath),
+                    )
 
     def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""
@@ -1199,16 +1204,16 @@ class GraphUpdater:
                     return text.decode("utf8")  # type: ignore[no-any-return]
             # Python: obj.method() -> attribute
             elif func_child.type == "attribute":
-                if attr_child := func_child.child_by_field_name("attribute"):
-                    text = attr_child.text
-                    if text is not None:
-                        return text.decode("utf8")  # type: ignore[no-any-return]
+                # Return the full attribute path
+                text = func_child.text
+                if text is not None:
+                    return text.decode("utf8")  # type: ignore[no-any-return]
             # JS/TS: obj.method() -> member_expression
             elif func_child.type == "member_expression":
-                if prop_child := func_child.child_by_field_name("property"):
-                    text = prop_child.text
-                    if text is not None:
-                        return text.decode("utf8")  # type: ignore[no-any-return]
+                # Return the full member expression (e.g., "obj.method")
+                text = func_child.text
+                if text is not None:
+                    return text.decode("utf8")  # type: ignore[no-any-return]
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
@@ -1269,6 +1274,22 @@ class GraphUpdater:
                 if imported_qn in self.function_registry:
                     logger.debug(f"Import-resolved call: {call_name} -> {imported_qn}")
                     return self.function_registry[imported_qn], imported_qn
+
+            # 1a.2. Handle qualified calls like "Class.methdod"
+            if "." in call_name:
+                parts = call_name.split(".")
+                class_name = parts[0]
+                method_name = ".".join(parts[1:])
+
+                # Check if the class is imported
+                if class_name in import_map:
+                    class_qn = import_map[class_name]
+                    method_qn = f"{class_qn}.{method_name}"
+                    if method_qn in self.function_registry:
+                        logger.debug(
+                            f"Import-resolved qualified call: {call_name} -> {method_qn}"
+                        )
+                        return self.function_registry[method_qn], method_qn
 
             # 1b. Check wildcard imports (e.g., import java.util.* or use std::collections::*)
             for local_name, imported_qn in import_map.items():
