@@ -65,6 +65,7 @@ class ProcessorFactory:
             self._import_processor = ImportProcessor(
                 repo_path_getter=lambda: self.repo_path,
                 project_name_getter=lambda: self.project_name,
+                ingestor=self.ingestor,
             )
         return self._import_processor
 

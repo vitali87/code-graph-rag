@@ -12,9 +12,15 @@ from ..language_config import LanguageConfig
 class ImportProcessor:
     """Handles parsing and processing of import statements."""
 
-    def __init__(self, repo_path_getter: Any, project_name_getter: Any) -> None:
+    def __init__(
+        self,
+        repo_path_getter: Any,
+        project_name_getter: Any,
+        ingestor: Any | None = None,
+    ) -> None:
         self._repo_path_getter = repo_path_getter
         self._project_name_getter = project_name_getter
+        self.ingestor = ingestor
         self.import_mapping: dict[str, dict[str, str]] = {}
 
     @property
@@ -71,6 +77,18 @@ class ImportProcessor:
             logger.debug(
                 f"Parsed {len(self.import_mapping[module_qn])} imports in {module_qn}"
             )
+
+            # Create IMPORTS relationships for each parsed import
+            if self.ingestor and module_qn in self.import_mapping:
+                for local_name, full_name in self.import_mapping[module_qn].items():
+                    self.ingestor.ensure_relationship_batch(
+                        ("Module", "qualified_name", module_qn),
+                        "IMPORTS",
+                        ("Module", "qualified_name", full_name),
+                    )
+                    logger.debug(
+                        f"  Created IMPORTS relationship: {module_qn} -> {full_name}"
+                    )
 
         except Exception as e:
             logger.warning(f"Failed to parse imports in {module_qn}: {e}")
