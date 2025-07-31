@@ -22,6 +22,8 @@ Relationships (source)-[REL_TYPE]->(target):
 - (Project|Package|Folder) -[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE]-> (various)
 - Module -[:DEFINES]-> (Class|Function)
 - Class -[:DEFINES_METHOD]-> Method
+- Class -[:INHERITS]-> Class
+- Method -[:OVERRIDES]-> Method
 - Project -[:DEPENDS_ON_EXTERNAL]-> ExternalPackage
 - (Function|Method) -[:CALLS]-> (Function|Method)
 

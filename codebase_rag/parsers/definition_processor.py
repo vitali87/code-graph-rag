@@ -390,6 +390,14 @@ class DefinitionProcessor:
                 ("Class", "qualified_name", class_qn),
             )
 
+            # Create INHERITS relationships for each parent class
+            for parent_class_qn in parent_classes:
+                self.ingestor.ensure_relationship_batch(
+                    ("Class", "qualified_name", class_qn),
+                    "INHERITS",
+                    ("Class", "qualified_name", parent_class_qn),
+                )
+
             body_node = class_node.child_by_field_name("body")
             if not body_node:
                 continue
@@ -455,6 +463,9 @@ class DefinitionProcessor:
                                 )
                                 if parent_qn:
                                     parent_classes.append(parent_qn)
+                                else:
+                                    # Fallback: assume same module
+                                    parent_classes.append(f"{module_qn}.{parent_name}")
                         else:
                             # Fallback: assume same module
                             parent_classes.append(f"{module_qn}.{parent_name}")
