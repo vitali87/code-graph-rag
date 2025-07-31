@@ -150,6 +150,56 @@ class DefinitionProcessor:
                 return result
         return None
 
+    def _extract_decorators(self, node: Node) -> list[str]:
+        """Extract decorator names from a decorated node."""
+        decorators = []
+
+        # Check if this node has a parent that is a decorated_definition
+        current = node.parent
+        while current:
+            if current.type == "decorated_definition":
+                # Get all decorator nodes
+                for child in current.children:
+                    if child.type == "decorator":
+                        decorator_name = self._get_decorator_name(child)
+                        if decorator_name:
+                            decorators.append(decorator_name)
+                break
+            current = current.parent
+
+        return decorators
+
+    def _get_decorator_name(self, decorator_node: Node) -> str | None:
+        """Extract the name from a decorator node (@decorator or @decorator(...))."""
+        # Handle @decorator or @module.decorator
+        for child in decorator_node.children:
+            if child.type == "identifier":
+                text = child.text
+                if text is not None:
+                    decorator_name: str = text.decode("utf8")
+                    return decorator_name
+            elif child.type == "attribute":
+                # Handle @module.decorator
+                text = child.text
+                if text is not None:
+                    attr_name: str = text.decode("utf8")
+                    return attr_name
+            elif child.type == "call":
+                # Handle @decorator(...) - get the function being called
+                func_node = child.child_by_field_name("function")
+                if func_node:
+                    if func_node.type == "identifier":
+                        text = func_node.text
+                        if text is not None:
+                            func_name: str = text.decode("utf8")
+                            return func_name
+                    elif func_node.type == "attribute":
+                        text = func_node.text
+                        if text is not None:
+                            func_attr_name: str = text.decode("utf8")
+                            return func_attr_name
+        return None
+
     def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
@@ -188,10 +238,11 @@ class DefinitionProcessor:
                 func_qn = f"{module_qn}.{func_name}"  # Fallback to simple name
 
             # Extract function properties
+            decorators = self._extract_decorators(func_node)
             func_props: dict[str, Any] = {
                 "qualified_name": func_qn,
                 "name": func_name,
-                "decorators": [],
+                "decorators": decorators,
                 "start_line": func_node.start_point[0] + 1,
                 "end_line": func_node.end_point[0] + 1,
                 "docstring": self._get_docstring(func_node),
@@ -313,10 +364,11 @@ class DefinitionProcessor:
                 continue
             class_name = text.decode("utf8")
             class_qn = f"{module_qn}.{class_name}"
+            decorators = self._extract_decorators(class_node)
             class_props: dict[str, Any] = {
                 "qualified_name": class_qn,
                 "name": class_name,
-                "decorators": [],
+                "decorators": decorators,
                 "start_line": class_node.start_point[0] + 1,
                 "end_line": class_node.end_point[0] + 1,
                 "docstring": self._get_docstring(class_node),
@@ -357,10 +409,11 @@ class DefinitionProcessor:
                     continue
                 method_name = text.decode("utf8")
                 method_qn = f"{class_qn}.{method_name}"
+                decorators = self._extract_decorators(method_node)
                 method_props: dict[str, Any] = {
                     "qualified_name": method_qn,
                     "name": method_name,
-                    "decorators": [],
+                    "decorators": decorators,
                     "start_line": method_node.start_point[0] + 1,
                     "end_line": method_node.end_point[0] + 1,
                     "docstring": self._get_docstring(method_node),
