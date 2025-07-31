@@ -7,6 +7,7 @@ splitting the monolithic class into logical components.
 
 import os
 from collections import defaultdict
+from collections.abc import ItemsView, KeysView
 from pathlib import Path
 from typing import Any
 
@@ -64,11 +65,11 @@ class FunctionRegistryTrie:
         if qualified_name in self._entries:
             del self._entries[qualified_name]
 
-    def keys(self) -> Any:
+    def keys(self) -> KeysView[str]:
         """Return all qualified names."""
         return self._entries.keys()
 
-    def items(self) -> Any:
+    def items(self) -> ItemsView[str, str]:
         """Return all (qualified_name, type) pairs."""
         return self._entries.items()
 
