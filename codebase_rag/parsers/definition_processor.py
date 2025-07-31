@@ -308,6 +308,10 @@ class DefinitionProcessor:
             logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
             self.ingestor.ensure_node_batch("Class", class_props)
 
+            # Register the class itself in the function registry
+            self.function_registry[class_qn] = "Class"
+            self.simple_name_lookup[class_name].add(class_qn)
+
             # Track inheritance
             parent_classes = self._extract_parent_classes(class_node, module_qn)
             self.class_inheritance[class_qn] = parent_classes

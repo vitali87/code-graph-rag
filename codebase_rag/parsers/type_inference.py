@@ -100,39 +100,57 @@ class TypeInferenceEngine:
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
     ) -> str | None:
-        """Infer type from parameter name by looking for matching classes."""
-        # Get all available classes in the current context
-        available_classes = []
+        """
+        Infer a parameter's type by matching its name against available class
+        definitions in the current scope (local and imported).
+        """
+        logger.debug(
+            f"Attempting to infer type for parameter '{param_name}' in module '{module_qn}'"
+        )
+        available_class_names = []
 
-        # Check classes in current module
-        for qn in self.function_registry.keys():
-            if qn.startswith(module_qn + ".") and "." in qn:
-                parts = qn.split(".")
-                # Check if this looks like a class (not a method)
-                if len(parts) >= 3 and parts[-1] not in ["__init__"]:
-                    potential_class = ".".join(parts[:-1])
-                    if potential_class not in available_classes:
-                        available_classes.append(potential_class)
+        # 1. Get classes defined in the current module
+        for qn, node_type in self.function_registry.items():
+            if node_type == "Class" and qn.startswith(module_qn + "."):
+                # Check if it's directly in this module, not a submodule
+                if ".".join(qn.split(".")[:-1]) == module_qn:
+                    available_class_names.append(qn.split(".")[-1])
 
-        # Check imported classes
+        # 2. Get imported classes
         if module_qn in self.import_processor.import_mapping:
             for local_name, imported_qn in self.import_processor.import_mapping[
                 module_qn
             ].items():
-                if (
-                    not local_name.startswith("*")
-                    and imported_qn in self.function_registry
-                ):
-                    available_classes.append(local_name)
+                if self.function_registry.get(imported_qn) == "Class":
+                    available_class_names.append(local_name)
 
-        # Try to match parameter name to class names
+        logger.debug(f"Available classes in scope: {available_class_names}")
+
+        # 3. Match parameter name against available classes with a scoring system
         param_lower = param_name.lower()
-        for class_ref in available_classes:
-            class_name = class_ref.split(".")[-1] if "." in class_ref else class_ref
-            if class_name.lower() in param_lower or param_lower in class_name.lower():
-                return class_name
+        best_match = None
+        highest_score = 0
 
-        return None
+        for class_name in available_class_names:
+            class_lower = class_name.lower()
+            score = 0
+
+            if param_lower == class_lower:
+                score = 100  # Exact match
+            elif class_lower.endswith(param_lower) or param_lower.endswith(class_lower):
+                score = 90
+            elif class_lower in param_lower:
+                # Higher score for longer matches
+                score = int(80 * (len(class_lower) / len(param_lower)))
+
+            if score > highest_score:
+                highest_score = score
+                best_match = class_name
+
+        logger.debug(
+            f"Best match for '{param_name}' is '{best_match}' with score {highest_score}"
+        )
+        return best_match
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         """
