@@ -1,5 +1,6 @@
 """Definition processor for extracting functions, classes and methods."""
 
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -458,63 +459,39 @@ class DefinitionProcessor:
     def _check_method_overrides(
         self, method_qn: str, method_name: str, class_qn: str
     ) -> None:
-        """Check if method overrides parent class methods & create relationships."""
+        """Check if method overrides parent class methods using BFS traversal."""
         if class_qn not in self.class_inheritance:
             return
 
-        # Check each parent class for a method with the same name
-        parent_classes = self.class_inheritance[class_qn]
-        for parent_class_qn in parent_classes:
-            parent_method_qn = f"{parent_class_qn}.{method_name}"
+        # Use BFS to find the nearest parent method in the inheritance hierarchy
+        queue = deque([class_qn])
+        visited = {class_qn}  # Don't revisit classes (handle diamond inheritance)
 
-            # Check if parent class has a method with the same name
-            if parent_method_qn in self.function_registry:
-                self.ingestor.ensure_relationship_batch(
-                    ("Method", "qualified_name", method_qn),
-                    "OVERRIDES",
-                    ("Method", "qualified_name", parent_method_qn),
-                )
-                logger.debug(
-                    f"Method override: {method_qn} OVERRIDES {parent_method_qn}"
-                )
-                return  # Found direct override, no need to check further
+        while queue:
+            current_class = queue.popleft()
 
-        # If no direct override found, check grandparent classes recursively
-        for parent_class_qn in parent_classes:
-            self._check_method_overrides_recursive(
-                method_qn, method_name, parent_class_qn
-            )
+            # Skip the original class (we're looking for parent methods)
+            if current_class != class_qn:
+                parent_method_qn = f"{current_class}.{method_name}"
 
-    def _check_method_overrides_recursive(
-        self, method_qn: str, method_name: str, parent_class_qn: str
-    ) -> bool:
-        """Recursively check parent classes for method overrides."""
-        if parent_class_qn not in self.class_inheritance:
-            return False
+                # Check if this parent class has the method
+                if parent_method_qn in self.function_registry:
+                    self.ingestor.ensure_relationship_batch(
+                        ("Method", "qualified_name", method_qn),
+                        "OVERRIDES",
+                        ("Method", "qualified_name", parent_method_qn),
+                    )
+                    logger.debug(
+                        f"Method override: {method_qn} OVERRIDES {parent_method_qn}"
+                    )
+                    return  # Found the nearest override, stop searching
 
-        grandparent_classes = self.class_inheritance[parent_class_qn]
-        for grandparent_qn in grandparent_classes:
-            grandparent_method_qn = f"{grandparent_qn}.{method_name}"
-
-            if grandparent_method_qn in self.function_registry:
-                self.ingestor.ensure_relationship_batch(
-                    ("Method", "qualified_name", method_qn),
-                    "OVERRIDES",
-                    ("Method", "qualified_name", grandparent_method_qn),
-                )
-                logger.debug(
-                    f"Method override (recursive): {method_qn} OVERRIDES "
-                    f"{grandparent_method_qn}"
-                )
-                return True  # Found override
-
-            # Continue recursively
-            if self._check_method_overrides_recursive(
-                method_qn, method_name, grandparent_qn
-            ):
-                return True
-
-        return False
+            # Add parent classes to queue for next level of BFS
+            if current_class in self.class_inheritance:
+                for parent_class_qn in self.class_inheritance[current_class]:
+                    if parent_class_qn not in visited:
+                        visited.add(parent_class_qn)
+                        queue.append(parent_class_qn)
 
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
         """Extract parent class names from a class definition."""
