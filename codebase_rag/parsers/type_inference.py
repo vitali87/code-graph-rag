@@ -528,37 +528,8 @@ class TypeInferenceEngine:
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         """Infer return type of a method call via static analysis."""
-        # First try proper AST analysis
-        result = self._infer_method_return_type(method_call, module_qn)
-        if result:
-            return result
-
-        # Handle common legitimate patterns without hardcoding specific names
-        if "." in method_call:
-            method_name = method_call.split(".")[-1]
-
-            # Pattern 1: Methods that return 'self' (fluent interface/builder pattern)
-            if (
-                method_name.startswith("update_")
-                or method_name.startswith("set_")
-                or method_name in ["apply_discount"]
-            ):
-                # These methods typically return self for chaining
-                object_part = method_call.rsplit(".", 1)[0]
-                return self._extract_object_type_from_call(
-                    object_part, module_qn, local_var_types
-                )
-
-            # Pattern 2: Factory/creation methods
-            if (
-                method_name.startswith("create_")
-                or method_name.startswith("get_")
-                or method_name.startswith("find_")
-            ):
-                # These often return the type indicated by the method name
-                return self._infer_factory_method_return_type(method_name, module_qn)
-
-        return None
+        # Try proper AST analysis
+        return self._infer_method_return_type(method_call, module_qn)
 
     def _extract_object_type_from_call(
         self,
@@ -570,29 +541,6 @@ class TypeInferenceEngine:
         # For simple variable references like "direct_user", check local variable types
         if local_var_types and object_part in local_var_types:
             return local_var_types[object_part]
-
-        return None
-
-    def _infer_factory_method_return_type(
-        self, method_name: str, module_qn: str
-    ) -> str | None:
-        """Infer return type from factory/creation method names."""
-        # Extract potential type name from method name
-        if method_name.startswith("create_"):
-            # create_user -> User, create_product -> Product
-            type_part = method_name[7:]  # Remove "create_"
-            if type_part:
-                return type_part.title()  # user -> User, product -> Product
-
-        elif method_name.startswith("get_") and method_name.endswith("_by_id"):
-            # get_user_by_id -> User
-            type_part = method_name[4:-6]  # Remove "get_" and "_by_id"
-            if type_part:
-                return type_part.title()  # user -> User
-
-        # Handle some common return type patterns
-        elif method_name == "get_profile":
-            return "Profile"
 
         return None
 
@@ -705,10 +653,46 @@ class TypeInferenceEngine:
 
     def _infer_attribute_type(self, attribute_name: str, module_qn: str) -> str | None:
         """Infer the type of an instance attribute like self.manager."""
-        # Use heuristic-based type inference for attribute names
-        # This could be enhanced by analyzing __init__ methods or type annotations
+        # Extract the class name from the module_qn
+        # module_qn looks like "project.services.user_service" and we need the class context
+        # This is challenging because we don't know which class we're currently analyzing
+        # Let's try to find it by analyzing the available AST nodes
 
-        # Common patterns: manager -> Manager, user_service -> UserService, etc.
+        try:
+            # Look for the class definition that might contain this method call
+            for file_path, (root_node, language) in self.ast_cache.items():
+                if language != "python":
+                    continue
+
+                # Check if this file matches our module
+                relative_path = file_path.relative_to(self.repo_path)
+                file_module_qn = ".".join(
+                    [self.project_name] + list(relative_path.with_suffix("").parts)
+                )
+                if file_path.name == "__init__.py":
+                    file_module_qn = ".".join(
+                        [self.project_name] + list(relative_path.parent.parts)
+                    )
+
+                if file_module_qn != module_qn:
+                    continue
+
+                # Look for all classes in this module and analyze their instance variables
+                instance_vars: dict[str, str] = {}
+                self._analyze_self_assignments(root_node, instance_vars, module_qn)
+
+                # Check if our attribute was found
+                full_attr_name = f"self.{attribute_name}"
+                if full_attr_name in instance_vars:
+                    attr_type: str = instance_vars[full_attr_name]
+                    return attr_type
+
+        except Exception as e:
+            logger.debug(
+                f"Failed to analyze instance variables for {attribute_name}: {e}"
+            )
+
+        # Fallback to heuristic-based inference
         if "_" in attribute_name:
             # Convert snake_case to PascalCase
             parts = attribute_name.split("_")
@@ -880,7 +864,14 @@ class TypeInferenceEngine:
                 if func_text is not None:
                     class_name = func_text.decode("utf8")
                     if class_name[0].isupper():  # Class names start with uppercase
-                        return str(class_name)
+                        # Try to resolve this to the full class name using the current module context
+                        module_qn = ".".join(
+                            method_qn.split(".")[:-2]
+                        )  # Remove class.method to get module
+                        resolved_class = self._find_class_in_scope(
+                            class_name, module_qn
+                        )
+                        return resolved_class or class_name
 
         # Handle self references: return self
         elif expr_node.type == "identifier":
