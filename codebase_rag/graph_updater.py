@@ -169,6 +169,9 @@ class GraphUpdater:
         logger.info("--- Pass 3: Processing Function Calls from AST Cache ---")
         self._process_function_calls()
 
+        # Process method overrides after all definitions are collected
+        self.factory.definition_processor.process_all_method_overrides()
+
         logger.info("\n--- Analysis complete. Flushing all data to database... ---")
         self.ingestor.flush_all()
 

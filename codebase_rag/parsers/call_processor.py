@@ -132,7 +132,13 @@ class CallProcessor:
                 method_qn = f"{class_qn}.{method_name}"
 
                 self._ingest_function_calls(
-                    method_node, method_qn, "Method", module_qn, language, queries
+                    method_node,
+                    method_qn,
+                    "Method",
+                    module_qn,
+                    language,
+                    queries,
+                    class_qn,
                 )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
@@ -172,6 +178,7 @@ class CallProcessor:
         module_qn: str,
         language: str,
         queries: dict[str, Any],
+        class_context: str | None = None,
     ) -> None:
         """Find and ingest function calls within a caller node."""
         calls_query = queries[language].get("calls")
@@ -194,7 +201,7 @@ class CallProcessor:
                 continue
 
             callee_info = self._resolve_function_call(
-                call_name, module_qn, local_var_types
+                call_name, module_qn, local_var_types, class_context
             )
             if not callee_info:
                 continue
@@ -216,8 +223,13 @@ class CallProcessor:
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
+        class_context: str | None = None,
     ) -> tuple[str, str] | None:
         """Resolve a function call to its qualified name and type."""
+        # Phase 0: Handle super() calls specially
+        if call_name.startswith("super()"):
+            return self._resolve_super_call(call_name, module_qn, class_context)
+
         # Phase 1: Check import mapping for 100% accurate resolution
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]
@@ -377,6 +389,46 @@ class CallProcessor:
             )
 
         logger.debug(f"Could not resolve call: {call_name}")
+        return None
+
+    def _resolve_super_call(
+        self, call_name: str, module_qn: str, class_context: str | None = None
+    ) -> tuple[str, str] | None:
+        """Resolve super() calls to parent class methods."""
+        # Extract method name from super() call
+        # Examples: "super().__init__" -> "__init__", "super().start_engine" -> "start_engine"
+        if "." in call_name:
+            method_name = call_name.split(".", 1)[1]  # Get part after "super()."
+        else:
+            # Just "super()" - this shouldn't happen in normal calls but handle gracefully
+            return None
+
+        # Use the provided class context
+        current_class_qn = class_context
+        if not current_class_qn:
+            logger.debug(f"No class context provided for super() call: {call_name}")
+            return None
+
+        # Look up parent classes for the current class
+        if current_class_qn not in self.class_inheritance:
+            logger.debug(f"No inheritance info for class {current_class_qn}")
+            return None
+
+        parent_classes = self.class_inheritance[current_class_qn]
+        if not parent_classes:
+            logger.debug(f"No parent classes found for {current_class_qn}")
+            return None
+
+        # Use inheritance chain traversal to find the method
+        result = self._resolve_inherited_method(current_class_qn, method_name)
+        if result:
+            callee_type, parent_method_qn = result
+            logger.debug(f"Resolved super() call: {call_name} -> {parent_method_qn}")
+            return callee_type, parent_method_qn
+
+        logger.debug(
+            f"Could not resolve super() call: {call_name} in parents of {current_class_qn}"
+        )
         return None
 
     def _resolve_inherited_method(

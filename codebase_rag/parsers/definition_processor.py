@@ -438,6 +438,83 @@ class DefinitionProcessor:
                     ("Method", "qualified_name", method_qn),
                 )
 
+                # Note: OVERRIDES relationships will be processed later after all methods are collected
+
+    def process_all_method_overrides(self) -> None:
+        """Process OVERRIDES relationships for all methods after collection is complete."""
+        logger.info("--- Pass 4: Processing Method Override Relationships ---")
+
+        # Process all methods to find overrides
+        for method_qn in self.function_registry.keys():
+            if self.function_registry[method_qn] == "Method":
+                # Extract class_qn and method_name from method_qn
+                if "." in method_qn:
+                    parts = method_qn.rsplit(".", 1)
+                    if len(parts) == 2:
+                        class_qn, method_name = parts
+                        self._check_method_overrides(method_qn, method_name, class_qn)
+
+    def _check_method_overrides(
+        self, method_qn: str, method_name: str, class_qn: str
+    ) -> None:
+        """Check if method overrides parent class methods & create relationships."""
+        if class_qn not in self.class_inheritance:
+            return
+
+        # Check each parent class for a method with the same name
+        parent_classes = self.class_inheritance[class_qn]
+        for parent_class_qn in parent_classes:
+            parent_method_qn = f"{parent_class_qn}.{method_name}"
+
+            # Check if parent class has a method with the same name
+            if parent_method_qn in self.function_registry:
+                self.ingestor.ensure_relationship_batch(
+                    ("Method", "qualified_name", method_qn),
+                    "OVERRIDES",
+                    ("Method", "qualified_name", parent_method_qn),
+                )
+                logger.debug(
+                    f"Method override: {method_qn} OVERRIDES {parent_method_qn}"
+                )
+                return  # Found direct override, no need to check further
+
+        # If no direct override found, check grandparent classes recursively
+        for parent_class_qn in parent_classes:
+            self._check_method_overrides_recursive(
+                method_qn, method_name, parent_class_qn
+            )
+
+    def _check_method_overrides_recursive(
+        self, method_qn: str, method_name: str, parent_class_qn: str
+    ) -> bool:
+        """Recursively check parent classes for method overrides."""
+        if parent_class_qn not in self.class_inheritance:
+            return False
+
+        grandparent_classes = self.class_inheritance[parent_class_qn]
+        for grandparent_qn in grandparent_classes:
+            grandparent_method_qn = f"{grandparent_qn}.{method_name}"
+
+            if grandparent_method_qn in self.function_registry:
+                self.ingestor.ensure_relationship_batch(
+                    ("Method", "qualified_name", method_qn),
+                    "OVERRIDES",
+                    ("Method", "qualified_name", grandparent_method_qn),
+                )
+                logger.debug(
+                    f"Method override (recursive): {method_qn} OVERRIDES "
+                    f"{grandparent_method_qn}"
+                )
+                return True  # Found override
+
+            # Continue recursively
+            if self._check_method_overrides_recursive(
+                method_qn, method_name, grandparent_qn
+            ):
+                return True
+
+        return False
+
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
         """Extract parent class names from a class definition."""
         parent_classes = []

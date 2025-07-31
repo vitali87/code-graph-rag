@@ -308,11 +308,11 @@ def test_super_calls_are_tracked(
         ),
         (
             f"{project_name}.inheritance.Poodle.__init__",
-            f"{project_name}.inheritance.Dog.__init__",
+            f"{project_name}.inheritance.Mammal.__init__",
         ),
         (
             f"{project_name}.inheritance.SmartCar.__init__",
-            f"{project_name}.inheritance.Car.__init__",
+            f"{project_name}.inheritance.Vehicle.__init__",
         ),
         # Method super() calls
         (
@@ -330,7 +330,7 @@ def test_super_calls_are_tracked(
 
     for caller_qn, callee_qn in expected_super_calls:
         found = any(
-            call[0][0][1] == caller_qn and call[0][2][1] == callee_qn
+            call[0][0][2] == caller_qn and call[0][2][2] == callee_qn
             for call in call_relationships
         )
         assert found, f"Missing super() call: {caller_qn} CALLS {callee_qn}"
@@ -395,7 +395,7 @@ def test_method_overrides_are_detected(
 
     for child_method, parent_method in expected_overrides:
         found = any(
-            call[0][0][1] == child_method and call[0][2][1] == parent_method
+            call[0][0][2] == child_method and call[0][2][2] == parent_method
             for call in override_relationships
         )
         assert found, (
@@ -486,7 +486,7 @@ def test_inherited_method_calls_are_resolved(
 
     for caller_qn, callee_qn in expected_inherited_calls:
         found = any(
-            call[0][0][1] == caller_qn and call[0][2][1] == callee_qn
+            call[0][0][2] == caller_qn and call[0][2][2] == callee_qn
             for call in call_relationships
         )
         assert found, f"Missing inherited method call: {caller_qn} CALLS {callee_qn}"
