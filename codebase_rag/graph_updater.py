@@ -306,14 +306,16 @@ class GraphUpdater:
         """Delegated to import processor for compatibility with existing tests."""
         return self.factory.import_processor._parse_python_imports(captures, module_qn)
 
-    def _handle_python_import_statement(self, import_node: Any, module_qn: str) -> None:
+    def _handle_python_import_statement(
+        self, import_node: Node, module_qn: str
+    ) -> None:
         """Delegated to import processor for compatibility with existing tests."""
         return self.factory.import_processor._handle_python_import_statement(
             import_node, module_qn
         )
 
     def _handle_python_import_from_statement(
-        self, import_node: Any, module_qn: str
+        self, import_node: Node, module_qn: str
     ) -> None:
         """Delegated to import processor for compatibility with existing tests."""
         return self.factory.import_processor._handle_python_import_from_statement(
@@ -325,7 +327,7 @@ class GraphUpdater:
         """Delegated to import processor for compatibility with existing tests."""
         return self.factory.import_processor.import_mapping
 
-    def _resolve_relative_import(self, relative_node: Any, module_qn: str) -> str:
+    def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         """Delegated to import processor for compatibility with existing tests."""
         return self.factory.import_processor._resolve_relative_import(
             relative_node, module_qn
