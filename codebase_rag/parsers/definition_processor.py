@@ -10,6 +10,7 @@ from tree_sitter import Node, QueryCursor
 from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
 from .import_processor import ImportProcessor
+from .utils import resolve_class_name
 
 
 class DefinitionProcessor:
@@ -550,34 +551,7 @@ class DefinitionProcessor:
         return parent_classes
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
-        """
-        Convert a simple class name to its fully qualified name.
-        """
-        # First check current module's import mappings
-        if module_qn in self.import_processor.import_mapping:
-            import_map = self.import_processor.import_mapping[module_qn]
-            if class_name in import_map:
-                return import_map[class_name]
-
-        # Then check if class exists in same module
-        same_module_qn = f"{module_qn}.{class_name}"
-        if same_module_qn in self.function_registry:
-            return same_module_qn
-
-        # Check parent modules using the trie structure
-        module_parts = module_qn.split(".")
-        for i in range(len(module_parts) - 1, 0, -1):
-            parent_module = ".".join(module_parts[:i])
-            potential_qn = f"{parent_module}.{class_name}"
-            if potential_qn in self.function_registry:
-                return potential_qn
-
-        # Use trie to find classes with the given name
-        matches = self.function_registry.find_ending_with(class_name)
-        for match in matches:
-            # Return the first match that looks like a class
-            match_parts = match.split(".")
-            if class_name in match_parts:
-                return str(match)
-
-        return None
+        """Convert a simple class name to its fully qualified name."""
+        return resolve_class_name(
+            class_name, module_qn, self.import_processor, self.function_registry
+        )
