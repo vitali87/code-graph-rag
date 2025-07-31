@@ -164,8 +164,11 @@ class ImportProcessor:
         else:
             return
 
-        # Extract imported items using field names
+        # Extract imported items - check both field names and direct children
         imported_items = []
+        is_wildcard = False
+
+        # First check field-named children (regular imports)
         for name_node in import_node.children_by_field_name("name"):
             if name_node.type == "dotted_name":
                 # Simple import: from module import name
@@ -180,7 +183,14 @@ class ImportProcessor:
                     alias = alias_node.text.decode("utf-8")
                     imported_items.append((alias, original_name))
 
-        if module_name and imported_items:
+        # Check for wildcard imports (direct children, not in "name" field)
+        for child in import_node.children:
+            if child.type == "wildcard_import":
+                # Wildcard import: from module import *
+                is_wildcard = True
+                break
+
+        if module_name and (imported_items or is_wildcard):
             # Only prepend project name for local modules
             if module_name.startswith(self.project_name):
                 base_module = module_name
@@ -192,10 +202,18 @@ class ImportProcessor:
                     base_module = f"{self.project_name}.{module_name}"
                 else:
                     base_module = module_name
-            for local_name, original_name in imported_items:
-                full_name = f"{base_module}.{original_name}"
-                self.import_mapping[module_qn][local_name] = full_name
-                logger.debug(f"  From import: {local_name} -> {full_name}")
+
+            if is_wildcard:
+                # Handle wildcard import: from module import *
+                wildcard_key = f"*{base_module}"
+                self.import_mapping[module_qn][wildcard_key] = base_module
+                logger.debug(f"  Wildcard import: * -> {base_module}")
+            else:
+                # Handle regular imports
+                for local_name, original_name in imported_items:
+                    full_name = f"{base_module}.{original_name}"
+                    self.import_mapping[module_qn][local_name] = full_name
+                    logger.debug(f"  From import: {local_name} -> {full_name}")
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         """Resolve relative imports like '.module' or '..parent.module'."""
