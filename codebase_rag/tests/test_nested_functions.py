@@ -98,11 +98,7 @@ def decorator_factory():
 def test_nested_function_definitions_are_created(
     nested_functions_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    """Test that functions are properly identified and created as nodes.
-
-    Note: Current implementation treats nested functions as top-level functions,
-    so we test for the actual behavior rather than ideal nested structure.
-    """
+    """Test that nested functions are properly identified with correct qualified names."""
     parsers, queries = load_parsers()
 
     updater = GraphUpdater(
@@ -115,19 +111,21 @@ def test_nested_function_definitions_are_created(
 
     project_name = nested_functions_project.name
 
-    # Functions are currently parsed as top-level, not nested
+    # Expected nested function qualified names (proper nesting structure)
     expected_functions = [
+        # Top-level functions
         f"{project_name}.nested_functions.outer_function",
-        f"{project_name}.nested_functions.inner_function",  # Parsed as top-level
-        f"{project_name}.nested_functions.another_inner",  # Parsed as top-level
-        f"{project_name}.nested_functions.deeply_nested",  # Parsed as top-level
         f"{project_name}.nested_functions.standalone_function",
-        f"{project_name}.nested_functions.local_helper",  # Parsed as top-level
         f"{project_name}.nested_functions.closure_example",
-        f"{project_name}.nested_functions.closure_function",  # Parsed as top-level
         f"{project_name}.nested_functions.decorator_factory",
-        f"{project_name}.nested_functions.decorator",  # Parsed as top-level
-        f"{project_name}.nested_functions.wrapper",  # Parsed as top-level
+        # Nested functions with proper hierarchy
+        f"{project_name}.nested_functions.outer_function.inner_function",
+        f"{project_name}.nested_functions.outer_function.another_inner",
+        f"{project_name}.nested_functions.outer_function.another_inner.deeply_nested",
+        f"{project_name}.nested_functions.standalone_function.local_helper",
+        f"{project_name}.nested_functions.closure_example.closure_function",
+        f"{project_name}.nested_functions.decorator_factory.decorator",
+        f"{project_name}.nested_functions.decorator_factory.decorator.wrapper",
     ]
 
     # Get all Function node creation calls
@@ -139,18 +137,15 @@ def test_nested_function_definitions_are_created(
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
-    # Verify all expected functions were created
+    # Verify all expected nested functions were created
     for expected_qn in expected_functions:
         assert expected_qn in created_functions, f"Missing function: {expected_qn}"
 
 
-def test_function_module_relationships(
+def test_nested_function_parent_child_relationships(
     nested_functions_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    """Test that proper DEFINES relationships are created between modules and functions.
-
-    Note: Current implementation treats all functions as top-level, so we test
-    Module -> Function relationships rather than nested function relationships."""
+    """Test that proper DEFINES relationships are created between parent and child functions."""
     parsers, queries = load_parsers()
 
     updater = GraphUpdater(
@@ -163,24 +158,12 @@ def test_function_module_relationships(
 
     project_name = nested_functions_project.name
 
-    # All functions are treated as top-level, so they all have Module -> Function relationships
+    # Expected parent-child relationships for nested functions
     expected_relationships = [
-        # Module -> all functions (treated as top-level)
+        # Module -> top-level functions
         (
             ("Module", f"{project_name}.nested_functions"),
             ("Function", f"{project_name}.nested_functions.outer_function"),
-        ),
-        (
-            ("Module", f"{project_name}.nested_functions"),
-            ("Function", f"{project_name}.nested_functions.inner_function"),
-        ),
-        (
-            ("Module", f"{project_name}.nested_functions"),
-            ("Function", f"{project_name}.nested_functions.another_inner"),
-        ),
-        (
-            ("Module", f"{project_name}.nested_functions"),
-            ("Function", f"{project_name}.nested_functions.deeply_nested"),
         ),
         (
             ("Module", f"{project_name}.nested_functions"),
@@ -188,27 +171,67 @@ def test_function_module_relationships(
         ),
         (
             ("Module", f"{project_name}.nested_functions"),
-            ("Function", f"{project_name}.nested_functions.local_helper"),
-        ),
-        (
-            ("Module", f"{project_name}.nested_functions"),
             ("Function", f"{project_name}.nested_functions.closure_example"),
-        ),
-        (
-            ("Module", f"{project_name}.nested_functions"),
-            ("Function", f"{project_name}.nested_functions.closure_function"),
         ),
         (
             ("Module", f"{project_name}.nested_functions"),
             ("Function", f"{project_name}.nested_functions.decorator_factory"),
         ),
+        # Function -> nested functions (proper parent-child relationships)
         (
-            ("Module", f"{project_name}.nested_functions"),
-            ("Function", f"{project_name}.nested_functions.decorator"),
+            ("Function", f"{project_name}.nested_functions.outer_function"),
+            (
+                "Function",
+                f"{project_name}.nested_functions.outer_function.inner_function",
+            ),
         ),
         (
-            ("Module", f"{project_name}.nested_functions"),
-            ("Function", f"{project_name}.nested_functions.wrapper"),
+            ("Function", f"{project_name}.nested_functions.outer_function"),
+            (
+                "Function",
+                f"{project_name}.nested_functions.outer_function.another_inner",
+            ),
+        ),
+        (
+            (
+                "Function",
+                f"{project_name}.nested_functions.outer_function.another_inner",
+            ),
+            (
+                "Function",
+                f"{project_name}.nested_functions.outer_function.another_inner.deeply_nested",
+            ),
+        ),
+        (
+            ("Function", f"{project_name}.nested_functions.standalone_function"),
+            (
+                "Function",
+                f"{project_name}.nested_functions.standalone_function.local_helper",
+            ),
+        ),
+        (
+            ("Function", f"{project_name}.nested_functions.closure_example"),
+            (
+                "Function",
+                f"{project_name}.nested_functions.closure_example.closure_function",
+            ),
+        ),
+        (
+            ("Function", f"{project_name}.nested_functions.decorator_factory"),
+            (
+                "Function",
+                f"{project_name}.nested_functions.decorator_factory.decorator",
+            ),
+        ),
+        (
+            (
+                "Function",
+                f"{project_name}.nested_functions.decorator_factory.decorator",
+            ),
+            (
+                "Function",
+                f"{project_name}.nested_functions.decorator_factory.decorator.wrapper",
+            ),
         ),
     ]
 
@@ -229,7 +252,7 @@ def test_function_module_relationships(
         child_tuple = (child_info[0], child_info[2])
         actual_relationships.add((parent_tuple, child_tuple))
 
-    # Verify expected Module -> Function relationships exist
+    # Verify all expected relationships exist
     for parent, child in expected_relationships:
         relationship = (parent, child)
         assert relationship in actual_relationships, (
@@ -282,13 +305,13 @@ def main():
 
     project_name = nested_functions_project.name
 
-    # Since functions are parsed as top-level, look for calls between top-level functions
+    # Expected function calls with proper nested qualified names
     expected_calls = [
-        # Calls that should be tracked (between top-level functions)
+        # Calls that should be tracked
         (
             f"{project_name}.function_calls.parent_function",
-            f"{project_name}.function_calls.child_function",
-        ),  # Local function call
+            f"{project_name}.function_calls.parent_function.child_function",
+        ),  # Local nested function call
         (
             f"{project_name}.function_calls.parent_function",
             f"{project_name}.function_calls.helper_function",

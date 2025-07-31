@@ -502,11 +502,10 @@ def test_async_context_manager_parsing(
 
     project_name = context_manager_project.name
 
-    # Expected async functions (Note: nested functions like async_function
-    # are parsed as top-level functions, not nested ones in current implementation)
+    # Expected async functions (Now with proper nested function support!)
     expected_functions = [
         f"{project_name}.context_managers.async_context_managers",
-        f"{project_name}.context_managers.async_function",  # Parsed as top-level, not nested
+        f"{project_name}.context_managers.async_context_managers.async_function",  # Properly nested!
     ]
 
     # Get all Function node creation calls

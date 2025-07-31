@@ -102,7 +102,7 @@ class DefinitionProcessor:
             )
 
             self.import_processor.parse_imports(root_node, module_qn, language, queries)
-            self._ingest_top_level_functions(root_node, module_qn, language, queries)
+            self._ingest_all_functions(root_node, module_qn, language, queries)
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
 
             return root_node, language
@@ -150,10 +150,10 @@ class DefinitionProcessor:
                 return result
         return None
 
-    def _ingest_top_level_functions(
+    def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
-        """Extract and ingest top-level functions."""
+        """Extract and ingest all functions (including nested ones)."""
         lang_queries = queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
@@ -179,7 +179,13 @@ class DefinitionProcessor:
             if text is None:
                 continue
             func_name = text.decode("utf8")
-            func_qn = f"{module_qn}.{func_name}"
+
+            # Build proper qualified name using existing nested infrastructure
+            func_qn = self._build_nested_qualified_name(
+                func_node, module_qn, func_name, lang_config
+            )
+            if func_qn is None:
+                func_qn = f"{module_qn}.{func_name}"  # Fallback to simple name
 
             # Extract function properties
             func_props: dict[str, Any] = {
@@ -196,12 +202,22 @@ class DefinitionProcessor:
             self.function_registry[func_qn] = "Function"
             self.simple_name_lookup[func_name].add(func_qn)
 
-            # Link Function to Module
+            # Determine parent and create proper relationship
+            parent_type, parent_qn = self._determine_function_parent(
+                func_node, module_qn, lang_config
+            )
             self.ingestor.ensure_relationship_batch(
-                ("Module", "qualified_name", module_qn),
+                (parent_type, "qualified_name", parent_qn),
                 "DEFINES",
                 ("Function", "qualified_name", func_qn),
             )
+
+    def _ingest_top_level_functions(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Extract and ingest top-level functions. (Legacy method, replaced by _ingest_all_functions)"""
+        # Keep for backward compatibility, but delegate to new method
+        self._ingest_all_functions(root_node, module_qn, language, queries)
 
     def _build_nested_qualified_name(
         self,
