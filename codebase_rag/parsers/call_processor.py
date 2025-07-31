@@ -197,6 +197,17 @@ class CallProcessor:
         for call_node in call_nodes:
             if not isinstance(call_node, Node):
                 continue
+
+            # Process nested calls first (inner to outer)
+            self._process_nested_calls_in_node(
+                call_node,
+                caller_qn,
+                caller_type,
+                module_qn,
+                local_var_types,
+                class_context,
+            )
+
             call_name = self._get_call_target_name(call_node)
             if not call_name:
                 continue
@@ -219,6 +230,74 @@ class CallProcessor:
                 (callee_type, "qualified_name", callee_qn),
             )
 
+    def _process_nested_calls_in_node(
+        self,
+        call_node: Node,
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> None:
+        """Process nested call expressions within a call node's function expression."""
+        # Get the function expression of this call
+        func_child = call_node.child_by_field_name("function")
+        if not func_child:
+            return
+
+        # If the function is an attribute (e.g., obj.method), check if obj contains calls
+        if func_child.type == "attribute":
+            # Recursively search for nested calls in the object part
+            self._find_and_process_nested_calls(
+                func_child,
+                caller_qn,
+                caller_type,
+                module_qn,
+                local_var_types,
+                class_context,
+            )
+
+    def _find_and_process_nested_calls(
+        self,
+        node: Node,
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> None:
+        """Recursively find and process call expressions in a node tree."""
+        # If this node is a call expression, process it
+        if node.type == "call":
+            # First process any nested calls within this call
+            self._process_nested_calls_in_node(
+                node, caller_qn, caller_type, module_qn, local_var_types, class_context
+            )
+
+            # Then process this call itself
+            call_name = self._get_call_target_name(node)
+            if call_name:
+                callee_info = self._resolve_function_call(
+                    call_name, module_qn, local_var_types, class_context
+                )
+                if callee_info:
+                    callee_type, callee_qn = callee_info
+                    logger.debug(
+                        f"      Found nested call from {caller_qn} to {call_name} "
+                        f"(resolved as {callee_type}:{callee_qn})"
+                    )
+                    self.ingestor.ensure_relationship_batch(
+                        (caller_type, "qualified_name", caller_qn),
+                        "CALLS",
+                        (callee_type, "qualified_name", callee_qn),
+                    )
+
+        # Recursively search in all child nodes
+        for child in node.children:
+            self._find_and_process_nested_calls(
+                child, caller_qn, caller_type, module_qn, local_var_types, class_context
+            )
+
     def _resolve_function_call(
         self,
         call_name: str,
@@ -230,6 +309,10 @@ class CallProcessor:
         # Phase 0: Handle super() calls specially
         if call_name.startswith("super()"):
             return self._resolve_super_call(call_name, module_qn, class_context)
+
+        # Phase 0.5: Handle method chaining - check if this is a chained call
+        if "." in call_name and self._is_method_chain(call_name):
+            return self._resolve_chained_call(call_name, module_qn, local_var_types)
 
         # Phase 1: Check import mapping for 100% accurate resolution
         if module_qn in self.import_processor.import_mapping:
@@ -390,6 +473,157 @@ class CallProcessor:
             )
 
         logger.debug(f"Could not resolve call: {call_name}")
+        return None
+
+    def _is_method_chain(self, call_name: str) -> bool:
+        """Check if this appears to be a method chain with parentheses (not just obj.method)."""
+        # Look for patterns like: obj.method().other_method or obj.method("arg").other_method
+        # But not simple patterns like: obj.method or self.attr
+        if "(" in call_name and ")" in call_name:
+            # Count method calls - if more than one, it's likely chaining
+            parts = call_name.split(".")
+            method_calls = sum(1 for part in parts if "(" in part and ")" in part)
+            return method_calls >= 1 and len(parts) >= 2
+        return False
+
+    def _resolve_chained_call(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> tuple[str, str] | None:
+        """Resolve chained method calls like obj.method().other_method()."""
+        # For chained calls like "processed_user.update_name('Updated').clone"
+        # We need to resolve the return type of the inner call first
+
+        # Handle the case where we have method(args).method format
+        # Find the rightmost method that's not in parentheses
+        import re
+
+        # Pattern to find the final method call: anything.method
+        # where method is at the end and not in parentheses
+        match = re.search(r"\.([^.()]+)$", call_name)
+        if not match:
+            return None
+
+        final_method = match.group(1)
+
+        # Get the object expression (everything before the final method)
+        object_expr = call_name[: match.start()]
+
+        # Try to get the return type of the object expression
+        object_type = self._infer_expression_return_type(
+            object_expr, module_qn, local_var_types
+        )
+
+        if object_type:
+            # Convert object_type to full qualified name if it's a short name
+            full_object_type = object_type
+            if "." not in object_type:
+                # This is a short class name, resolve to full qualified name
+                resolved_class = self._resolve_class_name(object_type, module_qn)
+                if resolved_class:
+                    full_object_type = resolved_class
+
+            # Now resolve the final method call on that type
+            method_qn = f"{full_object_type}.{final_method}"
+
+            if method_qn in self.function_registry:
+                logger.debug(
+                    f"Resolved chained call: {call_name} -> {method_qn} "
+                    f"(via {object_expr}:{object_type})"
+                )
+                return self.function_registry[method_qn], method_qn
+
+            # Also check inheritance for the final method
+            inherited_method = self._resolve_inherited_method(
+                full_object_type, final_method
+            )
+            if inherited_method:
+                logger.debug(
+                    f"Resolved chained inherited call: {call_name} -> {inherited_method[1]} "
+                    f"(via {object_expr}:{object_type})"
+                )
+                return inherited_method
+
+        return None
+
+    def _infer_expression_return_type(
+        self,
+        expression: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> str | None:
+        """Infer the return type of a complex expression like 'user.method(args)'."""
+        # For simple variable references, use local_var_types
+        if (
+            "(" not in expression
+            and "." not in expression
+            and local_var_types
+            and expression in local_var_types
+        ):
+            var_type = local_var_types[expression]
+            # Convert simple class name to full qualified name if needed
+            if module_qn in self.import_processor.import_mapping:
+                import_map = self.import_processor.import_mapping[module_qn]
+                if var_type in import_map:
+                    return import_map[var_type]
+            return self._resolve_class_name(var_type, module_qn)
+
+        # For method calls like 'processed_user.update_name("Updated")', resolve step by step
+        if "(" in expression and ")" in expression:
+            return self._infer_method_call_return_type_direct(
+                expression, module_qn, local_var_types
+            )
+
+        # For attribute access like 'processed_user.name', try to resolve via variable types
+        if "." in expression and local_var_types:
+            object_name = expression.split(".")[0]
+            if object_name in local_var_types:
+                return local_var_types[object_name]
+
+        return None
+
+    def _infer_method_call_return_type_direct(
+        self,
+        method_call: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> str | None:
+        """Directly infer return type of a method call without recursion."""
+        # Parse the method call: object.method(args)
+        if "." not in method_call:
+            return None
+
+        # Split into object part and method part
+        parts = method_call.split(".")
+        if len(parts) < 2:
+            return None
+
+        object_part = parts[0]
+        method_with_args = ".".join(parts[1:])
+
+        # Extract method name from method(args) format
+        if "(" in method_with_args:
+            method_name = method_with_args.split("(")[0]
+        else:
+            method_name = method_with_args
+
+        # Get object type from local variables
+        if local_var_types and object_part in local_var_types:
+            object_type = local_var_types[object_part]
+
+            # Convert to full qualified name if needed
+            full_object_type = object_type
+            if "." not in object_type:
+                resolved_class = self._resolve_class_name(object_type, module_qn)
+                if resolved_class:
+                    full_object_type = resolved_class
+
+            # Get the return type of the method
+            method_qn = f"{full_object_type}.{method_name}"
+            return self.type_inference._get_method_return_type_from_ast(method_qn)
+
         return None
 
     def _resolve_super_call(
