@@ -622,7 +622,6 @@ class TypeInferenceEngine:
         self, method_call: str, module_qn: str
     ) -> str | None:
         """Resolve a method call like 'self.manager.create_user' to its qualified name."""
-        # For now, handle simple cases like "self.manager.create_user"
         if "." not in method_call:
             return None
 
@@ -630,11 +629,122 @@ class TypeInferenceEngine:
         if len(parts) < 2:
             return None
 
+        # Handle direct method calls on known classes (e.g., "User.create")
+        if len(parts) == 2:
+            class_name, method_name = parts
+            return self._resolve_class_method(class_name, method_name, module_qn)
+
         # Handle self.attribute.method() pattern
         if parts[0] == "self" and len(parts) >= 3:
-            # Try to resolve the attribute type in the current class
-            # This needs proper instance variable tracking
-            pass
+            attribute_name = parts[1]
+            method_name = parts[-1]  # Last part is the method name
+
+            # Try to infer the type of self.attribute
+            attribute_type = self._infer_attribute_type(attribute_name, module_qn)
+            if attribute_type:
+                return self._resolve_class_method(
+                    attribute_type, method_name, module_qn
+                )
+
+        # Handle chained calls like "obj.attr.method()"
+        if len(parts) >= 3:
+            # For now, try to resolve the last two parts as class.method
+            potential_class = parts[-2]
+            method_name = parts[-1]
+            return self._resolve_class_method(potential_class, method_name, module_qn)
+
+        return None
+
+    def _resolve_class_method(
+        self, class_name: str, method_name: str, module_qn: str
+    ) -> str | None:
+        """Resolve a method on a specific class."""
+        # First try to find the class in the current module
+        local_class_qn = f"{module_qn}.{class_name}"
+        if (
+            local_class_qn in self.function_registry
+            and self.function_registry[local_class_qn] == "Class"
+        ):
+            method_qn = f"{local_class_qn}.{method_name}"
+            if (
+                method_qn in self.function_registry
+                and self.function_registry[method_qn] == "Method"
+            ):
+                return method_qn
+
+        # Try to find the class through imports
+        if module_qn in self.import_processor.import_mapping:
+            import_mapping = self.import_processor.import_mapping[module_qn]
+
+            # Check if class_name is imported
+            if class_name in import_mapping:
+                imported_class_qn = import_mapping[class_name]
+                if (
+                    imported_class_qn in self.function_registry
+                    and self.function_registry[imported_class_qn] == "Class"
+                ):
+                    method_qn = f"{imported_class_qn}.{method_name}"
+                    if (
+                        method_qn in self.function_registry
+                        and self.function_registry[method_qn] == "Method"
+                    ):
+                        return method_qn
+
+        # Search through all known classes with matching names
+        for qn, node_type in self.function_registry.items():
+            if node_type == "Class" and qn.split(".")[-1] == class_name:
+                method_qn = f"{qn}.{method_name}"
+                if (
+                    method_qn in self.function_registry
+                    and self.function_registry[method_qn] == "Method"
+                ):
+                    logger.debug(f"Resolved {class_name}.{method_name} to {method_qn}")
+                    return method_qn
+
+        return None
+
+    def _infer_attribute_type(self, attribute_name: str, module_qn: str) -> str | None:
+        """Infer the type of an instance attribute like self.manager."""
+        # Use heuristic-based type inference for attribute names
+        # This could be enhanced by analyzing __init__ methods or type annotations
+
+        # Common patterns: manager -> Manager, user_service -> UserService, etc.
+        if "_" in attribute_name:
+            # Convert snake_case to PascalCase
+            parts = attribute_name.split("_")
+            class_name = "".join(word.capitalize() for word in parts)
+        else:
+            # Simple capitalization
+            class_name = attribute_name.capitalize()
+
+        # Check if this class exists in the current scope
+        return self._find_class_in_scope(class_name, module_qn)
+
+    def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None:
+        """Find a class by name in the current module's scope."""
+        # Check local classes first
+        local_class_qn = f"{module_qn}.{class_name}"
+        if (
+            local_class_qn in self.function_registry
+            and self.function_registry[local_class_qn] == "Class"
+        ):
+            return class_name
+
+        # Check imported classes
+        if module_qn in self.import_processor.import_mapping:
+            import_mapping = self.import_processor.import_mapping[module_qn]
+            for local_name, imported_qn in import_mapping.items():
+                if (
+                    local_name == class_name
+                    and imported_qn in self.function_registry
+                    and self.function_registry[imported_qn] == "Class"
+                ):
+                    return class_name
+
+        # Look for classes with matching simple names across the project
+        for qn, node_type in self.function_registry.items():
+            if node_type == "Class" and qn.split(".")[-1] == class_name:
+                return class_name
 
         return None
 
