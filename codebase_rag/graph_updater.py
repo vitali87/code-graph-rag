@@ -228,11 +228,11 @@ class GraphUpdater:
         for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
             dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
             root = Path(root_str)
-            relative_root = root.relative_to(self.repo_path)
+            root.relative_to(self.repo_path)
 
             for file_name in files:
                 filepath = root / file_name
-                relative_filepath = str(filepath.relative_to(self.repo_path))
+                str(filepath.relative_to(self.repo_path))
 
                 # Check if this file type is supported for parsing
                 lang_config = get_language_config(filepath.suffix)
@@ -251,35 +251,9 @@ class GraphUpdater:
                 elif file_name == "pyproject.toml":
                     self.factory.definition_processor.process_dependencies(filepath)
                 else:
-                    # Create generic File node for non-parseable files
-                    parent_rel_path = relative_root
-                    parent_container_qn = (
-                        self.factory.structure_processor.structural_elements.get(
-                            parent_rel_path
-                        )
-                    )
-                    parent_label, parent_key, parent_val = (
-                        ("Package", "qualified_name", parent_container_qn)
-                        if parent_container_qn
-                        else (
-                            ("Folder", "path", str(parent_rel_path))
-                            if parent_rel_path != Path(".")
-                            else ("Project", "name", self.project_name)
-                        )
-                    )
-
-                    self.ingestor.ensure_node_batch(
-                        "File",
-                        {
-                            "path": relative_filepath,
-                            "name": file_name,
-                            "extension": filepath.suffix,
-                        },
-                    )
-                    self.ingestor.ensure_relationship_batch(
-                        (parent_label, parent_key, parent_val),
-                        "CONTAINS_FILE",
-                        ("File", "path", relative_filepath),
+                    # Use StructureProcessor to handle generic files
+                    self.factory.structure_processor.process_generic_file(
+                        filepath, file_name
                     )
 
     def _process_function_calls(self) -> None:

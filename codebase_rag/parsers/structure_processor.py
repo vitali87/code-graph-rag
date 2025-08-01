@@ -98,3 +98,37 @@ class StructureProcessor:
                     "CONTAINS_FOLDER",
                     ("Folder", "path", str(relative_root)),
                 )
+
+    def process_generic_file(self, file_path: Path, file_name: str) -> None:
+        """Process a generic (non-parseable) file and create appropriate nodes/relationships."""
+        relative_filepath = str(file_path.relative_to(self.repo_path))
+        relative_root = file_path.parent.relative_to(self.repo_path)
+
+        # Determine the parent container
+        parent_container_qn = self.structural_elements.get(relative_root)
+        parent_label, parent_key, parent_val = (
+            ("Package", "qualified_name", parent_container_qn)
+            if parent_container_qn
+            else (
+                ("Folder", "path", str(relative_root))
+                if relative_root != Path(".")
+                else ("Project", "name", self.project_name)
+            )
+        )
+
+        # Create File node
+        self.ingestor.ensure_node_batch(
+            "File",
+            {
+                "path": relative_filepath,
+                "name": file_name,
+                "extension": file_path.suffix,
+            },
+        )
+
+        # Create relationship to parent container
+        self.ingestor.ensure_relationship_batch(
+            (parent_label, parent_key, parent_val),
+            "CONTAINS_FILE",
+            ("File", "path", relative_filepath),
+        )
