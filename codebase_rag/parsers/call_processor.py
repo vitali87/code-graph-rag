@@ -515,7 +515,7 @@ class CallProcessor:
         object_expr = call_name[: match.start()]
 
         # Try to get the return type of the object expression
-        object_type = self._infer_expression_return_type(
+        object_type = self.type_inference._infer_expression_return_type(
             object_expr, module_qn, local_var_types
         )
 
@@ -548,84 +548,6 @@ class CallProcessor:
                     f"(via {object_expr}:{object_type})"
                 )
                 return inherited_method
-
-        return None
-
-    def _infer_expression_return_type(
-        self,
-        expression: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-    ) -> str | None:
-        """Infer the return type of a complex expression like 'user.method(args)'."""
-        # For simple variable references, use local_var_types
-        if (
-            "(" not in expression
-            and "." not in expression
-            and local_var_types
-            and expression in local_var_types
-        ):
-            var_type = local_var_types[expression]
-            # Convert simple class name to full qualified name if needed
-            if module_qn in self.import_processor.import_mapping:
-                import_map = self.import_processor.import_mapping[module_qn]
-                if var_type in import_map:
-                    return import_map[var_type]
-            return self._resolve_class_name(var_type, module_qn)
-
-        # For method calls like 'processed_user.update_name("Updated")', resolve step by step
-        if "(" in expression and ")" in expression:
-            return self._infer_method_call_return_type_direct(
-                expression, module_qn, local_var_types
-            )
-
-        # For attribute access like 'processed_user.name', try to resolve via variable types
-        if "." in expression and local_var_types:
-            object_name = expression.split(".")[0]
-            if object_name in local_var_types:
-                return local_var_types[object_name]
-
-        return None
-
-    def _infer_method_call_return_type_direct(
-        self,
-        method_call: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-    ) -> str | None:
-        """Directly infer return type of a method call without recursion."""
-        # Parse the method call: object.method(args)
-        if "." not in method_call:
-            return None
-
-        # Split into object part and method part
-        parts = method_call.split(".")
-        if len(parts) < 2:
-            return None
-
-        object_part = parts[0]
-        method_with_args = ".".join(parts[1:])
-
-        # Extract method name from method(args) format
-        if "(" in method_with_args:
-            method_name = method_with_args.split("(")[0]
-        else:
-            method_name = method_with_args
-
-        # Get object type from local variables
-        if local_var_types and object_part in local_var_types:
-            object_type = local_var_types[object_part]
-
-            # Convert to full qualified name if needed
-            full_object_type = object_type
-            if "." not in object_type:
-                resolved_class = self._resolve_class_name(object_type, module_qn)
-                if resolved_class:
-                    full_object_type = resolved_class
-
-            # Get the return type of the method
-            method_qn = f"{full_object_type}.{method_name}"
-            return self.type_inference._get_method_return_type_from_ast(method_qn)
 
         return None
 
