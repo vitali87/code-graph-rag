@@ -45,7 +45,7 @@ class TestStandardLibraryImports:
     ) -> None:
         """Test that standard library imports are not prefixed with project name."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: from os import path
         mock_import_node = MagicMock()
@@ -66,16 +66,21 @@ class TestStandardLibraryImports:
         }.get(field, [])
 
         # Call the method
-        mock_updater._handle_python_import_from_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_from_statement(
+            mock_import_node, module_qn
+        )
 
         # Should NOT have project prefix
         expected_mapping = {"path": "os.path"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_third_party_imports_not_prefixed(self, mock_updater: GraphUpdater) -> None:
         """Test that third-party imports are not prefixed with project name."""
         module_qn = "myproject.analysis"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: from numpy import array
         mock_import_node = MagicMock()
@@ -96,18 +101,23 @@ class TestStandardLibraryImports:
         }.get(field, [])
 
         # Call the method
-        mock_updater._handle_python_import_from_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_from_statement(
+            mock_import_node, module_qn
+        )
 
         # Should NOT have project prefix
         expected_mapping = {"array": "numpy.array"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_local_module_imports_are_prefixed(
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that local module imports ARE prefixed with project name."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: from utils import helper
         mock_import_node = MagicMock()
@@ -128,16 +138,21 @@ class TestStandardLibraryImports:
         }.get(field, [])
 
         # Call the method
-        mock_updater._handle_python_import_from_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_from_statement(
+            mock_import_node, module_qn
+        )
 
         # SHOULD have project prefix because utils/ exists in repo
         expected_mapping = {"helper": "myproject.utils.helper"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_local_file_imports_are_prefixed(self, mock_updater: GraphUpdater) -> None:
         """Test that local file imports ARE prefixed with project name."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: from config import settings
         mock_import_node = MagicMock()
@@ -158,18 +173,23 @@ class TestStandardLibraryImports:
         }.get(field, [])
 
         # Call the method
-        mock_updater._handle_python_import_from_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_from_statement(
+            mock_import_node, module_qn
+        )
 
         # SHOULD have project prefix because config.py exists in repo
         expected_mapping = {"settings": "myproject.config.settings"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_already_prefixed_imports_unchanged(
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that imports already prefixed with project name are unchanged."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: from myproject.utils import helper
         mock_import_node = MagicMock()
@@ -190,16 +210,21 @@ class TestStandardLibraryImports:
         }.get(field, [])
 
         # Call the method
-        mock_updater._handle_python_import_from_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_from_statement(
+            mock_import_node, module_qn
+        )
 
         # Should stay the same (no double prefix)
         expected_mapping = {"helper": "myproject.utils.helper"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_nested_local_module_imports(self, mock_updater: GraphUpdater) -> None:
         """Test that nested local module imports are correctly prefixed."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: from src.helpers import database
         mock_import_node = MagicMock()
@@ -220,16 +245,21 @@ class TestStandardLibraryImports:
         }.get(field, [])
 
         # Call the method
-        mock_updater._handle_python_import_from_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_from_statement(
+            mock_import_node, module_qn
+        )
 
         # SHOULD have project prefix because src/ exists in repo
         expected_mapping = {"database": "myproject.src.helpers.database"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_regular_import_standard_library(self, mock_updater: GraphUpdater) -> None:
         """Test that regular imports of standard library are not prefixed."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: import os
         mock_import_node = MagicMock()
@@ -240,16 +270,21 @@ class TestStandardLibraryImports:
         mock_import_node.named_children = [mock_dotted_name]
 
         # Call the method
-        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_statement(
+            mock_import_node, module_qn
+        )
 
         # Should NOT have project prefix
         expected_mapping = {"os": "os"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_regular_import_local_module(self, mock_updater: GraphUpdater) -> None:
         """Test that regular imports of local modules ARE prefixed."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: import utils
         mock_import_node = MagicMock()
@@ -260,18 +295,23 @@ class TestStandardLibraryImports:
         mock_import_node.named_children = [mock_dotted_name]
 
         # Call the method
-        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_statement(
+            mock_import_node, module_qn
+        )
 
         # SHOULD have project prefix because utils/ exists in repo
         expected_mapping = {"utils": "myproject.utils"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_regular_import_dotted_local_module(
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that dotted imports of local modules are correctly handled."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: import src.helpers
         mock_import_node = MagicMock()
@@ -282,16 +322,21 @@ class TestStandardLibraryImports:
         mock_import_node.named_children = [mock_dotted_name]
 
         # Call the method
-        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_statement(
+            mock_import_node, module_qn
+        )
 
         # SHOULD have project prefix, local name should be 'src'
         expected_mapping = {"src": "myproject.src.helpers"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_aliased_import_standard_library(self, mock_updater: GraphUpdater) -> None:
         """Test that aliased imports of standard library are not prefixed."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: import os as operating_system
         mock_import_node = MagicMock()
@@ -311,16 +356,21 @@ class TestStandardLibraryImports:
         mock_import_node.named_children = [mock_aliased_import]
 
         # Call the method
-        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_statement(
+            mock_import_node, module_qn
+        )
 
         # Should NOT have project prefix
         expected_mapping = {"operating_system": "os"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )
 
     def test_aliased_import_local_module(self, mock_updater: GraphUpdater) -> None:
         """Test that aliased imports of local modules ARE prefixed."""
         module_qn = "myproject.main"
-        mock_updater.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
         # Simulate parsing: import utils as helpers
         mock_import_node = MagicMock()
@@ -340,8 +390,13 @@ class TestStandardLibraryImports:
         mock_import_node.named_children = [mock_aliased_import]
 
         # Call the method
-        mock_updater._handle_python_import_statement(mock_import_node, module_qn)
+        mock_updater.factory.import_processor._handle_python_import_statement(
+            mock_import_node, module_qn
+        )
 
         # SHOULD have project prefix because utils/ exists in repo
         expected_mapping = {"helpers": "myproject.utils"}
-        assert mock_updater.import_mapping[module_qn] == expected_mapping
+        assert (
+            mock_updater.factory.import_processor.import_mapping[module_qn]
+            == expected_mapping
+        )

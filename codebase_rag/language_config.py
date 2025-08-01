@@ -41,7 +41,7 @@ LANGUAGE_CONFIGS = {
         function_node_types=["function_definition"],
         class_node_types=["class_definition"],
         module_node_types=["module"],
-        call_node_types=["call"],
+        call_node_types=["call", "with_statement"],
         import_node_types=["import_statement"],
         import_from_node_types=["import_from_statement"],
         package_indicators=["__init__.py"],
@@ -58,7 +58,10 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         call_node_types=["call_expression"],
         import_node_types=["import_statement", "lexical_declaration"],
-        import_from_node_types=["import_statement", "lexical_declaration"],  # Include CommonJS require
+        import_from_node_types=[
+            "import_statement",
+            "lexical_declaration",
+        ],  # Include CommonJS require
     ),
     "typescript": LanguageConfig(
         name="typescript",
@@ -72,7 +75,10 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         call_node_types=["call_expression"],
         import_node_types=["import_statement", "lexical_declaration"],
-        import_from_node_types=["import_statement", "lexical_declaration"],  # Include CommonJS require
+        import_from_node_types=[
+            "import_statement",
+            "lexical_declaration",
+        ],  # Include CommonJS require
     ),
     "rust": LanguageConfig(
         name="rust",
