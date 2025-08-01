@@ -228,11 +228,9 @@ class GraphUpdater:
         for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
             dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
             root = Path(root_str)
-            root.relative_to(self.repo_path)
 
             for file_name in files:
                 filepath = root / file_name
-                str(filepath.relative_to(self.repo_path))
 
                 # Check if this file type is supported for parsing
                 lang_config = get_language_config(filepath.suffix)
