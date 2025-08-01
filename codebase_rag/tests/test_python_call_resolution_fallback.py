@@ -64,7 +64,9 @@ class TestCallResolutionFallback:
 
         # Resolve the call - this should trigger the fallback logic
         # since we haven't set up any import mappings
-        result = mock_updater._resolve_function_call(call_name, caller_module)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            call_name, caller_module
+        )
 
         assert result is not None, "Call resolution should succeed"
         func_type, resolved_qn = result
@@ -73,8 +75,10 @@ class TestCallResolutionFallback:
         distances = {}
         for qn in mock_updater.function_registry.keys():
             if qn.endswith(".process_data"):
-                distances[qn] = mock_updater._calculate_import_distance(
-                    qn, caller_module
+                distances[qn] = (
+                    mock_updater.factory.call_processor._calculate_import_distance(
+                        qn, caller_module
+                    )
                 )
 
         # Find the candidate with minimum distance
@@ -82,8 +86,10 @@ class TestCallResolutionFallback:
         best_distance = distances[best_qn]
 
         # Verify we got one of the best candidates (there might be ties)
-        resolved_distance = mock_updater._calculate_import_distance(
-            resolved_qn, caller_module
+        resolved_distance = (
+            mock_updater.factory.call_processor._calculate_import_distance(
+                resolved_qn, caller_module
+            )
         )
         assert resolved_distance == best_distance, (
             f"Should choose candidate with best distance {best_distance}, "
@@ -118,17 +124,23 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "helper"
 
-        result = mock_updater._resolve_function_call(call_name, caller_module)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            call_name, caller_module
+        )
 
         assert result is not None, "Call resolution should succeed"
         func_type, resolved_qn = result
 
         # Should pick one of the closer candidates
-        resolved_distance = mock_updater._calculate_import_distance(
-            resolved_qn, caller_module
+        resolved_distance = (
+            mock_updater.factory.call_processor._calculate_import_distance(
+                resolved_qn, caller_module
+            )
         )
-        distant_distance = mock_updater._calculate_import_distance(
-            "proj.distant.far_mod.SomeClass.helper", caller_module
+        distant_distance = (
+            mock_updater.factory.call_processor._calculate_import_distance(
+                "proj.distant.far_mod.SomeClass.helper", caller_module
+            )
         )
 
         assert resolved_distance < distant_distance, (
@@ -149,7 +161,9 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "unique_func"
 
-        result = mock_updater._resolve_function_call(call_name, caller_module)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            call_name, caller_module
+        )
 
         assert result is not None, "Call resolution should succeed"
         func_type, resolved_qn = result
@@ -162,7 +176,9 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "nonexistent_func"
 
-        result = mock_updater._resolve_function_call(call_name, caller_module)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            call_name, caller_module
+        )
 
         assert result is None, "Should return None when no candidates found"
 
@@ -183,7 +199,9 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "local_func"
 
-        result = mock_updater._resolve_function_call(call_name, caller_module)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            call_name, caller_module
+        )
 
         assert result is not None, "Call resolution should succeed"
         func_type, resolved_qn = result

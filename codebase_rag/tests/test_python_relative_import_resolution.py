@@ -47,7 +47,9 @@ class TestRelativeImportResolution:
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
         # Test resolution
-        result = mock_updater._resolve_relative_import(mock_relative_node, module_qn)
+        result = mock_updater.factory.import_processor._resolve_relative_import(
+            mock_relative_node, module_qn
+        )
 
         # Should resolve to parent package: pkg.sub1.sub2.utils
         expected = "pkg.sub1.sub2.utils"
@@ -71,7 +73,9 @@ class TestRelativeImportResolution:
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
         # Test resolution
-        result = mock_updater._resolve_relative_import(mock_relative_node, module_qn)
+        result = mock_updater.factory.import_processor._resolve_relative_import(
+            mock_relative_node, module_qn
+        )
 
         # Should resolve to grandparent package: pkg.sub1.shared
         expected = "pkg.sub1.shared"
@@ -95,7 +99,9 @@ class TestRelativeImportResolution:
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
         # Test resolution
-        result = mock_updater._resolve_relative_import(mock_relative_node, module_qn)
+        result = mock_updater.factory.import_processor._resolve_relative_import(
+            mock_relative_node, module_qn
+        )
 
         # Should resolve to great-grandparent package: pkg.common
         expected = "pkg.common"
@@ -119,7 +125,9 @@ class TestRelativeImportResolution:
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
         # Test resolution
-        result = mock_updater._resolve_relative_import(mock_relative_node, module_qn)
+        result = mock_updater.factory.import_processor._resolve_relative_import(
+            mock_relative_node, module_qn
+        )
 
         # Should resolve to project root: config
         expected = "config"
@@ -141,7 +149,9 @@ class TestRelativeImportResolution:
         mock_relative_node.children = [mock_import_prefix]  # No dotted_name
 
         # Test resolution
-        result = mock_updater._resolve_relative_import(mock_relative_node, module_qn)
+        result = mock_updater.factory.import_processor._resolve_relative_import(
+            mock_relative_node, module_qn
+        )
 
         # Should resolve to grandparent package: pkg.sub1
         expected = "pkg.sub1"
@@ -167,7 +177,9 @@ class TestRelativeImportResolution:
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
         # Test resolution
-        result = mock_updater._resolve_relative_import(mock_relative_node, module_qn)
+        result = mock_updater.factory.import_processor._resolve_relative_import(
+            mock_relative_node, module_qn
+        )
 
         # Should resolve to root level: other
         expected = "other"
@@ -193,7 +205,9 @@ class TestRelativeImportResolution:
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
         # Test resolution
-        result = mock_updater._resolve_relative_import(mock_relative_node, module_qn)
+        result = mock_updater.factory.import_processor._resolve_relative_import(
+            mock_relative_node, module_qn
+        )
 
         # Should resolve to: pkg.sub1.sub2.helpers.database.models
         expected = "pkg.sub1.sub2.helpers.database.models"

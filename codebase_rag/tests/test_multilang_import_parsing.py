@@ -51,10 +51,10 @@ function main() {
         project_name = Path(temp_dir).name
         test_module = f"{project_name}.test"
 
-        assert test_module in updater.import_mapping, (
+        assert test_module in updater.factory.import_processor.import_mapping, (
             f"No import mapping for {test_module}"
         )
-        actual_imports = updater.import_mapping[test_module]
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
 
         expected = {
             "func1": f"{project_name}.utils.func1",
@@ -106,10 +106,10 @@ public class Test {
         project_name = Path(temp_dir).name
         test_module = f"{project_name}.test"
 
-        assert test_module in updater.import_mapping, (
+        assert test_module in updater.factory.import_processor.import_mapping, (
             f"No import mapping for {test_module}"
         )
-        actual_imports = updater.import_mapping[test_module]
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
 
         expected = {
             "List": "java.util.List",
@@ -159,10 +159,10 @@ fn main() {
         project_name = Path(temp_dir).name
         test_module = f"{project_name}.test"
 
-        assert test_module in updater.import_mapping, (
+        assert test_module in updater.factory.import_processor.import_mapping, (
             f"No import mapping for {test_module}"
         )
-        actual_imports = updater.import_mapping[test_module]
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
 
         expected = {
             "HashMap": "std::collections::HashMap",
@@ -217,10 +217,10 @@ func main() {
         project_name = Path(temp_dir).name
         test_module = f"{project_name}.test"
 
-        assert test_module in updater.import_mapping, (
+        assert test_module in updater.factory.import_processor.import_mapping, (
             f"No import mapping for {test_module}"
         )
-        actual_imports = updater.import_mapping[test_module]
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
 
         expected = {"fmt": "fmt", "os": "os", "f": "fmt"}
 

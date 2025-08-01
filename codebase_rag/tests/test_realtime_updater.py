@@ -34,7 +34,12 @@ def test_file_creation_flow(
     event_handler.dispatch(event)
 
     assert mock_updater.ingestor.execute_write.call_count == 2
-    mock_updater.parse_and_ingest_file.assert_called_once_with(test_file, "python")
+    mock_updater.factory.definition_processor.process_file.assert_called_once_with(
+        test_file,
+        "python",
+        mock_updater.queries,
+        mock_updater.factory.structure_processor.structural_elements,
+    )
     mock_updater.ingestor.flush_all.assert_called_once()
 
 
@@ -49,7 +54,12 @@ def test_file_modification_flow(
     event_handler.dispatch(event)
 
     assert mock_updater.ingestor.execute_write.call_count == 2
-    mock_updater.parse_and_ingest_file.assert_called_once_with(test_file, "python")
+    mock_updater.factory.definition_processor.process_file.assert_called_once_with(
+        test_file,
+        "python",
+        mock_updater.queries,
+        mock_updater.factory.structure_processor.structural_elements,
+    )
     mock_updater.ingestor.flush_all.assert_called_once()
 
 
@@ -63,7 +73,7 @@ def test_file_deletion_flow(
     event_handler.dispatch(event)
 
     assert mock_updater.ingestor.execute_write.call_count == 2
-    mock_updater.parse_and_ingest_file.assert_not_called()
+    mock_updater.factory.definition_processor.process_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_called_once()
 
 
@@ -80,7 +90,7 @@ def test_irrelevant_files_are_ignored(
     event_handler.dispatch(event)
 
     mock_updater.ingestor.execute_write.assert_not_called()
-    mock_updater.parse_and_ingest_file.assert_not_called()
+    mock_updater.factory.definition_processor.process_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_not_called()
 
 
@@ -94,7 +104,7 @@ def test_directory_creation_is_ignored(
     event_handler.dispatch(event)
 
     mock_updater.ingestor.execute_write.assert_not_called()
-    mock_updater.parse_and_ingest_file.assert_not_called()
+    mock_updater.factory.definition_processor.process_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_not_called()
 
 
@@ -109,5 +119,5 @@ def test_unsupported_file_types_are_ignored(
     event_handler.dispatch(event)
 
     assert mock_updater.ingestor.execute_write.call_count == 2
-    mock_updater.parse_and_ingest_file.assert_not_called()
+    mock_updater.factory.definition_processor.process_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_called_once()

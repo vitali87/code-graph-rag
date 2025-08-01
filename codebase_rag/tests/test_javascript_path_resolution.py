@@ -36,7 +36,7 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater._resolve_js_module_path(
+            result = graph_updater.factory.import_processor._resolve_js_module_path(
                 import_path, "test.src.components.Button"
             )
             assert result == expected, (
@@ -54,7 +54,9 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater._resolve_js_module_path(import_path, current_module)
+            result = graph_updater.factory.import_processor._resolve_js_module_path(
+                import_path, current_module
+            )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
             )
@@ -71,7 +73,9 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater._resolve_js_module_path(import_path, current_module)
+            result = graph_updater.factory.import_processor._resolve_js_module_path(
+                import_path, current_module
+            )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
             )
@@ -87,7 +91,9 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater._resolve_js_module_path(import_path, current_module)
+            result = graph_updater.factory.import_processor._resolve_js_module_path(
+                import_path, current_module
+            )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
             )
@@ -107,7 +113,9 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater._resolve_js_module_path(import_path, current_module)
+            result = graph_updater.factory.import_processor._resolve_js_module_path(
+                import_path, current_module
+            )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
             )
@@ -125,7 +133,9 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater._resolve_js_module_path(import_path, current_module)
+            result = graph_updater.factory.import_processor._resolve_js_module_path(
+                import_path, current_module
+            )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
             )

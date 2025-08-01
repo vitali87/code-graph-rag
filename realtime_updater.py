@@ -59,7 +59,15 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         if event.event_type in ["modified", "created"]:
             lang_config = get_language_config(path.suffix)
             if lang_config and lang_config.name in self.updater.parsers:
-                self.updater.parse_and_ingest_file(path, lang_config.name)
+                result = self.updater.factory.definition_processor.process_file(
+                    path,
+                    lang_config.name,
+                    self.updater.queries,
+                    self.updater.factory.structure_processor.structural_elements,
+                )
+                if result:
+                    root_node, language = result
+                    self.updater.ast_cache[path] = (root_node, language)
 
         # --- Step 4: Re-process all function calls across the entire codebase ---
         # This is the key to fixing the "island" problem. It ensures that changes

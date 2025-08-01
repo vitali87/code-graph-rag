@@ -35,8 +35,10 @@ class TestWildcardImportResolution:
         module_qn = "com.example.service"
 
         # Setup wildcard import as stored by parsing logic
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*java.util"] = "java.util"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*java.util"
+        ] = "java.util"
 
         # Setup function registry
         mock_updater.function_registry["java.util.List"] = "Class"
@@ -44,18 +46,24 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["java.util.HashMap"] = "Class"
 
         # Test wildcard resolution
-        result = mock_updater._resolve_function_call("List", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "List", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "java.util.List"
         assert func_type == "Class"
 
-        result = mock_updater._resolve_function_call("ArrayList", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "ArrayList", module_qn
+        )
         assert result is not None
         assert result[1] == "java.util.ArrayList"
 
         # Test non-existent function
-        result = mock_updater._resolve_function_call("NonExistentClass", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "NonExistentClass", module_qn
+        )
         assert result is None
 
     def test_rust_wildcard_import_resolution(self, mock_updater: GraphUpdater) -> None:
@@ -63,8 +71,10 @@ class TestWildcardImportResolution:
         module_qn = "my_project::service"
 
         # Setup wildcard import as stored by parsing logic
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*std::collections"] = "std::collections"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*std::collections"
+        ] = "std::collections"
 
         # Setup function registry
         mock_updater.function_registry["std::collections::HashMap"] = "Function"
@@ -72,13 +82,17 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["std::collections::VecDeque"] = "Function"
 
         # Test wildcard resolution with :: separator
-        result = mock_updater._resolve_function_call("HashMap", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "HashMap", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "std::collections::HashMap"
         assert func_type == "Function"
 
-        result = mock_updater._resolve_function_call("BTreeMap", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "BTreeMap", module_qn
+        )
         assert result is not None
         assert result[1] == "std::collections::BTreeMap"
 
@@ -90,14 +104,18 @@ class TestWildcardImportResolution:
 
         # JavaScript namespace imports are stored as exact mappings, not wildcards
         # import * as utils from './utils' creates: utils -> src.utils
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["utils"] = "src.utils"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn]["utils"] = (
+            "src.utils"
+        )
 
         # Setup function registry for the namespace itself
         mock_updater.function_registry["src.utils"] = "Module"
 
         # Test exact import resolution (not wildcard)
-        result = mock_updater._resolve_function_call("utils", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "utils", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "src.utils"
@@ -110,20 +128,26 @@ class TestWildcardImportResolution:
 
         # Python wildcard imports would be stored as: *myproject.utils -> myproject.utils
         # Note: Current parser may not handle this, but this tests the resolution logic
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*myproject.utils"] = "myproject.utils"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*myproject.utils"
+        ] = "myproject.utils"
 
         # Setup function registry
         mock_updater.function_registry["myproject.utils.helper_function"] = "Function"
         mock_updater.function_registry["myproject.utils.UtilityClass"] = "Class"
 
         # Test wildcard resolution
-        result = mock_updater._resolve_function_call("helper_function", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "helper_function", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "myproject.utils.helper_function"
 
-        result = mock_updater._resolve_function_call("UtilityClass", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "UtilityClass", module_qn
+        )
         assert result is not None
         assert result[1] == "myproject.utils.UtilityClass"
 
@@ -133,9 +157,11 @@ class TestWildcardImportResolution:
 
         # C++ using namespace would be stored as: *std -> std (if parser supported it)
         # Note: Current parser may not handle this, but this tests the resolution logic
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*std"] = "std"
-        mock_updater.import_mapping[module_qn]["*boost::algorithm"] = "boost::algorithm"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn]["*std"] = "std"
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*boost::algorithm"
+        ] = "boost::algorithm"
 
         # Setup function registry
         mock_updater.function_registry["std::vector"] = "Class"
@@ -143,16 +169,22 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["boost::algorithm::trim"] = "Function"
 
         # Test namespace resolution
-        result = mock_updater._resolve_function_call("vector", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "vector", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "std::vector"
 
-        result = mock_updater._resolve_function_call("string", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "string", module_qn
+        )
         assert result is not None
         assert result[1] == "std::string"
 
-        result = mock_updater._resolve_function_call("trim", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "trim", module_qn
+        )
         assert result is not None
         assert result[1] == "boost::algorithm::trim"
 
@@ -161,9 +193,13 @@ class TestWildcardImportResolution:
         module_qn = "com.example.service"
 
         # Scala wildcard imports would be stored as: *scala.collection -> scala.collection
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*scala.collection"] = "scala.collection"
-        mock_updater.import_mapping[module_qn]["*scala.util"] = "scala.util"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*scala.collection"
+        ] = "scala.collection"
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*scala.util"
+        ] = "scala.util"
 
         # Setup function registry
         mock_updater.function_registry["scala.collection.List"] = "Class"
@@ -171,16 +207,22 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["scala.util.Try"] = "Class"
 
         # Test wildcard resolution
-        result = mock_updater._resolve_function_call("List", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "List", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "scala.collection.List"
 
-        result = mock_updater._resolve_function_call("Map", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "Map", module_qn
+        )
         assert result is not None
         assert result[1] == "scala.collection.Map"
 
-        result = mock_updater._resolve_function_call("Try", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "Try", module_qn
+        )
         assert result is not None
         assert result[1] == "scala.util.Try"
 
@@ -189,16 +231,20 @@ class TestWildcardImportResolution:
         module_qn = "myproject/service"
 
         # Go imports are exact: import "fmt" creates: fmt -> fmt
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["fmt"] = "fmt"
-        mock_updater.import_mapping[module_qn]["strings"] = "strings"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn]["fmt"] = "fmt"
+        mock_updater.factory.import_processor.import_mapping[module_qn]["strings"] = (
+            "strings"
+        )
 
         # Setup function registry for the packages themselves
         mock_updater.function_registry["fmt"] = "Package"
         mock_updater.function_registry["strings"] = "Package"
 
         # Go uses exact imports, not wildcards
-        result = mock_updater._resolve_function_call("fmt", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "fmt", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "fmt"
@@ -210,20 +256,22 @@ class TestWildcardImportResolution:
         module_qn = "com.example.service"
 
         # Setup both exact and wildcard imports
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["List"] = (
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn]["List"] = (
             "my.custom.List"  # Exact import
         )
-        mock_updater.import_mapping[module_qn]["*java.util"] = (
-            "java.util"  # Wildcard import
-        )
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*java.util"
+        ] = "java.util"  # Wildcard import
 
         # Setup function registry for both
         mock_updater.function_registry["my.custom.List"] = "Class"
         mock_updater.function_registry["java.util.List"] = "Class"
 
         # Exact import should win
-        result = mock_updater._resolve_function_call("List", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "List", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "my.custom.List"
@@ -233,10 +281,16 @@ class TestWildcardImportResolution:
         module_qn = "com.example.service"
 
         # Setup multiple wildcard imports
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*java.util"] = "java.util"
-        mock_updater.import_mapping[module_qn]["*java.io"] = "java.io"
-        mock_updater.import_mapping[module_qn]["*std::collections"] = "std::collections"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*java.util"
+        ] = "java.util"
+        mock_updater.factory.import_processor.import_mapping[module_qn]["*java.io"] = (
+            "java.io"
+        )
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*std::collections"
+        ] = "std::collections"
 
         # Setup function registry
         mock_updater.function_registry["java.util.List"] = "Class"
@@ -244,15 +298,21 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["std::collections::HashMap"] = "Function"
 
         # Test resolution from different wildcard imports
-        result = mock_updater._resolve_function_call("List", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "List", module_qn
+        )
         assert result is not None
         assert result[1] == "java.util.List"
 
-        result = mock_updater._resolve_function_call("File", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "File", module_qn
+        )
         assert result is not None
         assert result[1] == "java.io.File"
 
-        result = mock_updater._resolve_function_call("HashMap", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "HashMap", module_qn
+        )
         assert result is not None
         assert result[1] == "std::collections::HashMap"
 
@@ -263,14 +323,18 @@ class TestWildcardImportResolution:
         module_qn = "com.example.service"
 
         # Setup wildcard import
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*java.util"] = "java.util"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*java.util"
+        ] = "java.util"
 
         # Setup function registry (but not the function we'll search for)
         mock_updater.function_registry["java.util.List"] = "Class"
 
         # Should not resolve non-existent function
-        result = mock_updater._resolve_function_call("NonExistentClass", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "NonExistentClass", module_qn
+        )
         assert result is None
 
     def test_fallback_still_works_after_wildcard_check(
@@ -280,8 +344,10 @@ class TestWildcardImportResolution:
         module_qn = "com.example.service"
 
         # Setup wildcard import that won't match our test
-        mock_updater.import_mapping[module_qn] = {}
-        mock_updater.import_mapping[module_qn]["*java.util"] = "java.util"
+        mock_updater.factory.import_processor.import_mapping[module_qn] = {}
+        mock_updater.factory.import_processor.import_mapping[module_qn][
+            "*java.util"
+        ] = "java.util"
 
         # Setup function registry for fallback resolution
         mock_updater.function_registry["com.example.service.LocalService"] = "Class"
@@ -290,7 +356,9 @@ class TestWildcardImportResolution:
         )
 
         # Should fall back to Phase 3 resolution
-        result = mock_updater._resolve_function_call("LocalService", module_qn)
+        result = mock_updater.factory.call_processor._resolve_function_call(
+            "LocalService", module_qn
+        )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "com.example.service.LocalService"
