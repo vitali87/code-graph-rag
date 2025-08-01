@@ -1,5 +1,6 @@
 """Call processor for finding and resolving function/method calls."""
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -501,7 +502,6 @@ class CallProcessor:
 
         # Handle the case where we have method(args).method format
         # Find the rightmost method that's not in parentheses
-        import re
 
         # Pattern to find the final method call: anything.method
         # where method is at the end and not in parentheses
