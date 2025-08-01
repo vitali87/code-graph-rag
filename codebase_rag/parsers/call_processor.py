@@ -461,15 +461,18 @@ class CallProcessor:
         # This is a fallback and can be imprecise, but better than nothing.
         possible_matches = self.function_registry.find_ending_with(call_name)
         if possible_matches:
-            # This is ambiguous, so we might just take the first one or log a warning.
-            # For now, let's take the first match.
-            first_match_qn = possible_matches[0]
+            # Sort candidates by likelihood (prioritize closer modules)
+            possible_matches.sort(
+                key=lambda qn: self._calculate_import_distance(qn, module_qn)
+            )
+            # Take the most likely candidate.
+            best_candidate_qn = possible_matches[0]
             logger.debug(
-                f"Trie-based fallback resolution: {call_name} -> {first_match_qn}"
+                f"Trie-based fallback resolution: {call_name} -> {best_candidate_qn}"
             )
             return (
-                self.function_registry[first_match_qn],
-                first_match_qn,
+                self.function_registry[best_candidate_qn],
+                best_candidate_qn,
             )
 
         logger.debug(f"Could not resolve call: {call_name}")
