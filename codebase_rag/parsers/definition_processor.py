@@ -202,6 +202,70 @@ class DefinitionProcessor:
                             return func_attr_name
         return None
 
+    def _extract_class_name(self, class_node: Node) -> str | None:
+        """Extract class name, handling both class declarations and class expressions."""
+        # For regular class declarations, try the name field first
+        name_node = class_node.child_by_field_name("name")
+        if name_node and name_node.text:
+            return str(name_node.text.decode("utf8"))
+
+        # For class expressions, look in parent variable_declarator
+        # Pattern: const Animal = class { ... }
+        current = class_node.parent
+        while current:
+            if current.type == "variable_declarator":
+                # Find the identifier child (the name)
+                for child in current.children:
+                    if child.type == "identifier" and child.text:
+                        return str(child.text.decode("utf8"))
+            current = current.parent
+
+        return None
+
+    def _extract_function_name(self, func_node: Node) -> str | None:
+        """Extract function name, handling both regular functions and arrow functions."""
+        # For regular functions, try the name field first
+        name_node = func_node.child_by_field_name("name")
+        if name_node and name_node.text:
+            return str(name_node.text.decode("utf8"))
+
+        # For arrow functions, look in parent variable_declarator
+        if func_node.type == "arrow_function":
+            current = func_node.parent
+            while current:
+                if current.type == "variable_declarator":
+                    # Find the identifier child (the name)
+                    for child in current.children:
+                        if child.type == "identifier" and child.text:
+                            return str(child.text.decode("utf8"))
+                current = current.parent
+
+        return None
+
+    def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
+        """Generate a synthetic name for anonymous functions (IIFEs, callbacks, etc.)."""
+        # Check if this is an IIFE pattern: function -> parenthesized_expression -> call_expression
+        parent = func_node.parent
+        if parent and parent.type == "parenthesized_expression":
+            grandparent = parent.parent
+            if grandparent and grandparent.type == "call_expression":
+                # Check if the parenthesized expression is the function being called
+                if grandparent.child_by_field_name("function") == parent:
+                    func_type = (
+                        "arrow" if func_node.type == "arrow_function" else "func"
+                    )
+                    return f"iife_{func_type}_{func_node.start_point[0]}_{func_node.start_point[1]}"
+
+        # Check direct call pattern (less common but possible)
+        if parent and parent.type == "call_expression":
+            if parent.child_by_field_name("function") == func_node:
+                return (
+                    f"iife_direct_{func_node.start_point[0]}_{func_node.start_point[1]}"
+                )
+
+        # For other anonymous functions (callbacks, etc.), use location-based name
+        return f"anonymous_{func_node.start_point[0]}_{func_node.start_point[1]}"
+
     def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
@@ -224,13 +288,11 @@ class DefinitionProcessor:
             if self._is_method(func_node, lang_config):
                 continue
 
-            name_node = func_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            func_name = text.decode("utf8")
+            # Extract function name - handle arrow functions specially
+            func_name = self._extract_function_name(func_node)
+            if not func_name:
+                # Generate synthetic name for anonymous functions (IIFEs, callbacks, etc.)
+                func_name = self._generate_anonymous_function_name(func_node, module_qn)
 
             # Build proper qualified name using existing nested infrastructure
             func_qn = self._build_nested_qualified_name(
@@ -358,13 +420,9 @@ class DefinitionProcessor:
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
-            name_node = class_node.child_by_field_name("name")
-            if not name_node:
+            class_name = self._extract_class_name(class_node)
+            if not class_name:
                 continue
-            text = name_node.text
-            if text is None:
-                continue
-            class_name = text.decode("utf8")
             class_qn = f"{module_qn}.{class_name}"
             decorators = self._extract_decorators(class_node)
             class_props: dict[str, Any] = {
@@ -525,7 +583,68 @@ class DefinitionProcessor:
                             # Fallback: assume same module
                             parent_classes.append(f"{module_qn}.{parent_name}")
 
+        # Look for inheritance in TypeScript/JavaScript class declaration
+        # Structure: class_declaration -> class_heritage -> extends_clause -> identifier
+        # Or in JavaScript: class_declaration -> class_heritage -> extends + identifier
+        class_heritage_node = None
+        for child in class_node.children:
+            if child.type == "class_heritage":
+                class_heritage_node = child
+                break
+
+        if class_heritage_node:
+            # TypeScript pattern: class_heritage -> extends_clause -> identifier
+            for child in class_heritage_node.children:
+                if child.type == "extends_clause":
+                    # Find the parent class identifier in the extends_clause
+                    for grandchild in child.children:
+                        if grandchild.type in ["identifier", "member_expression"]:
+                            parent_text = grandchild.text
+                            if parent_text:
+                                parent_name = parent_text.decode("utf8")
+                                parent_classes.append(
+                                    self._resolve_js_ts_parent_class(
+                                        parent_name, module_qn
+                                    )
+                                )
+                            break
+                    break
+                # JavaScript pattern: class_heritage -> extends + identifier (direct children)
+                elif child.type in ["identifier", "member_expression"]:
+                    # Check if the previous sibling is "extends"
+                    child_index = class_heritage_node.children.index(child)
+                    if (
+                        child_index > 0
+                        and class_heritage_node.children[child_index - 1].type
+                        == "extends"
+                    ):
+                        parent_text = child.text
+                        if parent_text:
+                            parent_name = parent_text.decode("utf8")
+                            parent_classes.append(
+                                self._resolve_js_ts_parent_class(parent_name, module_qn)
+                            )
+
         return parent_classes
+
+    def _resolve_js_ts_parent_class(self, parent_name: str, module_qn: str) -> str:
+        """Resolve a JavaScript/TypeScript parent class name to its fully qualified name."""
+        # Resolve to full qualified name if possible
+        if module_qn in self.import_processor.import_mapping:
+            import_map = self.import_processor.import_mapping[module_qn]
+            if parent_name in import_map:
+                return import_map[parent_name]
+            else:
+                # Try to resolve within same module
+                parent_qn = self._resolve_class_name(parent_name, module_qn)
+                if parent_qn:
+                    return parent_qn
+                else:
+                    # Fallback: assume same module
+                    return f"{module_qn}.{parent_name}"
+        else:
+            # Fallback: assume same module
+            return f"{module_qn}.{parent_name}"
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         """Convert a simple class name to its fully qualified name."""

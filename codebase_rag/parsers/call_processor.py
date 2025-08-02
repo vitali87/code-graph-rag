@@ -53,6 +53,7 @@ class CallProcessor:
 
             self._process_calls_in_functions(root_node, module_qn, language, queries)
             self._process_calls_in_classes(root_node, module_qn, language, queries)
+            self._process_module_level_calls(root_node, module_qn, language, queries)
 
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
@@ -143,6 +144,15 @@ class CallProcessor:
                     class_qn,
                 )
 
+    def _process_module_level_calls(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Process top-level calls in the module (like IIFE calls)."""
+        # Process calls that are directly at module level, not inside functions/classes
+        self._ingest_function_calls(
+            root_node, module_qn, "Module", module_qn, language, queries
+        )
+
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """Extracts the name of the function or method being called."""
         # For 'call' in Python and 'call_expression' in JS/TS
@@ -163,6 +173,10 @@ class CallProcessor:
                 text = func_child.text
                 if text is not None:
                     return str(text.decode("utf8"))
+            # JS/TS: IIFE calls like (function(){})() -> parenthesized_expression
+            elif func_child.type == "parenthesized_expression":
+                # For IIFEs, we need to identify the anonymous function inside
+                return self._get_iife_target_name(func_child)
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
@@ -170,6 +184,18 @@ class CallProcessor:
             if text is not None:
                 return str(text.decode("utf8"))
 
+        return None
+
+    def _get_iife_target_name(self, parenthesized_expr: Node) -> str | None:
+        """Extract the target name for IIFE calls like (function(){})()."""
+        # Look for function_expression or arrow_function inside parentheses
+        for child in parenthesized_expr.children:
+            if child.type in ["function_expression", "arrow_function"]:
+                # Generate the same synthetic name that was used during function detection
+                if child.type == "arrow_function":
+                    return f"iife_arrow_{child.start_point[0]}_{child.start_point[1]}"
+                else:
+                    return f"iife_func_{child.start_point[0]}_{child.start_point[1]}"
         return None
 
     def _ingest_function_calls(
@@ -307,6 +333,15 @@ class CallProcessor:
         class_context: str | None = None,
     ) -> tuple[str, str] | None:
         """Resolve a function call to its qualified name and type."""
+        # Phase -1: Handle IIFE calls specially
+        if call_name and (
+            call_name.startswith("iife_func_") or call_name.startswith("iife_arrow_")
+        ):
+            # IIFE calls: resolve to the anonymous function in the same module
+            iife_qn = f"{module_qn}.{call_name}"
+            if iife_qn in self.function_registry:
+                return self.function_registry[iife_qn], iife_qn
+
         # Phase 0: Handle super() calls specially
         if call_name.startswith("super()"):
             return self._resolve_super_call(call_name, module_qn, class_context)
@@ -331,6 +366,17 @@ class CallProcessor:
             # 1a.2. Handle qualified calls like "Class.method" and "self.attr.method"
             if "." in call_name:
                 parts = call_name.split(".")
+
+                # Handle JavaScript object method calls like "calculator.add"
+                if len(parts) == 2:
+                    object_name, method_name = parts
+                    # Try to find the method in the same module
+                    method_qn = f"{module_qn}.{method_name}"
+                    if method_qn in self.function_registry:
+                        logger.debug(
+                            f"Object method resolved: {call_name} -> {method_qn}"
+                        )
+                        return self.function_registry[method_qn], method_qn
 
                 # Special handling for self.attribute.method patterns
                 if len(parts) >= 3 and parts[0] == "self":
