@@ -342,8 +342,12 @@ class CallProcessor:
             if iife_qn in self.function_registry:
                 return self.function_registry[iife_qn], iife_qn
 
-        # Phase 0: Handle super() calls specially
-        if call_name.startswith("super()"):
+        # Phase 0: Handle super calls specially (JavaScript/TypeScript patterns)
+        if (
+            call_name == "super"
+            or call_name.startswith("super.")
+            or call_name.startswith("super()")
+        ):
             return self._resolve_super_call(call_name, module_qn, class_context)
 
         # Phase 0.5: Handle method chaining - check if this is a chained call
@@ -600,13 +604,24 @@ class CallProcessor:
     def _resolve_super_call(
         self, call_name: str, module_qn: str, class_context: str | None = None
     ) -> tuple[str, str] | None:
-        """Resolve super() calls to parent class methods."""
-        # Extract method name from super() call
-        # Examples: "super().__init__" -> "__init__", "super().start_engine" -> "start_engine"
-        if "." in call_name:
+        """Resolve super calls to parent class methods (JavaScript/TypeScript patterns)."""
+        # Extract method name from super call
+        # JavaScript patterns:
+        # - "super" -> constructor call: super(args)
+        # - "super.method" -> parent method call: super.method()
+        # - "super().method" -> chained call (less common)
+
+        if call_name == "super":
+            # Constructor call: super(args)
+            method_name = "constructor"
+        elif call_name.startswith("super."):
+            # Method call: super.method()
+            method_name = call_name.split(".", 1)[1]  # Get part after "super."
+        elif "." in call_name:
+            # Legacy pattern: super().method()
             method_name = call_name.split(".", 1)[1]  # Get part after "super()."
         else:
-            # Just "super()" - this shouldn't happen in normal calls but handle gracefully
+            # Unsupported pattern
             return None
 
         # Use the provided class context

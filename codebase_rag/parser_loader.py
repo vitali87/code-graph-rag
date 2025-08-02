@@ -226,6 +226,7 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                     if combined_import_patterns
                     else None,
                     "config": lang_config,
+                    "language": language,
                 }
 
                 available_languages.append(lang_name)

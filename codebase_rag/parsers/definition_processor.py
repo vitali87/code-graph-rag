@@ -104,8 +104,13 @@ class DefinitionProcessor:
             )
 
             self.import_processor.parse_imports(root_node, module_qn, language, queries)
+            self._ingest_missing_import_patterns(
+                root_node, module_qn, language, queries
+            )
             self._ingest_all_functions(root_node, module_qn, language, queries)
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
+            self._ingest_object_literal_methods(root_node, module_qn, language, queries)
+            self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
 
             return root_node, language
 
@@ -651,3 +656,363 @@ class DefinitionProcessor:
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+
+    def _ingest_prototype_inheritance(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect JavaScript prototype inheritance patterns using tree-sitter queries."""
+        if language not in ["javascript", "typescript"]:
+            return
+
+        lang_queries = queries[language]
+
+        # Get the language object for creating queries
+        language_obj = lang_queries.get("language")
+        if not language_obj:
+            return
+
+        # Import the Query and QueryCursor classes
+        from tree_sitter import Query, QueryCursor
+
+        # Create a query to find prototype inheritance patterns
+        # Pattern: Child.prototype = Object.create(Parent.prototype)
+        query_text = """
+        (assignment_expression
+          left: (member_expression
+            object: (identifier) @child_class
+            property: (property_identifier) @prototype (#eq? @prototype "prototype"))
+          right: (call_expression
+            function: (member_expression
+              object: (identifier) @object_name (#eq? @object_name "Object")
+              property: (property_identifier) @create_method (#eq? @create_method "create"))
+            arguments: (arguments
+              (member_expression
+                object: (identifier) @parent_class
+                property: (property_identifier) @parent_prototype (#eq? @parent_prototype "prototype")))))
+        """
+
+        try:
+            # Create and execute the query for inheritance
+            query = Query(language_obj, query_text)
+            cursor = QueryCursor(query)
+            captures = cursor.captures(root_node)
+
+            # Extract child and parent class names from captures
+            child_classes = captures.get("child_class", [])
+            parent_classes = captures.get("parent_class", [])
+
+            if child_classes and parent_classes:
+                for child_node, parent_node in zip(child_classes, parent_classes):
+                    if not child_node.text or not parent_node.text:
+                        continue
+                    child_name = child_node.text.decode("utf8")
+                    parent_name = parent_node.text.decode("utf8")
+
+                    # Build qualified names
+                    child_qn = f"{module_qn}.{child_name}"
+                    parent_qn = f"{module_qn}.{parent_name}"
+
+                    # Add to inheritance tracking
+                    if child_qn not in self.class_inheritance:
+                        self.class_inheritance[child_qn] = []
+                    if parent_qn not in self.class_inheritance[child_qn]:
+                        self.class_inheritance[child_qn].append(parent_qn)
+
+                    # Create inheritance relationship
+                    self.ingestor.ensure_relationship_batch(
+                        ("Function", "qualified_name", child_qn),
+                        "INHERITS",
+                        ("Function", "qualified_name", parent_qn),
+                    )
+
+                    logger.debug(
+                        f"Prototype inheritance: {child_qn} INHERITS {parent_qn}"
+                    )
+
+            # Also detect prototype method assignments: ConstructorFunction.prototype.methodName = function() { ... }
+            prototype_method_query = """
+            (assignment_expression
+              left: (member_expression
+                object: (member_expression
+                  object: (identifier) @constructor_name
+                  property: (property_identifier) @prototype_keyword (#eq? @prototype_keyword "prototype"))
+                property: (property_identifier) @method_name)
+              right: (function_expression) @method_function)
+            """
+
+            try:
+                method_query = Query(language_obj, prototype_method_query)
+                method_cursor = QueryCursor(method_query)
+                method_captures = method_cursor.captures(root_node)
+
+                constructor_names = method_captures.get("constructor_name", [])
+                method_names = method_captures.get("method_name", [])
+                method_functions = method_captures.get("method_function", [])
+
+                for i, (constructor_node, method_node, func_node) in enumerate(
+                    zip(constructor_names, method_names, method_functions)
+                ):
+                    if i < len(constructor_names) and i < len(method_names):
+                        constructor_name = (
+                            constructor_node.text.decode("utf8")
+                            if constructor_node.text
+                            else None
+                        )
+                        method_name = (
+                            method_node.text.decode("utf8")
+                            if method_node.text
+                            else None
+                        )
+
+                        if constructor_name and method_name:
+                            # Create the method as a Function node for prototype methods
+                            # Tests expect prototype methods to be in Function nodes
+                            constructor_qn = f"{module_qn}.{constructor_name}"
+                            method_qn = f"{constructor_qn}.{method_name}"
+
+                            # Create Function node for prototype method
+                            method_props = {
+                                "qualified_name": method_qn,
+                                "name": method_name,
+                                "start_line": func_node.start_point[0] + 1,
+                                "end_line": func_node.end_point[0] + 1,
+                                "docstring": self._get_docstring(func_node),
+                            }
+                            logger.info(
+                                f"  Found Prototype Method: {method_name} (qn: {method_qn})"
+                            )
+                            self.ingestor.ensure_node_batch("Function", method_props)
+
+                            # Register in function registry as Function
+                            self.function_registry[method_qn] = "Function"
+                            self.simple_name_lookup[method_name].add(method_qn)
+
+                            # Create relationship from constructor to method
+                            self.ingestor.ensure_relationship_batch(
+                                ("Function", "qualified_name", constructor_qn),
+                                "DEFINES",
+                                ("Function", "qualified_name", method_qn),
+                            )
+
+                            logger.debug(
+                                f"Prototype method: {constructor_qn} DEFINES_METHOD {method_qn}"
+                            )
+
+            except Exception as e:
+                logger.debug(f"Failed to detect prototype methods: {e}")
+
+        except Exception as e:
+            logger.debug(f"Failed to detect prototype inheritance: {e}")
+
+    def _ingest_missing_import_patterns(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect import patterns not handled by the existing import_processor."""
+        if language not in ["javascript", "typescript"]:
+            return
+
+        lang_queries = queries[language]
+
+        # Get the language object for creating queries
+        language_obj = lang_queries.get("language")
+        if not language_obj:
+            return
+
+        # Import the Query and QueryCursor classes
+        from tree_sitter import Query, QueryCursor
+
+        try:
+            # Focus only on CommonJS destructuring which import_processor doesn't handle well
+            commonjs_destructure_query = """
+            (lexical_declaration
+              (variable_declarator
+                name: (object_pattern
+                  (shorthand_property_identifier_pattern) @destructured_name)
+                value: (call_expression
+                  function: (identifier) @require_func
+                  arguments: (arguments
+                    (string) @module_name))))
+            """
+
+            try:
+                query = Query(language_obj, commonjs_destructure_query)
+                cursor = QueryCursor(query)
+                captures = cursor.captures(root_node)
+
+                destructured_names = captures.get("destructured_name", [])
+                module_names = captures.get("module_name", [])
+                require_funcs = captures.get("require_func", [])
+
+                for i, destructured_node in enumerate(destructured_names):
+                    if i < len(module_names) and i < len(require_funcs):
+                        # Only process if it's actually a require call
+                        require_func_text = None
+                        require_text = require_funcs[i].text
+                        if require_text is not None:
+                            require_func_text = require_text.decode("utf8")
+                        if require_func_text == "require":
+                            destructured_name = None
+                            if destructured_node.text is not None:
+                                destructured_name = destructured_node.text.decode(
+                                    "utf8"
+                                )
+                            module_name = None
+                            module_text = module_names[i].text
+                            if module_text is not None:
+                                module_name = module_text.decode("utf8").strip("'\"")
+
+                            if destructured_name and module_name:
+                                # Use the existing import_processor's path resolution
+                                resolved_source_module = (
+                                    self.import_processor._resolve_js_module_path(
+                                        module_name, module_qn
+                                    )
+                                )
+
+                                # Check if this import relationship already exists to avoid duplicates
+                                import_key = f"{module_qn}->{resolved_source_module}"
+                                if import_key not in getattr(
+                                    self, "_processed_imports", set()
+                                ):
+                                    # Create the source module node if it doesn't exist
+                                    self.ingestor.ensure_node_batch(
+                                        "Module",
+                                        {
+                                            "qualified_name": resolved_source_module,
+                                            "name": resolved_source_module,
+                                        },
+                                    )
+
+                                    # Create the relationship
+                                    self.ingestor.ensure_relationship_batch(
+                                        ("Module", "qualified_name", module_qn),
+                                        "IMPORTS",
+                                        (
+                                            "Module",
+                                            "qualified_name",
+                                            resolved_source_module,
+                                        ),
+                                    )
+
+                                    logger.debug(
+                                        f"Missing pattern: {module_qn} IMPORTS {destructured_name} from {resolved_source_module}"
+                                    )
+
+                                    # Track processed imports to avoid duplicates
+                                    if not hasattr(self, "_processed_imports"):
+                                        self._processed_imports = set()
+                                    self._processed_imports.add(import_key)
+
+            except Exception as e:
+                logger.debug(f"Failed to process CommonJS destructuring pattern: {e}")
+
+        except Exception as e:
+            logger.debug(f"Failed to detect missing import patterns: {e}")
+
+    def _ingest_object_literal_methods(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect and ingest methods defined in object literals."""
+        if language not in ["javascript", "typescript"]:
+            return
+
+        lang_queries = queries[language]
+
+        # Get the language object for creating queries
+        language_obj = lang_queries.get("language")
+        if not language_obj:
+            return
+
+        # Import the Query and QueryCursor classes
+        from tree_sitter import Query, QueryCursor
+
+        try:
+            # Query for object literal methods (pair with function_expression)
+            object_method_query = """
+            (pair
+              key: (property_identifier) @method_name
+              value: (function_expression) @method_function)
+            """
+
+            # Query for method definitions in object literals
+            method_def_query = """
+            (method_definition
+              name: (property_identifier) @method_name) @method_function
+            """
+
+            # Process both patterns
+            for query_text in [object_method_query, method_def_query]:
+                try:
+                    query = Query(language_obj, query_text)
+                    cursor = QueryCursor(query)
+                    captures = cursor.captures(root_node)
+
+                    method_names = captures.get("method_name", [])
+                    method_functions = captures.get("method_function", [])
+
+                    for method_name_node, method_func_node in zip(
+                        method_names, method_functions
+                    ):
+                        if method_name_node.text and method_func_node:
+                            method_name = method_name_node.text.decode("utf8")
+
+                            # Try to determine the object context from parent nodes
+                            object_name = self._find_object_name_for_method(
+                                method_name_node
+                            )
+
+                            if object_name:
+                                method_qn = f"{module_qn}.{object_name}.{method_name}"
+                            else:
+                                method_qn = f"{module_qn}.{method_name}"
+
+                            # Create Function node for object literal method
+                            method_props = {
+                                "qualified_name": method_qn,
+                                "name": method_name,
+                                "start_line": method_func_node.start_point[0] + 1,
+                                "end_line": method_func_node.end_point[0] + 1,
+                                "docstring": self._get_docstring(method_func_node),
+                            }
+                            logger.info(
+                                f"  Found Object Method: {method_name} (qn: {method_qn})"
+                            )
+                            self.ingestor.ensure_node_batch("Function", method_props)
+
+                            # Register in function registry
+                            self.function_registry[method_qn] = "Function"
+                            self.simple_name_lookup[method_name].add(method_qn)
+
+                            # Create relationship from module to method
+                            self.ingestor.ensure_relationship_batch(
+                                ("Module", "qualified_name", module_qn),
+                                "DEFINES",
+                                ("Function", "qualified_name", method_qn),
+                            )
+
+                except Exception as e:
+                    logger.debug(f"Failed to process object literal methods: {e}")
+
+        except Exception as e:
+            logger.debug(f"Failed to detect object literal methods: {e}")
+
+    def _find_object_name_for_method(self, method_name_node: Node) -> str | None:
+        """Find the object variable name that contains this method."""
+        # Walk up the tree to find the variable declarator or assignment
+        current = method_name_node.parent
+        while current:
+            if current.type == "variable_declarator":
+                # Look for the identifier (variable name)
+                for child in current.children:
+                    if child.type == "identifier":
+                        return child.text.decode("utf8") if child.text else None
+            elif current.type == "assignment_expression":
+                # Look for assignment target
+                left_child = current.child_by_field_name("left")
+                if left_child and left_child.type == "identifier" and left_child.text:
+                    text_bytes = left_child.text
+                    if text_bytes is not None:
+                        decoded_text: str = text_bytes.decode("utf8")
+                        return decoded_text
+            current = current.parent
+        return None
