@@ -629,6 +629,44 @@ class DefinitionProcessor:
                             parent_classes.append(
                                 self._resolve_js_ts_parent_class(parent_name, module_qn)
                             )
+                # Handle mixin patterns: class_heritage -> extends + call_expression
+                elif child.type == "call_expression":
+                    # Check if the previous sibling is "extends"
+                    child_index = class_heritage_node.children.index(child)
+                    if (
+                        child_index > 0
+                        and class_heritage_node.children[child_index - 1].type
+                        == "extends"
+                    ):
+                        # For mixin calls like Swimmable(Animal), extract the base class from arguments
+                        parent_classes.extend(
+                            self._extract_mixin_parent_classes(child, module_qn)
+                        )
+
+        return parent_classes
+
+    def _extract_mixin_parent_classes(
+        self, call_expr_node: Node, module_qn: str
+    ) -> list[str]:
+        """Extract parent classes from mixin call expressions like Swimmable(Animal)."""
+        parent_classes = []
+
+        # Look for arguments in the call expression
+        for child in call_expr_node.children:
+            if child.type == "arguments":
+                # Extract all identifiers from the arguments
+                for arg_child in child.children:
+                    if arg_child.type == "identifier" and arg_child.text:
+                        parent_name = arg_child.text.decode("utf8")
+                        parent_classes.append(
+                            self._resolve_js_ts_parent_class(parent_name, module_qn)
+                        )
+                    elif arg_child.type == "call_expression":
+                        # Handle nested mixins like Swimmable(Flyable(Animal))
+                        parent_classes.extend(
+                            self._extract_mixin_parent_classes(arg_child, module_qn)
+                        )
+                break
 
         return parent_classes
 
