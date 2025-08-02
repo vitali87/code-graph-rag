@@ -972,7 +972,7 @@ class DefinitionProcessor:
               value: (function_expression) @method_function)
             """
 
-            # Query for method definitions in object literals
+            # Query for method definitions in object literals (not class static methods)
             method_def_query = """
             (method_definition
               name: (property_identifier) @method_name) @method_function
@@ -993,6 +993,10 @@ class DefinitionProcessor:
                     ):
                         if method_name_node.text and method_func_node:
                             method_name = method_name_node.text.decode("utf8")
+
+                            # Skip if this is a static method in a class
+                            if self._is_static_method_in_class(method_func_node):
+                                continue
 
                             # Try to determine the object context from parent nodes
                             object_name = self._find_object_name_for_method(
@@ -1033,6 +1037,19 @@ class DefinitionProcessor:
 
         except Exception as e:
             logger.debug(f"Failed to detect object literal methods: {e}")
+
+    def _is_static_method_in_class(self, method_node: Node) -> bool:
+        """Check if this method is a static method inside a class definition."""
+        # Check if method has static keyword as sibling
+        if method_node.type == "method_definition":
+            # Check if any sibling or parent has "static" keyword
+            parent = method_node.parent
+            if parent and parent.type == "class_body":
+                # Look for static keyword in the method definition
+                for child in method_node.children:
+                    if child.type == "static":
+                        return True
+        return False
 
     def _find_object_name_for_method(self, method_name_node: Node) -> str | None:
         """Find the object variable name that contains this method."""
