@@ -265,6 +265,10 @@ class ImportProcessor:
                 # Handle CommonJS require() statements
                 self._parse_js_require(import_node, module_qn)
 
+            elif import_node.type == "export_statement":
+                # Handle re-export statements like: export { name } from './module'
+                self._parse_js_reexport(import_node, module_qn)
+
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         """Resolve JavaScript module path to qualified name."""
         if not import_path.startswith("."):
@@ -307,18 +311,32 @@ class ImportProcessor:
                 # Named imports: import { func1, func2 } from './module'
                 for grandchild in child.children:
                     if grandchild.type == "import_specifier":
-                        # Get the imported name
-                        for spec_child in grandchild.children:
-                            if spec_child.type == "identifier":
-                                imported_name = spec_child.text.decode("utf-8")
-                                self.import_mapping[current_module][imported_name] = (
-                                    f"{source_module}.{imported_name}"
-                                )
-                                logger.debug(
-                                    f"JS named import: {imported_name} -> "
-                                    f"{source_module}.{imported_name}"
-                                )
-                                break
+                        # Handle both simple imports and aliased imports
+                        # Simple: import { name } from 'module'
+                        # Aliased: import { name as alias } from 'module'
+
+                        identifiers = [
+                            c for c in grandchild.children if c.type == "identifier"
+                        ]
+
+                        if len(identifiers) == 1:
+                            # Simple import: { name }
+                            imported_name = identifiers[0].text.decode("utf-8")
+                            local_name = imported_name
+                        elif len(identifiers) == 2:
+                            # Aliased import: { name as alias }
+                            imported_name = identifiers[0].text.decode("utf-8")
+                            local_name = identifiers[1].text.decode("utf-8")
+                        else:
+                            continue
+
+                        self.import_mapping[current_module][local_name] = (
+                            f"{source_module}.{imported_name}"
+                        )
+                        logger.debug(
+                            f"JS named import: {local_name} -> "
+                            f"{source_module}.{imported_name}"
+                        )
 
             elif child.type == "namespace_import":
                 # Namespace import: import * as utils from './utils'
@@ -374,6 +392,45 @@ class ImportProcessor:
                                     f"JS require: {var_name} -> {resolved_module}"
                                 )
                                 break
+
+    def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
+        """Parse JavaScript re-export statements like 'export { name } from './module'."""
+        # Find the source module in export statement
+        source_module = None
+        for child in export_node.children:
+            if child.type == "string":
+                source_text = child.text.decode("utf-8").strip("'\"")
+                source_module = self._resolve_js_module_path(
+                    source_text, current_module
+                )
+                break
+
+        if not source_module:
+            return
+
+        # Parse export clause to extract re-exported names
+        for child in export_node.children:
+            if child.type == "export_clause":
+                # Handle named re-exports: export { name1, name2 } from './module'
+                for grandchild in child.children:
+                    if grandchild.type == "export_specifier":
+                        # Get the exported name
+                        for spec_child in grandchild.children:
+                            if spec_child.type == "identifier":
+                                exported_name = spec_child.text.decode("utf-8")
+                                self.import_mapping[current_module][exported_name] = (
+                                    f"{source_module}.{exported_name}"
+                                )
+                                logger.debug(
+                                    f"JS re-export: {exported_name} -> "
+                                    f"{source_module}.{exported_name}"
+                                )
+                                break
+            elif child.type == "*":
+                # Handle namespace re-exports: export * from './module'
+                wildcard_key = f"*{source_module}"
+                self.import_mapping[current_module][wildcard_key] = source_module
+                logger.debug(f"JS namespace re-export: * -> {source_module}")
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         """Parse Java import statements."""

@@ -59,11 +59,16 @@ LANGUAGE_CONFIGS = {
         class_node_types=["class_declaration", "class"],
         module_node_types=["program"],
         call_node_types=["call_expression"],
-        import_node_types=["import_statement", "lexical_declaration"],
+        import_node_types=[
+            "import_statement",
+            "lexical_declaration",
+            "export_statement",
+        ],
         import_from_node_types=[
             "import_statement",
             "lexical_declaration",
-        ],  # Include CommonJS require
+            "export_statement",
+        ],  # Include CommonJS require and re-exports
     ),
     "typescript": LanguageConfig(
         name="typescript",
@@ -86,11 +91,16 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["program"],
         call_node_types=["call_expression"],
-        import_node_types=["import_statement", "lexical_declaration"],
+        import_node_types=[
+            "import_statement",
+            "lexical_declaration",
+            "export_statement",
+        ],
         import_from_node_types=[
             "import_statement",
             "lexical_declaration",
-        ],  # Include CommonJS require
+            "export_statement",
+        ],  # Include CommonJS require and re-exports
     ),
     "rust": LanguageConfig(
         name="rust",

@@ -343,8 +343,8 @@ import Button from './Button';
 import Modal from './Modal';
 
 // Parent directory relative imports
-import utils from '../utils/helpers';
-import constants from '../utils/constants';
+import utils from '../../utils/helpers';
+import constants from '../../utils/constants';
 
 // Multiple levels up
 import config from '../../lib/config';
@@ -391,8 +391,8 @@ const url = constants.API_URL;
         f"{project_name}.src.components.forms.Button",
         f"{project_name}.src.utils.helpers",
         f"{project_name}.src.utils.constants",
-        f"{project_name}.lib.config",
-        f"{project_name}.shared",
+        f"{project_name}.src.lib.config",
+        f"{project_name}.src.shared",
     ]
 
     for pattern in expected_patterns:

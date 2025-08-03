@@ -6,7 +6,7 @@ from typing import Any
 
 import toml
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node, Query, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
@@ -110,6 +110,8 @@ class DefinitionProcessor:
             self._ingest_all_functions(root_node, module_qn, language, queries)
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
             self._ingest_object_literal_methods(root_node, module_qn, language, queries)
+            self._ingest_commonjs_exports(root_node, module_qn, language, queries)
+            self._ingest_es6_exports(root_node, module_qn, language, queries)
             self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
 
             return root_node, language
@@ -1037,6 +1039,216 @@ class DefinitionProcessor:
 
         except Exception as e:
             logger.debug(f"Failed to detect object literal methods: {e}")
+
+    def _ingest_commonjs_exports(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect and ingest CommonJS exports as function definitions."""
+        if language not in ["javascript", "typescript"]:
+            return
+
+        lang_queries = queries[language]
+        language_obj = lang_queries.get("language")
+        if not language_obj:
+            return
+
+        from tree_sitter import Query, QueryCursor
+
+        try:
+            # Query for exports.name = function patterns
+            exports_function_query = """
+            (assignment_expression
+              left: (member_expression
+                object: (identifier) @exports_obj
+                property: (property_identifier) @export_name)
+              right: [(function_expression) (arrow_function)] @export_function)
+            """
+
+            # Query for module.exports.name = function patterns
+            module_exports_query = """
+            (assignment_expression
+              left: (member_expression
+                object: (member_expression
+                  object: (identifier) @module_obj
+                  property: (property_identifier) @exports_prop)
+                property: (property_identifier) @export_name)
+              right: [(function_expression) (arrow_function)] @export_function)
+            """
+
+            for query_text in [exports_function_query, module_exports_query]:
+                try:
+                    query = Query(language_obj, query_text)
+                    cursor = QueryCursor(query)
+                    captures = cursor.captures(root_node)
+
+                    exports_objs = captures.get("exports_obj", [])
+                    module_objs = captures.get("module_obj", [])
+                    exports_props = captures.get("exports_prop", [])
+                    export_names = captures.get("export_name", [])
+                    export_functions = captures.get("export_function", [])
+
+                    # Process exports.name = function patterns
+                    for i, (exports_obj, export_name, export_function) in enumerate(
+                        zip(exports_objs, export_names, export_functions)
+                    ):
+                        if (
+                            exports_obj.text
+                            and export_name.text
+                            and exports_obj.text.decode("utf8") == "exports"
+                        ):
+                            function_name = export_name.text.decode("utf8")
+                            function_qn = f"{module_qn}.{function_name}"
+
+                            function_props = {
+                                "qualified_name": function_qn,
+                                "name": function_name,
+                                "start_line": export_function.start_point[0] + 1,
+                                "end_line": export_function.end_point[0] + 1,
+                                "docstring": self._get_docstring(export_function),
+                            }
+
+                            logger.info(
+                                f"  Found CommonJS Export: {function_name} (qn: {function_qn})"
+                            )
+                            self.ingestor.ensure_node_batch("Function", function_props)
+                            self.function_registry[function_qn] = "Function"
+                            self.simple_name_lookup[function_name].add(function_qn)
+
+                    # Process module.exports.name = function patterns
+                    for i, (
+                        module_obj,
+                        exports_prop,
+                        export_name,
+                        export_function,
+                    ) in enumerate(
+                        zip(module_objs, exports_props, export_names, export_functions)
+                    ):
+                        if (
+                            module_obj.text
+                            and exports_prop.text
+                            and export_name.text
+                            and module_obj.text.decode("utf8") == "module"
+                            and exports_prop.text.decode("utf8") == "exports"
+                        ):
+                            function_name = export_name.text.decode("utf8")
+                            function_qn = f"{module_qn}.{function_name}"
+
+                            function_props = {
+                                "qualified_name": function_qn,
+                                "name": function_name,
+                                "start_line": export_function.start_point[0] + 1,
+                                "end_line": export_function.end_point[0] + 1,
+                                "docstring": self._get_docstring(export_function),
+                            }
+
+                            logger.info(
+                                f"  Found CommonJS Module Export: {function_name} (qn: {function_qn})"
+                            )
+                            self.ingestor.ensure_node_batch("Function", function_props)
+                            self.function_registry[function_qn] = "Function"
+                            self.simple_name_lookup[function_name].add(function_qn)
+
+                except Exception as e:
+                    logger.debug(f"Failed to process CommonJS exports query: {e}")
+
+        except Exception as e:
+            logger.debug(f"Failed to detect CommonJS exports: {e}")
+
+    def _ingest_es6_exports(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect and ingest ES6 export statements as function definitions."""
+        try:
+            lang_query = queries[language]["language"]
+
+            # Query for export const name = function patterns
+            export_const_query = """
+            (export_statement
+              (lexical_declaration
+                (variable_declarator
+                  (identifier) @export_name
+                  [(function_expression) (arrow_function)] @export_function)))
+            """
+
+            # Query for export function name patterns
+            export_function_query = """
+            (export_statement
+              [(function_declaration) (generator_function_declaration)] @export_function)
+            """
+
+            for query_text in [export_const_query, export_function_query]:
+                try:
+                    query = Query(lang_query, query_text)
+                    cursor = QueryCursor(query)
+                    captures = cursor.captures(root_node)
+
+                    export_names = captures.get("export_name", [])
+                    export_functions = captures.get("export_function", [])
+
+                    # Process export const name = function patterns
+                    for i, (export_name, export_function) in enumerate(
+                        zip(export_names, export_functions)
+                    ):
+                        if export_name.text and export_function:
+                            function_name = export_name.text.decode("utf8")
+                            function_qn = f"{module_qn}.{function_name}"
+
+                            function_props = {
+                                "qualified_name": function_qn,
+                                "name": function_name,
+                                "start_line": export_function.start_point[0] + 1,
+                                "end_line": export_function.end_point[0] + 1,
+                                "docstring": self._get_docstring(export_function),
+                            }
+
+                            logger.debug(
+                                f"  Found ES6 Export Function: {function_name} (qn: {function_qn})"
+                            )
+                            self.ingestor.ensure_node_batch("Function", function_props)
+                            self.function_registry[function_qn] = "Function"
+                            self.simple_name_lookup[function_name].add(function_qn)
+
+                    # Process export function patterns (function declarations)
+                    if not export_names:  # Only function declarations
+                        for export_function in export_functions:
+                            if export_function:
+                                # Get function name from the function declaration
+                                function_name = None
+                                for child in export_function.children:
+                                    if child.type == "identifier":
+                                        function_name = child.text.decode("utf8")
+                                        break
+
+                                if function_name:
+                                    function_qn = f"{module_qn}.{function_name}"
+
+                                    function_props = {
+                                        "qualified_name": function_qn,
+                                        "name": function_name,
+                                        "start_line": export_function.start_point[0]
+                                        + 1,
+                                        "end_line": export_function.end_point[0] + 1,
+                                        "docstring": self._get_docstring(
+                                            export_function
+                                        ),
+                                    }
+
+                                    logger.debug(
+                                        f"  Found ES6 Export Function Declaration: {function_name} (qn: {function_qn})"
+                                    )
+                                    self.ingestor.ensure_node_batch(
+                                        "Function", function_props
+                                    )
+                                    self.function_registry[function_qn] = "Function"
+                                    self.simple_name_lookup[function_name].add(
+                                        function_qn
+                                    )
+
+                except Exception as e:
+                    logger.debug(f"Failed to process ES6 exports query: {e}")
+
+        except Exception as e:
+            logger.debug(f"Failed to detect ES6 exports: {e}")
 
     def _is_static_method_in_class(self, method_node: Node) -> bool:
         """Check if this method is a static method inside a class definition."""
