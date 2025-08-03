@@ -79,6 +79,7 @@ LANGUAGE_CONFIGS = {
             "function_expression",
             "arrow_function",
             "method_definition",
+            "function_signature",  # For ambient declarations: declare function
         ],
         class_node_types=[
             "class_declaration",
