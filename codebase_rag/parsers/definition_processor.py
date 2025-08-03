@@ -648,6 +648,29 @@ class DefinitionProcessor:
                             self._extract_mixin_parent_classes(child, module_qn)
                         )
 
+        # Look for TypeScript interface inheritance patterns
+        # Structure: interface_declaration -> extends_type_clause -> type_identifier
+        if class_node.type == "interface_declaration":
+            # Look for extends_type_clause (TypeScript interface inheritance)
+            extends_type_clause_node = None
+            for child in class_node.children:
+                if child.type == "extends_type_clause":
+                    extends_type_clause_node = child
+                    break
+
+            if extends_type_clause_node:
+                # Parse interface inheritance from extends_type_clause
+                # Pattern: extends_type_clause contains extends + type_identifier(s)
+                for child in extends_type_clause_node.children:
+                    if child.type == "type_identifier":
+                        # Direct type_identifier inheritance
+                        parent_text = child.text
+                        if parent_text:
+                            parent_name = parent_text.decode("utf8")
+                            parent_classes.append(
+                                self._resolve_js_ts_parent_class(parent_name, module_qn)
+                            )
+
         return parent_classes
 
     def _extract_mixin_parent_classes(
