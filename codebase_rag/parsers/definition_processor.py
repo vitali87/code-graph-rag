@@ -443,11 +443,24 @@ class DefinitionProcessor:
                 "end_line": class_node.end_point[0] + 1,
                 "docstring": self._get_docstring(class_node),
             }
-            logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
-            self.ingestor.ensure_node_batch("Class", class_props)
+            # Determine the correct node type based on the AST node type
+            if class_node.type == "interface_declaration":
+                node_type = "Interface"
+                logger.info(f"  Found Interface: {class_name} (qn: {class_qn})")
+            elif class_node.type == "enum_declaration":
+                node_type = "Enum"
+                logger.info(f"  Found Enum: {class_name} (qn: {class_qn})")
+            elif class_node.type == "type_alias_declaration":
+                node_type = "Type"
+                logger.info(f"  Found Type: {class_name} (qn: {class_qn})")
+            else:
+                node_type = "Class"
+                logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
 
-            # Register the class itself in the function registry
-            self.function_registry[class_qn] = "Class"
+            self.ingestor.ensure_node_batch(node_type, class_props)
+
+            # Register the class/interface/enum itself in the function registry
+            self.function_registry[class_qn] = node_type
             self.simple_name_lookup[class_name].add(class_qn)
 
             # Track inheritance
@@ -457,15 +470,17 @@ class DefinitionProcessor:
             self.ingestor.ensure_relationship_batch(
                 ("Module", "qualified_name", module_qn),
                 "DEFINES",
-                ("Class", "qualified_name", class_qn),
+                (node_type, "qualified_name", class_qn),
             )
 
             # Create INHERITS relationships for each parent class
             for parent_class_qn in parent_classes:
+                # The parent type is determined from the function registry
+                parent_type = self.function_registry.get(parent_class_qn, "Class")
                 self.ingestor.ensure_relationship_batch(
-                    ("Class", "qualified_name", class_qn),
+                    (node_type, "qualified_name", class_qn),
                     "INHERITS",
-                    ("Class", "qualified_name", parent_class_qn),
+                    (parent_type, "qualified_name", parent_class_qn),
                 )
 
             body_node = class_node.child_by_field_name("body")
