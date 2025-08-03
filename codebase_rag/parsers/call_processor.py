@@ -606,6 +606,21 @@ class CallProcessor:
                 # This is an instance method call on a built-in object
                 return ("Function", f"builtin.{call_name}")
 
+        # Handle JavaScript function binding methods (.bind, .call, .apply)
+        if (
+            call_name.endswith(".bind")
+            or call_name.endswith(".call")
+            or call_name.endswith(".apply")
+        ):
+            # These are special JavaScript method binding calls
+            # Track them as function calls to the binding methods themselves
+            if call_name.endswith(".bind"):
+                return ("Function", "builtin.Function.prototype.bind")
+            elif call_name.endswith(".call"):
+                return ("Function", "builtin.Function.prototype.call")
+            elif call_name.endswith(".apply"):
+                return ("Function", "builtin.Function.prototype.apply")
+
         # Handle prototype method calls with .call or .apply
         if ".prototype." in call_name and (
             call_name.endswith(".call") or call_name.endswith(".apply")
