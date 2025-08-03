@@ -112,6 +112,9 @@ class DefinitionProcessor:
             self._ingest_object_literal_methods(root_node, module_qn, language, queries)
             self._ingest_commonjs_exports(root_node, module_qn, language, queries)
             self._ingest_es6_exports(root_node, module_qn, language, queries)
+            self._ingest_assignment_arrow_functions(
+                root_node, module_qn, language, queries
+            )
             self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
 
             return root_node, language
@@ -1249,6 +1252,103 @@ class DefinitionProcessor:
 
         except Exception as e:
             logger.debug(f"Failed to detect ES6 exports: {e}")
+
+    def _ingest_assignment_arrow_functions(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect arrow functions in assignment expressions and object literals."""
+        # Only apply to JavaScript/TypeScript
+        if language not in ["javascript", "typescript"]:
+            return
+
+        try:
+            lang_query = queries[language]["language"]
+
+            # Query for object literal arrow functions: { arrowMethod: () => {} }
+            object_arrow_query = """
+            (object
+              (pair
+                (property_identifier) @method_name
+                (arrow_function) @arrow_function))
+            """
+
+            # Query for assignment arrow functions: this.arrowProperty = () => {}
+            assignment_arrow_query = """
+            (assignment_expression
+              (member_expression) @member_expr
+              (arrow_function) @arrow_function)
+            """
+
+            for query_text in [object_arrow_query, assignment_arrow_query]:
+                try:
+                    query = Query(lang_query, query_text)
+                    cursor = QueryCursor(query)
+                    captures = cursor.captures(root_node)
+
+                    method_names = captures.get("method_name", [])
+                    member_exprs = captures.get("member_expr", [])
+                    arrow_functions = captures.get("arrow_function", [])
+
+                    # Process object literal arrow methods
+                    for method_name, arrow_function in zip(
+                        method_names, arrow_functions
+                    ):
+                        if method_name.text and arrow_function:
+                            function_name = method_name.text.decode("utf8")
+                            function_qn = f"{module_qn}.{function_name}"
+
+                            function_props = {
+                                "qualified_name": function_qn,
+                                "name": function_name,
+                                "start_line": arrow_function.start_point[0] + 1,
+                                "end_line": arrow_function.end_point[0] + 1,
+                                "docstring": self._get_docstring(arrow_function),
+                            }
+
+                            logger.debug(
+                                f"  Found Object Arrow Function: {function_name} (qn: {function_qn})"
+                            )
+                            self.ingestor.ensure_node_batch("Function", function_props)
+                            self.function_registry[function_qn] = "Function"
+                            self.simple_name_lookup[function_name].add(function_qn)
+
+                    # Process assignment arrow functions
+                    for member_expr, arrow_function in zip(
+                        member_exprs, arrow_functions
+                    ):
+                        if member_expr.text and arrow_function:
+                            # Extract property name from this.propertyName
+                            member_text = member_expr.text.decode("utf8")
+                            if "." in member_text:
+                                function_name = member_text.split(".")[
+                                    -1
+                                ]  # Get the property name
+                                function_qn = f"{module_qn}.{function_name}"
+
+                                function_props = {
+                                    "qualified_name": function_qn,
+                                    "name": function_name,
+                                    "start_line": arrow_function.start_point[0] + 1,
+                                    "end_line": arrow_function.end_point[0] + 1,
+                                    "docstring": self._get_docstring(arrow_function),
+                                }
+
+                                logger.debug(
+                                    f"  Found Assignment Arrow Function: {function_name} (qn: {function_qn})"
+                                )
+                                self.ingestor.ensure_node_batch(
+                                    "Function", function_props
+                                )
+                                self.function_registry[function_qn] = "Function"
+                                self.simple_name_lookup[function_name].add(function_qn)
+
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to process assignment arrow functions query: {e}"
+                    )
+
+        except Exception as e:
+            logger.debug(f"Failed to detect assignment arrow functions: {e}")
 
     def _is_static_method_in_class(self, method_node: Node) -> bool:
         """Check if this method is a static method inside a class definition."""
