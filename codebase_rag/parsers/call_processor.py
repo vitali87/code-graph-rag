@@ -243,9 +243,13 @@ class CallProcessor:
                 call_name, module_qn, local_var_types, class_context
             )
             if not callee_info:
-                continue
-
-            callee_type, callee_qn = callee_info
+                # Check if it's a built-in JavaScript method
+                builtin_info = self._resolve_builtin_call(call_name)
+                if not builtin_info:
+                    continue
+                callee_type, callee_qn = builtin_info
+            else:
+                callee_type, callee_qn = callee_info
             logger.debug(
                 f"      Found call from {caller_qn} to {call_name} "
                 f"(resolved as {callee_type}:{callee_qn})"
@@ -527,6 +531,89 @@ class CallProcessor:
             )
 
         logger.debug(f"Could not resolve call: {call_name}")
+        return None
+
+    def _resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
+        """Resolve built-in JavaScript method calls that don't exist in user code."""
+        # Common built-in JavaScript objects and their methods
+        builtin_patterns = [
+            # Object static methods
+            "Object.create",
+            "Object.keys",
+            "Object.values",
+            "Object.entries",
+            "Object.assign",
+            "Object.freeze",
+            "Object.seal",
+            "Object.defineProperty",
+            "Object.getPrototypeOf",
+            "Object.setPrototypeOf",
+            # Array static methods
+            "Array.from",
+            "Array.of",
+            "Array.isArray",
+            # Global functions
+            "parseInt",
+            "parseFloat",
+            "isNaN",
+            "isFinite",
+            "encodeURIComponent",
+            "decodeURIComponent",
+            "setTimeout",
+            "clearTimeout",
+            "setInterval",
+            "clearInterval",
+            # Console methods
+            "console.log",
+            "console.error",
+            "console.warn",
+            "console.info",
+            "console.debug",
+            # JSON methods
+            "JSON.parse",
+            "JSON.stringify",
+            # Math static methods
+            "Math.random",
+            "Math.floor",
+            "Math.ceil",
+            "Math.round",
+            "Math.abs",
+            "Math.max",
+            "Math.min",
+            # Date static methods
+            "Date.now",
+            "Date.parse",
+        ]
+
+        # Check if the call matches any built-in pattern
+        for pattern in builtin_patterns:
+            if call_name == pattern:
+                # Return as a built-in function with the call name as QN
+                return ("Function", f"builtin.{call_name}")
+
+        # Check for method calls on built-in objects (instance methods)
+        builtin_objects = [
+            "Array",
+            "Object",
+            "String",
+            "Number",
+            "Date",
+            "RegExp",
+            "Function",
+        ]
+        for obj in builtin_objects:
+            if call_name.startswith(f"{obj.lower()}.") and "." in call_name:
+                # This is an instance method call on a built-in object
+                return ("Function", f"builtin.{call_name}")
+
+        # Handle prototype method calls with .call or .apply
+        if ".prototype." in call_name and (
+            call_name.endswith(".call") or call_name.endswith(".apply")
+        ):
+            # Extract the prototype method name without .call/.apply
+            base_call = call_name.rsplit(".", 1)[0]  # Remove .call or .apply
+            return ("Function", base_call)
+
         return None
 
     def _is_method_chain(self, call_name: str) -> bool:
