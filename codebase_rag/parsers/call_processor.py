@@ -378,7 +378,43 @@ class CallProcessor:
                 # Handle JavaScript object method calls like "calculator.add"
                 if len(parts) == 2:
                     object_name, method_name = parts
-                    # Try to find the method in the same module
+
+                    # First try type inference if available
+                    if local_var_types and object_name in local_var_types:
+                        var_type = local_var_types[object_name]
+
+                        # Resolve var_type to full qualified name
+                        if var_type in import_map:
+                            class_qn = import_map[var_type]
+                        else:
+                            class_qn_or_none = self._resolve_class_name(
+                                var_type, module_qn
+                            )
+                            class_qn = class_qn_or_none if class_qn_or_none else ""
+
+                        if class_qn:
+                            method_qn = f"{class_qn}.{method_name}"
+                            if method_qn in self.function_registry:
+                                logger.debug(
+                                    f"Type-inferred object method resolved: "
+                                    f"{call_name} -> {method_qn} "
+                                    f"(via {object_name}:{var_type})"
+                                )
+                                return self.function_registry[method_qn], method_qn
+
+                            # Check inheritance for this method
+                            inherited_method = self._resolve_inherited_method(
+                                class_qn, method_name
+                            )
+                            if inherited_method:
+                                logger.debug(
+                                    f"Type-inferred inherited object method resolved: "
+                                    f"{call_name} -> {inherited_method[1]} "
+                                    f"(via {object_name}:{var_type})"
+                                )
+                                return inherited_method
+
+                    # Fallback: Try to find the method in the same module
                     method_qn = f"{module_qn}.{method_name}"
                     if method_qn in self.function_registry:
                         logger.debug(
