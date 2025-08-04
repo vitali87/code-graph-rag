@@ -17,6 +17,72 @@ from .utils import resolve_class_name
 class CallProcessor:
     """Handles processing of function and method calls."""
 
+    # JavaScript built-in types for type inference
+    _JS_BUILTIN_TYPES = {
+        "Array",
+        "Object",
+        "String",
+        "Number",
+        "Date",
+        "RegExp",
+        "Function",
+        "Map",
+        "Set",
+        "Promise",
+        "Error",
+        "Boolean",
+    }
+
+    # JavaScript built-in patterns for static method calls
+    _JS_BUILTIN_PATTERNS = [
+        # Object static methods
+        "Object.create",
+        "Object.keys",
+        "Object.values",
+        "Object.entries",
+        "Object.assign",
+        "Object.freeze",
+        "Object.seal",
+        "Object.defineProperty",
+        "Object.getPrototypeOf",
+        "Object.setPrototypeOf",
+        # Array static methods
+        "Array.from",
+        "Array.of",
+        "Array.isArray",
+        # Global functions
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "isFinite",
+        "encodeURIComponent",
+        "decodeURIComponent",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        # Console methods
+        "console.log",
+        "console.error",
+        "console.warn",
+        "console.info",
+        "console.debug",
+        # JSON methods
+        "JSON.parse",
+        "JSON.stringify",
+        # Math static methods
+        "Math.random",
+        "Math.floor",
+        "Math.ceil",
+        "Math.round",
+        "Math.abs",
+        "Math.max",
+        "Math.min",
+        # Date static methods
+        "Date.now",
+        "Date.parse",
+    ]
+
     def __init__(
         self,
         ingestor: MemgraphIngestor,
@@ -415,21 +481,7 @@ class CallProcessor:
                                 return inherited_method
 
                         # Check if this is a built-in JavaScript type
-                        builtin_types = {
-                            "Array",
-                            "Object",
-                            "String",
-                            "Number",
-                            "Date",
-                            "RegExp",
-                            "Function",
-                            "Map",
-                            "Set",
-                            "Promise",
-                            "Error",
-                            "Boolean",
-                        }
-                        if var_type in builtin_types:
+                        if var_type in self._JS_BUILTIN_TYPES:
                             # This is a built-in type instance method call
                             return (
                                 "Function",
@@ -594,57 +646,8 @@ class CallProcessor:
     def _resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         """Resolve built-in JavaScript method calls that don't exist in user code."""
         # Common built-in JavaScript objects and their methods
-        builtin_patterns = [
-            # Object static methods
-            "Object.create",
-            "Object.keys",
-            "Object.values",
-            "Object.entries",
-            "Object.assign",
-            "Object.freeze",
-            "Object.seal",
-            "Object.defineProperty",
-            "Object.getPrototypeOf",
-            "Object.setPrototypeOf",
-            # Array static methods
-            "Array.from",
-            "Array.of",
-            "Array.isArray",
-            # Global functions
-            "parseInt",
-            "parseFloat",
-            "isNaN",
-            "isFinite",
-            "encodeURIComponent",
-            "decodeURIComponent",
-            "setTimeout",
-            "clearTimeout",
-            "setInterval",
-            "clearInterval",
-            # Console methods
-            "console.log",
-            "console.error",
-            "console.warn",
-            "console.info",
-            "console.debug",
-            # JSON methods
-            "JSON.parse",
-            "JSON.stringify",
-            # Math static methods
-            "Math.random",
-            "Math.floor",
-            "Math.ceil",
-            "Math.round",
-            "Math.abs",
-            "Math.max",
-            "Math.min",
-            # Date static methods
-            "Date.now",
-            "Date.parse",
-        ]
-
         # Check if the call matches any built-in pattern
-        for pattern in builtin_patterns:
+        for pattern in self._JS_BUILTIN_PATTERNS:
             if call_name == pattern:
                 # Return as a built-in function with the call name as QN
                 return ("Function", f"builtin.{call_name}")
