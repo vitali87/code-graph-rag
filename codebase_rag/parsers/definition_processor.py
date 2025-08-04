@@ -351,8 +351,13 @@ class DefinitionProcessor:
         module_qn: str,
         func_name: str,
         lang_config: LanguageConfig,
+        skip_classes: bool = False,
     ) -> str | None:
-        """Build qualified name for nested functions."""
+        """Build qualified name for nested functions.
+
+        Args:
+            skip_classes: If True, skip class nodes in the path (used for object literal methods)
+        """
         path_parts = []
         current = func_node.parent
 
@@ -364,13 +369,39 @@ class DefinitionProcessor:
             return None
 
         while current and current.type not in lang_config.module_node_types:
+            # Handle functions (named and anonymous)
             if current.type in lang_config.function_node_types:
                 if name_node := current.child_by_field_name("name"):
                     text = name_node.text
                     if text is not None:
                         path_parts.append(text.decode("utf8"))
+                else:
+                    # Check if this is an anonymous function that has been assigned a name
+                    func_name_from_assignment = self._extract_function_name(current)
+                    if func_name_from_assignment:
+                        path_parts.append(func_name_from_assignment)
+            # Handle classes
             elif current.type in lang_config.class_node_types:
-                return None  # This is a method
+                if skip_classes:
+                    # For object literal methods, skip the class but continue up the tree
+                    pass
+                else:
+                    # Check if we're inside a method that contains object literals
+                    # If so, include the class name in the path. Otherwise, return None (this is a method)
+                    if self._is_inside_method_with_object_literals(func_node):
+                        if name_node := current.child_by_field_name("name"):
+                            text = name_node.text
+                            if text is not None:
+                                path_parts.append(text.decode("utf8"))
+                    else:
+                        # Regular class method - return None
+                        return None
+            # Handle methods inside classes
+            elif current.type == "method_definition":
+                if name_node := current.child_by_field_name("name"):
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode("utf8"))
 
             current = current.parent
 
@@ -1074,10 +1105,12 @@ class DefinitionProcessor:
               value: (function_expression) @method_function)
             """
 
-            # Query for method definitions in object literals (not class static methods)
+            # Query for method definitions in object literals inside functions
+            # Only matches methods that are truly nested within function contexts
             method_def_query = """
-            (method_definition
-              name: (property_identifier) @method_name) @method_function
+            (object
+              (method_definition
+                name: (property_identifier) @method_name) @method_function)
             """
 
             # Process both patterns
@@ -1096,15 +1129,20 @@ class DefinitionProcessor:
                         if method_name_node.text and method_func_node:
                             method_name = method_name_node.text.decode("utf8")
 
-                            # Skip if this is a static method in a class
-                            if self._is_static_method_in_class(method_func_node):
+                            # Skip if this is a regular class method (not object literal inside a method)
+                            if self._is_class_method(
+                                method_func_node
+                            ) and not self._is_inside_method_with_object_literals(
+                                method_func_node
+                            ):
                                 continue
 
                             # Get language config for nested name building
                             lang_config = lang_queries.get("config")
                             if lang_config:
-                                # Use the same nested qualified name logic as functions
-                                method_qn = self._build_nested_qualified_name(
+                                # Build proper nested qualified name for object method
+                                method_qn = self._build_object_method_qualified_name(
+                                    method_name_node,
                                     method_func_node,
                                     module_qn,
                                     method_name,
@@ -1209,6 +1247,11 @@ class DefinitionProcessor:
                             and exports_obj.text.decode("utf8") == "exports"
                         ):
                             function_name = export_name.text.decode("utf8")
+
+                            # Skip if this export is inside a function (let regular processing handle it)
+                            if self._is_export_inside_function(export_function):
+                                continue
+
                             function_qn = f"{module_qn}.{function_name}"
 
                             function_props = {
@@ -1243,6 +1286,11 @@ class DefinitionProcessor:
                             and exports_prop.text.decode("utf8") == "exports"
                         ):
                             function_name = export_name.text.decode("utf8")
+
+                            # Skip if this export is inside a function (let regular processing handle it)
+                            if self._is_export_inside_function(export_function):
+                                continue
+
                             function_qn = f"{module_qn}.{function_name}"
 
                             function_props = {
@@ -1304,6 +1352,11 @@ class DefinitionProcessor:
                     ):
                         if export_name.text and export_function:
                             function_name = export_name.text.decode("utf8")
+
+                            # Skip if this export is inside a function (let regular processing handle it)
+                            if self._is_export_inside_function(export_function):
+                                continue
+
                             function_qn = f"{module_qn}.{function_name}"
 
                             function_props = {
@@ -1334,6 +1387,10 @@ class DefinitionProcessor:
                                         function_name = name_node.text.decode("utf8")
 
                                 if function_name:
+                                    # Skip if this export is inside a function (let regular processing handle it)
+                                    if self._is_export_inside_function(export_function):
+                                        continue
+
                                     function_qn = f"{module_qn}.{function_name}"
 
                                     function_props = {
@@ -1390,7 +1447,18 @@ class DefinitionProcessor:
               (arrow_function) @arrow_function)
             """
 
-            for query_text in [object_arrow_query, assignment_arrow_query]:
+            # Query for assignment function expressions: this.funcProperty = function() {}
+            assignment_function_query = """
+            (assignment_expression
+              (member_expression) @member_expr
+              (function_expression) @function_expr)
+            """
+
+            for query_text in [
+                object_arrow_query,
+                assignment_arrow_query,
+                assignment_function_query,
+            ]:
                 try:
                     query = Query(lang_query, query_text)
                     cursor = QueryCursor(query)
@@ -1399,6 +1467,7 @@ class DefinitionProcessor:
                     method_names = captures.get("method_name", [])
                     member_exprs = captures.get("member_expr", [])
                     arrow_functions = captures.get("arrow_function", [])
+                    function_exprs = captures.get("function_expr", [])
 
                     # Process object literal arrow methods
                     for method_name, arrow_function in zip(
@@ -1416,6 +1485,7 @@ class DefinitionProcessor:
                                     module_qn,
                                     function_name,
                                     lang_config,
+                                    skip_classes=False,
                                 )
                                 if function_qn is None:
                                     function_qn = f"{module_qn}.{function_name}"
@@ -1452,8 +1522,9 @@ class DefinitionProcessor:
                                 # Get language config for nested name building
                                 lang_config = queries[language].get("config")
                                 if lang_config:
-                                    # Use the same nested qualified name logic as functions
-                                    function_qn = self._build_nested_qualified_name(
+                                    # Use specialized logic for assignment arrow functions
+                                    function_qn = self._build_assignment_arrow_function_qualified_name(
+                                        member_expr,
                                         arrow_function,
                                         module_qn,
                                         function_name,
@@ -1474,6 +1545,49 @@ class DefinitionProcessor:
 
                                 logger.debug(
                                     f"  Found Assignment Arrow Function: {function_name} (qn: {function_qn})"
+                                )
+                                self.ingestor.ensure_node_batch(
+                                    "Function", function_props
+                                )
+                                self.function_registry[function_qn] = "Function"
+                                self.simple_name_lookup[function_name].add(function_qn)
+
+                    # Process assignment function expressions
+                    for member_expr, function_expr in zip(member_exprs, function_exprs):
+                        if member_expr.text and function_expr:
+                            # Extract property name from this.propertyName
+                            member_text = member_expr.text.decode("utf8")
+                            if "." in member_text:
+                                function_name = member_text.split(".")[
+                                    -1
+                                ]  # Get the property name
+
+                                # Get language config for nested name building
+                                lang_config = queries[language].get("config")
+                                if lang_config:
+                                    # Use specialized logic for assignment function expressions
+                                    function_qn = self._build_assignment_arrow_function_qualified_name(
+                                        member_expr,
+                                        function_expr,
+                                        module_qn,
+                                        function_name,
+                                        lang_config,
+                                    )
+                                    if function_qn is None:
+                                        function_qn = f"{module_qn}.{function_name}"
+                                else:
+                                    function_qn = f"{module_qn}.{function_name}"
+
+                                function_props = {
+                                    "qualified_name": function_qn,
+                                    "name": function_name,
+                                    "start_line": function_expr.start_point[0] + 1,
+                                    "end_line": function_expr.end_point[0] + 1,
+                                    "docstring": self._get_docstring(function_expr),
+                                }
+
+                                logger.debug(
+                                    f"  Found Assignment Function Expression: {function_name} (qn: {function_qn})"
                                 )
                                 self.ingestor.ensure_node_batch(
                                     "Function", function_props
@@ -1502,23 +1616,189 @@ class DefinitionProcessor:
                         return True
         return False
 
+    def _is_method_in_class(self, method_node: Node) -> bool:
+        """Check if this method is inside a class definition (static or instance)."""
+        # Walk up the tree to see if we're inside a class
+        current = method_node.parent
+        while current:
+            if current.type == "class_body":
+                return True
+            current = current.parent
+        return False
+
+    def _is_inside_method_with_object_literals(self, func_node: Node) -> bool:
+        """Check if this function is an object literal method inside a class method."""
+        # Walk up to see if we're inside an object literal inside a method_definition
+        current = func_node.parent
+        found_object = False
+
+        while current:
+            if current.type == "object":
+                found_object = True
+            elif current.type == "method_definition" and found_object:
+                # We're inside an object literal inside a method - this should be nested
+                return True
+            elif current.type == "class_body":
+                # Reached class body - stop looking
+                break
+            current = current.parent
+
+        return False
+
+    def _is_class_method(self, method_node: Node) -> bool:
+        """Check if a method definition is inside a class body."""
+        current = method_node.parent
+        while current:
+            if current.type == "class_body":
+                return True
+            elif current.type in ["program", "module"]:
+                return False
+            current = current.parent
+        return False
+
+    def _is_export_inside_function(self, export_node: Node) -> bool:
+        """Check if this export statement is inside a function body."""
+        current = export_node.parent
+        while current:
+            if current.type in [
+                "function_declaration",
+                "function_expression",
+                "arrow_function",
+                "method_definition",
+            ]:
+                return True
+            elif current.type in ["program", "module"]:
+                # Reached module level - not inside a function
+                return False
+            current = current.parent
+        return False
+
     def _find_object_name_for_method(self, method_name_node: Node) -> str | None:
-        """Find the object variable name that contains this method."""
+        """Find the object variable name that contains this method, using proper tree-sitter traversal."""
         # Walk up the tree to find the variable declarator or assignment
         current = method_name_node.parent
         while current:
             if current.type == "variable_declarator":
-                # Look for the identifier (variable name)
-                for child in current.children:
-                    if child.type == "identifier":
-                        return child.text.decode("utf8") if child.text else None
+                # Use field-based access to get the variable name
+                name_node = current.child_by_field_name("name")
+                if name_node and name_node.type == "identifier" and name_node.text:
+                    return str(name_node.text.decode("utf8"))
             elif current.type == "assignment_expression":
-                # Look for assignment target
+                # Use field-based access to get assignment target
                 left_child = current.child_by_field_name("left")
                 if left_child and left_child.type == "identifier" and left_child.text:
-                    text_bytes = left_child.text
-                    if text_bytes is not None:
-                        decoded_text: str = text_bytes.decode("utf8")
-                        return decoded_text
+                    return str(left_child.text.decode("utf8"))
             current = current.parent
         return None
+
+    def _build_object_method_qualified_name(
+        self,
+        method_name_node: Node,
+        method_func_node: Node,
+        module_qn: str,
+        method_name: str,
+        lang_config: LanguageConfig,
+    ) -> str | None:
+        """Build proper qualified name for object literal methods using tree-sitter traversal.
+
+        Skips intermediate object variable names to get semantic nesting like:
+        - createApiClient.get (not createApiClient.client.get)
+        - ServiceFactory.createService.process (not ServiceFactory.createService.{obj}.process)
+        """
+        path_parts = []
+
+        # Start from the method name node and walk up to find the containing function/class context
+        current = method_name_node.parent
+
+        # Walk up past the object literal and variable declaration to find the containing function
+        while current and current.type not in lang_config.module_node_types:
+            # Skip these object-related nodes to get to the containing function
+            if current.type in [
+                "object",
+                "variable_declarator",
+                "variable_declaration",
+                "assignment_expression",
+                "pair",
+            ]:
+                current = current.parent
+                continue
+
+            # Handle functions (named and anonymous)
+            if current.type in lang_config.function_node_types:
+                name_node = current.child_by_field_name("name")
+                if name_node and name_node.text:
+                    path_parts.append(name_node.text.decode("utf8"))
+            # Handle classes
+            elif current.type in lang_config.class_node_types:
+                name_node = current.child_by_field_name("name")
+                if name_node and name_node.text:
+                    path_parts.append(name_node.text.decode("utf8"))
+            # Handle methods inside classes
+            elif current.type == "method_definition":
+                name_node = current.child_by_field_name("name")
+                if name_node and name_node.text:
+                    path_parts.append(name_node.text.decode("utf8"))
+
+            current = current.parent
+
+        # Reverse the path parts to get correct order (module -> class -> method -> method)
+        path_parts.reverse()
+
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{method_name}"
+        else:
+            return f"{module_qn}.{method_name}"
+
+    def _build_assignment_arrow_function_qualified_name(
+        self,
+        member_expr: Node,
+        arrow_function: Node,
+        module_qn: str,
+        function_name: str,
+        lang_config: LanguageConfig,
+    ) -> str | None:
+        """Build proper qualified name for arrow functions in assignments using tree-sitter traversal.
+
+        Handles cases like:
+        - this.fetchUser = () => {} in constructor
+        - this.retry = () => {} in method
+        """
+        path_parts = []
+
+        # Start from the assignment expression and walk up to find the containing context
+        current = member_expr.parent  # assignment_expression
+        if current and current.type == "assignment_expression":
+            current = current.parent  # expression_statement or other container
+
+        # Walk up to find containing functions/classes/methods
+        while current and current.type not in lang_config.module_node_types:
+            # Skip expression statements and other non-semantic nodes
+            if current.type in ["expression_statement", "statement_block"]:
+                current = current.parent
+                continue
+
+            # Handle functions (named and anonymous)
+            if current.type in lang_config.function_node_types:
+                name_node = current.child_by_field_name("name")
+                if name_node and name_node.text:
+                    path_parts.append(name_node.text.decode("utf8"))
+            # Handle classes
+            elif current.type in lang_config.class_node_types:
+                name_node = current.child_by_field_name("name")
+                if name_node and name_node.text:
+                    path_parts.append(name_node.text.decode("utf8"))
+            # Handle methods inside classes (constructor, initialize, etc.)
+            elif current.type == "method_definition":
+                name_node = current.child_by_field_name("name")
+                if name_node and name_node.text:
+                    path_parts.append(name_node.text.decode("utf8"))
+
+            current = current.parent
+
+        # Reverse the path parts to get correct order (module -> class -> method -> function)
+        path_parts.reverse()
+
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{function_name}"
+        else:
+            return f"{module_qn}.{function_name}"
