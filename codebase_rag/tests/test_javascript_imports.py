@@ -274,6 +274,11 @@ const utils = require('./src/utils/helpers');
 const { helper } = require('./src/utils/helpers');
 const { API_URL } = require('./src/utils/constants');
 
+// Aliased destructured require
+const { helper: utilityHelper } = require('./src/utils/helpers');
+const { API_URL: apiEndpoint } = require('./src/utils/constants');
+const { add: mathAdd } = require('./src/utils/math');
+
 // Require with different variable names
 const fileSystem = require('fs');
 const utilities = require('./src/utils/helpers');
@@ -286,6 +291,11 @@ const content = fs.readFileSync('file.txt');
 const dirname = path.dirname(__filename);
 const apiKey = config.apiKey;
 const result = helper();
+
+// Using aliased destructured imports
+const utilResult = utilityHelper();
+const endpoint = apiEndpoint;
+const sum = mathAdd(1, 2);
 """
     )
 
@@ -308,8 +318,8 @@ const result = helper();
         call for call in import_relationships if "commonjs_imports" in call.args[0][2]
     ]
 
-    assert len(commonjs_imports) >= 6, (
-        f"Expected at least 6 CommonJS imports, found {len(commonjs_imports)}"
+    assert len(commonjs_imports) >= 8, (
+        f"Expected at least 8 CommonJS imports, found {len(commonjs_imports)}"
     )
 
     imported_modules = [call.args[2][2] for call in commonjs_imports]
@@ -324,6 +334,71 @@ const result = helper();
     for expected in expected_modules:
         assert any(expected in module for module in imported_modules), (
             f"Missing CommonJS import: {expected}\nFound: {imported_modules}"
+        )
+
+
+def test_commonjs_aliased_destructuring(
+    javascript_imports_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Test CommonJS aliased destructuring patterns ({ name: alias })."""
+    test_file = javascript_imports_project / "commonjs_aliased_destructuring.js"
+    test_file.write_text(
+        """
+// CommonJS aliased destructuring patterns
+const { helper: utilHelper } = require('./src/utils/helpers');
+const { API_URL: endpoint, helper: utilityFunc } = require('./src/utils/constants');
+const { add: mathAdd, subtract: mathSub } = require('./src/utils/math');
+
+// Mixed shorthand and aliased destructuring
+const { helper, API_URL: apiEndpoint } = require('./src/utils/helpers');
+
+// Using aliased imports
+const result1 = utilHelper();
+const url = endpoint;
+const sum = mathAdd(1, 2);
+const diff = mathSub(5, 3);
+const result2 = utilityFunc();
+const finalUrl = apiEndpoint;
+"""
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=javascript_imports_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    import_relationships = [
+        c
+        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
+        if c.args[1] == "IMPORTS"
+    ]
+
+    aliased_imports = [
+        call
+        for call in import_relationships
+        if "commonjs_aliased_destructuring" in call.args[0][2]
+    ]
+
+    # Should have at least 3 import relationships for the aliased destructuring
+    assert len(aliased_imports) >= 3, (
+        f"Expected at least 3 aliased destructuring imports, found {len(aliased_imports)}"
+    )
+
+    imported_modules = [call.args[2][2] for call in aliased_imports]
+    expected_modules = [
+        "javascript_imports_test.src.utils.helpers",
+        "javascript_imports_test.src.utils.constants",
+        "javascript_imports_test.src.utils.math",
+    ]
+
+    for expected in expected_modules:
+        assert any(expected in module for module in imported_modules), (
+            f"Missing aliased destructuring import: {expected}\nFound: {imported_modules}"
         )
 
 

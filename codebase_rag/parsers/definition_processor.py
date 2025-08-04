@@ -921,11 +921,17 @@ class DefinitionProcessor:
 
         try:
             # Focus only on CommonJS destructuring which import_processor doesn't handle well
+            # Handle both shorthand ({ name }) and aliased ({ name: alias }) destructuring
             commonjs_destructure_query = """
             (lexical_declaration
               (variable_declarator
                 name: (object_pattern
-                  (shorthand_property_identifier_pattern) @destructured_name)
+                  [
+                    (shorthand_property_identifier_pattern) @destructured_name
+                    (pair_pattern
+                      key: (property_identifier) @property_key
+                      value: (identifier) @alias_name)
+                  ])
                 value: (call_expression
                   function: (identifier) @require_func
                   arguments: (arguments
@@ -937,10 +943,16 @@ class DefinitionProcessor:
                 cursor = QueryCursor(query)
                 captures = cursor.captures(root_node)
 
+                # Handle shorthand destructuring ({ name })
                 destructured_names = captures.get("destructured_name", [])
+                # Handle aliased destructuring ({ name: alias })
+                property_keys = captures.get("property_key", [])
+                alias_names = captures.get("alias_name", [])
+
                 module_names = captures.get("module_name", [])
                 require_funcs = captures.get("require_func", [])
 
+                # Process shorthand destructuring
                 for i, destructured_node in enumerate(destructured_names):
                     if i < len(module_names) and i < len(require_funcs):
                         # Only process if it's actually a require call
@@ -960,52 +972,85 @@ class DefinitionProcessor:
                                 module_name = module_text.decode("utf8").strip("'\"")
 
                             if destructured_name and module_name:
-                                # Use the existing import_processor's path resolution
-                                resolved_source_module = (
-                                    self.import_processor._resolve_js_module_path(
-                                        module_name, module_qn
-                                    )
+                                self._process_commonjs_import(
+                                    destructured_name, module_name, module_qn
                                 )
 
-                                # Check if this import relationship already exists to avoid duplicates
-                                import_key = f"{module_qn}->{resolved_source_module}"
-                                if import_key not in getattr(
-                                    self, "_processed_imports", set()
-                                ):
-                                    # Create the source module node if it doesn't exist
-                                    self.ingestor.ensure_node_batch(
-                                        "Module",
-                                        {
-                                            "qualified_name": resolved_source_module,
-                                            "name": resolved_source_module,
-                                        },
-                                    )
+                # Process aliased destructuring
+                for i, (property_key_node, alias_name_node) in enumerate(
+                    zip(property_keys, alias_names)
+                ):
+                    if i < len(module_names) and i < len(require_funcs):
+                        # Only process if it's actually a require call
+                        require_func_text = None
+                        require_text = require_funcs[i].text
+                        if require_text is not None:
+                            require_func_text = require_text.decode("utf8")
+                        if require_func_text == "require":
+                            # For aliased destructuring, we use the alias name as the local variable
+                            alias_name = None
+                            if alias_name_node.text is not None:
+                                alias_name = alias_name_node.text.decode("utf8")
+                            module_name = None
+                            module_text = module_names[i].text
+                            if module_text is not None:
+                                module_name = module_text.decode("utf8").strip("'\"")
 
-                                    # Create the relationship
-                                    self.ingestor.ensure_relationship_batch(
-                                        ("Module", "qualified_name", module_qn),
-                                        "IMPORTS",
-                                        (
-                                            "Module",
-                                            "qualified_name",
-                                            resolved_source_module,
-                                        ),
-                                    )
-
-                                    logger.debug(
-                                        f"Missing pattern: {module_qn} IMPORTS {destructured_name} from {resolved_source_module}"
-                                    )
-
-                                    # Track processed imports to avoid duplicates
-                                    if not hasattr(self, "_processed_imports"):
-                                        self._processed_imports = set()
-                                    self._processed_imports.add(import_key)
+                            if alias_name and module_name:
+                                self._process_commonjs_import(
+                                    alias_name, module_name, module_qn
+                                )
 
             except Exception as e:
                 logger.debug(f"Failed to process CommonJS destructuring pattern: {e}")
 
         except Exception as e:
             logger.debug(f"Failed to detect missing import patterns: {e}")
+
+    def _process_commonjs_import(
+        self, imported_name: str, module_name: str, module_qn: str
+    ) -> None:
+        """Process a single CommonJS import (either shorthand or aliased)."""
+        try:
+            # Use the existing import_processor's path resolution
+            resolved_source_module = self.import_processor._resolve_js_module_path(
+                module_name, module_qn
+            )
+
+            # Check if this import relationship already exists to avoid duplicates
+            import_key = f"{module_qn}->{resolved_source_module}"
+            if import_key not in getattr(self, "_processed_imports", set()):
+                # Create the source module node if it doesn't exist
+                self.ingestor.ensure_node_batch(
+                    "Module",
+                    {
+                        "qualified_name": resolved_source_module,
+                        "name": resolved_source_module,
+                    },
+                )
+
+                # Create the relationship
+                self.ingestor.ensure_relationship_batch(
+                    ("Module", "qualified_name", module_qn),
+                    "IMPORTS",
+                    (
+                        "Module",
+                        "qualified_name",
+                        resolved_source_module,
+                    ),
+                )
+
+                logger.debug(
+                    f"Missing pattern: {module_qn} IMPORTS {imported_name} from {resolved_source_module}"
+                )
+
+                # Track processed imports to avoid duplicates
+                if not hasattr(self, "_processed_imports"):
+                    self._processed_imports = set()
+                self._processed_imports.add(import_key)
+
+        except Exception as e:
+            logger.debug(f"Failed to process CommonJS import {imported_name}: {e}")
 
     def _ingest_object_literal_methods(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
