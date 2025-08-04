@@ -830,54 +830,51 @@ class DefinitionProcessor:
                 method_names = method_captures.get("method_name", [])
                 method_functions = method_captures.get("method_function", [])
 
-                for i, (constructor_node, method_node, func_node) in enumerate(
-                    zip(constructor_names, method_names, method_functions)
+                for constructor_node, method_node, func_node in zip(
+                    constructor_names, method_names, method_functions
                 ):
-                    if i < len(constructor_names) and i < len(method_names):
-                        constructor_name = (
-                            constructor_node.text.decode("utf8")
-                            if constructor_node.text
-                            else None
+                    constructor_name = (
+                        constructor_node.text.decode("utf8")
+                        if constructor_node.text
+                        else None
+                    )
+                    method_name = (
+                        method_node.text.decode("utf8") if method_node.text else None
+                    )
+
+                    if constructor_name and method_name:
+                        # Create the method as a Function node for prototype methods
+                        # Tests expect prototype methods to be in Function nodes
+                        constructor_qn = f"{module_qn}.{constructor_name}"
+                        method_qn = f"{constructor_qn}.{method_name}"
+
+                        # Create Function node for prototype method
+                        method_props = {
+                            "qualified_name": method_qn,
+                            "name": method_name,
+                            "start_line": func_node.start_point[0] + 1,
+                            "end_line": func_node.end_point[0] + 1,
+                            "docstring": self._get_docstring(func_node),
+                        }
+                        logger.info(
+                            f"  Found Prototype Method: {method_name} (qn: {method_qn})"
                         )
-                        method_name = (
-                            method_node.text.decode("utf8")
-                            if method_node.text
-                            else None
+                        self.ingestor.ensure_node_batch("Function", method_props)
+
+                        # Register in function registry as Function
+                        self.function_registry[method_qn] = "Function"
+                        self.simple_name_lookup[method_name].add(method_qn)
+
+                        # Create relationship from constructor to method
+                        self.ingestor.ensure_relationship_batch(
+                            ("Function", "qualified_name", constructor_qn),
+                            "DEFINES",
+                            ("Function", "qualified_name", method_qn),
                         )
 
-                        if constructor_name and method_name:
-                            # Create the method as a Function node for prototype methods
-                            # Tests expect prototype methods to be in Function nodes
-                            constructor_qn = f"{module_qn}.{constructor_name}"
-                            method_qn = f"{constructor_qn}.{method_name}"
-
-                            # Create Function node for prototype method
-                            method_props = {
-                                "qualified_name": method_qn,
-                                "name": method_name,
-                                "start_line": func_node.start_point[0] + 1,
-                                "end_line": func_node.end_point[0] + 1,
-                                "docstring": self._get_docstring(func_node),
-                            }
-                            logger.info(
-                                f"  Found Prototype Method: {method_name} (qn: {method_qn})"
-                            )
-                            self.ingestor.ensure_node_batch("Function", method_props)
-
-                            # Register in function registry as Function
-                            self.function_registry[method_qn] = "Function"
-                            self.simple_name_lookup[method_name].add(method_qn)
-
-                            # Create relationship from constructor to method
-                            self.ingestor.ensure_relationship_batch(
-                                ("Function", "qualified_name", constructor_qn),
-                                "DEFINES",
-                                ("Function", "qualified_name", method_qn),
-                            )
-
-                            logger.debug(
-                                f"Prototype method: {constructor_qn} DEFINES_METHOD {method_qn}"
-                            )
+                        logger.debug(
+                            f"Prototype method: {constructor_qn} DEFINES_METHOD {method_qn}"
+                        )
 
             except Exception as e:
                 logger.debug(f"Failed to detect prototype methods: {e}")
