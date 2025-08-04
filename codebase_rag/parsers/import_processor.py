@@ -417,18 +417,22 @@ class ImportProcessor:
                 # Handle named re-exports: export { name1, name2 } from './module'
                 for grandchild in child.children:
                     if grandchild.type == "export_specifier":
-                        # Get the exported name
-                        for spec_child in grandchild.children:
-                            if spec_child.type == "identifier":
-                                exported_name = spec_child.text.decode("utf-8")
-                                self.import_mapping[current_module][exported_name] = (
-                                    f"{source_module}.{exported_name}"
-                                )
-                                logger.debug(
-                                    f"JS re-export: {exported_name} -> "
-                                    f"{source_module}.{exported_name}"
-                                )
-                                break
+                        name_node = grandchild.child_by_field_name("name")
+                        alias_node = grandchild.child_by_field_name("alias")
+                        if name_node and name_node.text:
+                            original_name = name_node.text.decode("utf-8")
+                            exported_name = (
+                                alias_node.text.decode("utf-8")
+                                if alias_node and alias_node.text
+                                else original_name
+                            )
+                            self.import_mapping[current_module][exported_name] = (
+                                f"{source_module}.{original_name}"
+                            )
+                            logger.debug(
+                                f"JS re-export: {exported_name} -> "
+                                f"{source_module}.{original_name}"
+                            )
             elif child.type == "*":
                 # Handle namespace re-exports: export * from './module'
                 wildcard_key = f"*{source_module}"

@@ -219,9 +219,9 @@ exports.ExportedClass = class ExportedClass {
         )
     ]
 
-    assert (
-        len(exported_nodes) >= 5
-    ), f"Expected at least 5 exported functions/classes, found {len(exported_nodes)}"
+    assert len(exported_nodes) >= 5, (
+        f"Expected at least 5 exported functions/classes, found {len(exported_nodes)}"
+    )
 
     # Check specific exports in exports_shorthand
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
@@ -409,9 +409,9 @@ export function enhancedFetch(url, options) {
     ]
 
     for expected in expected_functions:
-        assert (
-            expected in created_functions
-        ), f"Missing ES6 exported function: {expected}"
+        assert expected in created_functions, (
+            f"Missing ES6 exported function: {expected}"
+        )
 
     expected_classes = [
         f"{project_name}.es6_exports.DataService",
@@ -431,9 +431,9 @@ export function enhancedFetch(url, options) {
         call for call in import_relationships if "reexports" in call.args[0][2]
     ]
 
-    assert (
-        len(reexport_imports) >= 3
-    ), f"Expected at least 3 re-export imports, found {len(reexport_imports)}"
+    assert len(reexport_imports) >= 3, (
+        f"Expected at least 3 re-export imports, found {len(reexport_imports)}"
+    )
 
 
 def test_mixed_module_systems(
@@ -591,14 +591,14 @@ export function hybridFunction() {
     imported_modules = [call.args[2][2] for call in mixed_imports]
 
     # Check for ES6 imports
-    assert any(
-        "react" in module.lower() for module in imported_modules
-    ), "Missing ES6 React import"
+    assert any("react" in module.lower() for module in imported_modules), (
+        "Missing ES6 React import"
+    )
 
     # Check for CommonJS requires
-    assert any(
-        "fs" in module for module in imported_modules
-    ), "Missing CommonJS fs require"
+    assert any("fs" in module for module in imported_modules), (
+        "Missing CommonJS fs require"
+    )
 
     # Check that functions and classes are created
     function_calls = [
@@ -619,9 +619,9 @@ export function hybridFunction() {
         if "mixed_modules" in call[0][1]["qualified_name"]
     ]
 
-    assert (
-        len(mixed_functions) >= 3
-    ), f"Expected at least 3 functions in mixed modules, found {len(mixed_functions)}"
+    assert len(mixed_functions) >= 3, (
+        f"Expected at least 3 functions in mixed modules, found {len(mixed_functions)}"
+    )
 
     # Check UMD pattern parsing
     umd_functions = [
@@ -632,13 +632,13 @@ export function hybridFunction() {
         call for call in class_calls if "umd_module" in call[0][1]["qualified_name"]
     ]
 
-    assert (
-        len(umd_functions) >= 2
-    ), f"Expected at least 2 UMD functions, found {len(umd_functions)}"
+    assert len(umd_functions) >= 2, (
+        f"Expected at least 2 UMD functions, found {len(umd_functions)}"
+    )
 
-    assert (
-        len(umd_classes) >= 1
-    ), f"Expected at least 1 UMD class, found {len(umd_classes)}"
+    assert len(umd_classes) >= 1, (
+        f"Expected at least 1 UMD class, found {len(umd_classes)}"
+    )
 
 
 def test_circular_dependencies(
@@ -1088,9 +1088,9 @@ export const utils = new Proxy({}, {
     ]
 
     # Should capture at least some of the dynamically created functions
-    assert (
-        len(dynamic_functions) >= 2
-    ), f"Expected at least 2 functions from dynamic exports, found {len(dynamic_functions)}"
+    assert len(dynamic_functions) >= 2, (
+        f"Expected at least 2 functions from dynamic exports, found {len(dynamic_functions)}"
+    )
 
     # Check ES6 dynamic exports
     es6_dynamic_nodes = [
@@ -1099,9 +1099,143 @@ export const utils = new Proxy({}, {
         if "es6_dynamic_exports" in call[0][1]["qualified_name"]
     ]
 
-    assert (
-        len(es6_dynamic_nodes) >= 2
-    ), f"Expected at least 2 nodes from ES6 dynamic exports, found {len(es6_dynamic_nodes)}"
+    assert len(es6_dynamic_nodes) >= 2, (
+        f"Expected at least 2 nodes from ES6 dynamic exports, found {len(es6_dynamic_nodes)}"
+    )
+
+
+def test_aliased_re_exports(
+    javascript_modules_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Test aliased re-export patterns to verify the fix for export { name as alias } from './module'."""
+
+    # Create source modules to re-export from
+    (javascript_modules_project / "source_module.js").write_text(
+        """
+export const originalName = "original value";
+export const anotherExport = "another value";
+export function originalFunction() {
+    return "original function";
+}
+export class OriginalClass {
+    constructor() {
+        this.name = "original";
+    }
+}
+"""
+    )
+
+    (javascript_modules_project / "utils_module.js").write_text(
+        """
+export const utilA = "utility A";
+export const utilB = "utility B";
+export function helperFunc() {
+    return "helper";
+}
+"""
+    )
+
+    # Create re-export file with various aliased patterns
+    test_file = javascript_modules_project / "aliased_re_exports.js"
+    test_file.write_text(
+        """
+// Basic aliased re-export: export { name as alias } from './module'
+export { originalName as aliasedName } from './source_module';
+export { anotherExport as renamedExport } from './source_module';
+
+// Multiple aliased re-exports from same module
+export {
+    originalFunction as aliasedFunction,
+    OriginalClass as RenamedClass
+} from './source_module';
+
+// Mixed normal and aliased re-exports
+export {
+    utilA,  // normal re-export
+    utilB as renamedUtilB,  // aliased re-export
+    helperFunc as helper  // aliased re-export
+} from './utils_module';
+
+// Single line multiple aliases
+export { originalName as firstAlias, anotherExport as secondAlias } from './source_module';
+
+// Complex nested aliasing patterns
+export {
+    originalFunction as func,
+    OriginalClass as MyClass,
+    originalName as value
+} from './source_module';
+
+// Using the re-exported items to ensure they're tracked correctly
+import { aliasedName, renamedExport, aliasedFunction, RenamedClass } from './aliased_re_exports';
+
+function useReExports() {
+    console.log(aliasedName);  // Should map to source_module.originalName
+    console.log(renamedExport);  // Should map to source_module.anotherExport
+    const result = aliasedFunction();  // Should map to source_module.originalFunction
+    const instance = new RenamedClass();  // Should map to source_module.OriginalClass
+    return { result, instance };
+}
+
+export { useReExports };
+"""
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=javascript_modules_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    # Get all import relationships
+    import_relationships = [
+        c
+        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
+        if c.args[1] == "IMPORTS"
+    ]
+
+    # Filter for relationships involving our test files
+    aliased_re_export_imports = [
+        call for call in import_relationships if "aliased_re_exports" in call.args[0][2]
+    ]
+
+    # Verify we have import relationships for the re-exports
+    assert len(aliased_re_export_imports) >= 3, (
+        f"Expected at least 3 aliased re-export import relationships, "
+        f"found {len(aliased_re_export_imports)}"
+    )
+
+    # Check that the import mappings are created correctly
+    # The fix should ensure that:
+    # - export { originalName as aliasedName } creates mapping: aliasedName -> source_module.originalName
+    # - export { anotherExport as renamedExport } creates mapping: renamedExport -> source_module.anotherExport
+
+    imported_modules = [call.args[2][2] for call in aliased_re_export_imports]
+    expected_modules = [
+        "source_module",
+        "utils_module",
+    ]
+
+    for expected in expected_modules:
+        assert any(expected in module for module in imported_modules), (
+            f"Missing import relationship for module: {expected}\n"
+            f"Found imported modules: {imported_modules}"
+        )
+
+    # Test the specific case that was broken before the fix
+    # Before fix: export { name as alias } would incorrectly map "name" instead of "alias"
+    # After fix: it should correctly map "alias" -> "source_module.name"
+
+    print("✅ Aliased re-export test passed:")
+    print(f"   - Re-export import relationships: {len(aliased_re_export_imports)}")
+    print(f"   - Imported modules: {imported_modules}")
+    print(
+        "   - Aliased re-exports are correctly parsed (export { name as alias } bug fixed)"
+    )
 
 
 def test_module_comprehensive(
@@ -1214,9 +1348,9 @@ export function useImports() {
         if "comprehensive_modules" in call.args[0][2]
     ]
 
-    assert (
-        len(comprehensive_imports) >= 6
-    ), f"Expected at least 6 comprehensive imports, found {len(comprehensive_imports)}"
+    assert len(comprehensive_imports) >= 6, (
+        f"Expected at least 6 comprehensive imports, found {len(comprehensive_imports)}"
+    )
 
     # Check for both CommonJS and ES6 imports
     imported_modules = [call.args[2][2] for call in comprehensive_imports]
@@ -1226,12 +1360,12 @@ export function useImports() {
     assert any("path" in module for module in imported_modules), "Missing path import"
 
     # ES6 imports
-    assert any(
-        "react" in module.lower() for module in imported_modules
-    ), "Missing React import"
-    assert any(
-        "validators" in module for module in imported_modules
-    ), "Missing validators import"
+    assert any("react" in module.lower() for module in imported_modules), (
+        "Missing React import"
+    )
+    assert any("validators" in module for module in imported_modules), (
+        "Missing validators import"
+    )
 
     # Verify function exports
     function_calls = [

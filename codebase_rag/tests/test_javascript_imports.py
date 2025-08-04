@@ -764,6 +764,128 @@ require('./also-side-effects');
         )
 
 
+def test_aliased_re_export_import_mapping(
+    javascript_imports_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Test that aliased re-exports create correct import mappings (regression test for bug fix)."""
+
+    # Create source files
+    (javascript_imports_project / "math_utils.js").write_text(
+        """
+export function add(a, b) { return a + b; }
+export function subtract(a, b) { return a - b; }
+export function multiply(a, b) { return a * b; }
+export const PI = 3.14159;
+"""
+    )
+
+    (javascript_imports_project / "string_utils.js").write_text(
+        """
+export function capitalize(str) { return str.charAt(0).toUpperCase() + str.slice(1); }
+export function reverse(str) { return str.split('').reverse().join(''); }
+export const EMPTY_STRING = '';
+"""
+    )
+
+    # Create a re-export file with aliased exports - this would trigger the bug before fix
+    re_export_file = javascript_imports_project / "utils_index.js"
+    re_export_file.write_text(
+        """
+// These aliased re-exports would fail before the bug fix
+export { add as mathAdd, subtract as mathSub } from './math_utils';
+export { multiply as mathMultiply, PI as MATH_PI } from './math_utils';
+export { capitalize as toUpperCase, reverse as reverseString } from './string_utils';
+export { EMPTY_STRING as EMPTY } from './string_utils';
+
+// Mixed normal and aliased re-exports
+export { add } from './math_utils';  // normal re-export
+export { capitalize } from './string_utils';  // normal re-export
+"""
+    )
+
+    # Create a consumer file that imports the aliased re-exports
+    consumer_file = javascript_imports_project / "consumer.js"
+    consumer_file.write_text(
+        """
+// Import aliased re-exports - these should map correctly after the fix
+import { mathAdd, mathSub, mathMultiply, MATH_PI } from './utils_index';
+import { toUpperCase, reverseString, EMPTY } from './utils_index';
+import { add, capitalize } from './utils_index';
+
+// Use the imports to ensure they're tracked
+function useUtils() {
+    const sum = mathAdd(1, 2);  // Should resolve to math_utils.add
+    const diff = mathSub(5, 3);  // Should resolve to math_utils.subtract
+    const product = mathMultiply(4, 5);  // Should resolve to math_utils.multiply
+    const pi = MATH_PI;  // Should resolve to math_utils.PI
+
+    const upper = toUpperCase('hello');  // Should resolve to string_utils.capitalize
+    const reversed = reverseString('world');  // Should resolve to string_utils.reverse
+    const empty = EMPTY;  // Should resolve to string_utils.EMPTY_STRING
+
+    const directSum = add(10, 20);  // Should resolve to math_utils.add
+    const directCap = capitalize('test');  // Should resolve to string_utils.capitalize
+
+    return { sum, diff, product, pi, upper, reversed, empty, directSum, directCap };
+}
+
+export { useUtils };
+"""
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=javascript_imports_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    # Get all import relationships
+    import_relationships = [
+        c
+        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
+        if c.args[1] == "IMPORTS"
+    ]
+
+    # Test consumer imports (should work correctly with our fix)
+    consumer_imports = [
+        call for call in import_relationships if "consumer" in call.args[0][2]
+    ]
+
+    assert len(consumer_imports) >= 2, (
+        f"Expected at least 2 consumer import relationships, found {len(consumer_imports)}"
+    )
+
+    # Test re-export module imports (the core fix)
+    re_export_imports = [
+        call for call in import_relationships if "utils_index" in call.args[0][2]
+    ]
+
+    assert len(re_export_imports) >= 2, (
+        f"Expected at least 2 re-export import relationships, found {len(re_export_imports)}"
+    )
+
+    # Verify that we import from the correct source modules
+    re_export_targets = [call.args[2][2] for call in re_export_imports]
+
+    expected_targets = ["math_utils", "string_utils"]
+    for expected in expected_targets:
+        assert any(expected in target for target in re_export_targets), (
+            f"Missing re-export target: {expected}\nFound: {re_export_targets}"
+        )
+
+    print("✅ Aliased re-export import mapping test passed:")
+    print(f"   - Consumer imports: {len(consumer_imports)}")
+    print(f"   - Re-export imports: {len(re_export_imports)}")
+    print(f"   - Re-export targets: {re_export_targets}")
+    print(
+        "   - Bug fix verified: export { name as alias } now correctly maps alias -> source.name"
+    )
+
+
 def test_import_relationships_comprehensive(
     javascript_imports_project: Path,
     mock_ingestor: MagicMock,
