@@ -222,6 +222,37 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                     all_import_patterns.append(import_from_patterns)
                 combined_import_patterns = " ".join(all_import_patterns)
 
+                # Create locals query for variable tracking
+                locals_query = None
+                if lang_name in ["javascript", "typescript"]:
+                    # JavaScript/TypeScript locals query to track variable definitions and references
+                    locals_patterns = """
+                    ; Scopes
+                    (program) @local.scope
+                    (function_declaration) @local.scope
+                    (function_expression) @local.scope
+                    (arrow_function) @local.scope
+                    (method_definition) @local.scope
+                    (class_declaration) @local.scope
+                    (lexical_declaration) @local.scope
+
+                    ; Variable definitions
+                    (variable_declarator name: (identifier) @local.definition)
+                    (function_declaration name: (identifier) @local.definition)
+                    (class_declaration name: (identifier) @local.definition)
+                    (method_definition name: (property_identifier) @local.definition)
+                    (formal_parameters (identifier) @local.definition)
+
+                    ; Variable references
+                    (identifier) @local.reference
+                    """
+                    try:
+                        locals_query = Query(language, locals_patterns)
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to create locals query for {lang_name}: {e}"
+                        )
+
                 queries[lang_name] = {
                     "functions": (
                         Query(language, function_patterns)
@@ -237,6 +268,7 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                         if combined_import_patterns
                         else None
                     ),
+                    "locals": locals_query,
                     "config": lang_config,
                     "language": language,
                 }
