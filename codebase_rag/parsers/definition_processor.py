@@ -1313,10 +1313,11 @@ class DefinitionProcessor:
                             if export_function:
                                 # Get function name from the function declaration
                                 function_name = None
-                                for child in export_function.children:
-                                    if child.type == "identifier":
-                                        function_name = child.text.decode("utf8")
-                                        break
+                                if name_node := export_function.child_by_field_name(
+                                    "name"
+                                ):
+                                    if name_node.text:
+                                        function_name = name_node.text.decode("utf8")
 
                                 if function_name:
                                     function_qn = f"{module_qn}.{function_name}"
