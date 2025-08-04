@@ -1223,7 +1223,6 @@ class TypeInferenceEngine:
                 var_type = self._infer_js_variable_type(def_node, module_qn)
                 if var_type:
                     local_var_types[var_name] = var_type
-                    logger.debug(f"JS variable type inferred: {var_name} -> {var_type}")
 
         except Exception as e:
             logger.debug(f"Error in JavaScript variable type inference: {e}")
