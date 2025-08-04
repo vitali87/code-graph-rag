@@ -17,6 +17,72 @@ from .utils import resolve_class_name
 class CallProcessor:
     """Handles processing of function and method calls."""
 
+    # JavaScript built-in types for type inference
+    _JS_BUILTIN_TYPES = {
+        "Array",
+        "Object",
+        "String",
+        "Number",
+        "Date",
+        "RegExp",
+        "Function",
+        "Map",
+        "Set",
+        "Promise",
+        "Error",
+        "Boolean",
+    }
+
+    # JavaScript built-in patterns for static method calls
+    _JS_BUILTIN_PATTERNS = {
+        # Object static methods
+        "Object.create",
+        "Object.keys",
+        "Object.values",
+        "Object.entries",
+        "Object.assign",
+        "Object.freeze",
+        "Object.seal",
+        "Object.defineProperty",
+        "Object.getPrototypeOf",
+        "Object.setPrototypeOf",
+        # Array static methods
+        "Array.from",
+        "Array.of",
+        "Array.isArray",
+        # Global functions
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "isFinite",
+        "encodeURIComponent",
+        "decodeURIComponent",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        # Console methods
+        "console.log",
+        "console.error",
+        "console.warn",
+        "console.info",
+        "console.debug",
+        # JSON methods
+        "JSON.parse",
+        "JSON.stringify",
+        # Math static methods
+        "Math.random",
+        "Math.floor",
+        "Math.ceil",
+        "Math.round",
+        "Math.abs",
+        "Math.max",
+        "Math.min",
+        # Date static methods
+        "Date.now",
+        "Date.parse",
+    }
+
     def __init__(
         self,
         ingestor: MemgraphIngestor,
@@ -53,6 +119,7 @@ class CallProcessor:
 
             self._process_calls_in_functions(root_node, module_qn, language, queries)
             self._process_calls_in_classes(root_node, module_qn, language, queries)
+            self._process_module_level_calls(root_node, module_qn, language, queries)
 
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
@@ -143,6 +210,15 @@ class CallProcessor:
                     class_qn,
                 )
 
+    def _process_module_level_calls(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Process top-level calls in the module (like IIFE calls)."""
+        # Process calls that are directly at module level, not inside functions/classes
+        self._ingest_function_calls(
+            root_node, module_qn, "Module", module_qn, language, queries
+        )
+
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """Extracts the name of the function or method being called."""
         # For 'call' in Python and 'call_expression' in JS/TS
@@ -163,6 +239,10 @@ class CallProcessor:
                 text = func_child.text
                 if text is not None:
                     return str(text.decode("utf8"))
+            # JS/TS: IIFE calls like (function(){})() -> parenthesized_expression
+            elif func_child.type == "parenthesized_expression":
+                # For IIFEs, we need to identify the anonymous function inside
+                return self._get_iife_target_name(func_child)
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
@@ -170,6 +250,18 @@ class CallProcessor:
             if text is not None:
                 return str(text.decode("utf8"))
 
+        return None
+
+    def _get_iife_target_name(self, parenthesized_expr: Node) -> str | None:
+        """Extract the target name for IIFE calls like (function(){})()."""
+        # Look for function_expression or arrow_function inside parentheses
+        for child in parenthesized_expr.children:
+            if child.type in ["function_expression", "arrow_function"]:
+                # Generate the same synthetic name that was used during function detection
+                if child.type == "arrow_function":
+                    return f"iife_arrow_{child.start_point[0]}_{child.start_point[1]}"
+                else:
+                    return f"iife_func_{child.start_point[0]}_{child.start_point[1]}"
         return None
 
     def _ingest_function_calls(
@@ -217,9 +309,13 @@ class CallProcessor:
                 call_name, module_qn, local_var_types, class_context
             )
             if not callee_info:
-                continue
-
-            callee_type, callee_qn = callee_info
+                # Check if it's a built-in JavaScript method
+                builtin_info = self._resolve_builtin_call(call_name)
+                if not builtin_info:
+                    continue
+                callee_type, callee_qn = builtin_info
+            else:
+                callee_type, callee_qn = callee_info
             logger.debug(
                 f"      Found call from {caller_qn} to {call_name} "
                 f"(resolved as {callee_type}:{callee_qn})"
@@ -307,8 +403,21 @@ class CallProcessor:
         class_context: str | None = None,
     ) -> tuple[str, str] | None:
         """Resolve a function call to its qualified name and type."""
-        # Phase 0: Handle super() calls specially
-        if call_name.startswith("super()"):
+        # Phase -1: Handle IIFE calls specially
+        if call_name and (
+            call_name.startswith("iife_func_") or call_name.startswith("iife_arrow_")
+        ):
+            # IIFE calls: resolve to the anonymous function in the same module
+            iife_qn = f"{module_qn}.{call_name}"
+            if iife_qn in self.function_registry:
+                return self.function_registry[iife_qn], iife_qn
+
+        # Phase 0: Handle super calls specially (JavaScript/TypeScript patterns)
+        if (
+            call_name == "super"
+            or call_name.startswith("super.")
+            or call_name.startswith("super()")
+        ):
             return self._resolve_super_call(call_name, module_qn, class_context)
 
         # Phase 0.5: Handle method chaining - check if this is a chained call
@@ -331,6 +440,61 @@ class CallProcessor:
             # 1a.2. Handle qualified calls like "Class.method" and "self.attr.method"
             if "." in call_name:
                 parts = call_name.split(".")
+
+                # Handle JavaScript object method calls like "calculator.add"
+                if len(parts) == 2:
+                    object_name, method_name = parts
+
+                    # First try type inference if available
+                    if local_var_types and object_name in local_var_types:
+                        var_type = local_var_types[object_name]
+
+                        # Resolve var_type to full qualified name
+                        if var_type in import_map:
+                            class_qn = import_map[var_type]
+                        else:
+                            class_qn_or_none = self._resolve_class_name(
+                                var_type, module_qn
+                            )
+                            class_qn = class_qn_or_none if class_qn_or_none else ""
+
+                        if class_qn:
+                            method_qn = f"{class_qn}.{method_name}"
+                            if method_qn in self.function_registry:
+                                logger.debug(
+                                    f"Type-inferred object method resolved: "
+                                    f"{call_name} -> {method_qn} "
+                                    f"(via {object_name}:{var_type})"
+                                )
+                                return self.function_registry[method_qn], method_qn
+
+                            # Check inheritance for this method
+                            inherited_method = self._resolve_inherited_method(
+                                class_qn, method_name
+                            )
+                            if inherited_method:
+                                logger.debug(
+                                    f"Type-inferred inherited object method resolved: "
+                                    f"{call_name} -> {inherited_method[1]} "
+                                    f"(via {object_name}:{var_type})"
+                                )
+                                return inherited_method
+
+                        # Check if this is a built-in JavaScript type
+                        if var_type in self._JS_BUILTIN_TYPES:
+                            # This is a built-in type instance method call
+                            return (
+                                "Function",
+                                f"builtin.{var_type}.prototype.{method_name}",
+                            )
+
+                    # Fallback: Try to find the method in the same module
+                    method_qn = f"{module_qn}.{method_name}"
+                    if method_qn in self.function_registry:
+                        logger.debug(
+                            f"Object method resolved: {call_name} -> {method_qn}"
+                        )
+                        return self.function_registry[method_qn], method_qn
 
                 # Special handling for self.attribute.method patterns
                 if len(parts) >= 3 and parts[0] == "self":
@@ -479,6 +643,41 @@ class CallProcessor:
         logger.debug(f"Could not resolve call: {call_name}")
         return None
 
+    def _resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
+        """Resolve built-in JavaScript method calls that don't exist in user code."""
+        # Common built-in JavaScript objects and their methods
+        # Check if the call matches any built-in pattern
+        if call_name in self._JS_BUILTIN_PATTERNS:
+            return ("Function", f"builtin.{call_name}")
+
+        # Note: Instance method calls on built-in objects (e.g., myArray.push)
+        # are now handled via type inference in _resolve_function_call
+
+        # Handle JavaScript function binding methods (.bind, .call, .apply)
+        if (
+            call_name.endswith(".bind")
+            or call_name.endswith(".call")
+            or call_name.endswith(".apply")
+        ):
+            # These are special JavaScript method binding calls
+            # Track them as function calls to the binding methods themselves
+            if call_name.endswith(".bind"):
+                return ("Function", "builtin.Function.prototype.bind")
+            elif call_name.endswith(".call"):
+                return ("Function", "builtin.Function.prototype.call")
+            elif call_name.endswith(".apply"):
+                return ("Function", "builtin.Function.prototype.apply")
+
+        # Handle prototype method calls with .call or .apply
+        if ".prototype." in call_name and (
+            call_name.endswith(".call") or call_name.endswith(".apply")
+        ):
+            # Extract the prototype method name without .call/.apply
+            base_call = call_name.rsplit(".", 1)[0]  # Remove .call or .apply
+            return ("Function", base_call)
+
+        return None
+
     def _is_method_chain(self, call_name: str) -> bool:
         """Check if this appears to be a method chain with parentheses (not just obj.method)."""
         # Look for patterns like: obj.method().other_method or obj.method("arg").other_method
@@ -554,13 +753,24 @@ class CallProcessor:
     def _resolve_super_call(
         self, call_name: str, module_qn: str, class_context: str | None = None
     ) -> tuple[str, str] | None:
-        """Resolve super() calls to parent class methods."""
-        # Extract method name from super() call
-        # Examples: "super().__init__" -> "__init__", "super().start_engine" -> "start_engine"
-        if "." in call_name:
+        """Resolve super calls to parent class methods (JavaScript/TypeScript patterns)."""
+        # Extract method name from super call
+        # JavaScript patterns:
+        # - "super" -> constructor call: super(args)
+        # - "super.method" -> parent method call: super.method()
+        # - "super().method" -> chained call (less common)
+
+        if call_name == "super":
+            # Constructor call: super(args)
+            method_name = "constructor"
+        elif call_name.startswith("super."):
+            # Method call: super.method()
+            method_name = call_name.split(".", 1)[1]  # Get part after "super."
+        elif "." in call_name:
+            # Legacy pattern: super().method()
             method_name = call_name.split(".", 1)[1]  # Get part after "super()."
         else:
-            # Just "super()" - this shouldn't happen in normal calls but handle gracefully
+            # Unsupported pattern
             return None
 
         # Use the provided class context

@@ -9,6 +9,9 @@ from tree_sitter import Node, QueryCursor
 from .import_processor import ImportProcessor
 from .utils import resolve_class_name
 
+# Common language constants for performance optimization
+_JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
+
 
 class TypeInferenceEngine:
     """Handles type inference for local variables and method returns."""
@@ -38,8 +41,16 @@ class TypeInferenceEngine:
         """
         local_var_types: dict[str, str] = {}
 
-        if language != "python":
-            # For now, only implement Python support
+        if language == "python":
+            # Use existing Python type inference logic
+            pass
+        elif language in _JS_TYPESCRIPT_LANGUAGES:
+            # Use tree-sitter locals query for JavaScript/TypeScript
+            return self._build_js_local_variable_type_map(
+                caller_node, module_qn, language
+            )
+        else:
+            # Unsupported language
             return local_var_types
 
         try:
@@ -1180,5 +1191,75 @@ class TypeInferenceEngine:
                         f"Cannot infer type for variable reference: {identifier}"
                     )
                     return None
+
+        return None
+
+    def _build_js_local_variable_type_map(
+        self, caller_node: "Node", module_qn: str, language: str
+    ) -> dict[str, str]:
+        """Build local variable type map for JavaScript/TypeScript using tree-sitter locals query."""
+        local_var_types: dict[str, str] = {}
+
+        if language not in self.queries:
+            return local_var_types
+
+        locals_query = self.queries[language].get("locals")
+        if not locals_query:
+            return local_var_types
+
+        try:
+            from tree_sitter import QueryCursor
+
+            # Use tree-sitter's locals query to find variable definitions and references
+            cursor = QueryCursor(locals_query)
+            captures = cursor.captures(caller_node)
+
+            definitions = captures.get("local.definition", [])
+
+            for def_node in definitions:
+                if not hasattr(def_node, "text") or not def_node.text:
+                    continue
+
+                var_name = def_node.text.decode("utf8")
+
+                # Find the variable declarator or assignment that defines this variable
+                var_type = self._infer_js_variable_type(def_node, module_qn)
+                if var_type:
+                    local_var_types[var_name] = var_type
+
+        except Exception as e:
+            logger.debug(f"Error in JavaScript variable type inference: {e}")
+
+        return local_var_types
+
+    def _infer_js_variable_type(self, def_node: "Node", module_qn: str) -> str | None:
+        """Infer the type of a JavaScript variable from its definition."""
+        # Walk up the AST to find the variable declarator
+        current = def_node.parent
+
+        while current:
+            if current.type == "variable_declarator":
+                # Look for patterns like: const animal = new Animal(...)
+                value_node = current.child_by_field_name("value")
+                if value_node and value_node.type == "new_expression":
+                    # Extract the constructor name
+                    constructor_node = value_node.child_by_field_name("constructor")
+                    if constructor_node and constructor_node.type == "identifier":
+                        constructor_name = constructor_node.text
+                        if constructor_name:
+                            return str(constructor_name.decode("utf8"))
+
+                # Look for patterns like: const rect = Rectangle()
+                elif value_node and value_node.type == "call_expression":
+                    func_node = value_node.child_by_field_name("function")
+                    if func_node and func_node.type == "identifier":
+                        func_name = func_node.text
+                        if func_name:
+                            # Check if this is a class expression assignment like: const Rectangle = class { ... }
+                            return str(func_name.decode("utf8"))
+
+                break
+
+            current = current.parent
 
         return None

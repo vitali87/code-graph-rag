@@ -39,7 +39,18 @@ Use the Makefile for:
 
 ## 🚀 Features
 
-- **🌍 Multi-Language Support**: Supports Python, JavaScript, TypeScript, Rust, Go, Scala, Java, and C++ codebases
+- **🌍 Multi-Language Support**:
+
+  | Language | Status | Features |
+  |----------|--------|----------|
+  | ✅ Python | **Fully Supported** | Complete AST parsing, type inference, call graphs |
+  | ✅ JavaScript | **Fully Supported** | Complete AST parsing, type inference, call graphs |
+  | ✅ TypeScript | **Fully Supported** | Complete AST parsing, type inference, call graphs |
+  | 🔜 C++ | **Next in Line** | Basic parsing ready, full support in active development |
+  | 🚧 Rust | In Development | Basic parsing, full support underway |
+  | 🚧 Go | In Development | Basic parsing, full support underway |
+  | 🚧 Scala | In Development | Basic parsing, full support underway |
+  | 🚧 Java | In Development | Basic parsing, full support underway |
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
@@ -451,26 +462,27 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 
 ### Supported Languages & Features
 
-| Language   | Extensions    | Functions | Classes/Structs | Modules | Package Detection |
-|------------|---------------|-----------|-----------------|---------|-------------------|
-| Python     | `.py`         | ✅        | ✅              | ✅      | `__init__.py`    |
-| JavaScript | `.js`, `.jsx` | ✅        | ✅              | ✅      | -                |
-| TypeScript | `.ts`, `.tsx` | ✅        | ✅              | ✅      | -                |
-| Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                |
-| Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                |
-| Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations |
-| Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations |
-| C++        | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`| ✅      | ✅ (classes/structs/unions/enums) | ✅      | -                |
+| Language   | Extensions    | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
+|------------|---------------|-----------|-----------------|---------|-------------------|---------------------|
+| Python     | `.py`         | ✅        | ✅              | ✅      | `__init__.py`    | Type inference, decorators, nested functions |
+| JavaScript | `.js`, `.jsx` | ✅        | ✅              | ✅      | -                | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
+| TypeScript | `.ts`, `.tsx` | ✅        | ✅              | ✅      | -                | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
+| Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                | impl blocks, associated functions |
+| Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                | Methods, type declarations |
+| Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations | Case classes, objects |
+| Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations | Annotations, constructors |
+| C++        | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`| ✅      | ✅ (classes/structs/unions/enums) | ✅      | -                | Constructors, destructors |
 
 ### Language-Specific Features
 
-- **Python**: Full support including nested functions, methods, classes, and package structure
-- **JavaScript/TypeScript**: Functions, arrow functions, classes, and method definitions
-- **Rust**: Functions, structs, enums, impl blocks, and associated functions
-- **Go**: Functions, methods, type declarations, and struct definitions
-- **Scala**: Functions, methods, classes, objects, traits, case classes, and Scala 3 syntax
-- **Java**: Methods, constructors, classes, interfaces, enums, and annotation types
-- **C++**: Functions, classes, structs, and methods
+- **Python**: Full support including nested functions, methods, classes, decorators, type hints, and package structure
+- **JavaScript**: ES6 modules, CommonJS modules, prototype-based methods, object methods, arrow functions, classes, and JSX support
+- **TypeScript**: All JavaScript features plus interfaces, type aliases, enums, namespaces, generics, and advanced type inference
+- **Rust**: Functions, structs, enums, impl blocks, traits, and associated functions
+- **Go**: Functions, methods, type declarations, interfaces, and struct definitions
+- **Scala**: Functions, methods, classes, objects, traits, case classes, implicits, and Scala 3 syntax
+- **Java**: Methods, constructors, classes, interfaces, enums, annotations, and generics
+- **C++**: Functions, classes, structs, unions, enums, constructors, destructors, and templates
 
 
 ### Adding New Languages

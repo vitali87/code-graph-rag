@@ -51,34 +51,57 @@ LANGUAGE_CONFIGS = {
         file_extensions=[".js", ".jsx"],
         function_node_types=[
             "function_declaration",
+            "generator_function_declaration",
+            "function_expression",
             "arrow_function",
             "method_definition",
         ],
-        class_node_types=["class_declaration"],
+        class_node_types=["class_declaration", "class"],
         module_node_types=["program"],
         call_node_types=["call_expression"],
-        import_node_types=["import_statement", "lexical_declaration"],
+        import_node_types=[
+            "import_statement",
+            "lexical_declaration",
+            "export_statement",
+        ],
         import_from_node_types=[
             "import_statement",
             "lexical_declaration",
-        ],  # Include CommonJS require
+            "export_statement",
+        ],  # Include CommonJS require and re-exports
     ),
     "typescript": LanguageConfig(
         name="typescript",
         file_extensions=[".ts", ".tsx"],
         function_node_types=[
             "function_declaration",
+            "generator_function_declaration",
+            "function_expression",
             "arrow_function",
             "method_definition",
+            "function_signature",  # For ambient declarations: declare function
         ],
-        class_node_types=["class_declaration"],
+        class_node_types=[
+            "class_declaration",
+            "class",
+            "abstract_class_declaration",
+            "enum_declaration",
+            "interface_declaration",
+            "type_alias_declaration",
+            "internal_module",
+        ],
         module_node_types=["program"],
         call_node_types=["call_expression"],
-        import_node_types=["import_statement", "lexical_declaration"],
+        import_node_types=[
+            "import_statement",
+            "lexical_declaration",
+            "export_statement",
+        ],
         import_from_node_types=[
             "import_statement",
             "lexical_declaration",
-        ],  # Include CommonJS require
+            "export_statement",
+        ],  # Include CommonJS require and re-exports
     ),
     "rust": LanguageConfig(
         name="rust",
