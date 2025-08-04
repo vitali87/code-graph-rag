@@ -930,7 +930,7 @@ class DefinitionProcessor:
                     )
 
                     logger.debug(
-                        f"Prototype method: {constructor_qn} DEFINES_METHOD {method_qn}"
+                        f"Prototype method: {constructor_qn} DEFINES {method_qn}"
                     )
 
         except Exception as e:
