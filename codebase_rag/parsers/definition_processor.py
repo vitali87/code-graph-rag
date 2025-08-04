@@ -958,18 +958,7 @@ class DefinitionProcessor:
             # Handle both shorthand ({ name }) and aliased ({ name: alias }) destructuring
             commonjs_destructure_query = """
             (lexical_declaration
-              (variable_declarator
-                name: (object_pattern
-                  [
-                    (shorthand_property_identifier_pattern) @destructured_name
-                    (pair_pattern
-                      key: (property_identifier) @property_key
-                      value: (identifier) @alias_name)
-                  ])
-                value: (call_expression
-                  function: (identifier) @require_func
-                  arguments: (arguments
-                    (string) @module_name))))
+              (variable_declarator) @variable_declarator)
             """
 
             try:
@@ -977,69 +966,96 @@ class DefinitionProcessor:
                 cursor = QueryCursor(query)
                 captures = cursor.captures(root_node)
 
-                # Handle shorthand destructuring ({ name })
-                destructured_names = captures.get("destructured_name", [])
-                # Handle aliased destructuring ({ name: alias })
-                property_keys = captures.get("property_key", [])
-                alias_names = captures.get("alias_name", [])
+                # Get all variable declarators
+                variable_declarators = captures.get("variable_declarator", [])
 
-                module_names = captures.get("module_name", [])
-                require_funcs = captures.get("require_func", [])
-
-                # Process shorthand destructuring
-                for i, destructured_node in enumerate(destructured_names):
-                    if i < len(module_names) and i < len(require_funcs):
-                        # Only process if it's actually a require call
-                        require_func_text = None
-                        require_text = require_funcs[i].text
-                        if require_text is not None:
-                            require_func_text = require_text.decode("utf8")
-                        if require_func_text == "require":
-                            destructured_name = None
-                            if destructured_node.text is not None:
-                                destructured_name = destructured_node.text.decode(
-                                    "utf8"
-                                )
-                            module_name = None
-                            module_text = module_names[i].text
-                            if module_text is not None:
-                                module_name = module_text.decode("utf8").strip("'\"")
-
-                            if destructured_name and module_name:
-                                self._process_commonjs_import(
-                                    destructured_name, module_name, module_qn
-                                )
-
-                # Process aliased destructuring
-                for i, (property_key_node, alias_name_node) in enumerate(
-                    zip(property_keys, alias_names)
-                ):
-                    if i < len(module_names) and i < len(require_funcs):
-                        # Only process if it's actually a require call
-                        require_func_text = None
-                        require_text = require_funcs[i].text
-                        if require_text is not None:
-                            require_func_text = require_text.decode("utf8")
-                        if require_func_text == "require":
-                            # For aliased destructuring, we use the alias name as the local variable
-                            alias_name = None
-                            if alias_name_node.text is not None:
-                                alias_name = alias_name_node.text.decode("utf8")
-                            module_name = None
-                            module_text = module_names[i].text
-                            if module_text is not None:
-                                module_name = module_text.decode("utf8").strip("'\"")
-
-                            if alias_name and module_name:
-                                self._process_commonjs_import(
-                                    alias_name, module_name, module_qn
-                                )
+                # Process each variable declarator separately
+                for declarator in variable_declarators:
+                    self._process_variable_declarator_for_commonjs(
+                        declarator, module_qn
+                    )
 
             except Exception as e:
                 logger.debug(f"Failed to process CommonJS destructuring pattern: {e}")
 
         except Exception as e:
             logger.debug(f"Failed to detect missing import patterns: {e}")
+
+    def _process_variable_declarator_for_commonjs(
+        self, declarator: Node, module_qn: str
+    ) -> None:
+        """Process a single variable declarator to extract CommonJS destructuring imports."""
+        try:
+            # Check if this is a destructuring assignment with a require call
+            # Pattern: const { name1, name2: alias } = require('module')
+
+            # Find the name (left side) - should be an object_pattern for destructuring
+            name_node = declarator.child_by_field_name("name")
+            if not name_node or name_node.type != "object_pattern":
+                return
+
+            # Find the value (right side) - should be a require call
+            value_node = declarator.child_by_field_name("value")
+            if not value_node or value_node.type != "call_expression":
+                return
+
+            # Check if the call is to 'require'
+            function_node = value_node.child_by_field_name("function")
+            if not function_node or function_node.type != "identifier":
+                return
+
+            if (
+                function_node.text is None
+                or function_node.text.decode("utf8") != "require"
+            ):
+                return
+
+            # Extract the module name from require arguments
+            arguments_node = value_node.child_by_field_name("arguments")
+            if not arguments_node or not arguments_node.children:
+                return
+
+            # Get the first argument (module name string)
+            module_string_node = None
+            for child in arguments_node.children:
+                if child.type == "string":
+                    module_string_node = child
+                    break
+
+            if not module_string_node or module_string_node.text is None:
+                return
+
+            module_name = module_string_node.text.decode("utf8").strip("'\"")
+
+            # Now extract all destructured variables from the object pattern
+            for child in name_node.children:
+                if child.type == "shorthand_property_identifier_pattern":
+                    # Handle shorthand destructuring: { name }
+                    if child.text is not None:
+                        destructured_name = child.text.decode("utf8")
+                        self._process_commonjs_import(
+                            destructured_name, module_name, module_qn
+                        )
+
+                elif child.type == "pair_pattern":
+                    # Handle aliased destructuring: { name: alias }
+                    key_node = child.child_by_field_name("key")
+                    value_node = child.child_by_field_name("value")
+
+                    if (
+                        key_node
+                        and key_node.type == "property_identifier"
+                        and value_node
+                        and value_node.type == "identifier"
+                    ):
+                        if value_node.text is not None:
+                            alias_name = value_node.text.decode("utf8")
+                            self._process_commonjs_import(
+                                alias_name, module_name, module_qn
+                            )
+
+        except Exception as e:
+            logger.debug(f"Failed to process variable declarator for CommonJS: {e}")
 
     def _process_commonjs_import(
         self, imported_name: str, module_name: str, module_qn: str

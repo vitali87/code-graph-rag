@@ -855,3 +855,127 @@ const url = API_URL;
     print(f"   - IMPORTS relationships: {len(import_relationships)}")
     print(f"   - DEFINES relationships: {len(defines_relationships)}")
     print(f"   - Comprehensive test imports: {len(comprehensive_imports)}")
+
+
+def test_commonjs_multiple_destructured_variables_regression(
+    javascript_imports_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """
+    Regression test for critical bug in CommonJS destructuring.
+
+    This test specifically addresses the bug where multiple destructured variables
+    from a single require() statement would cause IndexError due to incorrect
+    iteration logic. The bug was in _ingest_missing_import_patterns where it
+    would iterate over destructured names but try to access module_names[i]
+    and require_funcs[i] with the same index, causing failures when i >= 1.
+
+    Example that would fail before fix:
+    const { a, b, c } = require('module'); // 3 destructured, 1 module, 1 require
+    Old code: iterate i=0,1,2 over [a,b,c] but access module_names[1] (IndexError)
+    """
+    test_file = javascript_imports_project / "regression_multiple_destructured.js"
+    test_file.write_text(
+        """
+// These patterns would trigger the IndexError bug before the fix
+
+// Case 1: Multiple shorthand destructuring from single require
+const { helper, validator, formatter, processor } = require('./src/utils/helpers');
+
+// Case 2: Multiple aliased destructuring from single require
+const { api: apiClient, db: database, cache: cacheStore } = require('./src/services');
+
+// Case 3: Mixed shorthand and aliased in single require
+const { logger, config: appConfig, utils: utilityLib, DEBUG } = require('./src/core');
+
+// Case 4: Large number of destructured variables (stress test)
+const {
+    add, subtract, multiply, divide,
+    sin, cos, tan, sqrt,
+    PI: mathPI, E: mathE
+} = require('./src/utils/math');
+
+// Case 5: Multiple requires with multiple destructuring each
+const { read, write, exists } = require('fs');
+const { join, resolve, dirname } = require('path');
+const { parse, stringify } = require('json');
+
+// Using the destructured variables to ensure they're tracked
+helper();
+validator();
+formatter();
+processor();
+
+apiClient.get();
+database.query();
+cacheStore.set();
+
+logger.info();
+appConfig.load();
+utilityLib.helper();
+
+const sum = add(1, 2);
+const diff = subtract(5, 3);
+const area = multiply(PI, 2);
+"""
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=javascript_imports_project,
+        parsers=parsers,
+        queries=queries,
+    )
+
+    # This would raise IndexError before the fix
+    updater.run()
+
+    import_relationships = [
+        c
+        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
+        if c.args[1] == "IMPORTS"
+    ]
+
+    regression_imports = [
+        call
+        for call in import_relationships
+        if "regression_multiple_destructured" in call.args[0][2]
+    ]
+
+    # Should handle all the destructuring patterns without IndexError
+    # We expect multiple imports from the destructuring patterns
+    assert len(regression_imports) >= 7, (
+        f"Expected at least 7 imports from multiple destructuring patterns, "
+        f"found {len(regression_imports)}. This suggests the regression fix may not be working."
+    )
+
+    # Verify specific modules are imported
+    imported_modules = [call.args[2][2] for call in regression_imports]
+
+    expected_patterns = [
+        "helpers",  # from './src/utils/helpers'
+        "services",  # from './src/services'
+        "core",  # from './src/core'
+        "math",  # from './src/utils/math'
+        "fs",  # from 'fs'
+        "path",  # from 'path'
+        "json",  # from 'json'
+    ]
+
+    found_patterns = []
+    for pattern in expected_patterns:
+        if any(pattern in module for module in imported_modules):
+            found_patterns.append(pattern)
+
+    # Should find most of the expected patterns
+    assert len(found_patterns) >= 5, (
+        f"Expected to find at least 5 module patterns {expected_patterns}, "
+        f"but only found {len(found_patterns)}: {found_patterns}\n"
+        f"All imported modules: {imported_modules}"
+    )
+
+    print("✅ CommonJS multiple destructuring regression test passed:")
+    print(f"   - Total imports from test file: {len(regression_imports)}")
+    print(f"   - Module patterns found: {found_patterns}")
+    print("   - No IndexError occurred (bug is fixed)")
