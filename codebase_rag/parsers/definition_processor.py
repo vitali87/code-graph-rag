@@ -1,5 +1,6 @@
 """Definition processor for extracting functions, classes and methods."""
 
+import textwrap
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -766,9 +767,6 @@ class DefinitionProcessor:
         if not language_obj:
             return
 
-        # Import the Query and QueryCursor classes
-        from tree_sitter import Query, QueryCursor
-
         # Create a query to find prototype inheritance patterns
         # Pattern: Child.prototype = Object.create(Parent.prototype)
         query_text = """
@@ -837,9 +835,6 @@ class DefinitionProcessor:
         language_obj = lang_queries.get("language")
         if not language_obj:
             return
-
-        # Import the Query and QueryCursor classes
-        from tree_sitter import Query, QueryCursor
 
         # Detect prototype method assignments: ConstructorFunction.prototype.methodName = function() { ... }
         prototype_method_query = """
@@ -923,9 +918,6 @@ class DefinitionProcessor:
         language_obj = lang_queries.get("language")
         if not language_obj:
             return
-
-        # Import the Query and QueryCursor classes
-        from tree_sitter import Query, QueryCursor
 
         try:
             # Focus only on CommonJS destructuring which import_processor doesn't handle well
@@ -1029,9 +1021,6 @@ class DefinitionProcessor:
         if not language_obj:
             return
 
-        # Import the Query and QueryCursor classes
-        from tree_sitter import Query, QueryCursor
-
         try:
             # Query for object literal methods (pair with function_expression)
             object_method_query = """
@@ -1117,8 +1106,6 @@ class DefinitionProcessor:
         language_obj = lang_queries.get("language")
         if not language_obj:
             return
-
-        from tree_sitter import Query, QueryCursor
 
         try:
             # Query for exports.name = function patterns
@@ -1241,8 +1228,6 @@ class DefinitionProcessor:
             (export_statement
               [(function_declaration) (generator_function_declaration)] @export_function)
             """
-
-            import textwrap
 
             for query_text in [export_const_query, export_function_query]:
                 try:
