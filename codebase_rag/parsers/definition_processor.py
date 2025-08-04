@@ -1264,8 +1264,8 @@ class DefinitionProcessor:
             (export_statement
               (lexical_declaration
                 (variable_declarator
-                  (identifier) @export_name
-                  [(function_expression) (arrow_function)] @export_function)))
+                  name: (identifier) @export_name
+                  value: [(function_expression) (arrow_function)] @export_function)))
             """
 
             # Query for export function name patterns
