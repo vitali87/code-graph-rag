@@ -14,6 +14,9 @@ from ..services.graph_service import MemgraphIngestor
 from .import_processor import ImportProcessor
 from .utils import resolve_class_name
 
+# Common language constants for performance optimization
+_JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
+
 
 class DefinitionProcessor:
     """Handles processing of function, class, and method definitions."""
@@ -774,7 +777,7 @@ class DefinitionProcessor:
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
         """Detect JavaScript prototype inheritance patterns using tree-sitter queries."""
-        if language not in ["javascript", "typescript"]:
+        if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
         # Handle prototype inheritance links
@@ -940,7 +943,7 @@ class DefinitionProcessor:
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
         """Detect import patterns not handled by the existing import_processor."""
-        if language not in ["javascript", "typescript"]:
+        if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
         lang_queries = queries[language]
@@ -1087,7 +1090,7 @@ class DefinitionProcessor:
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
         """Detect and ingest methods defined in object literals."""
-        if language not in ["javascript", "typescript"]:
+        if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
         lang_queries = queries[language]
@@ -1196,7 +1199,7 @@ class DefinitionProcessor:
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
         """Detect and ingest CommonJS exports as function definitions."""
-        if language not in ["javascript", "typescript"]:
+        if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
         lang_queries = queries[language]
@@ -1426,7 +1429,7 @@ class DefinitionProcessor:
     ) -> None:
         """Detect arrow functions in assignment expressions and object literals."""
         # Only apply to JavaScript/TypeScript
-        if language not in ["javascript", "typescript"]:
+        if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
         try:

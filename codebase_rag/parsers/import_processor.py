@@ -8,6 +8,9 @@ from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
 
+# Common language constants for performance optimization
+_JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
+
 
 class ImportProcessor:
     """Handles parsing and processing of import statements."""
@@ -62,7 +65,7 @@ class ImportProcessor:
             # Handle different language import patterns
             if language == "python":
                 self._parse_python_imports(captures, module_qn)
-            elif language in ["javascript", "typescript"]:
+            elif language in _JS_TYPESCRIPT_LANGUAGES:
                 self._parse_js_ts_imports(captures, module_qn)
             elif language == "java":
                 self._parse_java_imports(captures, module_qn)

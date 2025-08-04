@@ -9,6 +9,9 @@ from tree_sitter import Node, QueryCursor
 from .import_processor import ImportProcessor
 from .utils import resolve_class_name
 
+# Common language constants for performance optimization
+_JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
+
 
 class TypeInferenceEngine:
     """Handles type inference for local variables and method returns."""
@@ -41,7 +44,7 @@ class TypeInferenceEngine:
         if language == "python":
             # Use existing Python type inference logic
             pass
-        elif language in ["javascript", "typescript"]:
+        elif language in _JS_TYPESCRIPT_LANGUAGES:
             # Use tree-sitter locals query for JavaScript/TypeScript
             return self._build_js_local_variable_type_map(
                 caller_node, module_qn, language

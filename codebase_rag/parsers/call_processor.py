@@ -34,7 +34,7 @@ class CallProcessor:
     }
 
     # JavaScript built-in patterns for static method calls
-    _JS_BUILTIN_PATTERNS = [
+    _JS_BUILTIN_PATTERNS = {
         # Object static methods
         "Object.create",
         "Object.keys",
@@ -81,7 +81,7 @@ class CallProcessor:
         # Date static methods
         "Date.now",
         "Date.parse",
-    ]
+    }
 
     def __init__(
         self,
@@ -647,10 +647,8 @@ class CallProcessor:
         """Resolve built-in JavaScript method calls that don't exist in user code."""
         # Common built-in JavaScript objects and their methods
         # Check if the call matches any built-in pattern
-        for pattern in self._JS_BUILTIN_PATTERNS:
-            if call_name == pattern:
-                # Return as a built-in function with the call name as QN
-                return ("Function", f"builtin.{call_name}")
+        if call_name in self._JS_BUILTIN_PATTERNS:
+            return ("Function", f"builtin.{call_name}")
 
         # Note: Instance method calls on built-in objects (e.g., myArray.push)
         # are now handled via type inference in _resolve_function_call
