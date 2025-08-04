@@ -414,6 +414,28 @@ class CallProcessor:
                                 )
                                 return inherited_method
 
+                        # Check if this is a built-in JavaScript type
+                        builtin_types = {
+                            "Array",
+                            "Object",
+                            "String",
+                            "Number",
+                            "Date",
+                            "RegExp",
+                            "Function",
+                            "Map",
+                            "Set",
+                            "Promise",
+                            "Error",
+                            "Boolean",
+                        }
+                        if var_type in builtin_types:
+                            # This is a built-in type instance method call
+                            return (
+                                "Function",
+                                f"builtin.{var_type}.prototype.{method_name}",
+                            )
+
                     # Fallback: Try to find the method in the same module
                     method_qn = f"{module_qn}.{method_name}"
                     if method_qn in self.function_registry:
@@ -627,20 +649,8 @@ class CallProcessor:
                 # Return as a built-in function with the call name as QN
                 return ("Function", f"builtin.{call_name}")
 
-        # Check for method calls on built-in objects (instance methods)
-        builtin_objects = [
-            "Array",
-            "Object",
-            "String",
-            "Number",
-            "Date",
-            "RegExp",
-            "Function",
-        ]
-        for obj in builtin_objects:
-            if call_name.startswith(f"{obj.lower()}.") and "." in call_name:
-                # This is an instance method call on a built-in object
-                return ("Function", f"builtin.{call_name}")
+        # Note: Instance method calls on built-in objects (e.g., myArray.push)
+        # are now handled via type inference in _resolve_function_call
 
         # Handle JavaScript function binding methods (.bind, .call, .apply)
         if (
