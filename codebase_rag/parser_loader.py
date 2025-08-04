@@ -1,5 +1,6 @@
 import os
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
 
 from loguru import logger
@@ -165,7 +166,11 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
     queries: dict[str, Any] = {}
     available_languages = []
 
-    for lang_name, lang_config in LANGUAGE_CONFIGS.items():
+    
+    # Deepcopy to avoid modifying the original configs
+    configs = deepcopy(LANGUAGE_CONFIGS)
+
+    for lang_name, lang_config in configs.items():
         if lang_lib := LANGUAGE_LIBRARIES.get(lang_name):
             try:
                 language = Language(lang_lib())
@@ -219,8 +224,12 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                 combined_import_patterns = " ".join(all_import_patterns)
 
                 queries[lang_name] = {
-                    "functions": Query(language, function_patterns),
-                    "classes": Query(language, class_patterns),
+                    "functions": Query(language, function_patterns)
+                    if function_patterns
+                    else None,
+                    "classes": Query(language, class_patterns)
+                    if class_patterns
+                    else None,
                     "calls": Query(language, call_patterns) if call_patterns else None,
                     "imports": Query(language, combined_import_patterns)
                     if combined_import_patterns
