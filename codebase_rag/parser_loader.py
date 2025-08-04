@@ -224,17 +224,26 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
 
                 # Create locals query for variable tracking
                 locals_query = None
-                if lang_name == "javascript":
-                    # JavaScript locals query to track variable definitions and references
-                    locals_patterns = """
-                    ; Variable definitions
-                    (variable_declarator name: (identifier) @local.definition)
-                    (function_declaration name: (identifier) @local.definition)
-                    (class_declaration name: (identifier) @local.definition)
+                if lang_name in ("javascript", "typescript"):
+                    # Create language-specific locals patterns
+                    if lang_name == "javascript":
+                        locals_patterns = """
+                        ; Variable definitions
+                        (variable_declarator name: (identifier) @local.definition)
+                        (function_declaration name: (identifier) @local.definition)
+                        (class_declaration name: (identifier) @local.definition)
 
-                    ; Variable references
-                    (identifier) @local.reference
-                    """
+                        ; Variable references
+                        (identifier) @local.reference
+                        """
+                    else:  # typescript
+                        # TypeScript-specific patterns (very conservative to avoid grammar conflicts)
+                        locals_patterns = """
+                        ; Most basic patterns that should work with TypeScript
+                        (variable_declarator name: (identifier) @local.definition)
+                        (identifier) @local.reference
+                        """
+
                     try:
                         locals_query = Query(language, locals_patterns)
                     except Exception as e:
