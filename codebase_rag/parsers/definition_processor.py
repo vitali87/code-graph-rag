@@ -38,6 +38,28 @@ class DefinitionProcessor:
         self.import_processor = import_processor
         self.class_inheritance: dict[str, list[str]] = {}
 
+    def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
+        """
+        Determine the node type for inheritance relationships.
+        Returns the type from the function registry, defaulting to "Class".
+        """
+        node_type = self.function_registry.get(qualified_name, "Class")
+        return str(node_type)
+
+    def _create_inheritance_relationship(
+        self, child_node_type: str, child_qn: str, parent_qn: str
+    ) -> None:
+        """
+        Create an INHERITS relationship between child and parent entities.
+        Determines the parent type automatically from the function registry.
+        """
+        parent_type = self._get_node_type_for_inheritance(parent_qn)
+        self.ingestor.ensure_relationship_batch(
+            (child_node_type, "qualified_name", child_qn),
+            "INHERITS",
+            (parent_type, "qualified_name", parent_qn),
+        )
+
     def process_file(
         self,
         file_path: Path,
@@ -510,12 +532,8 @@ class DefinitionProcessor:
 
             # Create INHERITS relationships for each parent class
             for parent_class_qn in parent_classes:
-                # The parent type is determined from the function registry
-                parent_type = self.function_registry.get(parent_class_qn, "Class")
-                self.ingestor.ensure_relationship_batch(
-                    (node_type, "qualified_name", class_qn),
-                    "INHERITS",
-                    (parent_type, "qualified_name", parent_class_qn),
+                self._create_inheritance_relationship(
+                    node_type, class_qn, parent_class_qn
                 )
 
             body_node = class_node.child_by_field_name("body")
