@@ -1100,15 +1100,29 @@ class DefinitionProcessor:
                             if self._is_static_method_in_class(method_func_node):
                                 continue
 
-                            # Try to determine the object context from parent nodes
-                            object_name = self._find_object_name_for_method(
-                                method_name_node
-                            )
-
-                            if object_name:
-                                method_qn = f"{module_qn}.{object_name}.{method_name}"
+                            # Get language config for nested name building
+                            lang_config = lang_queries.get("config")
+                            if lang_config:
+                                # Use the same nested qualified name logic as functions
+                                method_qn = self._build_nested_qualified_name(
+                                    method_func_node,
+                                    module_qn,
+                                    method_name,
+                                    lang_config,
+                                )
+                                if method_qn is None:
+                                    method_qn = f"{module_qn}.{method_name}"
                             else:
-                                method_qn = f"{module_qn}.{method_name}"
+                                # Fallback to old logic if no config
+                                object_name = self._find_object_name_for_method(
+                                    method_name_node
+                                )
+                                if object_name:
+                                    method_qn = (
+                                        f"{module_qn}.{object_name}.{method_name}"
+                                    )
+                                else:
+                                    method_qn = f"{module_qn}.{method_name}"
 
                             # Create Function node for object literal method
                             method_props = {
@@ -1392,7 +1406,21 @@ class DefinitionProcessor:
                     ):
                         if method_name.text and arrow_function:
                             function_name = method_name.text.decode("utf8")
-                            function_qn = f"{module_qn}.{function_name}"
+
+                            # Get language config for nested name building
+                            lang_config = queries[language].get("config")
+                            if lang_config:
+                                # Use the same nested qualified name logic as functions
+                                function_qn = self._build_nested_qualified_name(
+                                    arrow_function,
+                                    module_qn,
+                                    function_name,
+                                    lang_config,
+                                )
+                                if function_qn is None:
+                                    function_qn = f"{module_qn}.{function_name}"
+                            else:
+                                function_qn = f"{module_qn}.{function_name}"
 
                             function_props = {
                                 "qualified_name": function_qn,
@@ -1420,7 +1448,21 @@ class DefinitionProcessor:
                                 function_name = member_text.split(".")[
                                     -1
                                 ]  # Get the property name
-                                function_qn = f"{module_qn}.{function_name}"
+
+                                # Get language config for nested name building
+                                lang_config = queries[language].get("config")
+                                if lang_config:
+                                    # Use the same nested qualified name logic as functions
+                                    function_qn = self._build_nested_qualified_name(
+                                        arrow_function,
+                                        module_qn,
+                                        function_name,
+                                        lang_config,
+                                    )
+                                    if function_qn is None:
+                                        function_qn = f"{module_qn}.{function_name}"
+                                else:
+                                    function_qn = f"{module_qn}.{function_name}"
 
                                 function_props = {
                                     "qualified_name": function_qn,
