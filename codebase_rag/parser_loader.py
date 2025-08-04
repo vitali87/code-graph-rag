@@ -166,7 +166,6 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
     queries: dict[str, Any] = {}
     available_languages = []
 
-    
     # Deepcopy to avoid modifying the original configs
     configs = deepcopy(LANGUAGE_CONFIGS)
 
@@ -224,16 +223,20 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                 combined_import_patterns = " ".join(all_import_patterns)
 
                 queries[lang_name] = {
-                    "functions": Query(language, function_patterns)
-                    if function_patterns
-                    else None,
-                    "classes": Query(language, class_patterns)
-                    if class_patterns
-                    else None,
+                    "functions": (
+                        Query(language, function_patterns)
+                        if function_patterns
+                        else None
+                    ),
+                    "classes": (
+                        Query(language, class_patterns) if class_patterns else None
+                    ),
                     "calls": Query(language, call_patterns) if call_patterns else None,
-                    "imports": Query(language, combined_import_patterns)
-                    if combined_import_patterns
-                    else None,
+                    "imports": (
+                        Query(language, combined_import_patterns)
+                        if combined_import_patterns
+                        else None
+                    ),
                     "config": lang_config,
                     "language": language,
                 }

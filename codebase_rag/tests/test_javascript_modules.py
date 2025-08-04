@@ -219,9 +219,9 @@ exports.ExportedClass = class ExportedClass {
         )
     ]
 
-    assert len(exported_nodes) >= 5, (
-        f"Expected at least 5 exported functions/classes, found {len(exported_nodes)}"
-    )
+    assert (
+        len(exported_nodes) >= 5
+    ), f"Expected at least 5 exported functions/classes, found {len(exported_nodes)}"
 
     # Check specific exports in exports_shorthand
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
@@ -409,9 +409,9 @@ export function enhancedFetch(url, options) {
     ]
 
     for expected in expected_functions:
-        assert expected in created_functions, (
-            f"Missing ES6 exported function: {expected}"
-        )
+        assert (
+            expected in created_functions
+        ), f"Missing ES6 exported function: {expected}"
 
     expected_classes = [
         f"{project_name}.es6_exports.DataService",
@@ -431,9 +431,9 @@ export function enhancedFetch(url, options) {
         call for call in import_relationships if "reexports" in call.args[0][2]
     ]
 
-    assert len(reexport_imports) >= 3, (
-        f"Expected at least 3 re-export imports, found {len(reexport_imports)}"
-    )
+    assert (
+        len(reexport_imports) >= 3
+    ), f"Expected at least 3 re-export imports, found {len(reexport_imports)}"
 
 
 def test_mixed_module_systems(
@@ -591,14 +591,14 @@ export function hybridFunction() {
     imported_modules = [call.args[2][2] for call in mixed_imports]
 
     # Check for ES6 imports
-    assert any("react" in module.lower() for module in imported_modules), (
-        "Missing ES6 React import"
-    )
+    assert any(
+        "react" in module.lower() for module in imported_modules
+    ), "Missing ES6 React import"
 
     # Check for CommonJS requires
-    assert any("fs" in module for module in imported_modules), (
-        "Missing CommonJS fs require"
-    )
+    assert any(
+        "fs" in module for module in imported_modules
+    ), "Missing CommonJS fs require"
 
     # Check that functions and classes are created
     function_calls = [
@@ -619,9 +619,9 @@ export function hybridFunction() {
         if "mixed_modules" in call[0][1]["qualified_name"]
     ]
 
-    assert len(mixed_functions) >= 3, (
-        f"Expected at least 3 functions in mixed modules, found {len(mixed_functions)}"
-    )
+    assert (
+        len(mixed_functions) >= 3
+    ), f"Expected at least 3 functions in mixed modules, found {len(mixed_functions)}"
 
     # Check UMD pattern parsing
     umd_functions = [
@@ -632,13 +632,13 @@ export function hybridFunction() {
         call for call in class_calls if "umd_module" in call[0][1]["qualified_name"]
     ]
 
-    assert len(umd_functions) >= 2, (
-        f"Expected at least 2 UMD functions, found {len(umd_functions)}"
-    )
+    assert (
+        len(umd_functions) >= 2
+    ), f"Expected at least 2 UMD functions, found {len(umd_functions)}"
 
-    assert len(umd_classes) >= 1, (
-        f"Expected at least 1 UMD class, found {len(umd_classes)}"
-    )
+    assert (
+        len(umd_classes) >= 1
+    ), f"Expected at least 1 UMD class, found {len(umd_classes)}"
 
 
 def test_circular_dependencies(
@@ -1088,9 +1088,9 @@ export const utils = new Proxy({}, {
     ]
 
     # Should capture at least some of the dynamically created functions
-    assert len(dynamic_functions) >= 2, (
-        f"Expected at least 2 functions from dynamic exports, found {len(dynamic_functions)}"
-    )
+    assert (
+        len(dynamic_functions) >= 2
+    ), f"Expected at least 2 functions from dynamic exports, found {len(dynamic_functions)}"
 
     # Check ES6 dynamic exports
     es6_dynamic_nodes = [
@@ -1099,9 +1099,9 @@ export const utils = new Proxy({}, {
         if "es6_dynamic_exports" in call[0][1]["qualified_name"]
     ]
 
-    assert len(es6_dynamic_nodes) >= 2, (
-        f"Expected at least 2 nodes from ES6 dynamic exports, found {len(es6_dynamic_nodes)}"
-    )
+    assert (
+        len(es6_dynamic_nodes) >= 2
+    ), f"Expected at least 2 nodes from ES6 dynamic exports, found {len(es6_dynamic_nodes)}"
 
 
 def test_module_comprehensive(
@@ -1214,9 +1214,9 @@ export function useImports() {
         if "comprehensive_modules" in call.args[0][2]
     ]
 
-    assert len(comprehensive_imports) >= 6, (
-        f"Expected at least 6 comprehensive imports, found {len(comprehensive_imports)}"
-    )
+    assert (
+        len(comprehensive_imports) >= 6
+    ), f"Expected at least 6 comprehensive imports, found {len(comprehensive_imports)}"
 
     # Check for both CommonJS and ES6 imports
     imported_modules = [call.args[2][2] for call in comprehensive_imports]
@@ -1226,12 +1226,12 @@ export function useImports() {
     assert any("path" in module for module in imported_modules), "Missing path import"
 
     # ES6 imports
-    assert any("react" in module.lower() for module in imported_modules), (
-        "Missing React import"
-    )
-    assert any("validators" in module for module in imported_modules), (
-        "Missing validators import"
-    )
+    assert any(
+        "react" in module.lower() for module in imported_modules
+    ), "Missing React import"
+    assert any(
+        "validators" in module for module in imported_modules
+    ), "Missing validators import"
 
     # Verify function exports
     function_calls = [

@@ -1217,9 +1217,12 @@ class DefinitionProcessor:
               [(function_declaration) (generator_function_declaration)] @export_function)
             """
 
+            import textwrap
+
             for query_text in [export_const_query, export_function_query]:
                 try:
-                    query = Query(lang_query, query_text)
+                    cleaned_query = textwrap.dedent(query_text).strip()
+                    query = Query(lang_query, cleaned_query)
                     cursor = QueryCursor(query)
                     captures = cursor.captures(root_node)
 
