@@ -956,9 +956,16 @@ class DefinitionProcessor:
         try:
             # Focus only on CommonJS destructuring which import_processor doesn't handle well
             # Handle both shorthand ({ name }) and aliased ({ name: alias }) destructuring
+            # More specific query to find only CommonJS destructuring with require
             commonjs_destructure_query = """
             (lexical_declaration
-              (variable_declarator) @variable_declarator)
+              (variable_declarator
+                name: (object_pattern)
+                value: (call_expression
+                  function: (identifier) @func (#eq? @func "require")
+                )
+              ) @variable_declarator
+            )
             """
 
             try:
