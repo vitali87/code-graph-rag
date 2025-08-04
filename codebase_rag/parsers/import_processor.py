@@ -318,28 +318,22 @@ class ImportProcessor:
                         # Simple: import { name } from 'module'
                         # Aliased: import { name as alias } from 'module'
 
-                        identifiers = [
-                            c for c in grandchild.children if c.type == "identifier"
-                        ]
-
-                        if len(identifiers) == 1:
-                            # Simple import: { name }
-                            imported_name = identifiers[0].text.decode("utf-8")
-                            local_name = imported_name
-                        elif len(identifiers) == 2:
-                            # Aliased import: { name as alias }
-                            imported_name = identifiers[0].text.decode("utf-8")
-                            local_name = identifiers[1].text.decode("utf-8")
-                        else:
-                            continue
-
-                        self.import_mapping[current_module][local_name] = (
-                            f"{source_module}.{imported_name}"
-                        )
-                        logger.debug(
-                            f"JS named import: {local_name} -> "
-                            f"{source_module}.{imported_name}"
-                        )
+                        name_node = grandchild.child_by_field_name("name")
+                        alias_node = grandchild.child_by_field_name("alias")
+                        if name_node and name_node.text:
+                            imported_name = name_node.text.decode("utf-8")
+                            local_name = (
+                                alias_node.text.decode("utf-8")
+                                if alias_node and alias_node.text
+                                else imported_name
+                            )
+                            self.import_mapping[current_module][local_name] = (
+                                f"{source_module}.{imported_name}"
+                            )
+                            logger.debug(
+                                f"JS named import: {local_name} -> "
+                                f"{source_module}.{imported_name}"
+                            )
 
             elif child.type == "namespace_import":
                 # Namespace import: import * as utils from './utils'
