@@ -745,6 +745,20 @@ class DefinitionProcessor:
         if language not in ["javascript", "typescript"]:
             return
 
+        # Handle prototype inheritance links
+        self._ingest_prototype_inheritance_links(
+            root_node, module_qn, language, queries
+        )
+
+        # Handle prototype method assignments
+        self._ingest_prototype_method_assignments(
+            root_node, module_qn, language, queries
+        )
+
+    def _ingest_prototype_inheritance_links(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect prototype inheritance links (Child.prototype = Object.create(Parent.prototype))."""
         lang_queries = queries[language]
 
         # Get the language object for creating queries
@@ -810,77 +824,91 @@ class DefinitionProcessor:
                         f"Prototype inheritance: {child_qn} INHERITS {parent_qn}"
                     )
 
-            # Also detect prototype method assignments: ConstructorFunction.prototype.methodName = function() { ... }
-            prototype_method_query = """
-            (assignment_expression
-              left: (member_expression
-                object: (member_expression
-                  object: (identifier) @constructor_name
-                  property: (property_identifier) @prototype_keyword (#eq? @prototype_keyword "prototype"))
-                property: (property_identifier) @method_name)
-              right: (function_expression) @method_function)
-            """
-
-            try:
-                method_query = Query(language_obj, prototype_method_query)
-                method_cursor = QueryCursor(method_query)
-                method_captures = method_cursor.captures(root_node)
-
-                constructor_names = method_captures.get("constructor_name", [])
-                method_names = method_captures.get("method_name", [])
-                method_functions = method_captures.get("method_function", [])
-
-                for constructor_node, method_node, func_node in zip(
-                    constructor_names, method_names, method_functions
-                ):
-                    constructor_name = (
-                        constructor_node.text.decode("utf8")
-                        if constructor_node.text
-                        else None
-                    )
-                    method_name = (
-                        method_node.text.decode("utf8") if method_node.text else None
-                    )
-
-                    if constructor_name and method_name:
-                        # Create the method as a Function node for prototype methods
-                        # Tests expect prototype methods to be in Function nodes
-                        constructor_qn = f"{module_qn}.{constructor_name}"
-                        method_qn = f"{constructor_qn}.{method_name}"
-
-                        # Create Function node for prototype method
-                        method_props = {
-                            "qualified_name": method_qn,
-                            "name": method_name,
-                            "start_line": func_node.start_point[0] + 1,
-                            "end_line": func_node.end_point[0] + 1,
-                            "docstring": self._get_docstring(func_node),
-                        }
-                        logger.info(
-                            f"  Found Prototype Method: {method_name} (qn: {method_qn})"
-                        )
-                        self.ingestor.ensure_node_batch("Function", method_props)
-
-                        # Register in function registry as Function
-                        self.function_registry[method_qn] = "Function"
-                        self.simple_name_lookup[method_name].add(method_qn)
-
-                        # Create relationship from constructor to method
-                        self.ingestor.ensure_relationship_batch(
-                            ("Function", "qualified_name", constructor_qn),
-                            "DEFINES",
-                            ("Function", "qualified_name", method_qn),
-                        )
-
-                        logger.debug(
-                            f"Prototype method: {constructor_qn} DEFINES_METHOD {method_qn}"
-                        )
-
-            except Exception as e:
-                logger.debug(f"Failed to detect prototype methods: {e}")
-
         except Exception as e:
             logger.debug(f"Failed to detect prototype inheritance: {e}")
+
+    def _ingest_prototype_method_assignments(
+        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+    ) -> None:
+        """Detect prototype method assignments (Constructor.prototype.method = function() {})."""
+        lang_queries = queries[language]
+
+        # Get the language object for creating queries
+        language_obj = lang_queries.get("language")
+        if not language_obj:
+            return
+
+        # Import the Query and QueryCursor classes
+        from tree_sitter import Query, QueryCursor
+
+        # Detect prototype method assignments: ConstructorFunction.prototype.methodName = function() { ... }
+        prototype_method_query = """
+        (assignment_expression
+          left: (member_expression
+            object: (member_expression
+              object: (identifier) @constructor_name
+              property: (property_identifier) @prototype_keyword (#eq? @prototype_keyword "prototype"))
+            property: (property_identifier) @method_name)
+          right: (function_expression) @method_function)
+        """
+
+        try:
+            method_query = Query(language_obj, prototype_method_query)
+            method_cursor = QueryCursor(method_query)
+            method_captures = method_cursor.captures(root_node)
+
+            constructor_names = method_captures.get("constructor_name", [])
+            method_names = method_captures.get("method_name", [])
+            method_functions = method_captures.get("method_function", [])
+
+            for constructor_node, method_node, func_node in zip(
+                constructor_names, method_names, method_functions
+            ):
+                constructor_name = (
+                    constructor_node.text.decode("utf8")
+                    if constructor_node.text
+                    else None
+                )
+                method_name = (
+                    method_node.text.decode("utf8") if method_node.text else None
+                )
+
+                if constructor_name and method_name:
+                    # Create the method as a Function node for prototype methods
+                    # Tests expect prototype methods to be in Function nodes
+                    constructor_qn = f"{module_qn}.{constructor_name}"
+                    method_qn = f"{constructor_qn}.{method_name}"
+
+                    # Create Function node for prototype method
+                    method_props = {
+                        "qualified_name": method_qn,
+                        "name": method_name,
+                        "start_line": func_node.start_point[0] + 1,
+                        "end_line": func_node.end_point[0] + 1,
+                        "docstring": self._get_docstring(func_node),
+                    }
+                    logger.info(
+                        f"  Found Prototype Method: {method_name} (qn: {method_qn})"
+                    )
+                    self.ingestor.ensure_node_batch("Function", method_props)
+
+                    # Register in function registry as Function
+                    self.function_registry[method_qn] = "Function"
+                    self.simple_name_lookup[method_name].add(method_qn)
+
+                    # Create relationship from constructor to method
+                    self.ingestor.ensure_relationship_batch(
+                        ("Function", "qualified_name", constructor_qn),
+                        "DEFINES",
+                        ("Function", "qualified_name", method_qn),
+                    )
+
+                    logger.debug(
+                        f"Prototype method: {constructor_qn} DEFINES_METHOD {method_qn}"
+                    )
+
+        except Exception as e:
+            logger.debug(f"Failed to detect prototype methods: {e}")
 
     def _ingest_missing_import_patterns(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
