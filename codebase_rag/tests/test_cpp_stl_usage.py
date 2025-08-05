@@ -418,9 +418,9 @@ void demonstrateSTLContainers() {
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
     # Verify expected classes were created
-    found_classes = [cls for cls in expected_classes if cls in created_classes]
-    assert len(found_classes) >= 2, (
-        f"Expected at least 2 STL container classes, found {len(found_classes)}: {found_classes}"
+    missing_classes = set(expected_classes) - created_classes
+    assert not missing_classes, (
+        f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
     # Get all Function node creation calls
@@ -433,9 +433,9 @@ void demonstrateSTLContainers() {
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify at least some expected functions were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 2, (
-        f"Expected at least 2 STL container functions, found {len(found_functions)}: {found_functions}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
 

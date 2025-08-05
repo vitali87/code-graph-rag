@@ -265,9 +265,9 @@ void demonstrateTemplateMetaprogramming() {
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify at least some template functions were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 6, (
-        f"Expected at least 6 template functions, found {len(found_functions)}: {found_functions}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
     # Expected template class
@@ -287,9 +287,9 @@ void demonstrateTemplateMetaprogramming() {
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
     # Verify template classes were created
-    found_classes = [cls for cls in expected_classes if cls in created_classes]
-    assert len(found_classes) >= 2, (
-        f"Expected at least 2 template classes, found {len(found_classes)}: {found_classes}"
+    missing_classes = set(expected_classes) - created_classes
+    assert not missing_classes, (
+        f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
 
@@ -695,9 +695,9 @@ void demonstrateTemplateTemplateParameters() {
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
     # Verify template classes were created
-    found_classes = [cls for cls in expected_classes if cls in created_classes]
-    assert len(found_classes) >= 3, (
-        f"Expected at least 3 template classes, found {len(found_classes)}: {found_classes}"
+    missing_classes = set(expected_classes) - created_classes
+    assert not missing_classes, (
+        f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
     # Verify inheritance relationship (Stack inherits from Container)
@@ -1061,9 +1061,9 @@ void demonstrateConcepts() {
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
     # Verify metaprogramming classes were created
-    found_classes = [cls for cls in expected_classes if cls in created_classes]
-    assert len(found_classes) >= 6, (
-        f"Expected at least 6 metaprogramming classes, found {len(found_classes)}: {found_classes}"
+    missing_classes = set(expected_classes) - created_classes
+    assert not missing_classes, (
+        f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
     # Verify CRTP inheritance relationships

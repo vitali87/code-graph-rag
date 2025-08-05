@@ -326,9 +326,9 @@ namespace math {
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify at least some expected functions were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 4, (
-        f"Expected at least 4 module functions, found {len(found_functions)}: {found_functions}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
 

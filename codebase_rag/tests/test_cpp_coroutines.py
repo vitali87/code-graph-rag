@@ -291,9 +291,9 @@ void demonstrateBasicGenerators() {
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify at least some expected functions were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 3, (
-        f"Expected at least 3 coroutine functions, found {len(found_functions)}: {found_functions}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
 
@@ -592,9 +592,9 @@ void demonstrateAsyncAwait() {
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify at least some expected functions were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 3, (
-        f"Expected at least 3 async/await functions, found {len(found_functions)}: {found_functions}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
 
