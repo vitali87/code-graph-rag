@@ -1282,8 +1282,3 @@ void demonstrateComprehensiveSTL() {
 
     # Test that STL parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ C++ STL usage relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive STL calls: {len(comprehensive_calls)}")

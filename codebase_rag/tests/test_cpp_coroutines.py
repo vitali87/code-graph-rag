@@ -954,8 +954,3 @@ void demonstrateCustomCoroutines() {
 
     # Test that coroutine parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ C++20 coroutines relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Custom coroutine calls: {len(custom_coroutine_calls)}")

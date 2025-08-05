@@ -388,9 +388,9 @@ interface PaymentMethod {
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify functions using interfaces were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 3, (
-        f"Expected at least 3 functions using interfaces, found {len(found_functions)}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
     # Should have inheritance relationships for interfaces
@@ -1121,9 +1121,3 @@ addEventListener('click', (event) => {
 
     # Test that type parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ TypeScript type relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - IMPLEMENTS relationships: {len(implements_relationships)}")
-    print(f"   - Comprehensive test calls: {len(comprehensive_calls)}")

@@ -979,8 +979,3 @@ void demonstrateComprehensiveMemoryManagement() {
 
     # Test that memory management parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ C++ memory management relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive memory management calls: {len(comprehensive_calls)}")

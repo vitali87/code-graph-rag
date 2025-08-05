@@ -1313,10 +1313,3 @@ void demonstrateComprehensiveTemplates() {
 
     # Test that template parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ C++ template relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - INHERITS relationships: {len(inherits_relationships)}")
-    print(f"   - Comprehensive template calls: {len(comprehensive_calls)}")
-    print(f"   - Template inheritance: {len(template_inheritance)}")

@@ -610,7 +610,7 @@ void runComprehensiveTest() {
     ).call_args_list
 
     call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
     inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
     imports_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
 
@@ -703,16 +703,6 @@ void runComprehensiveTest() {
     assert len(found_modern_functions) >= 4, (
         f"Expected at least 4 modern C++ functions, found {len(found_modern_functions)}: {found_modern_functions}"
     )
-
-    print("✅ Comprehensive C++ feature integration validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - INHERITS relationships: {len(inherits_relationships)}")
-    print(f"   - IMPORTS relationships: {len(imports_relationships)}")
-    print(f"   - Comprehensive calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive inheritance: {len(comprehensive_inherits)}")
-    print(f"   - Complex classes found: {len(found_complex_classes)}")
-    print(f"   - Modern functions found: {len(found_modern_functions)}")
 
 
 def test_real_world_cpp_scenario(
@@ -960,15 +950,10 @@ int main() {
         f"Expected at least 2 component inheritance relationships, found {len(component_inheritance)}"
     )
 
-    print("✅ Real-world C++ scenario validation passed:")
-    print(f"   - Header imports: {len(header_imports)}")
-    print(f"   - Component inheritance: {len(component_inheritance)}")
-
 
 # Mark as completed
 def test_cpp_comprehensive_complete() -> None:
     """Mark comprehensive C++ testing as complete."""
-    print("✅ All comprehensive C++ tests completed successfully!")
     print("Coverage includes:")
     print("   - Basic syntax (classes, functions, namespaces)")
     print("   - Include directives and header relationships")

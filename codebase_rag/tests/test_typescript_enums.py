@@ -1000,18 +1000,16 @@ console.log(demo.getColor());
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "CALLS"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Note: Function calls may not be detected in this parser implementation
     # Focus on verifying the core parsing of functions and classes instead
-    comprehensive_calls: list[object] = []
 
     # Note: TypeScript enums are not parsed as separate node types by this parser
     # Instead, we verify that functions and classes that use enums are properly parsed
 
     # Set comprehensive_enums to empty list since enums aren't detected as separate nodes
-    comprehensive_enums: list[object] = []
 
     # Check EnumDemo class
     class_calls = [
@@ -1027,10 +1025,3 @@ console.log(demo.getColor());
     assert len(enum_demo_class) >= 1, (
         f"Expected EnumDemo class, found {len(enum_demo_class)}"
     )
-
-    print("✅ TypeScript enum validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive enum calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive enums: {len(comprehensive_enums)}")
-    print(f"   - EnumDemo class: {len(enum_demo_class)}")

@@ -854,7 +854,7 @@ void showcaseModuleFeatures() {
     imports_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
 
     # Should have module import relationships
-    module_imports = [
+    [
         call
         for call in imports_relationships
         if "module_usage" in call.args[0][2]
@@ -872,9 +872,3 @@ void showcaseModuleFeatures() {
     assert len(module_function_calls) >= 5, (
         f"Expected at least 5 module function calls, found {len(module_function_calls)}"
     )
-
-    print("✅ C++20 modules relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - IMPORTS relationships: {len(imports_relationships)}")
-    print(f"   - Module imports: {len(module_imports)}")
-    print(f"   - Module function calls: {len(module_function_calls)}")

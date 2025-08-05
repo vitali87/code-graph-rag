@@ -1499,7 +1499,7 @@ async function performAsyncOperation(data) {
     ).call_args_list
 
     calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive error handling
     comprehensive_calls = [
@@ -1524,9 +1524,3 @@ async function performAsyncOperation(data) {
     assert len(comprehensive_nodes) >= 5, (
         f"Expected at least 5 error handling nodes, found {len(comprehensive_nodes)}"
     )
-
-    print("✅ JavaScript error handling validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive error calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive nodes: {len(comprehensive_nodes)}")

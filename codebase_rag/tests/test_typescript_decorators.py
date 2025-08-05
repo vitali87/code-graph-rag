@@ -1765,7 +1765,7 @@ console.log((example as any).tableName); // 'comprehensive_items'
     ).call_args_list
 
     calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive decorator-related calls
     comprehensive_calls = [
@@ -1815,10 +1815,3 @@ console.log((example as any).tableName); // 'comprehensive_items'
     assert len(comprehensive_class) >= 1, (
         f"Expected ComprehensiveExample class, found {len(comprehensive_class)}"
     )
-
-    print("✅ TypeScript decorators validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive decorators: {len(comprehensive_decorators)}")
-    print(f"   - Comprehensive class: {len(comprehensive_class)}")

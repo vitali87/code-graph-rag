@@ -236,9 +236,9 @@ const varResults = varFunctions.map(fn => fn());
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify closure functions were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 8, (
-        f"Expected at least 8 closure functions, found {len(found_functions)}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
     # Verify nested functions are captured
@@ -1450,8 +1450,3 @@ const scopeResult = accessScopes();
 
     # Test that closure parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ JavaScript closure and scoping relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive test calls: {len(comprehensive_calls)}")

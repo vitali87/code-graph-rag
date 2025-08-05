@@ -1225,10 +1225,6 @@ export { useReExports };
     # Test the specific case that was broken before the fix
     # Before fix: export { name as alias } would incorrectly map "name" instead of "alias"
     # After fix: it should correctly map "alias" -> "source_module.name"
-
-    print("✅ Aliased re-export test passed:")
-    print(f"   - Re-export import relationships: {len(aliased_re_export_imports)}")
-    print(f"   - Imported modules: {imported_modules}")
     print(
         "   - Aliased re-exports are correctly parsed (export { name as alias } bug fixed)"
     )
@@ -1394,9 +1390,3 @@ export function useImports() {
     # Test that module parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
     assert calls_relationships, "Should still have CALLS relationships"
-
-    print("✅ JavaScript module relationship validation passed:")
-    print(f"   - IMPORTS relationships: {len(import_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - Comprehensive module imports: {len(comprehensive_imports)}")

@@ -1184,7 +1184,7 @@ console.log(userRepo.name); // users
     ).call_args_list
 
     calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
     inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
     implements_relationships = [
         c for c in all_relationships if c.args[1] == "IMPLEMENTS"
@@ -1225,7 +1225,7 @@ console.log(userRepo.name); // users
         if "comprehensive_classes" in call.args[0][2]
     ]
 
-    ts_implementation = [
+    [
         call
         for call in implements_relationships
         if "comprehensive_classes" in call.args[0][2]
@@ -1234,12 +1234,3 @@ console.log(userRepo.name); // users
     assert len(ts_inheritance) >= 1, (
         f"Expected at least 1 inheritance relationship, found {len(ts_inheritance)}"
     )
-
-    print("✅ TypeScript class features validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - INHERITS relationships: {len(inherits_relationships)}")
-    print(f"   - IMPLEMENTS relationships: {len(implements_relationships)}")
-    print(f"   - Comprehensive classes: {len(comprehensive_classes)}")
-    print(f"   - TypeScript inheritance: {len(ts_inheritance)}")
-    print(f"   - TypeScript implementation: {len(ts_implementation)}")

@@ -1213,7 +1213,7 @@ outer.call({ context: 'custom' });
     ).call_args_list
 
     calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive this-related calls
     comprehensive_calls = [
@@ -1236,9 +1236,3 @@ outer.call({ context: 'custom' });
     assert len(binding_calls) >= 2, (
         f"Expected at least 2 bind/call/apply calls, found {len(binding_calls)}"
     )
-
-    print("✅ JavaScript this binding validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive this calls: {len(comprehensive_calls)}")
-    print(f"   - Binding method calls: {len(binding_calls)}")

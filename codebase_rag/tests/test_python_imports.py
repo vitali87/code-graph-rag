@@ -660,8 +660,3 @@ if True:
 
     # Test that import parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ Import relationship validation passed:")
-    print(f"   - IMPORTS relationships: {len(import_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive test imports: {len(comprehensive_imports)}")

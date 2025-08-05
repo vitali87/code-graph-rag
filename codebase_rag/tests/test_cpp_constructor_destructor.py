@@ -1352,11 +1352,6 @@ void demonstrateComprehensiveConstructors() {
     # Test that constructor parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
-    print("✅ C++ constructor/destructor relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive constructor calls: {len(comprehensive_calls)}")
-
 
 # Mark the first task as completed
 def test_constructor_destructor_complete() -> None:

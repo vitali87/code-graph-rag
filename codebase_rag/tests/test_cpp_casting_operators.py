@@ -948,8 +948,3 @@ void demonstrateComprehensiveCasting() {
 
     # Test that casting parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ C++ casting operators relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive casting calls: {len(comprehensive_calls)}")

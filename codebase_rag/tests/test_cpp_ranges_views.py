@@ -1056,8 +1056,3 @@ void demonstrateRangeGraphProcessing() {
 
     # Test that ranges parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ C++20 ranges and views relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Range processing calls: {len(range_processing_calls)}")

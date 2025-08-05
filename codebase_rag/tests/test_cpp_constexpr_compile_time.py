@@ -850,6 +850,3 @@ void demonstrateComprehensiveConstexpr() {
     print(
         "✅ C++ constexpr and compile-time programming relationship validation passed:"
     )
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive constexpr calls: {len(comprehensive_calls)}")

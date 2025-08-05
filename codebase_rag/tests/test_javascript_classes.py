@@ -1213,9 +1213,3 @@ const testResult = testClasses();
 
     # Test that class parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ JavaScript class relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - INHERITS relationships: {len(inherits_relationships)}")
-    print(f"   - Comprehensive test calls: {len(comprehensive_calls)}")

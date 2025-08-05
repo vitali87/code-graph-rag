@@ -954,9 +954,3 @@ void demonstrateAllIncludes() {
     assert inheritance_found, (
         "Expected inheritance relationship ComprehensiveIncludeDemo -> Base"
     )
-
-    print("✅ C++ include relationship validation passed:")
-    print(f"   - IMPORTS relationships: {len(import_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - INHERITS relationships: {len(inherits_relationships)}")
-    print(f"   - Comprehensive test imports: {len(comprehensive_imports)}")

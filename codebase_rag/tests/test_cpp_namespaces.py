@@ -916,9 +916,3 @@ void testNamespaceFeatures() {
 
     # Test that namespace parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ C++ namespace relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive namespace calls: {len(comprehensive_calls)}")
-    print(f"   - Cross-namespace calls: {len(cross_namespace_calls)}")

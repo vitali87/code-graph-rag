@@ -430,8 +430,3 @@ void demonstrateConceptComposition() {
     assert len(composition_definitions) >= 5, (
         f"Expected at least 5 concept composition definitions, found {len(composition_definitions)}"
     )
-
-    print("✅ C++ concepts relationship validation passed:")
-    print(f"   - Namespace relationships: {len(namespace_relationships)}")
-    print(f"   - Composition definitions: {len(composition_definitions)}")
-    print(f"   - Total relationships: {len(all_relationships)}")

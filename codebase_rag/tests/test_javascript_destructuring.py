@@ -192,9 +192,9 @@ try {
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify functions with destructuring parameters were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 3, (
-        f"Expected at least 3 functions with destructuring, found {len(found_functions)}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
     # Verify function calls are tracked
@@ -364,9 +364,9 @@ const result = processArray([10, 20, 30, 40]);
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify functions with array destructuring were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 5, (
-        f"Expected at least 5 functions with array destructuring, found {len(found_functions)}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
     # Verify function calls are tracked
@@ -590,9 +590,9 @@ async function updateUser(id, data) { return { id, ...data }; }
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
     # Verify functions with parameter destructuring were created
-    found_functions = [func for func in expected_functions if func in created_functions]
-    assert len(found_functions) >= 7, (
-        f"Expected at least 7 functions with parameter destructuring, found {len(found_functions)}"
+    missing_functions = set(expected_functions) - created_functions
+    assert not missing_functions, (
+        f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
     # Expected classes
@@ -896,8 +896,3 @@ const formatted = formatData({
 
     # Test that destructuring parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ JavaScript destructuring relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive test calls: {len(comprehensive_calls)}")

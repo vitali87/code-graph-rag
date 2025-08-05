@@ -1489,7 +1489,3 @@ void demonstrateAllOperators() {
 
     # Test that operator parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-    print("✅ C++ operator overloading relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive operator calls: {len(comprehensive_calls)}")

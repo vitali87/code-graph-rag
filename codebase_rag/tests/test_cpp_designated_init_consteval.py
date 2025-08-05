@@ -1060,13 +1060,10 @@ void demonstrateLambdaInitCaptures() {
     print(
         "✅ C++20 designated initializers, consteval, and lambda init captures validation passed:"
     )
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
 
 
 def test_comprehensive_modern_cpp_complete() -> None:
     """Mark comprehensive modern C++ testing as complete."""
-    print("✅ Comprehensive modern C++ feature tests completed successfully!")
     print("Coverage includes:")
     print("   - C++20 designated initializers")
     print("   - C++20 consteval immediate functions")

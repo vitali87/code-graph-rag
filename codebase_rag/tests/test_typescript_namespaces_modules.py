@@ -1403,7 +1403,7 @@ Conditional.log('Debug message');
     ).call_args_list
 
     calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive namespace-related calls
     comprehensive_calls = [
@@ -1439,9 +1439,3 @@ Conditional.log('Debug message');
     assert len(comprehensive_namespaces) >= 4, (
         f"Expected at least 4 namespace patterns, found {len(comprehensive_namespaces)}"
     )
-
-    print("✅ TypeScript namespaces/modules validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive namespaces: {len(comprehensive_namespaces)}")

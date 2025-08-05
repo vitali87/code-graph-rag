@@ -1141,7 +1141,7 @@ console.log(complex);
     ).call_args_list
 
     calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive spread/rest patterns
     comprehensive_calls = [
@@ -1170,9 +1170,3 @@ console.log(complex);
     assert len(comprehensive_functions) >= 6, (
         f"Expected at least 6 functions in comprehensive test, found {len(comprehensive_functions)}"
     )
-
-    print("✅ JavaScript spread/rest operators validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive functions: {len(comprehensive_functions)}")

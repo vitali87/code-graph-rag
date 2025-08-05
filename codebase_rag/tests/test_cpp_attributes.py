@@ -1299,11 +1299,3 @@ void testAttributePolymorphism() {
     assert len(attribute_inherits) >= 1, (
         f"Expected at least 1 inheritance with attributes, found {len(attribute_inherits)}"
     )
-
-    print("✅ C++ attributes relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - INHERITS relationships: {len(inherits_relationships)}")
-    print(f"   - Comprehensive calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive defines: {len(comprehensive_defines)}")
-    print(f"   - Attribute inheritance: {len(attribute_inherits)}")
