@@ -949,7 +949,7 @@ public:
         }
     }
 
-    // Assignment operator
+    // Copy assignment operator
     DynamicArray& operator=(const DynamicArray& other) {
         if (this != &other) {
             delete[] data_;
@@ -959,6 +959,28 @@ public:
             for (size_t i = 0; i < size_; ++i) {
                 data_[i] = other.data_[i];
             }
+        }
+        return *this;
+    }
+
+    // Move constructor
+    DynamicArray(DynamicArray&& other) noexcept
+        : data_(other.data_), size_(other.size_), capacity_(other.capacity_) {
+        other.data_ = nullptr;
+        other.size_ = 0;
+        other.capacity_ = 0;
+    }
+
+    // Move assignment operator
+    DynamicArray& operator=(DynamicArray&& other) noexcept {
+        if (this != &other) {
+            delete[] data_;
+            data_ = other.data_;
+            size_ = other.size_;
+            capacity_ = other.capacity_;
+            other.data_ = nullptr;
+            other.size_ = 0;
+            other.capacity_ = 0;
         }
         return *this;
     }
@@ -1071,13 +1093,32 @@ public:
         strcpy(data_, other.data_);
     }
 
-    // Assignment operator
+    // Copy assignment operator
     SimpleString& operator=(const SimpleString& other) {
         if (this != &other) {
             delete[] data_;
             length_ = other.length_;
             data_ = new char[length_ + 1];
             strcpy(data_, other.data_);
+        }
+        return *this;
+    }
+
+    // Move constructor
+    SimpleString(SimpleString&& other) noexcept
+        : data_(other.data_), length_(other.length_) {
+        other.data_ = nullptr;
+        other.length_ = 0;
+    }
+
+    // Move assignment operator
+    SimpleString& operator=(SimpleString&& other) noexcept {
+        if (this != &other) {
+            delete[] data_;
+            data_ = other.data_;
+            length_ = other.length_;
+            other.data_ = nullptr;
+            other.length_ = 0;
         }
         return *this;
     }
