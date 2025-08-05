@@ -437,8 +437,15 @@ class CallProcessor:
                 # Check if it's a built-in JavaScript method
                 builtin_info = self._resolve_builtin_call(call_name)
                 if not builtin_info:
-                    continue
-                callee_type, callee_qn = builtin_info
+                    # Check if it's a C++ operator
+                    operator_info = self._resolve_cpp_operator_call(
+                        call_name, module_qn
+                    )
+                    if not operator_info:
+                        continue
+                    callee_type, callee_qn = operator_info
+                else:
+                    callee_type, callee_qn = builtin_info
             else:
                 callee_type, callee_qn = callee_info
             logger.debug(
@@ -800,6 +807,70 @@ class CallProcessor:
             # Extract the prototype method name without .call/.apply
             base_call = call_name.rsplit(".", 1)[0]  # Remove .call or .apply
             return ("Function", base_call)
+
+        return None
+
+    def _resolve_cpp_operator_call(
+        self, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """Resolve C++ operator calls to built-in operator functions."""
+        if not call_name.startswith("operator"):
+            return None
+
+        # Map C++ operators to standardized function names
+        cpp_operators = {
+            "operator+": "builtin.cpp.operator_plus",
+            "operator-": "builtin.cpp.operator_minus",
+            "operator*": "builtin.cpp.operator_multiply",
+            "operator/": "builtin.cpp.operator_divide",
+            "operator%": "builtin.cpp.operator_modulo",
+            "operator==": "builtin.cpp.operator_equal",
+            "operator!=": "builtin.cpp.operator_not_equal",
+            "operator<": "builtin.cpp.operator_less",
+            "operator>": "builtin.cpp.operator_greater",
+            "operator<=": "builtin.cpp.operator_less_equal",
+            "operator>=": "builtin.cpp.operator_greater_equal",
+            "operator=": "builtin.cpp.operator_assign",
+            "operator+=": "builtin.cpp.operator_plus_assign",
+            "operator-=": "builtin.cpp.operator_minus_assign",
+            "operator*=": "builtin.cpp.operator_multiply_assign",
+            "operator/=": "builtin.cpp.operator_divide_assign",
+            "operator%=": "builtin.cpp.operator_modulo_assign",
+            "operator++": "builtin.cpp.operator_increment",
+            "operator--": "builtin.cpp.operator_decrement",
+            "operator<<": "builtin.cpp.operator_left_shift",
+            "operator>>": "builtin.cpp.operator_right_shift",
+            "operator&": "builtin.cpp.operator_bitwise_and",
+            "operator|": "builtin.cpp.operator_bitwise_or",
+            "operator^": "builtin.cpp.operator_bitwise_xor",
+            "operator~": "builtin.cpp.operator_bitwise_not",
+            "operator&&": "builtin.cpp.operator_logical_and",
+            "operator||": "builtin.cpp.operator_logical_or",
+            "operator!": "builtin.cpp.operator_logical_not",
+            "operator[]": "builtin.cpp.operator_subscript",
+            "operator()": "builtin.cpp.operator_call",
+        }
+
+        if call_name in cpp_operators:
+            return ("Function", cpp_operators[call_name])
+
+        # Handle custom/overloaded operators in the same module
+        # Try to find a matching operator definition
+        possible_matches = self.function_registry.find_ending_with(call_name)
+        if possible_matches:
+            # Prefer operators from the same module
+            same_module_ops = [
+                qn
+                for qn in possible_matches
+                if qn.startswith(module_qn) and call_name in qn
+            ]
+            if same_module_ops:
+                best_candidate = same_module_ops[0]
+                return (self.function_registry[best_candidate], best_candidate)
+
+            # Fallback to any matching operator
+            best_candidate = possible_matches[0]
+            return (self.function_registry[best_candidate], best_candidate)
 
         return None
 

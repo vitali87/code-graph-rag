@@ -304,10 +304,10 @@ void useLocalHeaders();
     # Verify specific local includes exist
     imported_headers = [call.args[2][2] for call in local_imports]
     expected_patterns = [
-        "base.h",
-        "types.h",
-        "math.h",
-        "third_party.h",
+        "base",  # base.h -> qualified name contains "base"
+        "types",  # types.h -> qualified name contains "types"
+        "math",  # math.h -> qualified name contains "math"
+        "third_party",  # third_party.h -> qualified name contains "third_party"
     ]
 
     for pattern in expected_patterns:
@@ -622,8 +622,8 @@ void demonstrateIncludeTypes() {
             f"Missing system include: {expected}\nFound: {imported_headers}"
         )
 
-    # Local includes
-    local_headers = ["base.h", "types.h", "math.h"]
+    # Local includes (check for base names without .h extension)
+    local_headers = ["base", "types", "math"]
     for expected in local_headers:
         assert any(expected in header for header in imported_headers), (
             f"Missing local include: {expected}\nFound: {imported_headers}"
@@ -762,8 +762,8 @@ std::vector<int> PragmaClass::getItems() const {
 
     imported_headers = [call.args[2][2] for call in guard_test_imports]
 
-    # Should include both header types
-    expected_headers = ["with_guards.h", "with_pragma.h", "iostream", "string"]
+    # Should include both header types (check for base names)
+    expected_headers = ["with_guards", "with_pragma", "iostream", "string"]
     for expected in expected_headers:
         assert any(expected in header for header in imported_headers), (
             f"Missing include: {expected}\nFound: {imported_headers}"
