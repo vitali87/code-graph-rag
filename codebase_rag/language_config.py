@@ -196,6 +196,9 @@ LANGUAGE_CONFIGS = {
             "subscript_expression",  # For operator[] calls
             "new_expression",  # For new operator
             "delete_expression",  # For delete operator
+            "binary_expression",  # For operator overloads like obj1 + obj2
+            "unary_expression",  # For unary operators like ++obj
+            "update_expression",  # For prefix/postfix increment/decrement
         ],
         import_node_types=["preproc_include"],
         import_from_node_types=["preproc_include"],  # C++ uses #include

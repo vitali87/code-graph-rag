@@ -283,7 +283,7 @@ class CallProcessor:
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """Extracts the name of the function or method being called."""
-        # For 'call' in Python and 'call_expression' in JS/TS
+        # For 'call' in Python and 'call_expression' in JS/TS/C++
         if func_child := call_node.child_by_field_name("function"):
             if func_child.type == "identifier":
                 text = func_child.text
@@ -301,10 +301,73 @@ class CallProcessor:
                 text = func_child.text
                 if text is not None:
                     return str(text.decode("utf8"))
+            # C++: obj.method() -> field_expression
+            elif func_child.type == "field_expression":
+                # Extract method name from field_expression
+                field_node = func_child.child_by_field_name("field")
+                if field_node and field_node.text:
+                    return str(field_node.text.decode("utf8"))
+            # C++: namespace::func() or Class::method() -> qualified_identifier
+            elif func_child.type == "qualified_identifier":
+                # Return the full qualified name (e.g., "std::cout")
+                text = func_child.text
+                if text is not None:
+                    return str(text.decode("utf8"))
             # JS/TS: IIFE calls like (function(){})() -> parenthesized_expression
             elif func_child.type == "parenthesized_expression":
                 # For IIFEs, we need to identify the anonymous function inside
                 return self._get_iife_target_name(func_child)
+
+        # C++: Binary operators like obj1 + obj2 -> operator+
+        if call_node.type == "binary_expression":
+            operator_node = None
+            for child in call_node.children:
+                if child.type in [
+                    "+",
+                    "-",
+                    "*",
+                    "/",
+                    "%",
+                    "==",
+                    "!=",
+                    "<",
+                    ">",
+                    "<=",
+                    ">=",
+                    "&&",
+                    "||",
+                    "&",
+                    "|",
+                    "^",
+                    "<<",
+                    ">>",
+                    "=",
+                    "+=",
+                    "-=",
+                    "*=",
+                    "/=",
+                    "%=",
+                    "&=",
+                    "|=",
+                    "^=",
+                    "<<=",
+                    ">>=",
+                    "[]",
+                ]:
+                    operator_node = child
+                    break
+            if operator_node and operator_node.text:
+                return f"operator{operator_node.text.decode('utf8')}"
+
+        # C++: Unary operators like ++obj, --obj -> operator++, operator--
+        if call_node.type in ["unary_expression", "update_expression"]:
+            operator_node = None
+            for child in call_node.children:
+                if child.type in ["++", "--", "+", "-", "*", "&", "!", "~"]:
+                    operator_node = child
+                    break
+            if operator_node and operator_node.text:
+                return f"operator{operator_node.text.decode('utf8')}"
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
