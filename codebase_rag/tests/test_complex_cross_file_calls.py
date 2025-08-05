@@ -4,15 +4,11 @@ This test creates a more comprehensive scenario with multiple packages and modul
 to ensure cross-file function calls are properly detected across the codebase.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.services.graph_service import MemgraphIngestor

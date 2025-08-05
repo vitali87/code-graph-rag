@@ -3,15 +3,11 @@ Comprehensive JavaScript async patterns parsing and relationship testing.
 Tests all possible async JavaScript patterns including Promises, async/await, callbacks, and generators.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

@@ -1,12 +1,9 @@
 import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, call
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.services.graph_service import MemgraphIngestor

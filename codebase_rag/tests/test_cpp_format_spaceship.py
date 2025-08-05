@@ -2,14 +2,10 @@
 Test C++20 std::format library and spaceship operator functionality.
 """
 
-import os
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

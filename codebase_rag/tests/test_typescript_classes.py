@@ -3,15 +3,11 @@ Comprehensive TypeScript class features parsing and relationship testing.
 Tests access modifiers, abstract classes, parameter properties, decorators, and advanced class patterns.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

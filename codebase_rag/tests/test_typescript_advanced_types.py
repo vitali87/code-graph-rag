@@ -3,15 +3,11 @@ Comprehensive TypeScript advanced types parsing and testing.
 Tests generics, utility types, conditional types, mapped types, template literal types, and advanced type patterns.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

@@ -4,15 +4,11 @@ Tests C++11/14/17/20/23 attributes including [[nodiscard]], [[maybe_unused]], [[
 [[fallthrough]], [[likely]], [[unlikely]], and compiler-specific attributes.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

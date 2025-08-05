@@ -3,15 +3,11 @@ Comprehensive JavaScript 'this' binding and context parsing and testing.
 Tests this in different contexts, bind/call/apply, arrow functions, and binding patterns.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

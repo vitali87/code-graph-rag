@@ -6,14 +6,10 @@ This test validates the fix for ambiguous call resolution where the fallback log
 previously picked the first match arbitrarily instead of using import distance heuristics.
 """
 
-import os
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 
