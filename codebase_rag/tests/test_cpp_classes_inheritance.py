@@ -1440,3 +1440,281 @@ void testTemplateInheritance() {
 
     # Test that inheritance parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
+
+
+def test_cpp_inheritance_edge_cases(
+    cpp_inheritance_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Test edge cases in C++ inheritance parsing including complex templates and namespaces."""
+    test_file = cpp_inheritance_project / "edge_case_inheritance.cpp"
+    test_file.write_text(
+        """
+// Edge cases for C++ inheritance parsing
+#include <vector>
+#include <memory>
+
+// Test complex template inheritance with multiple template parameters
+template<typename T, typename U = int>
+class ComplexBase {
+public:
+    virtual ~ComplexBase() = default;
+    virtual void process(const T& data, const U& meta) = 0;
+};
+
+// Test nested namespace template inheritance
+namespace outer {
+    namespace inner {
+        template<typename DataType>
+        class NestedTemplate {
+        public:
+            virtual void handle(const DataType& data) = 0;
+        };
+
+        class ConcreteNested : public NestedTemplate<std::string> {
+        public:
+            void handle(const std::string& data) override {}
+        };
+    }
+}
+
+// Test multiple template inheritance
+template<typename T>
+class Processor : public ComplexBase<T, double>,
+                  public outer::inner::NestedTemplate<T> {
+public:
+    void process(const T& data, const double& meta) override {}
+    void handle(const T& data) override {}
+};
+
+// Test template specialization with inheritance
+template<>
+class Processor<std::vector<int>> : public ComplexBase<std::vector<int>>,
+                                    public outer::inner::NestedTemplate<int> {
+public:
+    void process(const std::vector<int>& data, const double& meta) override {}
+    void handle(const int& data) override {}
+};
+
+// Test CRTP (Curiously Recurring Template Pattern)
+template<typename Derived>
+class CRTP_Base {
+public:
+    void interface() {
+        static_cast<Derived*>(this)->implementation();
+    }
+
+protected:
+    virtual ~CRTP_Base() = default;
+};
+
+class CRTP_Derived : public CRTP_Base<CRTP_Derived> {
+public:
+    void implementation() {
+        // CRTP implementation
+    }
+};
+
+// Test complex virtual inheritance with templates
+template<typename T>
+class VirtualBase {
+protected:
+    T data_;
+public:
+    VirtualBase(const T& data) : data_(data) {}
+    virtual ~VirtualBase() = default;
+};
+
+template<typename T>
+class LeftMixin : public virtual VirtualBase<T> {
+public:
+    LeftMixin(const T& data) : VirtualBase<T>(data) {}
+    virtual void leftMethod() {}
+};
+
+template<typename T>
+class RightMixin : public virtual VirtualBase<T> {
+public:
+    RightMixin(const T& data) : VirtualBase<T>(data) {}
+    virtual void rightMethod() {}
+};
+
+// Diamond inheritance with templates
+class DiamondDerived : public LeftMixin<std::string>,
+                      public RightMixin<std::string> {
+public:
+    DiamondDerived(const std::string& data)
+        : VirtualBase<std::string>(data), LeftMixin<std::string>(data), RightMixin<std::string>(data) {}
+
+    void combinedMethod() {
+        leftMethod();
+        rightMethod();
+    }
+};
+
+// Test variadic template inheritance
+template<typename... Args>
+class VariadicBase {
+public:
+    virtual ~VariadicBase() = default;
+    virtual void process(Args... args) = 0;
+};
+
+class VariadicDerived : public VariadicBase<int, std::string, double> {
+public:
+    void process(int i, std::string s, double d) override {}
+};
+
+// Test private/protected inheritance
+class PrivateInheritance : private ComplexBase<int> {
+public:
+    void publicMethod() {}
+};
+
+class ProtectedInheritance : protected outer::inner::NestedTemplate<float> {
+public:
+    void handle(const float& data) override {}
+};
+
+// Test inheritance with nested classes
+class OuterWithNested {
+public:
+    class NestedBase {
+    public:
+        virtual ~NestedBase() = default;
+        virtual void nestedMethod() = 0;
+    };
+
+    class NestedDerived : public NestedBase {
+    public:
+        void nestedMethod() override {}
+    };
+};
+
+void demonstrateEdgeCases() {
+    // Test instantiation of complex inheritance hierarchies
+    Processor<std::string> stringProcessor;
+    stringProcessor.process("test", 3.14);
+    stringProcessor.handle("test");
+
+    // Test template specialization
+    Processor<std::vector<int>> vectorProcessor;
+    std::vector<int> vec{1, 2, 3};
+    vectorProcessor.process(vec, 2.71);
+    vectorProcessor.handle(42);
+
+    // Test CRTP
+    CRTP_Derived crtp;
+    crtp.interface();
+
+    // Test diamond inheritance
+    DiamondDerived diamond("diamond_data");
+    diamond.combinedMethod();
+    diamond.leftMethod();
+    diamond.rightMethod();
+
+    // Test variadic templates
+    VariadicDerived variadic;
+    variadic.process(42, "hello", 3.14159);
+
+    // Test private inheritance (can access through public methods)
+    PrivateInheritance privateObj;
+    privateObj.publicMethod();
+
+    // Test protected inheritance
+    ProtectedInheritance protectedObj;
+    protectedObj.handle(2.5f);
+
+    // Test nested class inheritance
+    OuterWithNested::NestedDerived nested;
+    nested.nestedMethod();
+}
+"""
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=cpp_inheritance_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    # Verify complex template inheritance relationships are captured
+    relationship_calls = [
+        call
+        for call in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+    ]
+
+    # Expected complex inheritance relationships
+    edge_case_inherits = [
+        call for call in relationship_calls if "edge_case_inheritance" in call[0][0][2]
+    ]
+
+    # Should capture at least the major inheritance relationships
+    assert len(edge_case_inherits) >= 10, (
+        f"Expected at least 10 edge case inheritance relationships, found {len(edge_case_inherits)}"
+    )
+
+    # Verify template specialization inheritance is handled
+    specialization_inherits = [
+        call for call in edge_case_inherits if "std::vector<int>" in str(call[0][0])
+    ]
+
+    assert len(specialization_inherits) >= 1, (
+        f"Expected template specialization inheritance, found {len(specialization_inherits)}"
+    )
+
+    # Verify CRTP inheritance pattern
+    crtp_inherits = [
+        call
+        for call in edge_case_inherits
+        if "CRTP" in call[0][0][2] and "CRTP" in call[0][2][2]
+    ]
+
+    assert len(crtp_inherits) >= 1, (
+        f"Expected CRTP inheritance pattern, found {len(crtp_inherits)}"
+    )
+
+    # Verify diamond inheritance with virtual base classes
+    diamond_inherits = [
+        call
+        for call in edge_case_inherits
+        if ("LeftMixin" in call[0][0][2] and "VirtualBase" in call[0][2][2])
+        or ("RightMixin" in call[0][0][2] and "VirtualBase" in call[0][2][2])
+        or ("DiamondDerived" in call[0][0][2])
+    ]
+
+    assert len(diamond_inherits) >= 3, (
+        f"Expected diamond inheritance with virtual bases, found {len(diamond_inherits)}"
+    )
+
+    # Verify nested namespace template inheritance
+    nested_ns_inherits = [
+        call
+        for call in edge_case_inherits
+        if "NestedTemplate" in call[0][2][2] or "ComplexBase" in call[0][2][2]
+    ]
+
+    assert len(nested_ns_inherits) >= 2, (
+        f"Expected nested namespace template inheritance, found {len(nested_ns_inherits)}"
+    )
+
+    # Test that complex parsing doesn't break function calls
+    call_relationships = [
+        c
+        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
+        if c.args[1] == "CALLS"
+    ]
+
+    edge_case_calls = [
+        call
+        for call in call_relationships
+        if "edge_case_inheritance" in call.args[0][2]
+    ]
+
+    assert len(edge_case_calls) >= 5, (
+        f"Expected complex inheritance to preserve function calls, found {len(edge_case_calls)}"
+    )

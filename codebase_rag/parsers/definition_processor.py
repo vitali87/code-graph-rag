@@ -850,6 +850,61 @@ class DefinitionProcessor:
                         visited.add(parent_class_qn)
                         queue.append(parent_class_qn)
 
+    def _parse_cpp_base_classes(
+        self, base_clause_node: Node, class_node: Node, module_qn: str
+    ) -> list[str]:
+        """Parse C++ base class clause to extract all parent classes with full template support."""
+        parent_classes = []
+
+        # Iterate through all children in the base_class_clause
+        for base_child in base_clause_node.children:
+            parent_name = None
+
+            # Handle different types of parent class specifications
+            if base_child.type == "type_identifier":
+                # Simple inheritance: class Derived : public Base
+                parent_name = base_child.text.decode("utf8")
+
+            elif base_child.type == "qualified_identifier":
+                # Namespace qualified: class Derived : public ns::Base
+                # Also handles qualified templates: class Derived : public ns::Base<T>
+                parent_name = base_child.text.decode("utf8")
+
+            elif base_child.type == "template_type":
+                # Template inheritance: class Derived : public Base<T>
+                parent_name = base_child.text.decode("utf8")
+
+            # Skip access specifiers, virtual keyword, commas, and colons
+            elif base_child.type in ["access_specifier", "virtual", ",", ":"]:
+                continue
+
+            if parent_name:
+                # Build proper qualified name
+                # Extract the base class name (handle templates and namespaces)
+                base_name = self._extract_cpp_base_class_name(parent_name)
+                parent_qn = self._build_cpp_qualified_name(
+                    class_node, module_qn, base_name
+                )
+                parent_classes.append(parent_qn)
+                logger.debug(f"Found C++ inheritance: {parent_name} -> {parent_qn}")
+
+        return parent_classes
+
+    def _extract_cpp_base_class_name(self, parent_text: str) -> str:
+        """Extract the base class name from C++ inheritance text, handling templates and namespaces."""
+        # Remove template arguments for qualified name building
+        # Base<T> -> Base, std::vector<int> -> vector, ns::Base<T> -> Base
+
+        # Handle templates first (remove template arguments)
+        if "<" in parent_text:
+            parent_text = parent_text.split("<")[0]
+
+        # Then handle namespace qualification (keep only the last part)
+        if "::" in parent_text:
+            parent_text = parent_text.split("::")[-1]
+
+        return parent_text
+
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
         """Extract parent class names from a class definition."""
         parent_classes = []
@@ -859,22 +914,9 @@ class DefinitionProcessor:
             # Look for base_class_clause in C++ class definition
             for child in class_node.children:
                 if child.type == "base_class_clause":
-                    for base_child in child.children:
-                        if base_child.type in [
-                            "type_identifier",
-                            "qualified_identifier",
-                        ]:
-                            parent_text = base_child.text
-                            if parent_text:
-                                parent_name = parent_text.decode("utf8")
-                                # For now, assume same module - could be enhanced with proper resolution
-                                parent_qn = self._build_cpp_qualified_name(
-                                    class_node, module_qn, parent_name.split("::")[-1]
-                                )
-                                parent_classes.append(parent_qn)
-                        elif base_child.type == "access_specifier":
-                            # Skip access specifiers like public, private, protected
-                            continue
+                    parent_classes.extend(
+                        self._parse_cpp_base_classes(child, class_node, module_qn)
+                    )
             return parent_classes
 
         # Look for superclasses in Python class definition
