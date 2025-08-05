@@ -172,17 +172,35 @@ LANGUAGE_CONFIGS = {
     "cpp": LanguageConfig(
         name="cpp",
         file_extensions=[".cpp", ".h", ".hpp", ".cc", ".cxx", ".hxx", ".hh"],
-        function_node_types=["function_definition"],
+        function_node_types=[
+            "function_definition",  # Includes aliased constructor/destructor/operator definitions
+            "declaration",  # Includes aliased constructor/destructor/operator declarations
+            "field_declaration",  # For method declarations in classes
+            "template_declaration",  # For template functions
+            "lambda_expression",  # For lambda functions
+        ],
         class_node_types=[
             "class_specifier",
             "struct_specifier",
             "union_specifier",
             "enum_specifier",
         ],
-        module_node_types=["translation_unit", "namespace_definition"],
-        call_node_types=["call_expression"],
+        module_node_types=[
+            "translation_unit",
+            "namespace_definition",
+            "linkage_specification",  # extern "C" blocks
+        ],
+        call_node_types=[
+            "call_expression",
+            "field_expression",  # For method calls like obj.method()
+            "subscript_expression",  # For operator[] calls
+            "new_expression",  # For new operator
+            "delete_expression",  # For delete operator
+        ],
         import_node_types=["preproc_include"],
         import_from_node_types=["preproc_include"],  # C++ uses #include
+        # C++ specific configurations
+        package_indicators=["CMakeLists.txt", "Makefile", "*.vcxproj", "conanfile.txt"],
     ),
     "c-sharp": LanguageConfig(
         name="c-sharp",

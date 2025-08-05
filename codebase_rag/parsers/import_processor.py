@@ -73,6 +73,8 @@ class ImportProcessor:
                 self._parse_rust_imports(captures, module_qn)
             elif language == "go":
                 self._parse_go_imports(captures, module_qn)
+            elif language == "cpp":
+                self._parse_cpp_imports(captures, module_qn)
             else:
                 # Generic fallback for other languages
                 self._parse_generic_imports(captures, module_qn, lang_config)
@@ -593,6 +595,56 @@ class ImportProcessor:
             # Map package name to full import path
             self.import_mapping[module_qn][package_name] = import_path
             logger.debug(f"Go import: {package_name} -> {import_path}")
+
+    def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse C++ #include statements."""
+        for import_node in captures.get("import", []):
+            if import_node.type == "preproc_include":
+                self._parse_cpp_include(import_node, module_qn)
+
+    def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
+        """Parse a single C++ #include statement."""
+        include_path = None
+        is_system_include = False
+
+        for child in include_node.children:
+            if child.type == "string_literal":
+                # Local include: #include "header.h"
+                include_path = child.text.decode("utf-8").strip('"')
+                is_system_include = False
+            elif child.type == "system_lib_string":
+                # System include: #include <iostream>
+                include_path = child.text.decode("utf-8").strip("<>")
+                is_system_include = True
+
+        if include_path:
+            # Extract the header name for the local mapping
+            header_name = include_path.split("/")[-1]
+            if header_name.endswith(".h") or header_name.endswith(".hpp"):
+                local_name = header_name.split(".")[0]
+            else:
+                local_name = header_name
+
+            # Build full qualified name
+            if is_system_include:
+                # System includes map to external libraries
+                full_name = (
+                    f"std.{include_path}"
+                    if not include_path.startswith("std")
+                    else include_path
+                )
+            else:
+                # Local includes map to project modules
+                # Convert path/to/header.h to project.path.to.header
+                path_parts = (
+                    include_path.replace("/", ".").replace(".h", "").replace(".hpp", "")
+                )
+                full_name = f"{self.project_name}.{path_parts}"
+
+            self.import_mapping[module_qn][local_name] = full_name
+            logger.debug(
+                f"C++ include: {local_name} -> {full_name} (system: {is_system_include})"
+            )
 
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageConfig
