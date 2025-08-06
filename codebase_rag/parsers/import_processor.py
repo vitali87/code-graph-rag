@@ -73,6 +73,8 @@ class ImportProcessor:
                 self._parse_rust_imports(captures, module_qn)
             elif language == "go":
                 self._parse_go_imports(captures, module_qn)
+            elif language == "cpp":
+                self._parse_cpp_imports(captures, module_qn)
             else:
                 # Generic fallback for other languages
                 self._parse_generic_imports(captures, module_qn, lang_config)
@@ -593,6 +595,139 @@ class ImportProcessor:
             # Map package name to full import path
             self.import_mapping[module_qn][package_name] = import_path
             logger.debug(f"Go import: {package_name} -> {import_path}")
+
+    def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse C++ #include statements and C++20 module imports."""
+        # Parse traditional #include statements
+        for import_node in captures.get("import", []):
+            if import_node.type == "preproc_include":
+                self._parse_cpp_include(import_node, module_qn)
+            elif import_node.type == "template_function":
+                # Handle "import <header>;" syntax
+                self._parse_cpp_module_import(import_node, module_qn)
+            elif import_node.type == "declaration":
+                # Handle "module math_operations;" declarations and "export import :partition;"
+                self._parse_cpp_module_declaration(import_node, module_qn)
+
+    def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
+        """Parse a single C++ #include statement."""
+        include_path = None
+        is_system_include = False
+
+        for child in include_node.children:
+            if child.type == "string_literal":
+                # Local include: #include "header.h"
+                include_path = child.text.decode("utf-8").strip('"')
+                is_system_include = False
+            elif child.type == "system_lib_string":
+                # System include: #include <iostream>
+                include_path = child.text.decode("utf-8").strip("<>")
+                is_system_include = True
+
+        if include_path:
+            # Extract the header name for the local mapping
+            header_name = include_path.split("/")[-1]
+            if header_name.endswith(".h") or header_name.endswith(".hpp"):
+                local_name = header_name.split(".")[0]
+            else:
+                local_name = header_name
+
+            # Build full qualified name
+            if is_system_include:
+                # System includes map to external libraries
+                full_name = (
+                    f"std.{include_path}"
+                    if not include_path.startswith("std")
+                    else include_path
+                )
+            else:
+                # Local includes map to project modules
+                # Convert path/to/header.h to project.path.to.header
+                path_parts = (
+                    include_path.replace("/", ".").replace(".h", "").replace(".hpp", "")
+                )
+                full_name = f"{self.project_name}.{path_parts}"
+
+            self.import_mapping[module_qn][local_name] = full_name
+            logger.debug(
+                f"C++ include: {local_name} -> {full_name} (system: {is_system_include})"
+            )
+
+    def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
+        """Parse C++20 module import statements like 'import <iostream>;'."""
+        # Check if this is actually an import statement
+        identifier_child = None
+        template_args_child = None
+
+        for child in import_node.children:
+            if child.type == "identifier":
+                identifier_child = child
+            elif child.type == "template_argument_list":
+                template_args_child = child
+
+        # Only process if the identifier is "import"
+        if identifier_child and identifier_child.text.decode("utf-8") == "import":
+            if template_args_child:
+                # Extract the module/header name from <...>
+                module_name = None
+                for child in template_args_child.children:
+                    if child.type == "type_descriptor":
+                        for desc_child in child.children:
+                            if desc_child.type == "type_identifier":
+                                module_name = desc_child.text.decode("utf-8")
+                                break
+                    elif child.type == "type_identifier":
+                        module_name = child.text.decode("utf-8")
+
+                if module_name:
+                    # This is a standard library module import like "import <iostream>;"
+                    local_name = module_name
+                    full_name = f"std.{module_name}"
+
+                    self.import_mapping[module_qn][local_name] = full_name
+                    logger.debug(f"C++20 module import: {local_name} -> {full_name}")
+
+    def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
+        """Parse C++20 module declarations and partition imports."""
+        # Extract text to analyze the declaration
+        decl_text = decl_node.text.decode("utf-8").strip()
+
+        if decl_text.startswith("module ") and not decl_text.startswith("module ;"):
+            # Parse "module math_operations;" - this is a module implementation file
+            parts = decl_text.split()
+            if len(parts) >= 2:
+                module_name = parts[1].rstrip(";")
+                # Record that this file implements the specified module
+                self.import_mapping[module_qn][module_name] = (
+                    f"{self.project_name}.{module_name}"
+                )
+                logger.debug(f"C++20 module implementation: {module_name}")
+
+        elif decl_text.startswith("export module "):
+            # Parse "export module math_operations;" - this is a module interface
+            parts = decl_text.split()
+            if len(parts) >= 3:
+                module_name = parts[2].rstrip(";")
+                # Record that this file exports the specified module
+                self.import_mapping[module_qn][module_name] = (
+                    f"{self.project_name}.{module_name}"
+                )
+                logger.debug(f"C++20 module interface: {module_name}")
+
+        elif "import :" in decl_text:
+            # Parse "export import :partition_name;" - this is a partition import
+            # Extract partition name
+            colon_pos = decl_text.find(":")
+            if colon_pos != -1:
+                partition_part = decl_text[colon_pos + 1 :].split(";")[0].strip()
+                if partition_part:
+                    # Create mapping for the partition
+                    partition_name = f"partition_{partition_part}"
+                    full_name = f"{self.project_name}.{partition_part}"
+                    self.import_mapping[module_qn][partition_name] = full_name
+                    logger.debug(
+                        f"C++20 module partition import: {partition_name} -> {full_name}"
+                    )
 
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageConfig

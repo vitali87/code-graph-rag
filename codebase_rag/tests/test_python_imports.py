@@ -3,15 +3,11 @@ Comprehensive Python import parsing and relationship testing.
 Tests all possible Python import patterns and verifies IMPORTS relationships.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -664,8 +660,3 @@ if True:
 
     # Test that import parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ Import relationship validation passed:")
-    print(f"   - IMPORTS relationships: {len(import_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive test imports: {len(comprehensive_imports)}")

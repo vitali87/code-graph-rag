@@ -3,15 +3,11 @@ Comprehensive JavaScript class parsing and relationship testing.
 Tests all possible JavaScript class patterns and verifies class definitions, inheritance, and method relationships.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -1217,9 +1213,3 @@ const testResult = testClasses();
 
     # Test that class parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ JavaScript class relationship validation passed:")
-    print(f"   - CALLS relationships: {len(call_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - INHERITS relationships: {len(inherits_relationships)}")
-    print(f"   - Comprehensive test calls: {len(comprehensive_calls)}")

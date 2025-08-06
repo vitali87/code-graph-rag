@@ -9,6 +9,9 @@ from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
+
+# No longer need constants import - using Tree-sitter directly
+from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import resolve_class_name
@@ -141,13 +144,20 @@ class CallProcessor:
             if self._is_method(func_node, lang_config):
                 continue
 
-            name_node = func_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            func_name = text.decode("utf8")
+            # Extract function name using appropriate method for language
+            if language == "cpp":
+                # For C++, use utility functions instead of creating a temporary instance
+                func_name = extract_cpp_function_name(func_node)
+                if not func_name:
+                    continue
+            else:
+                name_node = func_node.child_by_field_name("name")
+                if not name_node:
+                    continue
+                text = name_node.text
+                if text is None:
+                    continue
+                func_name = text.decode("utf8")
             func_qn = self._build_nested_qualified_name(
                 func_node, module_qn, func_name, lang_config
             )
@@ -221,7 +231,7 @@ class CallProcessor:
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """Extracts the name of the function or method being called."""
-        # For 'call' in Python and 'call_expression' in JS/TS
+        # For 'call' in Python and 'call_expression' in JS/TS/C++
         if func_child := call_node.child_by_field_name("function"):
             if func_child.type == "identifier":
                 text = func_child.text
@@ -239,10 +249,38 @@ class CallProcessor:
                 text = func_child.text
                 if text is not None:
                     return str(text.decode("utf8"))
+            # C++: obj.method() -> field_expression
+            elif func_child.type == "field_expression":
+                # Extract method name from field_expression
+                field_node = func_child.child_by_field_name("field")
+                if field_node and field_node.text:
+                    return str(field_node.text.decode("utf8"))
+            # C++: namespace::func() or Class::method() -> qualified_identifier
+            elif func_child.type == "qualified_identifier":
+                # Return the full qualified name (e.g., "std::cout")
+                text = func_child.text
+                if text is not None:
+                    return str(text.decode("utf8"))
             # JS/TS: IIFE calls like (function(){})() -> parenthesized_expression
             elif func_child.type == "parenthesized_expression":
                 # For IIFEs, we need to identify the anonymous function inside
                 return self._get_iife_target_name(func_child)
+
+        # C++: Binary operators like obj1 + obj2 -> operator+
+        if call_node.type == "binary_expression":
+            # Use Tree-sitter field access to get the operator directly
+            operator_node = call_node.child_by_field_name("operator")
+            if operator_node and operator_node.text:
+                operator_text = operator_node.text.decode("utf8")
+                return convert_operator_symbol_to_name(operator_text)
+
+        # C++: Unary operators like ++obj, --obj -> operator++, operator--
+        if call_node.type in ["unary_expression", "update_expression"]:
+            # Use Tree-sitter field access to get the operator directly
+            operator_node = call_node.child_by_field_name("operator")
+            if operator_node and operator_node.text:
+                operator_text = operator_node.text.decode("utf8")
+                return convert_operator_symbol_to_name(operator_text)
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
@@ -312,8 +350,15 @@ class CallProcessor:
                 # Check if it's a built-in JavaScript method
                 builtin_info = self._resolve_builtin_call(call_name)
                 if not builtin_info:
-                    continue
-                callee_type, callee_qn = builtin_info
+                    # Check if it's a C++ operator
+                    operator_info = self._resolve_cpp_operator_call(
+                        call_name, module_qn
+                    )
+                    if not operator_info:
+                        continue
+                    callee_type, callee_qn = operator_info
+                else:
+                    callee_type, callee_qn = builtin_info
             else:
                 callee_type, callee_qn = callee_info
             logger.debug(
@@ -675,6 +720,74 @@ class CallProcessor:
             # Extract the prototype method name without .call/.apply
             base_call = call_name.rsplit(".", 1)[0]  # Remove .call or .apply
             return ("Function", base_call)
+
+        return None
+
+    def _resolve_cpp_operator_call(
+        self, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """Resolve C++ operator calls to built-in operator functions."""
+        if not call_name.startswith("operator"):
+            return None
+
+        # Map C++ operators to standardized function names
+        cpp_operators = {
+            "operator_plus": "builtin.cpp.operator_plus",
+            "operator_minus": "builtin.cpp.operator_minus",
+            "operator_multiply": "builtin.cpp.operator_multiply",
+            "operator_divide": "builtin.cpp.operator_divide",
+            "operator_modulo": "builtin.cpp.operator_modulo",
+            "operator_equal": "builtin.cpp.operator_equal",
+            "operator_not_equal": "builtin.cpp.operator_not_equal",
+            "operator_less": "builtin.cpp.operator_less",
+            "operator_greater": "builtin.cpp.operator_greater",
+            "operator_less_equal": "builtin.cpp.operator_less_equal",
+            "operator_greater_equal": "builtin.cpp.operator_greater_equal",
+            "operator_assign": "builtin.cpp.operator_assign",
+            "operator_plus_assign": "builtin.cpp.operator_plus_assign",
+            "operator_minus_assign": "builtin.cpp.operator_minus_assign",
+            "operator_multiply_assign": "builtin.cpp.operator_multiply_assign",
+            "operator_divide_assign": "builtin.cpp.operator_divide_assign",
+            "operator_modulo_assign": "builtin.cpp.operator_modulo_assign",
+            "operator_increment": "builtin.cpp.operator_increment",
+            "operator_decrement": "builtin.cpp.operator_decrement",
+            "operator_left_shift": "builtin.cpp.operator_left_shift",
+            "operator_right_shift": "builtin.cpp.operator_right_shift",
+            "operator_bitwise_and": "builtin.cpp.operator_bitwise_and",
+            "operator_bitwise_or": "builtin.cpp.operator_bitwise_or",
+            "operator_bitwise_xor": "builtin.cpp.operator_bitwise_xor",
+            "operator_bitwise_not": "builtin.cpp.operator_bitwise_not",
+            "operator_logical_and": "builtin.cpp.operator_logical_and",
+            "operator_logical_or": "builtin.cpp.operator_logical_or",
+            "operator_logical_not": "builtin.cpp.operator_logical_not",
+            "operator_subscript": "builtin.cpp.operator_subscript",
+            "operator_call": "builtin.cpp.operator_call",
+        }
+
+        if call_name in cpp_operators:
+            return ("Function", cpp_operators[call_name])
+
+        # Handle custom/overloaded operators in the same module
+        # Try to find a matching operator definition
+        possible_matches = self.function_registry.find_ending_with(call_name)
+        if possible_matches:
+            # Prefer operators from the same module
+            same_module_ops = [
+                qn
+                for qn in possible_matches
+                if qn.startswith(module_qn) and call_name in qn
+            ]
+            if same_module_ops:
+                # Sort to ensure deterministic selection, preferring shorter QNs
+                same_module_ops.sort(key=lambda qn: (len(qn), qn))
+                best_candidate = same_module_ops[0]
+                return (self.function_registry[best_candidate], best_candidate)
+
+            # Fallback to any matching operator
+            # Sort to ensure deterministic selection
+            possible_matches.sort(key=lambda qn: (len(qn), qn))
+            best_candidate = possible_matches[0]
+            return (self.function_registry[best_candidate], best_candidate)
 
         return None
 

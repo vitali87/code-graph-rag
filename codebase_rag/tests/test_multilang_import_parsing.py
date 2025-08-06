@@ -3,15 +3,11 @@
 Test script to verify import parsing works for all supported languages.
 """
 
-import os
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 # Add the parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 

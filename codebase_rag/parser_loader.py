@@ -177,24 +177,36 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
 
                 parsers[lang_name] = parser
 
-                # Compile queries
-                function_patterns = " ".join(
-                    [
-                        f"({node_type}) @function"
-                        for node_type in lang_config.function_node_types
-                    ]
+                # Create Tree-sitter queries - use pre-formatted queries if available, otherwise generate from node types
+                function_patterns = (
+                    lang_config.function_query
+                    if lang_config.function_query
+                    else " ".join(
+                        [
+                            f"({node_type}) @function"
+                            for node_type in lang_config.function_node_types
+                        ]
+                    )
                 )
-                class_patterns = " ".join(
-                    [
-                        f"({node_type}) @class"
-                        for node_type in lang_config.class_node_types
-                    ]
+                class_patterns = (
+                    lang_config.class_query
+                    if lang_config.class_query
+                    else " ".join(
+                        [
+                            f"({node_type}) @class"
+                            for node_type in lang_config.class_node_types
+                        ]
+                    )
                 )
-                call_patterns = " ".join(
-                    [
-                        f"({node_type}) @call"
-                        for node_type in lang_config.call_node_types
-                    ]
+                call_patterns = (
+                    lang_config.call_query
+                    if lang_config.call_query
+                    else " ".join(
+                        [
+                            f"({node_type}) @call"
+                            for node_type in lang_config.call_node_types
+                        ]
+                    )
                 )
 
                 # Create import query patterns

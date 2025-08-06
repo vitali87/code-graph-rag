@@ -3,15 +3,11 @@ Comprehensive TypeScript declaration files (.d.ts) parsing and testing.
 Tests ambient declarations, module declarations, global augmentations, and declaration file patterns.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -1396,7 +1392,7 @@ export {};
     ).call_args_list
 
     calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive declaration-related calls
     comprehensive_calls = [
@@ -1421,9 +1417,3 @@ export {};
     assert len(comprehensive_declarations) >= 5, (
         f"Expected at least 5 declaration patterns, found {len(comprehensive_declarations)}"
     )
-
-    print("✅ TypeScript declaration files validation passed:")
-    print(f"   - CALLS relationships: {len(calls_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive calls: {len(comprehensive_calls)}")
-    print(f"   - Comprehensive declarations: {len(comprehensive_declarations)}")

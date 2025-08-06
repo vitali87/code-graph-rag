@@ -3,15 +3,11 @@ Comprehensive JavaScript import parsing and relationship testing.
 Tests all possible JavaScript import patterns and verifies IMPORTS relationships.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -876,11 +872,6 @@ export { useUtils };
         assert any(expected in target for target in re_export_targets), (
             f"Missing re-export target: {expected}\nFound: {re_export_targets}"
         )
-
-    print("✅ Aliased re-export import mapping test passed:")
-    print(f"   - Consumer imports: {len(consumer_imports)}")
-    print(f"   - Re-export imports: {len(re_export_imports)}")
-    print(f"   - Re-export targets: {re_export_targets}")
     print(
         "   - Bug fix verified: export { name as alias } now correctly maps alias -> source.name"
     )
@@ -972,11 +963,6 @@ const url = API_URL;
 
     # Test that import parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
-
-    print("✅ JavaScript import relationship validation passed:")
-    print(f"   - IMPORTS relationships: {len(import_relationships)}")
-    print(f"   - DEFINES relationships: {len(defines_relationships)}")
-    print(f"   - Comprehensive test imports: {len(comprehensive_imports)}")
 
 
 def test_commonjs_multiple_destructured_variables_regression(
@@ -1096,8 +1082,4 @@ const area = multiply(PI, 2);
         f"but only found {len(found_patterns)}: {found_patterns}\n"
         f"All imported modules: {imported_modules}"
     )
-
-    print("✅ CommonJS multiple destructuring regression test passed:")
-    print(f"   - Total imports from test file: {len(regression_imports)}")
-    print(f"   - Module patterns found: {found_patterns}")
     print("   - No IndexError occurred (bug is fixed)")
