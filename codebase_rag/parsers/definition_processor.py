@@ -11,6 +11,7 @@ from tree_sitter import Node, Query, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
+from .constants import get_operator_name
 from .cpp_utils import (
     build_cpp_qualified_name,
     extract_cpp_function_name,
@@ -435,27 +436,7 @@ class DefinitionProcessor:
         # Get the operator text and create a readable name
         if operator_node.text:
             operator_text = operator_node.text.decode("utf8").strip()
-            # Convert operators to readable names
-            operator_map = {
-                "+": "operator_plus",
-                "-": "operator_minus",
-                "*": "operator_multiply",
-                "/": "operator_divide",
-                "=": "operator_assign",
-                "==": "operator_equal",
-                "!=": "operator_not_equal",
-                "<": "operator_less",
-                ">": "operator_greater",
-                "<=": "operator_less_equal",
-                ">=": "operator_greater_equal",
-                "[]": "operator_subscript",
-                "()": "operator_call",
-                "++": "operator_increment",
-                "--": "operator_decrement",
-            }
-            return operator_map.get(
-                operator_text, f"operator_{operator_text.replace(' ', '_')}"
-            )
+            return get_operator_name(operator_text)
         return "operator_unknown"
 
     def _extract_destructor_name(self, destructor_node: Node) -> str:

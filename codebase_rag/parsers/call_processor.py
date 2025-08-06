@@ -9,6 +9,7 @@ from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
+from .constants import CPP_BINARY_OPERATORS, CPP_UNARY_OPERATORS, get_operator_name
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import resolve_class_name
@@ -314,52 +315,21 @@ class CallProcessor:
         if call_node.type == "binary_expression":
             operator_node = None
             for child in call_node.children:
-                if child.type in [
-                    "+",
-                    "-",
-                    "*",
-                    "/",
-                    "%",
-                    "==",
-                    "!=",
-                    "<",
-                    ">",
-                    "<=",
-                    ">=",
-                    "&&",
-                    "||",
-                    "&",
-                    "|",
-                    "^",
-                    "<<",
-                    ">>",
-                    "=",
-                    "+=",
-                    "-=",
-                    "*=",
-                    "/=",
-                    "%=",
-                    "&=",
-                    "|=",
-                    "^=",
-                    "<<=",
-                    ">>=",
-                    "[]",
-                ]:
+                if child.type in CPP_BINARY_OPERATORS:
                     operator_node = child
                     break
             if operator_node and operator_node.text:
-                return f"operator{operator_node.text.decode('utf8')}"
+                return get_operator_name(operator_node.text.decode("utf8"))
 
         # C++: Unary operators like ++obj, --obj -> operator++, operator--
         if call_node.type in ["unary_expression", "update_expression"]:
             operator_node = None
             for child in call_node.children:
-                if child.type in ["++", "--", "+", "-", "*", "&", "!", "~"]:
+                if child.type in CPP_UNARY_OPERATORS:
                     operator_node = child
                     break
             if operator_node and operator_node.text:
-                return f"operator{operator_node.text.decode('utf8')}"
+                return get_operator_name(operator_node.text.decode("utf8"))
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):

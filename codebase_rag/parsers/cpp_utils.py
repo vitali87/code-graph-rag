@@ -8,6 +8,8 @@ utilities, we improve modularity and reduce coupling between processors.
 
 from tree_sitter import Node
 
+from .constants import get_operator_name
+
 
 def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
     """Build qualified name for C++ entities, handling namespaces properly."""
@@ -133,27 +135,7 @@ def extract_operator_name(operator_node: Node) -> str:
     # Get the operator text and create a readable name
     if operator_node.text:
         operator_text = operator_node.text.decode("utf8").strip()
-        # Convert operators to readable names
-        operator_map = {
-            "+": "operator_plus",
-            "-": "operator_minus",
-            "*": "operator_multiply",
-            "/": "operator_divide",
-            "=": "operator_assign",
-            "==": "operator_equal",
-            "!=": "operator_not_equal",
-            "<": "operator_less",
-            ">": "operator_greater",
-            "<=": "operator_less_equal",
-            ">=": "operator_greater_equal",
-            "[]": "operator_subscript",
-            "()": "operator_call",
-            "++": "operator_increment",
-            "--": "operator_decrement",
-        }
-        return operator_map.get(
-            operator_text, f"operator_{operator_text.replace(' ', '_')}"
-        )
+        return get_operator_name(operator_text)
     return "operator_unknown"
 
 
