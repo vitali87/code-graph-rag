@@ -139,9 +139,15 @@ def is_cpp_exported(node: Node) -> bool:
             for child in parent.children:
                 if child == current:
                     break  # We've reached our node
-                if child.type == "type_identifier" and child.text:
+                # Check for export keyword - could be various node types depending on Tree-sitter grammar
+                if child.text:
                     child_text = child.text.decode("utf-8")
-                    if child_text == "export":
+                    if child_text == "export" and child.type in [
+                        "export",  # Direct export node type
+                        "export_keyword",  # Export keyword node type
+                        "identifier",  # Sometimes export appears as identifier
+                        "primitive_type",  # Fallback for some grammars
+                    ]:
                         found_export = True
 
             if found_export:
