@@ -463,6 +463,41 @@ class DefinitionProcessor:
                     if name:
                         return name
 
+            # Special handling for field_declaration nodes that are actually method declarations
+            if func_node.type == "field_declaration":
+                # Check if this field_declaration contains a function_declarator
+                # This happens for method declarations like: void methodName() const;
+                has_function_declarator = any(
+                    child.type == "function_declarator" for child in func_node.children
+                )
+                if has_function_declarator:
+                    # This is a method declaration, extract name from function_declarator
+                    for child in func_node.children:
+                        if child.type == "function_declarator":
+                            # Look for the declarator inside the function_declarator
+                            declarator = child.child_by_field_name("declarator")
+                            if (
+                                declarator
+                                and declarator.type == "field_identifier"
+                                and declarator.text
+                            ):
+                                return (
+                                    declarator.text.decode("utf8")
+                                    if declarator.text
+                                    else None
+                                )
+                            # Fallback: look for field_identifier directly
+                            for grandchild in child.children:
+                                if (
+                                    grandchild.type == "field_identifier"
+                                    and grandchild.text
+                                ):
+                                    return (
+                                        grandchild.text.decode("utf8")
+                                        if grandchild.text
+                                        else None
+                                    )
+
         elif func_node.type == "function_declarator":
             # Look for identifier, field_identifier, destructor_name, or operator name
             for child in func_node.children:
