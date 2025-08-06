@@ -118,23 +118,9 @@ def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
 
 def is_cpp_exported(node: Node) -> bool:
     """Check if a C++ declaration is exported from a module."""
-    # First check text-based export detection (more reliable for C++20 modules)
+    # Use AST-based detection to find export keywords
     current = node
     while current and current.parent:
-        # Get the full text of the current node
-        if current.text:
-            node_text = current.text.decode("utf-8").strip()
-            # Check if this node's text starts with "export "
-            if node_text.startswith("export "):
-                return True
-
-            # Check for export at the beginning of lines
-            lines = node_text.split("\n")
-            for line in lines:
-                line = line.strip()
-                if line.startswith("export "):
-                    return True
-
         # Check siblings to the left for export keyword
         if current.parent:
             parent = current.parent

@@ -557,9 +557,28 @@ class DefinitionProcessor:
 
         def find_module_declarations(node: Node) -> None:
             """Recursively find module-related declarations."""
-            if node.type == "declaration":
-                text = node.text.decode("utf-8").strip()
-                if text.startswith("export module ") or text.startswith("module "):
+            # Look for actual module_declaration nodes in AST
+            if node.type == "module_declaration":
+                text = node.text.decode("utf-8").strip() if node.text else ""
+                module_declarations.append((node, text))
+
+            # Also check for module declarations that might be under other node types
+            elif node.type == "declaration":
+                # Check if this declaration contains module keywords as children
+                has_module = False
+
+                for child in node.children:
+                    if child.type == "module" or (
+                        child.text and child.text.decode("utf-8").strip() == "module"
+                    ):
+                        has_module = True
+                    if child.type == "export" or (
+                        child.text and child.text.decode("utf-8").strip() == "export"
+                    ):
+                        pass
+
+                if has_module:
+                    text = node.text.decode("utf-8").strip() if node.text else ""
                     module_declarations.append((node, text))
 
             for child in node.children:

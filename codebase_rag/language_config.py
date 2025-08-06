@@ -26,6 +26,12 @@ COMMON_DECLARATION_IMPORT = ["import_declaration"]
 
 COMMON_USING_DIRECTIVE = ["using_directive"]
 
+CPP_IMPORTS = [
+    "preproc_include",
+    "template_function",
+    "declaration",
+]  # #include, import <>, module declarations
+
 
 def create_lang_config(**kwargs: Any) -> "LanguageConfig":
     """Helper to create LanguageConfig without redundant name assignment."""
@@ -213,16 +219,8 @@ LANGUAGE_CONFIGS = {
             "unary_expression",  # For unary operators like ++obj
             "update_expression",  # For prefix/postfix increment/decrement
         ],
-        import_node_types=[
-            "preproc_include",
-            "template_function",
-            "declaration",
-        ],  # #include, import <>, module declarations
-        import_from_node_types=[
-            "preproc_include",
-            "template_function",
-            "declaration",
-        ],  # C++ uses #include and C++20 import/module
+        import_node_types=CPP_IMPORTS,
+        import_from_node_types=CPP_IMPORTS,
         # C++ specific configurations
         package_indicators=["CMakeLists.txt", "Makefile", "*.vcxproj", "conanfile.txt"],
         # Pre-formatted Tree-sitter queries for comprehensive C++ parsing
