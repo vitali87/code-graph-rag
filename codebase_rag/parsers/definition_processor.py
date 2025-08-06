@@ -754,6 +754,11 @@ class DefinitionProcessor:
                     logger.info(
                         f"  Found Exported Struct: {class_name} (qn: {class_qn})"
                     )
+                elif "export union " in node_text:
+                    node_type = "Class"  # In C++, unions are also class-like
+                    logger.info(
+                        f"  Found Exported Union: {class_name} (qn: {class_qn})"
+                    )
                 elif "export template" in node_text:
                     node_type = "Class"  # Template class
                     logger.info(
