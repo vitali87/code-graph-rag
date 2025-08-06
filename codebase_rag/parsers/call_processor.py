@@ -188,18 +188,10 @@ class CallProcessor:
 
             # Extract function name using appropriate method for language
             if language == "cpp":
-                # For C++, create a temporary instance to call the method
-                from .definition_processor import DefinitionProcessor
+                # For C++, use utility functions instead of creating a temporary instance
+                from .cpp_utils import extract_cpp_function_name
 
-                temp_processor = DefinitionProcessor(
-                    ingestor=self.ingestor,
-                    repo_path=self.repo_path,
-                    project_name=self.project_name,
-                    function_registry=self.function_registry,
-                    simple_name_lookup={},
-                    import_processor=self.import_processor,
-                )
-                func_name = temp_processor._extract_cpp_function_name(func_node)
+                func_name = extract_cpp_function_name(func_node)
                 if not func_name:
                     continue
             else:

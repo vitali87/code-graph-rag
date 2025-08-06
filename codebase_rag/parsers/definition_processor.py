@@ -11,6 +11,11 @@ from tree_sitter import Node, Query, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
+from .cpp_utils import (
+    build_cpp_qualified_name,
+    extract_cpp_function_name,
+    is_cpp_exported,
+)
 from .import_processor import ImportProcessor
 from .utils import resolve_class_name
 
@@ -279,64 +284,6 @@ class DefinitionProcessor:
 
         return None
 
-    def _build_cpp_qualified_name(self, node: Node, module_qn: str, name: str) -> str:
-        """Build qualified name for C++ entities, handling namespaces properly."""
-        # For C++20 module files, use module-based naming instead of traditional namespace-based naming
-        # Extract the file path from module_qn to check if this is a module file
-        module_parts = module_qn.split(".")
-
-        # Check if this is a module interface file (.ixx, .cppm, .ccm)
-        is_module_file = False
-        if len(module_parts) >= 3:  # At least project.dir.filename
-            module_parts[-1]  # Last part should be the filename
-            # Check parent directory or file extension patterns that suggest module files
-            if len(module_parts) >= 3 and (
-                "interfaces" in module_parts or "modules" in module_parts
-            ):
-                is_module_file = True
-
-        if is_module_file and len(module_parts) >= 3:
-            # For module files, use simplified naming: project.filename.classname
-            project_name = module_parts[0]  # First part is always project name
-            filename = module_parts[-1]  # Last part is filename (without extension)
-
-            # Skip namespace parts for module files - classes/functions are qualified directly by the module
-            return f"{project_name}.{filename}.{name}"
-        else:
-            # Traditional C++ namespace-based naming for regular files
-            path_parts = []
-            current = node.parent
-
-            # Walk up the tree to find namespaces
-            while current and current.type != "translation_unit":
-                if current.type == "namespace_definition":
-                    # Get namespace name from the 'name' field
-                    namespace_name = None
-                    # First try to get the name field directly
-                    name_node = current.child_by_field_name("name")
-                    if name_node and name_node.text:
-                        namespace_name = name_node.text.decode("utf8")
-                    else:
-                        # Fallback: look for namespace_identifier or identifier children
-                        for child in current.children:
-                            if (
-                                child.type in ["namespace_identifier", "identifier"]
-                                and child.text
-                            ):
-                                namespace_name = child.text.decode("utf8")
-                                break
-                    if namespace_name:
-                        path_parts.append(namespace_name)
-                current = current.parent
-
-            # Reverse to get correct namespace order (outermost first)
-            path_parts.reverse()
-
-            if path_parts:
-                return f"{module_qn}.{'.'.join(path_parts)}.{name}"
-            else:
-                return f"{module_qn}.{name}"
-
     def _extract_class_name(self, class_node: Node) -> str | None:
         """Extract class name, handling both class declarations and class expressions."""
         # For regular class declarations, try the name field first
@@ -377,54 +324,6 @@ class DefinitionProcessor:
 
         return None
 
-    def _is_cpp_exported(self, node: Node) -> bool:
-        """Check if a C++ declaration is exported from a module."""
-        # First check text-based export detection (more reliable for C++20 modules)
-        current = node
-        while current and current.parent:
-            # Get the full text of the current node
-            if current.text:
-                node_text = current.text.decode("utf-8").strip()
-                # Check if this node's text starts with "export "
-                if node_text.startswith("export "):
-                    return True
-
-                # Check for export at the beginning of lines
-                lines = node_text.split("\n")
-                for line in lines:
-                    line = line.strip()
-                    if line.startswith("export "):
-                        return True
-
-            # Check siblings to the left for export keyword
-            if current.parent:
-                parent = current.parent
-                found_export = False
-
-                for child in parent.children:
-                    if child == current:
-                        break  # We've reached our node
-                    if child.type == "type_identifier" and child.text:
-                        child_text = child.text.decode("utf-8")
-                        if child_text == "export":
-                            found_export = True
-
-                if found_export:
-                    return True
-
-            # Move up the tree, but don't go too far
-            if current.type in [
-                "declaration",
-                "function_definition",
-                "template_declaration",
-                "class_specifier",
-                "translation_unit",
-            ]:
-                break
-            current = current.parent
-
-        return False
-
     def _extract_cpp_exported_class_name(self, class_node: Node) -> str | None:
         """Extract class name from misclassified exported class nodes (function_definition nodes that are actually classes)."""
         # For misclassified nodes like "export class Calculator", the identifier node contains the class name
@@ -447,7 +346,7 @@ class DefinitionProcessor:
             # Look for function_declarator within these definitions
             for child in func_node.children:
                 if child.type == "function_declarator":
-                    name = self._extract_cpp_function_name(child)
+                    name = extract_cpp_function_name(child)
                     if name:
                         return name
 
@@ -459,7 +358,7 @@ class DefinitionProcessor:
             # Handle method declarations - look for function_declarator
             for child in func_node.children:
                 if child.type == "function_declarator":
-                    name = self._extract_cpp_function_name(child)
+                    name = extract_cpp_function_name(child)
                     if name:
                         return name
 
@@ -518,7 +417,7 @@ class DefinitionProcessor:
                     "declaration",
                     "constructor_or_destructor_definition",
                 ]:
-                    return self._extract_cpp_function_name(child)
+                    return extract_cpp_function_name(child)
 
         elif func_node.type == "lambda_expression":
             # Lambda expressions don't have names, return a synthetic one
@@ -616,15 +515,13 @@ class DefinitionProcessor:
 
             # Extract function name - use C++ specific logic for C++
             if language == "cpp":
-                func_name = self._extract_cpp_function_name(func_node)
+                func_name = extract_cpp_function_name(func_node)
                 if not func_name:
                     continue  # Skip if we can't extract name for C++ functions
                 # Build C++ qualified name with namespace support
-                func_qn = self._build_cpp_qualified_name(
-                    func_node, module_qn, func_name
-                )
+                func_qn = build_cpp_qualified_name(func_node, module_qn, func_name)
                 # Check if this is an exported function
-                is_exported = self._is_cpp_exported(func_node)
+                is_exported = is_cpp_exported(func_node)
             else:
                 is_exported = False  # Default for non-C++ languages
                 # Extract function name - handle arrow functions specially
@@ -941,13 +838,11 @@ class DefinitionProcessor:
                 else:
                     # Normal class processing
                     class_name = self._extract_cpp_class_name(class_node)
-                    is_exported = self._is_cpp_exported(class_node)
+                    is_exported = is_cpp_exported(class_node)
 
                 if not class_name:
                     continue
-                class_qn = self._build_cpp_qualified_name(
-                    class_node, module_qn, class_name
-                )
+                class_qn = build_cpp_qualified_name(class_node, module_qn, class_name)
             else:
                 is_exported = False  # Default for non-C++ languages
                 class_name = self._extract_class_name(class_node)
@@ -1057,7 +952,7 @@ class DefinitionProcessor:
 
                 # Use C++ specific method name extraction for C++
                 if language == "cpp":
-                    method_name = self._extract_cpp_function_name(method_node)
+                    method_name = extract_cpp_function_name(method_node)
                     if not method_name:
                         continue
                 else:
@@ -1181,9 +1076,7 @@ class DefinitionProcessor:
                 # Build proper qualified name
                 # Extract the base class name (handle templates and namespaces)
                 base_name = self._extract_cpp_base_class_name(parent_name)
-                parent_qn = self._build_cpp_qualified_name(
-                    class_node, module_qn, base_name
-                )
+                parent_qn = build_cpp_qualified_name(class_node, module_qn, base_name)
                 parent_classes.append(parent_qn)
                 logger.debug(f"Found C++ inheritance: {parent_name} -> {parent_qn}")
 
