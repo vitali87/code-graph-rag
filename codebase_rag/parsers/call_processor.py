@@ -11,7 +11,7 @@ from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
 
 # No longer need constants import - using Tree-sitter directly
-from .cpp_utils import extract_cpp_function_name
+from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import resolve_class_name
@@ -126,47 +126,6 @@ class CallProcessor:
 
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
-
-    def _convert_operator_symbol_to_name(self, symbol: str) -> str:
-        """Convert operator symbol to readable name using Tree-sitter approach."""
-        symbol_map = {
-            "+": "operator_plus",
-            "-": "operator_minus",
-            "*": "operator_multiply",
-            "/": "operator_divide",
-            "%": "operator_modulo",
-            "=": "operator_assign",
-            "==": "operator_equal",
-            "!=": "operator_not_equal",
-            "<": "operator_less",
-            ">": "operator_greater",
-            "<=": "operator_less_equal",
-            ">=": "operator_greater_equal",
-            "&&": "operator_logical_and",
-            "||": "operator_logical_or",
-            "&": "operator_bitwise_and",
-            "|": "operator_bitwise_or",
-            "^": "operator_bitwise_xor",
-            "~": "operator_bitwise_not",
-            "!": "operator_not",
-            "<<": "operator_left_shift",
-            ">>": "operator_right_shift",
-            "++": "operator_increment",
-            "--": "operator_decrement",
-            "+=": "operator_plus_assign",
-            "-=": "operator_minus_assign",
-            "*=": "operator_multiply_assign",
-            "/=": "operator_divide_assign",
-            "%=": "operator_modulo_assign",
-            "&=": "operator_and_assign",
-            "|=": "operator_or_assign",
-            "^=": "operator_xor_assign",
-            "<<=": "operator_left_shift_assign",
-            ">>=": "operator_right_shift_assign",
-            "[]": "operator_subscript",
-            "()": "operator_call",
-        }
-        return symbol_map.get(symbol, f"operator_{symbol.replace(' ', '_')}")
 
     def _process_calls_in_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
@@ -313,7 +272,7 @@ class CallProcessor:
             operator_node = call_node.child_by_field_name("operator")
             if operator_node and operator_node.text:
                 operator_text = operator_node.text.decode("utf8")
-                return self._convert_operator_symbol_to_name(operator_text)
+                return convert_operator_symbol_to_name(operator_text)
 
         # C++: Unary operators like ++obj, --obj -> operator++, operator--
         if call_node.type in ["unary_expression", "update_expression"]:
@@ -321,7 +280,7 @@ class CallProcessor:
             operator_node = call_node.child_by_field_name("operator")
             if operator_node and operator_node.text:
                 operator_text = operator_node.text.decode("utf8")
-                return self._convert_operator_symbol_to_name(operator_text)
+                return convert_operator_symbol_to_name(operator_text)
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
