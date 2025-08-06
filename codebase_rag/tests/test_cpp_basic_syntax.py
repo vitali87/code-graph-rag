@@ -177,8 +177,8 @@ void demonstrateClasses() {
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
-    # Expected function definitions (methods and free functions)
-    expected_functions = [
+    # Expected method definitions (class methods)
+    expected_methods = [
         f"{project_name}.basic_classes.Person.Person",  # constructor
         f"{project_name}.basic_classes.Person.setName",
         f"{project_name}.basic_classes.Person.getName",
@@ -187,7 +187,18 @@ void demonstrateClasses() {
         f"{project_name}.basic_classes.MathUtils.calculateCircleArea",
         f"{project_name}.basic_classes.Point.distance",
         f"{project_name}.basic_classes.Rectangle.area",
+    ]
+
+    # Expected free function definitions
+    expected_functions = [
         f"{project_name}.basic_classes.demonstrateClasses",
+    ]
+
+    # Get all Method node creation calls
+    method_calls = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Method"
     ]
 
     # Get all Function node creation calls
@@ -197,9 +208,16 @@ void demonstrateClasses() {
         if call[0][0] == "Function"
     ]
 
+    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
-    # Verify at least some expected functions were created
+    # Verify all expected methods were created
+    missing_methods = set(expected_methods) - created_methods
+    assert not missing_methods, (
+        f"Missing expected methods: {sorted(list(missing_methods))}"
+    )
+
+    # Verify all expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -508,13 +526,24 @@ void demonstrateUsingDirectives() {
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Expected functions in namespaces
+    # Expected methods in namespaces (class methods)
+    expected_methods = [
+        f"{project_name}.basic_namespaces.graphics.Circle.area",
+    ]
+
+    # Expected free functions in namespaces
     expected_functions = [
         f"{project_name}.basic_namespaces.globalFunction",
         f"{project_name}.basic_namespaces.utils.printDebug",
         f"{project_name}.basic_namespaces.utils.math.add",
-        f"{project_name}.basic_namespaces.graphics.Circle.area",
         f"{project_name}.basic_namespaces.demonstrateNamespaces",
+    ]
+
+    # Get all Method node creation calls
+    method_calls = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Method"
     ]
 
     # Get all Function node creation calls
@@ -524,9 +553,16 @@ void demonstrateUsingDirectives() {
         if call[0][0] == "Function"
     ]
 
+    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
-    # Verify at least some namespaced functions were created
+    # Verify expected methods were created
+    missing_methods = set(expected_methods) - created_methods
+    assert not missing_methods, (
+        f"Missing expected methods: {sorted(list(missing_methods))}"
+    )
+
+    # Verify expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"

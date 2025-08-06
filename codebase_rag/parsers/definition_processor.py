@@ -932,15 +932,10 @@ class DefinitionProcessor:
                     "end_line": method_node.end_point[0] + 1,
                     "docstring": self._get_docstring(method_node),
                 }
-                # For C++, create methods as Function nodes to match test expectations
-                if language == "cpp":
-                    logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
-                    self.ingestor.ensure_node_batch("Function", method_props)
-                    self.function_registry[method_qn] = "Function"
-                else:
-                    logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
-                    self.ingestor.ensure_node_batch("Method", method_props)
-                    self.function_registry[method_qn] = "Method"
+                # All methods should be Method nodes for consistency across languages
+                logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
+                self.ingestor.ensure_node_batch("Method", method_props)
+                self.function_registry[method_qn] = "Method"
                 self.simple_name_lookup[method_name].add(method_qn)
 
                 self.ingestor.ensure_relationship_batch(
