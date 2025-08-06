@@ -56,13 +56,21 @@ def convert_operator_symbol_to_name(symbol: str) -> str:
 def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
     """Build qualified name for C++ entities, handling namespaces properly."""
     # For C++20 module files, use module-based naming instead of traditional namespace-based naming
-    # Extract the file path from module_qn to check if this is a module file
     module_parts = module_qn.split(".")
 
-    # Check if this is a module interface file (.ixx, .cppm, .ccm)
+    # Improved C++20 module file detection - check for common module file indicators
     is_module_file = (
         len(module_parts) >= 3  # At least project.dir.filename
-        and ("interfaces" in module_parts or "modules" in module_parts)
+        and (
+            "interfaces" in module_parts
+            or "modules" in module_parts
+            or
+            # Also check for common module file extensions in the qualified name
+            any(
+                part.endswith((".ixx", ".cppm", ".ccm", ".mxx"))
+                for part in module_parts
+            )
+        )
     )
 
     if is_module_file:
