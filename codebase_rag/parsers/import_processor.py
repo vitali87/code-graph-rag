@@ -715,20 +715,15 @@ class ImportProcessor:
                 logger.debug(f"C++20 module interface: {module_name}")
 
         elif "import :" in decl_text:
-            # Parse "export import :containers;" - this is a partition import
-            if (
-                ":containers" in decl_text
-                or ":algorithms" in decl_text
-                or ":iterators" in decl_text
-            ):
-                # Extract partition name
-                colon_pos = decl_text.find(":")
-                if colon_pos != -1:
-                    partition_part = decl_text[colon_pos + 1 :].split(";")[0].strip()
+            # Parse "export import :partition_name;" - this is a partition import
+            # Extract partition name
+            colon_pos = decl_text.find(":")
+            if colon_pos != -1:
+                partition_part = decl_text[colon_pos + 1 :].split(";")[0].strip()
+                if partition_part:
                     # Create mapping for the partition
                     partition_name = f"partition_{partition_part}"
                     full_name = f"{self.project_name}.{partition_part}"
-
                     self.import_mapping[module_qn][partition_name] = full_name
                     logger.debug(
                         f"C++20 module partition import: {partition_name} -> {full_name}"
