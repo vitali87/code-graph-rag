@@ -1,6 +1,6 @@
 [project]
 name = "graph-code"
-version = "0.0.21"
+version = "0.0.22"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"

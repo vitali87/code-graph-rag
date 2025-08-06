@@ -198,91 +198,106 @@ def extract_destructor_name(destructor_node: Node) -> str:
     return "~destructor"
 
 
+def _extract_name_from_function_definition(func_node: Node) -> str | None:
+    """Extract function name from C++ function definition nodes."""
+    # Look for function_declarator within these definitions
+    for child in func_node.children:
+        if child.type == "function_declarator":
+            return extract_cpp_function_name(child)
+    return None
+
+
+def _extract_name_from_declaration(func_node: Node) -> str | None:
+    """Extract function name from C++ declaration nodes."""
+    # Handle method declarations - look for function_declarator
+    for child in func_node.children:
+        if child.type == "function_declarator":
+            return extract_cpp_function_name(child)
+    return None
+
+
+def _extract_name_from_field_declaration(func_node: Node) -> str | None:
+    """Extract function name from field_declaration nodes that are actually method declarations."""
+    # Check if this field_declaration contains a function_declarator
+    # This happens for method declarations like: void methodName() const;
+    has_function_declarator = any(
+        child.type == "function_declarator" for child in func_node.children
+    )
+    if not has_function_declarator:
+        return None
+
+    # This is a method declaration, extract name from function_declarator
+    for child in func_node.children:
+        if child.type == "function_declarator":
+            # Look for the declarator inside the function_declarator
+            declarator = child.child_by_field_name("declarator")
+            if declarator and declarator.type == "field_identifier" and declarator.text:
+                return declarator.text.decode("utf8") if declarator.text else None
+
+            # Fallback: look for field_identifier directly
+            for grandchild in child.children:
+                if grandchild.type == "field_identifier" and grandchild.text:
+                    return grandchild.text.decode("utf8") if grandchild.text else None
+    return None
+
+
+def _extract_name_from_function_declarator(func_node: Node) -> str | None:
+    """Extract function name from function_declarator nodes."""
+    # Look for identifier, field_identifier, destructor_name, or operator name
+    for child in func_node.children:
+        if child.type in ["identifier", "field_identifier"] and child.text:
+            return child.text.decode("utf8") if child.text else None
+        elif child.type == "operator_name":
+            # Handle operator overloading
+            return extract_operator_name(child)
+        elif child.type == "destructor_name":
+            # Handle destructor names like ~ClassName
+            return extract_destructor_name(child)
+    return None
+
+
+def _extract_name_from_template_declaration(func_node: Node) -> str | None:
+    """Extract function name from template_declaration nodes."""
+    # For template functions, look inside the template
+    for child in func_node.children:
+        if child.type in [
+            "function_definition",
+            "function_declarator",
+            "declaration",
+        ]:
+            return extract_cpp_function_name(child)
+    return None
+
+
 def extract_cpp_function_name(func_node: Node) -> str | None:
     """Extract function name from C++ function definitions and declarations."""
-    # Handle different C++ function types
+    # Dispatch to appropriate helper function based on node type
     if func_node.type in [
         "function_definition",
         "constructor_or_destructor_definition",
         "inline_method_definition",
         "operator_cast_definition",
     ]:
-        # Look for function_declarator within these definitions
-        for child in func_node.children:
-            if child.type == "function_declarator":
-                name = extract_cpp_function_name(child)
-                if name:
-                    return name
+        return _extract_name_from_function_definition(func_node)
 
     elif func_node.type in [
-        "field_declaration",
         "declaration",
         "constructor_or_destructor_declaration",
     ]:
-        # Handle method declarations - look for function_declarator
-        for child in func_node.children:
-            if child.type == "function_declarator":
-                name = extract_cpp_function_name(child)
-                if name:
-                    return name
+        return _extract_name_from_declaration(func_node)
 
-        # Special handling for field_declaration nodes that are actually method declarations
-        if func_node.type == "field_declaration":
-            # Check if this field_declaration contains a function_declarator
-            # This happens for method declarations like: void methodName() const;
-            has_function_declarator = any(
-                child.type == "function_declarator" for child in func_node.children
-            )
-            if has_function_declarator:
-                # This is a method declaration, extract name from function_declarator
-                for child in func_node.children:
-                    if child.type == "function_declarator":
-                        # Look for the declarator inside the function_declarator
-                        declarator = child.child_by_field_name("declarator")
-                        if (
-                            declarator
-                            and declarator.type == "field_identifier"
-                            and declarator.text
-                        ):
-                            return (
-                                declarator.text.decode("utf8")
-                                if declarator.text
-                                else None
-                            )
-                        # Fallback: look for field_identifier directly
-                        for grandchild in child.children:
-                            if (
-                                grandchild.type == "field_identifier"
-                                and grandchild.text
-                            ):
-                                return (
-                                    grandchild.text.decode("utf8")
-                                    if grandchild.text
-                                    else None
-                                )
+    elif func_node.type == "field_declaration":
+        # First try standard declaration extraction
+        name = _extract_name_from_declaration(func_node)
+        if name:
+            return name
+        # Then try special field_declaration handling
+        return _extract_name_from_field_declaration(func_node)
 
     elif func_node.type == "function_declarator":
-        # Look for identifier, field_identifier, destructor_name, or operator name
-        for child in func_node.children:
-            if child.type in ["identifier", "field_identifier"] and child.text:
-                return str(child.text.decode("utf8"))
-            elif child.type == "operator_name":
-                # Handle operator overloading
-                return extract_operator_name(child)
-            elif child.type == "destructor_name":
-                # Handle destructor names like ~ClassName
-                return extract_destructor_name(child)
+        return _extract_name_from_function_declarator(func_node)
 
     elif func_node.type == "template_declaration":
-        # For template functions, look inside the template
-        for child in func_node.children:
-            if child.type in [
-                "function_definition",
-                "function_declarator",
-                "declaration",
-            ]:
-                name = extract_cpp_function_name(child)
-                if name:
-                    return name
+        return _extract_name_from_template_declaration(func_node)
 
     return None

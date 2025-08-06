@@ -46,7 +46,7 @@ Use the Makefile for:
   | ✅ Python | **Fully Supported** | Complete AST parsing, type inference, call graphs |
   | ✅ JavaScript | **Fully Supported** | Complete AST parsing, type inference, call graphs |
   | ✅ TypeScript | **Fully Supported** | Complete AST parsing, type inference, call graphs |
-  | 🔜 C++ | **Next in Line** | Basic parsing ready, full support in active development |
+  | ✅ C++ | **Fully Supported** | Complete AST parsing, operator overloading, templates, namespaces, C++20 modules |
   | 🚧 Rust | In Development | Basic parsing, full support underway |
   | 🚧 Go | In Development | Basic parsing, full support underway |
   | 🚧 Scala | In Development | Basic parsing, full support underway |
@@ -239,6 +239,10 @@ Example queries (works across all supported languages):
 - "List all TypeScript components"
 - "Find Rust structs and their methods"
 - "Show me Go interfaces and implementations"
+- "Find all C++ operator overloads in the Matrix class"
+- "Show me C++ template functions with their specializations"
+- "List all C++ namespaces and their contained classes"
+- "Find C++ lambda expressions used in algorithms"
 - "Add logging to all database connection functions"
 - "Refactor the User class to use dependency injection"
 - "Convert these Python functions to async/await pattern"
@@ -388,11 +392,11 @@ The knowledge graph uses the following node types and relationships:
 ### Language-Specific Mappings
 - **Python**: `function_definition`, `class_definition`
 - **JavaScript/TypeScript**: `function_declaration`, `arrow_function`, `class_declaration`
+- **C++**: `function_definition`, `template_declaration`, `lambda_expression`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`, operator overloading, constructor/destructor definitions
 - **Rust**: `function_item`, `struct_item`, `enum_item`, `impl_item`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 - **Scala**: `function_definition`, `class_definition`, `object_definition`, `trait_definition`
 - **Java**: `method_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`
-- **C++**: `function_definition`, `constructor_definition`, `destructor_definition`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
 
 ### Relationships
 - `CONTAINS_PACKAGE`: Project or Package contains Package nodes
@@ -467,22 +471,22 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 | Python     | `.py`         | ✅        | ✅              | ✅      | `__init__.py`    | Type inference, decorators, nested functions |
 | JavaScript | `.js`, `.jsx` | ✅        | ✅              | ✅      | -                | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | TypeScript | `.ts`, `.tsx` | ✅        | ✅              | ✅      | -                | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
+| C++        | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`, `.ixx`, `.cppm`, `.ccm`| ✅      | ✅ (classes/structs/unions/enums) | ✅      | CMakeLists.txt, Makefile | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
 | Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                | impl blocks, associated functions |
 | Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                | Methods, type declarations |
 | Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations | Case classes, objects |
 | Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations | Annotations, constructors |
-| C++        | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`| ✅      | ✅ (classes/structs/unions/enums) | ✅      | -                | Constructors, destructors |
 
 ### Language-Specific Features
 
 - **Python**: Full support including nested functions, methods, classes, decorators, type hints, and package structure
 - **JavaScript**: ES6 modules, CommonJS modules, prototype-based methods, object methods, arrow functions, classes, and JSX support
 - **TypeScript**: All JavaScript features plus interfaces, type aliases, enums, namespaces, generics, and advanced type inference
+- **C++**: Comprehensive support including functions, classes, structs, unions, enums, constructors, destructors, operator overloading, templates, lambdas, namespaces, C++20 modules, inheritance, method calls, and modern C++ features
 - **Rust**: Functions, structs, enums, impl blocks, traits, and associated functions
 - **Go**: Functions, methods, type declarations, interfaces, and struct definitions
 - **Scala**: Functions, methods, classes, objects, traits, case classes, implicits, and Scala 3 syntax
 - **Java**: Methods, constructors, classes, interfaces, enums, annotations, and generics
-- **C++**: Functions, classes, structs, unions, enums, constructors, destructors, and templates
 
 
 ### Adding New Languages
