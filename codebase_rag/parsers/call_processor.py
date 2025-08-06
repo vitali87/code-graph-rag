@@ -309,53 +309,19 @@ class CallProcessor:
 
         # C++: Binary operators like obj1 + obj2 -> operator+
         if call_node.type == "binary_expression":
-            # Tree-sitter binary_expression nodes contain the operator directly
-            # Look for operator symbols in the children
-            for child in call_node.children:
-                if child.text:
-                    child_text = child.text.decode("utf8")
-                    # Check if this child is an operator symbol
-                    if child_text in [
-                        "+",
-                        "-",
-                        "*",
-                        "/",
-                        "%",
-                        "==",
-                        "!=",
-                        "<",
-                        ">",
-                        "<=",
-                        ">=",
-                        "&&",
-                        "||",
-                        "&",
-                        "|",
-                        "^",
-                        "<<",
-                        ">>",
-                        "+=",
-                        "-=",
-                        "*=",
-                        "/=",
-                        "%=",
-                        "&=",
-                        "|=",
-                        "^=",
-                        "<<=",
-                        ">>=",
-                        "=",
-                    ]:
-                        return self._convert_operator_symbol_to_name(child_text)
+            # Use Tree-sitter field access to get the operator directly
+            operator_node = call_node.child_by_field_name("operator")
+            if operator_node and operator_node.text:
+                operator_text = operator_node.text.decode("utf8")
+                return self._convert_operator_symbol_to_name(operator_text)
 
         # C++: Unary operators like ++obj, --obj -> operator++, operator--
         if call_node.type in ["unary_expression", "update_expression"]:
-            # Tree-sitter update_expression nodes contain ++ or -- operators
-            for child in call_node.children:
-                if child.text:
-                    child_text = child.text.decode("utf8")
-                    if child_text in ["++", "--", "+", "-", "!", "~", "*", "&"]:
-                        return self._convert_operator_symbol_to_name(child_text)
+            # Use Tree-sitter field access to get the operator directly
+            operator_node = call_node.child_by_field_name("operator")
+            if operator_node and operator_node.text:
+                operator_text = operator_node.text.decode("utf8")
+                return self._convert_operator_symbol_to_name(operator_text)
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
