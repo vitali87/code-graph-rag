@@ -15,7 +15,10 @@ from ..services.graph_service import MemgraphIngestor
 # No longer need constants import - using Tree-sitter directly
 from .cpp_utils import (
     build_cpp_qualified_name,
+    extract_cpp_exported_class_name,
     extract_cpp_function_name,
+    extract_destructor_name,
+    extract_operator_name,
     is_cpp_exported,
 )
 from .import_processor import ImportProcessor
@@ -326,16 +329,6 @@ class DefinitionProcessor:
 
         return None
 
-    def _extract_cpp_exported_class_name(self, class_node: Node) -> str | None:
-        """Extract class name from misclassified exported class nodes (function_definition nodes that are actually classes)."""
-        # For misclassified nodes like "export class Calculator", the identifier node contains the class name
-        for child in class_node.children:
-            if child.type == "identifier" and child.text:
-                # This should be the class name
-                decoded_text: str = child.text.decode("utf-8")
-                return decoded_text
-        return None
-
     def _extract_cpp_function_name(self, func_node: Node) -> str | None:
         """Extract function name from C++ function definitions and declarations."""
         # Handle different C++ function types
@@ -406,10 +399,10 @@ class DefinitionProcessor:
                     return str(child.text.decode("utf8"))
                 elif child.type == "operator_name":
                     # Handle operator overloading
-                    return self._extract_operator_name(child)
+                    return extract_operator_name(child)
                 elif child.type == "destructor_name":
                     # Handle destructor names like ~ClassName
-                    return self._extract_destructor_name(child)
+                    return extract_destructor_name(child)
 
         elif func_node.type == "template_declaration":
             # For template functions, look inside the template
@@ -431,70 +424,6 @@ class DefinitionProcessor:
             return str(name_node.text.decode("utf8"))
 
         return None
-
-    def _extract_operator_name(self, operator_node: Node) -> str:
-        """Extract operator name from operator_name node using Tree-sitter AST."""
-        if not operator_node.text:
-            return "operator_unknown"
-
-        operator_text = operator_node.text.decode("utf8").strip()
-
-        # Tree-sitter provides operator_name nodes with full text like "operator+"
-        # Extract just the symbol part after "operator"
-        if operator_text.startswith("operator"):
-            symbol = operator_text[8:].strip()  # Remove "operator" prefix
-
-            # Convert symbol to readable name using simple mapping
-            symbol_map = {
-                "+": "operator_plus",
-                "-": "operator_minus",
-                "*": "operator_multiply",
-                "/": "operator_divide",
-                "%": "operator_modulo",
-                "=": "operator_assign",
-                "==": "operator_equal",
-                "!=": "operator_not_equal",
-                "<": "operator_less",
-                ">": "operator_greater",
-                "<=": "operator_less_equal",
-                ">=": "operator_greater_equal",
-                "&&": "operator_logical_and",
-                "||": "operator_logical_or",
-                "&": "operator_bitwise_and",
-                "|": "operator_bitwise_or",
-                "^": "operator_bitwise_xor",
-                "~": "operator_bitwise_not",
-                "!": "operator_not",
-                "<<": "operator_left_shift",
-                ">>": "operator_right_shift",
-                "++": "operator_increment",
-                "--": "operator_decrement",
-                "+=": "operator_plus_assign",
-                "-=": "operator_minus_assign",
-                "*=": "operator_multiply_assign",
-                "/=": "operator_divide_assign",
-                "%=": "operator_modulo_assign",
-                "&=": "operator_and_assign",
-                "|=": "operator_or_assign",
-                "^=": "operator_xor_assign",
-                "<<=": "operator_left_shift_assign",
-                ">>=": "operator_right_shift_assign",
-                "[]": "operator_subscript",
-                "()": "operator_call",
-            }
-
-            return symbol_map.get(symbol, f"operator_{symbol.replace(' ', '_')}")
-
-        return "operator_unknown"
-
-    def _extract_destructor_name(self, destructor_node: Node) -> str:
-        """Extract destructor name from destructor_name node."""
-        # Destructor name is like ~ClassName, return just the class name
-        for child in destructor_node.children:
-            if child.type == "identifier" and child.text:
-                class_name = child.text.decode("utf8")
-                return f"~{class_name}"
-        return "~destructor"
 
     def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
         """Generate a synthetic name for anonymous functions (IIFEs, callbacks, etc.)."""
@@ -862,7 +791,7 @@ class DefinitionProcessor:
                 # Handle both normal classes and misclassified exported classes
                 if class_node.type == "function_definition":
                     # This is a misclassified exported class - extract name differently
-                    class_name = self._extract_cpp_exported_class_name(class_node)
+                    class_name = extract_cpp_exported_class_name(class_node)
                     is_exported = True  # We know it's exported because we found it in the exported classes search
                 else:
                     # Normal class processing
