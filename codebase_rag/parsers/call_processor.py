@@ -126,51 +126,6 @@ class CallProcessor:
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
 
-    def _extract_cpp_call_info(self, call_node: Node) -> tuple[str | None, str | None]:
-        """Extract caller and callee information from C++ call expressions."""
-        if call_node.type == "call_expression":
-            # Regular function call: function_name(args)
-            function_node = call_node.child_by_field_name("function")
-            if function_node:
-                if function_node.type == "identifier":
-                    # Simple function call
-                    if function_node.text:
-                        return None, function_node.text.decode("utf8")
-                elif function_node.type == "field_expression":
-                    # Method call: object.method(args)
-                    object_node = function_node.child_by_field_name("argument")
-                    field_node = function_node.child_by_field_name("field")
-                    if object_node and field_node and field_node.text:
-                        caller = (
-                            object_node.text.decode("utf8")
-                            if object_node.text
-                            else None
-                        )
-                        callee = field_node.text.decode("utf8")
-                        return caller, callee
-                elif function_node.type == "qualified_identifier":
-                    # Qualified call: namespace::function(args) or Class::method(args)
-                    if function_node.text:
-                        qualified_name = function_node.text.decode("utf8")
-                        parts = qualified_name.split("::")
-                        if len(parts) >= 2:
-                            return parts[-2], parts[
-                                -1
-                            ]  # Class/namespace, method/function
-                        else:
-                            return None, qualified_name
-
-        elif call_node.type == "field_expression":
-            # Direct method access: obj.method (without call)
-            object_node = call_node.child_by_field_name("argument")
-            field_node = call_node.child_by_field_name("field")
-            if object_node and field_node and field_node.text:
-                caller = object_node.text.decode("utf8") if object_node.text else None
-                callee = field_node.text.decode("utf8")
-                return caller, callee
-
-        return None, None
-
     def _convert_operator_symbol_to_name(self, symbol: str) -> str:
         """Convert operator symbol to readable name using Tree-sitter approach."""
         symbol_map = {
