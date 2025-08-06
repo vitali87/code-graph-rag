@@ -261,6 +261,8 @@ class DefinitionProcessor:
                 return "Class"  # In C++, structs are essentially classes
             elif child.type == "union_specifier":
                 return "Union"
+            elif child.type == "enum_specifier":
+                return "Enum"
         return None
 
     def _extract_cpp_class_name(self, class_node: Node) -> str | None:
@@ -272,6 +274,7 @@ class DefinitionProcessor:
                     "class_specifier",
                     "struct_specifier",
                     "union_specifier",
+                    "enum_specifier",
                 ]:
                     return self._extract_cpp_class_name(child)
 

@@ -241,6 +241,7 @@ LANGUAGE_CONFIGS = {
     (template_declaration (class_specifier)) @class
     (template_declaration (struct_specifier)) @class
     (template_declaration (union_specifier)) @class
+    (template_declaration (enum_specifier)) @class
     """,
         call_query="""
     (call_expression) @call
