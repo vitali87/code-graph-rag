@@ -79,8 +79,7 @@ class LanguageConfig:
 ################################################################################
 
 LANGUAGE_CONFIGS = {
-    "python": LanguageConfig(
-        name="python",
+    "python": create_lang_config(
         file_extensions=[".py"],
         function_node_types=["function_definition"],
         class_node_types=["class_definition"],
@@ -116,8 +115,7 @@ LANGUAGE_CONFIGS = {
         import_node_types=COMMON_JS_TS_IMPORTS,
         import_from_node_types=COMMON_JS_TS_IMPORTS,  # Include CommonJS require and re-exports
     ),
-    "rust": LanguageConfig(
-        name="rust",
+    "rust": create_lang_config(
         file_extensions=[".rs"],
         function_node_types=["function_item"],
         class_node_types=["struct_item", "enum_item", "impl_item"],
@@ -126,8 +124,7 @@ LANGUAGE_CONFIGS = {
         import_node_types=["use_declaration"],
         import_from_node_types=["use_declaration"],  # Rust uses 'use' for all imports
     ),
-    "go": LanguageConfig(
-        name="go",
+    "go": create_lang_config(
         file_extensions=[".go"],
         function_node_types=["function_declaration", "method_declaration"],
         class_node_types=["type_declaration"],  # Go structs
@@ -176,8 +173,7 @@ LANGUAGE_CONFIGS = {
         import_node_types=COMMON_DECLARATION_IMPORT,
         import_from_node_types=COMMON_DECLARATION_IMPORT,  # Java uses same node for imports
     ),
-    "cpp": LanguageConfig(
-        name="cpp",
+    "cpp": create_lang_config(
         file_extensions=[
             ".cpp",
             ".h",
@@ -274,8 +270,7 @@ LANGUAGE_CONFIGS = {
         import_node_types=COMMON_USING_DIRECTIVE,
         import_from_node_types=COMMON_USING_DIRECTIVE,  # C# uses using directives
     ),
-    "php": LanguageConfig(
-        name="php",
+    "php": create_lang_config(
         file_extensions=[".php"],
         function_node_types=[
             "function_static_declaration",
@@ -297,8 +292,7 @@ LANGUAGE_CONFIGS = {
             "nullsafe_member_call_expression",
         ],
     ),
-    "lua": LanguageConfig(
-        name="lua",
+    "lua": create_lang_config(
         file_extensions=[".lua"],
         function_node_types=[
             "function_definition",
