@@ -27,6 +27,12 @@ class LanguageConfig:
         default_factory=list
     )  # e.g., ["__init__.py"] for Python
 
+    # Optional pre-formatted Tree-sitter query strings or query generators
+    # These override the default node_types-based query generation
+    function_query: str | None = None
+    class_query: str | None = None
+    call_query: str | None = None
+
 
 ######################## Language configurations ###############################
 # Automatic generation might add types that are too broad or inaccurate.
@@ -224,6 +230,32 @@ LANGUAGE_CONFIGS = {
         ],  # C++ uses #include and C++20 import/module
         # C++ specific configurations
         package_indicators=["CMakeLists.txt", "Makefile", "*.vcxproj", "conanfile.txt"],
+        # Pre-formatted Tree-sitter queries for comprehensive C++ parsing
+        function_query="""
+    (function_definition) @function
+    (template_declaration (function_definition)) @function
+    (lambda_expression) @function
+    (field_declaration) @function
+    (declaration) @function
+    """,
+        class_query="""
+    (class_specifier) @class
+    (struct_specifier) @class
+    (union_specifier) @class
+    (enum_specifier) @class
+    (template_declaration (class_specifier)) @class
+    (template_declaration (struct_specifier)) @class
+    """,
+        call_query="""
+    (call_expression) @call
+    (binary_expression) @call
+    (unary_expression) @call
+    (update_expression) @call
+    (field_expression) @call
+    (subscript_expression) @call
+    (new_expression) @call
+    (delete_expression) @call
+    """,
     ),
     "c-sharp": LanguageConfig(
         name="c-sharp",

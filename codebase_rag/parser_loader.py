@@ -160,43 +160,6 @@ _language_loaders = _import_language_loaders()
 LANGUAGE_LIBRARIES: dict[str, LanguageLoader | None] = _language_loaders
 
 
-def _get_cpp_function_queries() -> str:
-    """Get comprehensive C++ function queries using Tree-sitter properly."""
-    return """
-    (function_definition) @function
-    (template_declaration (function_definition)) @function
-    (lambda_expression) @function
-    (field_declaration) @function
-    (declaration) @function
-    """
-
-
-def _get_cpp_class_queries() -> str:
-    """Get comprehensive C++ class queries using Tree-sitter properly."""
-    return """
-    (class_specifier) @class
-    (struct_specifier) @class
-    (union_specifier) @class
-    (enum_specifier) @class
-    (template_declaration (class_specifier)) @class
-    (template_declaration (struct_specifier)) @class
-    """
-
-
-def _get_cpp_call_queries() -> str:
-    """Get comprehensive C++ call queries using Tree-sitter properly."""
-    return """
-    (call_expression) @call
-    (binary_expression) @call
-    (unary_expression) @call
-    (update_expression) @call
-    (field_expression) @call
-    (subscript_expression) @call
-    (new_expression) @call
-    (delete_expression) @call
-    """
-
-
 def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
     """Loads all available Tree-sitter parsers and compiles their queries."""
     parsers: dict[str, Parser] = {}
@@ -214,32 +177,37 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
 
                 parsers[lang_name] = parser
 
-                # Create proper Tree-sitter queries based on language
-                if lang_name == "cpp":
-                    # Use comprehensive C++ queries that leverage Tree-sitter properly
-                    function_patterns = _get_cpp_function_queries()
-                    class_patterns = _get_cpp_class_queries()
-                    call_patterns = _get_cpp_call_queries()
-                else:
-                    # Use generic patterns for other languages (these should be improved too)
-                    function_patterns = " ".join(
+                # Create Tree-sitter queries - use pre-formatted queries if available, otherwise generate from node types
+                function_patterns = (
+                    lang_config.function_query
+                    if lang_config.function_query
+                    else " ".join(
                         [
                             f"({node_type}) @function"
                             for node_type in lang_config.function_node_types
                         ]
                     )
-                    class_patterns = " ".join(
+                )
+                class_patterns = (
+                    lang_config.class_query
+                    if lang_config.class_query
+                    else " ".join(
                         [
                             f"({node_type}) @class"
                             for node_type in lang_config.class_node_types
                         ]
                     )
-                    call_patterns = " ".join(
+                )
+                call_patterns = (
+                    lang_config.call_query
+                    if lang_config.call_query
+                    else " ".join(
                         [
                             f"({node_type}) @call"
                             for node_type in lang_config.call_node_types
                         ]
                     )
+                )
 
                 # Create import query patterns
                 import_patterns = " ".join(
