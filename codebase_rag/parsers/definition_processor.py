@@ -576,10 +576,6 @@ class DefinitionProcessor:
                         child.text and child.text.decode("utf-8").strip() == "module"
                     ):
                         has_module = True
-                    if child.type == "export" or (
-                        child.text and child.text.decode("utf-8").strip() == "export"
-                    ):
-                        pass
 
                 if has_module:
                     text = node.text.decode("utf-8").strip() if node.text else ""

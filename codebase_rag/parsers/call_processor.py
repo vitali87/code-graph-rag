@@ -778,10 +778,14 @@ class CallProcessor:
                 if qn.startswith(module_qn) and call_name in qn
             ]
             if same_module_ops:
+                # Sort to ensure deterministic selection, preferring shorter QNs
+                same_module_ops.sort(key=lambda qn: (len(qn), qn))
                 best_candidate = same_module_ops[0]
                 return (self.function_registry[best_candidate], best_candidate)
 
             # Fallback to any matching operator
+            # Sort to ensure deterministic selection
+            possible_matches.sort(key=lambda qn: (len(qn), qn))
             best_candidate = possible_matches[0]
             return (self.function_registry[best_candidate], best_candidate)
 
