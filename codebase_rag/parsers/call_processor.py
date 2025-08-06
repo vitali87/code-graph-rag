@@ -11,6 +11,7 @@ from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
 
 # No longer need constants import - using Tree-sitter directly
+from .cpp_utils import extract_cpp_function_name
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import resolve_class_name
@@ -187,8 +188,6 @@ class CallProcessor:
             # Extract function name using appropriate method for language
             if language == "cpp":
                 # For C++, use utility functions instead of creating a temporary instance
-                from .cpp_utils import extract_cpp_function_name
-
                 func_name = extract_cpp_function_name(func_node)
                 if not func_name:
                     continue
