@@ -559,6 +559,17 @@ void demonstrateLambdasAndFunctional() {
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
+    lambda_functions = [
+        func
+        for func in created_functions
+        if "lambda_" in func and func.split(".")[-1].startswith("lambda_")
+    ]
+
+    assert len(lambda_functions) >= 10, (
+        f"Expected at least 10 lambda functions to be captured, found {len(lambda_functions)}. "
+        f"This means lambda expressions are being skipped during processing!"
+    )
+
 
 def test_async_functional_patterns(
     cpp_lambdas_project: Path,

@@ -380,7 +380,11 @@ class DefinitionProcessor:
             if language == "cpp":
                 func_name = extract_cpp_function_name(func_node)
                 if not func_name:
-                    continue  # Skip if we can't extract name for C++ functions
+                    if func_node.type == "lambda_expression":
+                        # Generate a synthetic name for anonymous lambda functions
+                        func_name = f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
+                    else:
+                        continue  # Skip other unnamed C++ function-like nodes
                 # Build C++ qualified name with namespace support
                 func_qn = build_cpp_qualified_name(func_node, module_qn, func_name)
                 # Check if this is an exported function
