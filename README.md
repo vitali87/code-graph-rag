@@ -392,7 +392,7 @@ The knowledge graph uses the following node types and relationships:
 ### Language-Specific Mappings
 - **Python**: `function_definition`, `class_definition`
 - **JavaScript/TypeScript**: `function_declaration`, `arrow_function`, `class_declaration`
-- **C++**: `function_definition`, `template_declaration`, `lambda_expression`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`, operator overloading, constructor/destructor definitions
+- **C++**: `function_definition`, `template_declaration`, `lambda_expression`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
 - **Rust**: `function_item`, `struct_item`, `enum_item`, `impl_item`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 - **Scala**: `function_definition`, `class_definition`, `object_definition`, `trait_definition`
