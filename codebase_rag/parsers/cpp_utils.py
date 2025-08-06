@@ -60,16 +60,12 @@ def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
     module_parts = module_qn.split(".")
 
     # Check if this is a module interface file (.ixx, .cppm, .ccm)
-    is_module_file = False
-    if len(module_parts) >= 3:  # At least project.dir.filename
-        module_parts[-1]  # Last part should be the filename
-        # Check parent directory or file extension patterns that suggest module files
-        if len(module_parts) >= 3 and (
-            "interfaces" in module_parts or "modules" in module_parts
-        ):
-            is_module_file = True
+    is_module_file = (
+        len(module_parts) >= 3  # At least project.dir.filename
+        and ("interfaces" in module_parts or "modules" in module_parts)
+    )
 
-    if is_module_file and len(module_parts) >= 3:
+    if is_module_file:
         # For module files, use simplified naming: project.filename.classname
         project_name = module_parts[0]  # First part is always project name
         filename = module_parts[-1]  # Last part is filename (without extension)
