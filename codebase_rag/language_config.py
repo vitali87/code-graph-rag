@@ -171,7 +171,18 @@ LANGUAGE_CONFIGS = {
     ),
     "cpp": LanguageConfig(
         name="cpp",
-        file_extensions=[".cpp", ".h", ".hpp", ".cc", ".cxx", ".hxx", ".hh"],
+        file_extensions=[
+            ".cpp",
+            ".h",
+            ".hpp",
+            ".cc",
+            ".cxx",
+            ".hxx",
+            ".hh",
+            ".ixx",
+            ".cppm",
+            ".ccm",
+        ],
         function_node_types=[
             "function_definition",  # Includes aliased constructor/destructor/operator definitions
             "declaration",  # Includes aliased constructor/destructor/operator declarations
@@ -189,6 +200,7 @@ LANGUAGE_CONFIGS = {
             "translation_unit",
             "namespace_definition",
             "linkage_specification",  # extern "C" blocks
+            "declaration",  # For module declarations like "module math_operations;"
         ],
         call_node_types=[
             "call_expression",
@@ -200,8 +212,16 @@ LANGUAGE_CONFIGS = {
             "unary_expression",  # For unary operators like ++obj
             "update_expression",  # For prefix/postfix increment/decrement
         ],
-        import_node_types=["preproc_include"],
-        import_from_node_types=["preproc_include"],  # C++ uses #include
+        import_node_types=[
+            "preproc_include",
+            "template_function",
+            "declaration",
+        ],  # #include, import <>, module declarations
+        import_from_node_types=[
+            "preproc_include",
+            "template_function",
+            "declaration",
+        ],  # C++ uses #include and C++20 import/module
         # C++ specific configurations
         package_indicators=["CMakeLists.txt", "Makefile", "*.vcxproj", "conanfile.txt"],
     ),

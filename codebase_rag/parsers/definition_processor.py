@@ -133,6 +133,11 @@ class DefinitionProcessor:
             self._ingest_missing_import_patterns(
                 root_node, module_qn, language, queries
             )
+            # Handle C++20 module-specific processing
+            if language == "cpp":
+                self._ingest_cpp_module_declarations(
+                    root_node, module_qn, file_path, queries
+                )
             self._ingest_all_functions(root_node, module_qn, language, queries)
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
             self._ingest_object_literal_methods(root_node, module_qn, language, queries)
@@ -276,38 +281,61 @@ class DefinitionProcessor:
 
     def _build_cpp_qualified_name(self, node: Node, module_qn: str, name: str) -> str:
         """Build qualified name for C++ entities, handling namespaces properly."""
-        path_parts = []
-        current = node.parent
+        # For C++20 module files, use module-based naming instead of traditional namespace-based naming
+        # Extract the file path from module_qn to check if this is a module file
+        module_parts = module_qn.split(".")
 
-        # Walk up the tree to find namespaces
-        while current and current.type != "translation_unit":
-            if current.type == "namespace_definition":
-                # Get namespace name from the 'name' field
-                namespace_name = None
-                # First try to get the name field directly
-                name_node = current.child_by_field_name("name")
-                if name_node and name_node.text:
-                    namespace_name = name_node.text.decode("utf8")
-                else:
-                    # Fallback: look for namespace_identifier or identifier children
-                    for child in current.children:
-                        if (
-                            child.type in ["namespace_identifier", "identifier"]
-                            and child.text
-                        ):
-                            namespace_name = child.text.decode("utf8")
-                            break
-                if namespace_name:
-                    path_parts.append(namespace_name)
-            current = current.parent
+        # Check if this is a module interface file (.ixx, .cppm, .ccm)
+        is_module_file = False
+        if len(module_parts) >= 3:  # At least project.dir.filename
+            module_parts[-1]  # Last part should be the filename
+            # Check parent directory or file extension patterns that suggest module files
+            if len(module_parts) >= 3 and (
+                "interfaces" in module_parts or "modules" in module_parts
+            ):
+                is_module_file = True
 
-        # Reverse to get correct namespace order (outermost first)
-        path_parts.reverse()
+        if is_module_file and len(module_parts) >= 3:
+            # For module files, use simplified naming: project.filename.classname
+            project_name = module_parts[0]  # First part is always project name
+            filename = module_parts[-1]  # Last part is filename (without extension)
 
-        if path_parts:
-            return f"{module_qn}.{'.'.join(path_parts)}.{name}"
+            # Skip namespace parts for module files - classes/functions are qualified directly by the module
+            return f"{project_name}.{filename}.{name}"
         else:
-            return f"{module_qn}.{name}"
+            # Traditional C++ namespace-based naming for regular files
+            path_parts = []
+            current = node.parent
+
+            # Walk up the tree to find namespaces
+            while current and current.type != "translation_unit":
+                if current.type == "namespace_definition":
+                    # Get namespace name from the 'name' field
+                    namespace_name = None
+                    # First try to get the name field directly
+                    name_node = current.child_by_field_name("name")
+                    if name_node and name_node.text:
+                        namespace_name = name_node.text.decode("utf8")
+                    else:
+                        # Fallback: look for namespace_identifier or identifier children
+                        for child in current.children:
+                            if (
+                                child.type in ["namespace_identifier", "identifier"]
+                                and child.text
+                            ):
+                                namespace_name = child.text.decode("utf8")
+                                break
+                    if namespace_name:
+                        path_parts.append(namespace_name)
+                current = current.parent
+
+            # Reverse to get correct namespace order (outermost first)
+            path_parts.reverse()
+
+            if path_parts:
+                return f"{module_qn}.{'.'.join(path_parts)}.{name}"
+            else:
+                return f"{module_qn}.{name}"
 
     def _extract_class_name(self, class_node: Node) -> str | None:
         """Extract class name, handling both class declarations and class expressions."""
@@ -347,6 +375,64 @@ class DefinitionProcessor:
                             return str(child.text.decode("utf8"))
                 current = current.parent
 
+        return None
+
+    def _is_cpp_exported(self, node: Node) -> bool:
+        """Check if a C++ declaration is exported from a module."""
+        # First check text-based export detection (more reliable for C++20 modules)
+        current = node
+        while current and current.parent:
+            # Get the full text of the current node
+            if current.text:
+                node_text = current.text.decode("utf-8").strip()
+                # Check if this node's text starts with "export "
+                if node_text.startswith("export "):
+                    return True
+
+                # Check for export at the beginning of lines
+                lines = node_text.split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith("export "):
+                        return True
+
+            # Check siblings to the left for export keyword
+            if current.parent:
+                parent = current.parent
+                found_export = False
+
+                for child in parent.children:
+                    if child == current:
+                        break  # We've reached our node
+                    if child.type == "type_identifier" and child.text:
+                        child_text = child.text.decode("utf-8")
+                        if child_text == "export":
+                            found_export = True
+
+                if found_export:
+                    return True
+
+            # Move up the tree, but don't go too far
+            if current.type in [
+                "declaration",
+                "function_definition",
+                "template_declaration",
+                "class_specifier",
+                "translation_unit",
+            ]:
+                break
+            current = current.parent
+
+        return False
+
+    def _extract_cpp_exported_class_name(self, class_node: Node) -> str | None:
+        """Extract class name from misclassified exported class nodes (function_definition nodes that are actually classes)."""
+        # For misclassified nodes like "export class Calculator", the identifier node contains the class name
+        for child in class_node.children:
+            if child.type == "identifier" and child.text:
+                # This should be the class name
+                decoded_text: str = child.text.decode("utf-8")
+                return decoded_text
         return None
 
     def _extract_cpp_function_name(self, func_node: Node) -> str | None:
@@ -502,7 +588,10 @@ class DefinitionProcessor:
                 func_qn = self._build_cpp_qualified_name(
                     func_node, module_qn, func_name
                 )
+                # Check if this is an exported function
+                is_exported = self._is_cpp_exported(func_node)
             else:
+                is_exported = False  # Default for non-C++ languages
                 # Extract function name - handle arrow functions specially
                 func_name = self._extract_function_name(func_node)
                 if not func_name:
@@ -528,6 +617,7 @@ class DefinitionProcessor:
                 "start_line": func_node.start_point[0] + 1,
                 "end_line": func_node.end_point[0] + 1,
                 "docstring": self._get_docstring(func_node),
+                "is_exported": is_exported,
             }
             logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
             self.ingestor.ensure_node_batch("Function", func_props)
@@ -544,6 +634,14 @@ class DefinitionProcessor:
                 "DEFINES",
                 ("Function", "qualified_name", func_qn),
             )
+
+            # Create export relationship if this is an exported C++ function
+            if is_exported and language == "cpp":
+                self.ingestor.ensure_relationship_batch(
+                    ("Module", "qualified_name", module_qn),
+                    "EXPORTS",
+                    ("Function", "qualified_name", func_qn),
+                )
 
     def _ingest_top_level_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
@@ -655,6 +753,130 @@ class DefinitionProcessor:
 
         return "Module", module_qn
 
+    def _ingest_cpp_module_declarations(
+        self, root_node: Node, module_qn: str, file_path: Path, queries: dict[str, Any]
+    ) -> None:
+        """Process C++20 module declarations and create appropriate Module nodes."""
+        # Parse the AST to find module declarations
+        module_declarations = []
+
+        def find_module_declarations(node: Node) -> None:
+            """Recursively find module-related declarations."""
+            if node.type == "declaration":
+                text = node.text.decode("utf-8").strip()
+                if text.startswith("export module ") or text.startswith("module "):
+                    module_declarations.append((node, text))
+
+            for child in node.children:
+                find_module_declarations(child)
+
+        find_module_declarations(root_node)
+
+        # Process each module declaration found
+        for decl_node, decl_text in module_declarations:
+            if decl_text.startswith("export module "):
+                # This is a module interface unit
+                parts = decl_text.split()
+                if len(parts) >= 3:
+                    module_name = parts[2].rstrip(";")
+
+                    # Create a ModuleInterface node
+                    interface_qn = f"{self.project_name}.{module_name}"
+                    self.ingestor.ensure_node_batch(
+                        "ModuleInterface",
+                        {
+                            "qualified_name": interface_qn,
+                            "name": module_name,
+                            "path": str(file_path.relative_to(self.repo_path)),
+                            "module_type": "interface",
+                        },
+                    )
+
+                    # Link the ModuleInterface to the current Module (file)
+                    self.ingestor.ensure_relationship_batch(
+                        ("Module", "qualified_name", module_qn),
+                        "EXPORTS_MODULE",
+                        ("ModuleInterface", "qualified_name", interface_qn),
+                    )
+
+                    logger.info(f"  Found C++ Module Interface: {interface_qn}")
+
+            elif decl_text.startswith("module ") and not decl_text.startswith(
+                "module ;"
+            ):
+                # This is a module implementation unit
+                parts = decl_text.split()
+                if len(parts) >= 2:
+                    module_name = parts[1].rstrip(";")
+
+                    # Create a ModuleImplementation node
+                    impl_qn = f"{self.project_name}.{module_name}_impl"
+                    self.ingestor.ensure_node_batch(
+                        "ModuleImplementation",
+                        {
+                            "qualified_name": impl_qn,
+                            "name": f"{module_name}_impl",
+                            "path": str(file_path.relative_to(self.repo_path)),
+                            "implements_module": module_name,
+                            "module_type": "implementation",
+                        },
+                    )
+
+                    # Link the ModuleImplementation to the current Module (file)
+                    self.ingestor.ensure_relationship_batch(
+                        ("Module", "qualified_name", module_qn),
+                        "IMPLEMENTS_MODULE",
+                        ("ModuleImplementation", "qualified_name", impl_qn),
+                    )
+
+                    # Try to link to the module interface if it exists
+                    interface_qn = f"{self.project_name}.{module_name}"
+                    self.ingestor.ensure_relationship_batch(
+                        ("ModuleImplementation", "qualified_name", impl_qn),
+                        "IMPLEMENTS",
+                        ("ModuleInterface", "qualified_name", interface_qn),
+                    )
+
+                    logger.info(f"  Found C++ Module Implementation: {impl_qn}")
+
+    def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
+        """Find C++ exported classes that are misclassified as function_definition due to Tree-sitter grammar limitations."""
+        exported_class_nodes = []
+
+        def traverse_for_exported_classes(node: Node) -> None:
+            # Look for function_definition nodes that are actually exported classes/structs
+            if node.type == "function_definition":
+                # Check if this function_definition is actually an exported class
+                node_text = node.text.decode("utf-8").strip() if node.text else ""
+
+                # Look for patterns like "export class", "export struct", "export template"
+                if (
+                    node_text.startswith("export class ")
+                    or node_text.startswith("export struct ")
+                    or node_text.startswith("export template")
+                ):
+                    # Additional check: see if it has ERROR nodes for "class" or "struct"
+                    for child in node.children:
+                        if child.type == "ERROR" and child.text:
+                            error_text = child.text.decode("utf-8")
+                            if error_text in ["class", "struct"]:
+                                exported_class_nodes.append(node)
+                                break
+                    else:
+                        # If no ERROR node found but text suggests it's a class, still include it
+                        if (
+                            "export class " in node_text
+                            or "export struct " in node_text
+                        ):
+                            exported_class_nodes.append(node)
+
+            # Recursively search child nodes
+            for child in node.children:
+                traverse_for_exported_classes(child)
+
+        traverse_for_exported_classes(root_node)
+        return exported_class_nodes
+
     def _ingest_classes_and_methods(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
@@ -666,18 +888,33 @@ class DefinitionProcessor:
         captures = cursor.captures(root_node)
         class_nodes = captures.get("class", [])
 
+        # For C++, also check for misclassified exported classes due to Tree-sitter grammar limitations
+        if language == "cpp":
+            additional_class_nodes = self._find_cpp_exported_classes(root_node)
+            class_nodes.extend(additional_class_nodes)
+
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
             # Use C++ specific class name extraction for C++ language
             if language == "cpp":
-                class_name = self._extract_cpp_class_name(class_node)
+                # Handle both normal classes and misclassified exported classes
+                if class_node.type == "function_definition":
+                    # This is a misclassified exported class - extract name differently
+                    class_name = self._extract_cpp_exported_class_name(class_node)
+                    is_exported = True  # We know it's exported because we found it in the exported classes search
+                else:
+                    # Normal class processing
+                    class_name = self._extract_cpp_class_name(class_node)
+                    is_exported = self._is_cpp_exported(class_node)
+
                 if not class_name:
                     continue
                 class_qn = self._build_cpp_qualified_name(
                     class_node, module_qn, class_name
                 )
             else:
+                is_exported = False  # Default for non-C++ languages
                 class_name = self._extract_class_name(class_node)
                 if not class_name:
                     continue
@@ -690,6 +927,7 @@ class DefinitionProcessor:
                 "start_line": class_node.start_point[0] + 1,
                 "end_line": class_node.end_point[0] + 1,
                 "docstring": self._get_docstring(class_node),
+                "is_exported": is_exported,
             }
             # Determine the correct node type based on the AST node type
             if class_node.type == "interface_declaration":
@@ -718,6 +956,24 @@ class DefinitionProcessor:
                 logger.info(
                     f"  Found Template {node_type}: {class_name} (qn: {class_qn})"
                 )
+            elif class_node.type == "function_definition" and language == "cpp":
+                # This is a misclassified exported class - determine type from text
+                node_text = class_node.text.decode("utf-8") if class_node.text else ""
+                if "export struct " in node_text:
+                    node_type = "Class"  # In C++, structs are essentially classes
+                    logger.info(
+                        f"  Found Exported Struct: {class_name} (qn: {class_qn})"
+                    )
+                elif "export template" in node_text:
+                    node_type = "Class"  # Template class
+                    logger.info(
+                        f"  Found Exported Template Class: {class_name} (qn: {class_qn})"
+                    )
+                else:
+                    node_type = "Class"  # Default to Class for exported classes
+                    logger.info(
+                        f"  Found Exported Class: {class_name} (qn: {class_qn})"
+                    )
             else:
                 node_type = "Class"
                 logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
@@ -737,6 +993,14 @@ class DefinitionProcessor:
                 "DEFINES",
                 (node_type, "qualified_name", class_qn),
             )
+
+            # Create export relationship if this is an exported C++ class
+            if is_exported and language == "cpp":
+                self.ingestor.ensure_relationship_batch(
+                    ("Module", "qualified_name", module_qn),
+                    "EXPORTS",
+                    (node_type, "qualified_name", class_qn),
+                )
 
             # Create INHERITS relationships for each parent class
             for parent_class_qn in parent_classes:
