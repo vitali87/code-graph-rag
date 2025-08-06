@@ -1,4 +1,36 @@
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
+
+
+# Shared node type constants to eliminate duplication
+COMMON_JS_TS_FUNCTIONS = [
+    "function_declaration",
+    "generator_function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+]
+
+COMMON_JS_TS_CLASSES = ["class_declaration", "class"]
+
+COMMON_JS_TS_IMPORTS = [
+    "import_statement",
+    "lexical_declaration",
+    "export_statement",
+]
+
+COMMON_DECLARATION_IMPORT = ["import_declaration"]
+
+COMMON_USING_DIRECTIVE = ["using_directive"]
+
+
+def create_lang_config(**kwargs: Any) -> "LanguageConfig":
+    """Helper to create LanguageConfig without redundant name assignment."""
+    # Name will be set automatically when configs are processed
+    return LanguageConfig(name="", **kwargs)
 
 
 @dataclass
@@ -52,44 +84,21 @@ LANGUAGE_CONFIGS = {
         import_from_node_types=["import_from_statement"],
         package_indicators=["__init__.py"],
     ),
-    "javascript": LanguageConfig(
-        name="javascript",
+    "javascript": create_lang_config(
         file_extensions=[".js", ".jsx"],
-        function_node_types=[
-            "function_declaration",
-            "generator_function_declaration",
-            "function_expression",
-            "arrow_function",
-            "method_definition",
-        ],
-        class_node_types=["class_declaration", "class"],
+        function_node_types=COMMON_JS_TS_FUNCTIONS,
+        class_node_types=COMMON_JS_TS_CLASSES,
         module_node_types=["program"],
         call_node_types=["call_expression"],
-        import_node_types=[
-            "import_statement",
-            "lexical_declaration",
-            "export_statement",
-        ],
-        import_from_node_types=[
-            "import_statement",
-            "lexical_declaration",
-            "export_statement",
-        ],  # Include CommonJS require and re-exports
+        import_node_types=COMMON_JS_TS_IMPORTS,
+        import_from_node_types=COMMON_JS_TS_IMPORTS,  # Include CommonJS require and re-exports
     ),
-    "typescript": LanguageConfig(
-        name="typescript",
+    "typescript": create_lang_config(
         file_extensions=[".ts", ".tsx"],
-        function_node_types=[
-            "function_declaration",
-            "generator_function_declaration",
-            "function_expression",
-            "arrow_function",
-            "method_definition",
-            "function_signature",  # For ambient declarations: declare function
-        ],
-        class_node_types=[
-            "class_declaration",
-            "class",
+        function_node_types=COMMON_JS_TS_FUNCTIONS
+        + ["function_signature"],  # For ambient declarations: declare function
+        class_node_types=COMMON_JS_TS_CLASSES
+        + [
             "abstract_class_declaration",
             "enum_declaration",
             "interface_declaration",
@@ -98,16 +107,8 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["program"],
         call_node_types=["call_expression"],
-        import_node_types=[
-            "import_statement",
-            "lexical_declaration",
-            "export_statement",
-        ],
-        import_from_node_types=[
-            "import_statement",
-            "lexical_declaration",
-            "export_statement",
-        ],  # Include CommonJS require and re-exports
+        import_node_types=COMMON_JS_TS_IMPORTS,
+        import_from_node_types=COMMON_JS_TS_IMPORTS,  # Include CommonJS require and re-exports
     ),
     "rust": LanguageConfig(
         name="rust",
@@ -129,8 +130,7 @@ LANGUAGE_CONFIGS = {
         import_node_types=["import_declaration"],
         import_from_node_types=["import_declaration"],  # Go uses same node for imports
     ),
-    "scala": LanguageConfig(
-        name="scala",
+    "scala": create_lang_config(
         file_extensions=[".scala", ".sc"],
         function_node_types=[
             "function_definition",
@@ -148,14 +148,11 @@ LANGUAGE_CONFIGS = {
             "field_expression",
             "infix_expression",
         ],
-        import_node_types=["import_declaration"],
-        import_from_node_types=[
-            "import_declaration"
-        ],  # Scala uses same node for imports
+        import_node_types=COMMON_DECLARATION_IMPORT,
+        import_from_node_types=COMMON_DECLARATION_IMPORT,  # Scala uses same node for imports
         package_indicators=[],  # Scala uses package declarations
     ),
-    "java": LanguageConfig(
-        name="java",
+    "java": create_lang_config(
         file_extensions=[".java"],
         function_node_types=[
             "method_declaration",
@@ -170,10 +167,8 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         package_indicators=[],  # Java uses package declarations
         call_node_types=["method_invocation"],
-        import_node_types=["import_declaration"],
-        import_from_node_types=[
-            "import_declaration"
-        ],  # Java uses same node for imports
+        import_node_types=COMMON_DECLARATION_IMPORT,
+        import_from_node_types=COMMON_DECLARATION_IMPORT,  # Java uses same node for imports
     ),
     "cpp": LanguageConfig(
         name="cpp",
@@ -257,8 +252,7 @@ LANGUAGE_CONFIGS = {
     (delete_expression) @call
     """,
     ),
-    "c-sharp": LanguageConfig(
-        name="c-sharp",
+    "c-sharp": create_lang_config(
         file_extensions=[".cs"],
         function_node_types=[
             "destructor_declaration",
@@ -277,8 +271,8 @@ LANGUAGE_CONFIGS = {
         ],
         module_node_types=["compilation_unit"],
         call_node_types=["invocation_expression"],
-        import_node_types=["using_directive"],
-        import_from_node_types=["using_directive"],  # C# uses using directives
+        import_node_types=COMMON_USING_DIRECTIVE,
+        import_from_node_types=COMMON_USING_DIRECTIVE,  # C# uses using directives
     ),
     "php": LanguageConfig(
         name="php",
@@ -315,6 +309,17 @@ LANGUAGE_CONFIGS = {
         call_node_types=["function_call"],
     ),
 }
+
+
+def _initialize_config_names() -> None:
+    """Initialize config names based on dict keys."""
+    for lang_name, config in LANGUAGE_CONFIGS.items():
+        if not config.name:  # Only set if empty (from create_lang_config)
+            config.name = lang_name
+
+
+# Initialize names on module load
+_initialize_config_names()
 
 
 def get_language_config(file_extension: str) -> LanguageConfig | None:
