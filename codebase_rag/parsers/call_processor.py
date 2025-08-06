@@ -9,7 +9,8 @@ from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services.graph_service import MemgraphIngestor
-from .constants import CPP_BINARY_OPERATORS, CPP_UNARY_OPERATORS, get_operator_name
+
+# No longer need constants import - using Tree-sitter directly
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import resolve_class_name
@@ -170,6 +171,47 @@ class CallProcessor:
 
         return None, None
 
+    def _convert_operator_symbol_to_name(self, symbol: str) -> str:
+        """Convert operator symbol to readable name using Tree-sitter approach."""
+        symbol_map = {
+            "+": "operator_plus",
+            "-": "operator_minus",
+            "*": "operator_multiply",
+            "/": "operator_divide",
+            "%": "operator_modulo",
+            "=": "operator_assign",
+            "==": "operator_equal",
+            "!=": "operator_not_equal",
+            "<": "operator_less",
+            ">": "operator_greater",
+            "<=": "operator_less_equal",
+            ">=": "operator_greater_equal",
+            "&&": "operator_logical_and",
+            "||": "operator_logical_or",
+            "&": "operator_bitwise_and",
+            "|": "operator_bitwise_or",
+            "^": "operator_bitwise_xor",
+            "~": "operator_bitwise_not",
+            "!": "operator_not",
+            "<<": "operator_left_shift",
+            ">>": "operator_right_shift",
+            "++": "operator_increment",
+            "--": "operator_decrement",
+            "+=": "operator_plus_assign",
+            "-=": "operator_minus_assign",
+            "*=": "operator_multiply_assign",
+            "/=": "operator_divide_assign",
+            "%=": "operator_modulo_assign",
+            "&=": "operator_and_assign",
+            "|=": "operator_or_assign",
+            "^=": "operator_xor_assign",
+            "<<=": "operator_left_shift_assign",
+            ">>=": "operator_right_shift_assign",
+            "[]": "operator_subscript",
+            "()": "operator_call",
+        }
+        return symbol_map.get(symbol, f"operator_{symbol.replace(' ', '_')}")
+
     def _process_calls_in_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
@@ -313,23 +355,53 @@ class CallProcessor:
 
         # C++: Binary operators like obj1 + obj2 -> operator+
         if call_node.type == "binary_expression":
-            operator_node = None
+            # Tree-sitter binary_expression nodes contain the operator directly
+            # Look for operator symbols in the children
             for child in call_node.children:
-                if child.type in CPP_BINARY_OPERATORS:
-                    operator_node = child
-                    break
-            if operator_node and operator_node.text:
-                return get_operator_name(operator_node.text.decode("utf8"))
+                if child.text:
+                    child_text = child.text.decode("utf8")
+                    # Check if this child is an operator symbol
+                    if child_text in [
+                        "+",
+                        "-",
+                        "*",
+                        "/",
+                        "%",
+                        "==",
+                        "!=",
+                        "<",
+                        ">",
+                        "<=",
+                        ">=",
+                        "&&",
+                        "||",
+                        "&",
+                        "|",
+                        "^",
+                        "<<",
+                        ">>",
+                        "+=",
+                        "-=",
+                        "*=",
+                        "/=",
+                        "%=",
+                        "&=",
+                        "|=",
+                        "^=",
+                        "<<=",
+                        ">>=",
+                        "=",
+                    ]:
+                        return self._convert_operator_symbol_to_name(child_text)
 
         # C++: Unary operators like ++obj, --obj -> operator++, operator--
         if call_node.type in ["unary_expression", "update_expression"]:
-            operator_node = None
+            # Tree-sitter update_expression nodes contain ++ or -- operators
             for child in call_node.children:
-                if child.type in CPP_UNARY_OPERATORS:
-                    operator_node = child
-                    break
-            if operator_node and operator_node.text:
-                return get_operator_name(operator_node.text.decode("utf8"))
+                if child.text:
+                    child_text = child.text.decode("utf8")
+                    if child_text in ["++", "--", "+", "-", "!", "~", "*", "&"]:
+                        return self._convert_operator_symbol_to_name(child_text)
 
         # For 'method_invocation' in Java
         if name_node := call_node.child_by_field_name("name"):
