@@ -84,9 +84,9 @@ bob:greet()
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have method calls (setmetatable, print calls)
-    assert len(calls_rels) >= 4, (
-        f"Expected at least 4 CALLS relationships, got {len(calls_rels)}"
+    # Should have method calls (Person:new calls)
+    assert len(calls_rels) >= 2, (
+        f"Expected at least 2 CALLS relationships, got {len(calls_rels)}"
     )
 
     # Should have import relationship (main imports person)

@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 
 
 class TestStandardLibraryImports:
@@ -30,8 +31,12 @@ class TestStandardLibraryImports:
         (test_repo / "config.py").touch()
         (test_repo / "src").mkdir(exist_ok=True)
 
+        parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor=mock_ingestor, repo_path=test_repo, parsers={}, queries={}
+            ingestor=mock_ingestor,
+            repo_path=test_repo,
+            parsers=parsers,
+            queries=queries,
         )
         updater.project_name = "myproject"
         return updater
@@ -47,11 +52,11 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
-        mock_module_name_node.text.decode.return_value = "os"
+        mock_module_name_node.text = b"os"
 
         mock_name_node = MagicMock()
         mock_name_node.type = "dotted_name"
-        mock_name_node.text.decode.return_value = "path"
+        mock_name_node.text = b"path"
 
         mock_import_node.child_by_field_name.side_effect = lambda field: {
             "module_name": mock_module_name_node,
@@ -82,11 +87,11 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
-        mock_module_name_node.text.decode.return_value = "numpy"
+        mock_module_name_node.text = b"numpy"
 
         mock_name_node = MagicMock()
         mock_name_node.type = "dotted_name"
-        mock_name_node.text.decode.return_value = "array"
+        mock_name_node.text = b"array"
 
         mock_import_node.child_by_field_name.side_effect = lambda field: {
             "module_name": mock_module_name_node,
@@ -119,11 +124,11 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
-        mock_module_name_node.text.decode.return_value = "utils"
+        mock_module_name_node.text = b"utils"
 
         mock_name_node = MagicMock()
         mock_name_node.type = "dotted_name"
-        mock_name_node.text.decode.return_value = "helper"
+        mock_name_node.text = b"helper"
 
         mock_import_node.child_by_field_name.side_effect = lambda field: {
             "module_name": mock_module_name_node,
@@ -154,11 +159,11 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
-        mock_module_name_node.text.decode.return_value = "config"
+        mock_module_name_node.text = b"config"
 
         mock_name_node = MagicMock()
         mock_name_node.type = "dotted_name"
-        mock_name_node.text.decode.return_value = "settings"
+        mock_name_node.text = b"settings"
 
         mock_import_node.child_by_field_name.side_effect = lambda field: {
             "module_name": mock_module_name_node,
@@ -191,11 +196,11 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
-        mock_module_name_node.text.decode.return_value = "myproject.utils"
+        mock_module_name_node.text = b"myproject.utils"
 
         mock_name_node = MagicMock()
         mock_name_node.type = "dotted_name"
-        mock_name_node.text.decode.return_value = "helper"
+        mock_name_node.text = b"helper"
 
         mock_import_node.child_by_field_name.side_effect = lambda field: {
             "module_name": mock_module_name_node,
@@ -226,11 +231,11 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
-        mock_module_name_node.text.decode.return_value = "src.helpers"
+        mock_module_name_node.text = b"src.helpers"
 
         mock_name_node = MagicMock()
         mock_name_node.type = "dotted_name"
-        mock_name_node.text.decode.return_value = "database"
+        mock_name_node.text = b"database"
 
         mock_import_node.child_by_field_name.side_effect = lambda field: {
             "module_name": mock_module_name_node,
@@ -261,7 +266,7 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "os"
+        mock_dotted_name.text = b"os"
 
         mock_import_node.named_children = [mock_dotted_name]
 
@@ -286,7 +291,7 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "utils"
+        mock_dotted_name.text = b"utils"
 
         mock_import_node.named_children = [mock_dotted_name]
 
@@ -313,7 +318,7 @@ class TestStandardLibraryImports:
         mock_import_node = MagicMock()
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "src.helpers"
+        mock_dotted_name.text = b"src.helpers"
 
         mock_import_node.named_children = [mock_dotted_name]
 
@@ -340,9 +345,9 @@ class TestStandardLibraryImports:
         mock_aliased_import.type = "aliased_import"
 
         mock_name_node = MagicMock()
-        mock_name_node.text.decode.return_value = "os"
+        mock_name_node.text = b"os"
         mock_alias_node = MagicMock()
-        mock_alias_node.text.decode.return_value = "operating_system"
+        mock_alias_node.text = b"operating_system"
 
         mock_aliased_import.child_by_field_name.side_effect = lambda field: {
             "name": mock_name_node,
@@ -374,9 +379,9 @@ class TestStandardLibraryImports:
         mock_aliased_import.type = "aliased_import"
 
         mock_name_node = MagicMock()
-        mock_name_node.text.decode.return_value = "utils"
+        mock_name_node.text = b"utils"
         mock_alias_node = MagicMock()
-        mock_alias_node.text.decode.return_value = "helpers"
+        mock_alias_node.text = b"helpers"
 
         mock_aliased_import.child_by_field_name.side_effect = lambda field: {
             "name": mock_name_node,
