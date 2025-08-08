@@ -134,12 +134,7 @@ class ImportProcessor:
                 module_name_node = child.child_by_field_name("name")
                 alias_node = child.child_by_field_name("alias")
 
-                if (
-                    module_name_node
-                    and alias_node
-                    and module_name_node.text
-                    and alias_node.text
-                ):
+                if module_name_node and alias_node:
                     decoded_module_name = safe_decode_text(module_name_node)
                     decoded_alias = safe_decode_text(alias_node)
                     if not decoded_module_name or not decoded_alias:
@@ -343,11 +338,11 @@ class ImportProcessor:
 
                         name_node = grandchild.child_by_field_name("name")
                         alias_node = grandchild.child_by_field_name("alias")
-                        if name_node and name_node.text:
+                        if name_node:
                             imported_name = safe_decode_with_fallback(name_node)
                             local_name = (
                                 safe_decode_with_fallback(alias_node)
-                                if alias_node and alias_node.text
+                                if alias_node
                                 else imported_name
                             )
                             self.import_mapping[current_module][local_name] = (
@@ -438,11 +433,11 @@ class ImportProcessor:
                     if grandchild.type == "export_specifier":
                         name_node = grandchild.child_by_field_name("name")
                         alias_node = grandchild.child_by_field_name("alias")
-                        if name_node and name_node.text:
+                        if name_node:
                             original_name = safe_decode_with_fallback(name_node)
                             exported_name = (
                                 safe_decode_with_fallback(alias_node)
-                                if alias_node and alias_node.text
+                                if alias_node
                                 else original_name
                             )
                             self.import_mapping[current_module][exported_name] = (
@@ -691,7 +686,7 @@ class ImportProcessor:
                 template_args_child = child
 
         # Only process if the identifier is "import"
-        if identifier_child and safe_decode_with_fallback(identifier_child) == "import":
+        if identifier_child and safe_decode_text(identifier_child) == "import":
             if template_args_child:
                 # Extract the module/header name from <...>
                 module_name = None
