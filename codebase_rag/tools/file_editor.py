@@ -35,6 +35,7 @@ LANGUAGE_EXTENSIONS = {
     ".cxx": "cpp",
     ".hxx": "cpp",
     ".hh": "cpp",
+    ".lua": "lua",
 }
 
 

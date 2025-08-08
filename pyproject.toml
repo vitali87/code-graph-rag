@@ -1,6 +1,6 @@
 [project]
 name = "graph-code"
-version = "0.0.22"
+version = "0.0.23"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -44,6 +44,7 @@ treesitter-full = [
     "tree-sitter-scala>=0.24.0",
     "tree-sitter-java>=0.23.5",
     "tree-sitter-cpp>=0.23.0",
+    "tree-sitter-lua>=0.0.19",
 ]
 
 [tool.ruff]

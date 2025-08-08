@@ -172,6 +172,8 @@ class CallProcessor:
     ) -> None:
         """Process calls within class methods."""
         lang_queries = queries[language]
+        if not lang_queries.get("classes"):
+            return
 
         query = lang_queries["classes"]
         cursor = QueryCursor(query)

@@ -47,6 +47,7 @@ Use the Makefile for:
   | ✅ JavaScript | **Fully Supported** | Complete AST parsing, type inference, call graphs |
   | ✅ TypeScript | **Fully Supported** | Complete AST parsing, type inference, call graphs |
   | ✅ C++ | **Fully Supported** | Complete AST parsing, operator overloading, templates, namespaces, C++20 modules |
+  | 🚧 Lua | In Progress | Basic parsing, full support underway |
   | 🚧 Rust | In Development | Basic parsing, full support underway |
   | 🚧 Go | In Development | Basic parsing, full support underway |
   | 🚧 Scala | In Development | Basic parsing, full support underway |
@@ -472,6 +473,7 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 | JavaScript | `.js`, `.jsx` | ✅        | ✅              | ✅      | -                | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | TypeScript | `.ts`, `.tsx` | ✅        | ✅              | ✅      | -                | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | C++        | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`, `.ixx`, `.cppm`, `.ccm`| ✅      | ✅ (classes/structs/unions/enums) | ✅      | CMakeLists.txt, Makefile | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
+| Lua        | `.lua`        | ✅        | ✅ (tables/modules) | ✅    | -                | Local/global functions, metatables, closures, coroutines |
 | Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                | impl blocks, associated functions |
 | Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                | Methods, type declarations |
 | Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations | Case classes, objects |
@@ -483,6 +485,7 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 - **JavaScript**: ES6 modules, CommonJS modules, prototype-based methods, object methods, arrow functions, classes, and JSX support
 - **TypeScript**: All JavaScript features plus interfaces, type aliases, enums, namespaces, generics, and advanced type inference
 - **C++**: Comprehensive support including functions, classes, structs, unions, enums, constructors, destructors, operator overloading, templates, lambdas, namespaces, C++20 modules, inheritance, method calls, and modern C++ features
+- **Lua**: Functions, local/global variables, tables, metatables, closures, coroutines, and object-oriented patterns
 - **Rust**: Functions, structs, enums, impl blocks, traits, and associated functions
 - **Go**: Functions, methods, type declarations, interfaces, and struct definitions
 - **Scala**: Functions, methods, classes, objects, traits, case classes, implicits, and Scala 3 syntax

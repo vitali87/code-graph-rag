@@ -354,6 +354,34 @@ class DefinitionProcessor:
         # For other anonymous functions (callbacks, etc.), use location-based name
         return f"anonymous_{func_node.start_point[0]}_{func_node.start_point[1]}"
 
+    def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
+        """Extract function name from Lua assignment patterns like Calculator.divide = function()."""
+        # Look for parent assignment_statement
+        current = func_node.parent
+        while current and current.type != "assignment_statement":
+            current = current.parent
+
+        if not current:
+            return None
+
+        # Find the variable_list (left side of assignment)
+        for child in current.children:
+            if child.type == "variable_list":
+                # Look for dot_index_expression like "Calculator.divide"
+                for var_child in child.children:
+                    if var_child.type == "dot_index_expression":
+                        # Extract the full dotted name
+                        return (
+                            var_child.text.decode("utf-8") if var_child.text else None
+                        )
+                    elif var_child.type == "identifier":
+                        # Simple identifier assignment
+                        return (
+                            var_child.text.decode("utf-8") if var_child.text else None
+                        )
+
+        return None
+
     def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
@@ -393,6 +421,15 @@ class DefinitionProcessor:
                 is_exported = False  # Default for non-C++ languages
                 # Extract function name - handle arrow functions specially
                 func_name = self._extract_function_name(func_node)
+
+                # Special handling for Lua function_definition nodes in assignments
+                if (
+                    not func_name
+                    and language == "lua"
+                    and func_node.type == "function_definition"
+                ):
+                    func_name = self._extract_lua_assignment_function_name(func_node)
+
                 if not func_name:
                     # Generate synthetic name for anonymous functions (IIFEs, callbacks, etc.)
                     func_name = self._generate_anonymous_function_name(
@@ -696,6 +733,9 @@ class DefinitionProcessor:
     ) -> None:
         """Extract and ingest classes and their methods."""
         lang_queries = queries[language]
+        # Languages without classes (e.g., Lua) will not have a classes query
+        if not lang_queries.get("classes"):
+            return
 
         query = lang_queries["classes"]
         cursor = QueryCursor(query)
