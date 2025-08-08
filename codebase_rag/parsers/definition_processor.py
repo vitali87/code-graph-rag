@@ -20,7 +20,7 @@ from .cpp_utils import (
     is_cpp_exported,
 )
 from .import_processor import ImportProcessor
-from .utils import resolve_class_name
+from .utils import resolve_class_name, safe_decode_text
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -371,14 +371,10 @@ class DefinitionProcessor:
                 for var_child in child.children:
                     if var_child.type == "dot_index_expression":
                         # Extract the full dotted name
-                        return (
-                            var_child.text.decode("utf-8") if var_child.text else None
-                        )
+                        return safe_decode_text(var_child)
                     elif var_child.type == "identifier":
                         # Simple identifier assignment
-                        return (
-                            var_child.text.decode("utf-8") if var_child.text else None
-                        )
+                        return safe_decode_text(var_child)
 
         return None
 

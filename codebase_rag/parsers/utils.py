@@ -2,9 +2,23 @@
 
 from typing import TYPE_CHECKING
 
+from tree_sitter import Node
+
 if TYPE_CHECKING:
     from ..graph_updater import FunctionRegistryTrie
     from .import_processor import ImportProcessor
+
+
+def safe_decode_text(node: Node) -> str | None:
+    """Safely decode text from a tree-sitter node.
+
+    Args:
+        node: Tree-sitter node to decode text from
+
+    Returns:
+        Decoded text or None if node has no text
+    """
+    return node.text.decode("utf-8") if node.text else None
 
 
 def resolve_class_name(

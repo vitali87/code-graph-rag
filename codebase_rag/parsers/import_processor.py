@@ -815,28 +815,21 @@ class ImportProcessor:
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
         """Return True if function_call represents require(...) or require 'x'."""
-        func = call_node.child_by_field_name("function")
-        if func and func.text and self._safe_decode_with_fallback(func) == "require":
-            return True
-        for child in call_node.children:
-            if child.type == "identifier" and child.text:
-                if self._safe_decode_with_fallback(child) == "require":
-                    return True
+        # In Lua tree-sitter, function calls have the function name as the first child
+        first_child = call_node.children[0] if call_node.children else None
+        if first_child and first_child.type == "identifier":
+            return self._safe_decode_text(first_child) == "require"
         return False
 
     def _lua_is_pcall_require(self, call_node: Node) -> bool:
         """Return True if function_call represents pcall(require, 'module')."""
-        func = call_node.child_by_field_name("function")
-        if not func:
-            # Sometimes the function field is not set, look for first identifier child
-            for child in call_node.children:
-                if child.type == "identifier":
-                    func = child
-                    break
-
-        if not func or not func.text:
-            return False
-        if self._safe_decode_with_fallback(func) != "pcall":
+        # Check if first child is 'pcall'
+        first_child = call_node.children[0] if call_node.children else None
+        if not (
+            first_child
+            and first_child.type == "identifier"
+            and self._safe_decode_text(first_child) == "pcall"
+        ):
             return False
 
         # Check if first argument is 'require' identifier
@@ -884,20 +877,25 @@ class ImportProcessor:
                     found_require = True
         return None
 
-    def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
-        """Find identifier assigned from the require call (local or global)."""
+    def _lua_find_ancestor_statement(self, node: Node) -> Node | None:
+        """Find the nearest statement-like ancestor of a node."""
 
-        # Ascend to nearest statement-like ancestor
         def _is_stmt(node: Node) -> bool:
             return node.type.endswith("statement") or node.type in {
                 "assignment_statement",
                 "local_statement",
             }
 
-        stmt = call_node.parent
+        stmt = node.parent
         while stmt and not _is_stmt(stmt):
             stmt = stmt.parent
 
+        return stmt
+
+    def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
+        """Find identifier assigned from the require call (local or global)."""
+
+        stmt = self._lua_find_ancestor_statement(call_node)
         if not stmt:
             return None
 
@@ -919,17 +917,7 @@ class ImportProcessor:
         We want to extract 'json' (the second identifier).
         """
 
-        # Ascend to nearest statement-like ancestor
-        def _is_stmt(node: Node) -> bool:
-            return node.type.endswith("statement") or node.type in {
-                "assignment_statement",
-                "local_statement",
-            }
-
-        stmt = call_node.parent
-        while stmt is not None and not _is_stmt(stmt):
-            stmt = stmt.parent
-
+        stmt = self._lua_find_ancestor_statement(call_node)
         if not stmt:
             return None
 
