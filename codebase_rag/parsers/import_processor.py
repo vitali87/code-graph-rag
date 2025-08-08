@@ -861,14 +861,10 @@ class ImportProcessor:
         else:
             candidates.extend(call_node.children)
         for node in candidates:
-            if node.type in ("string", "string_literal") and node.text:
-                text_bytes = node.text
-                if text_bytes is not None:
-                    if isinstance(text_bytes, bytes):
-                        value = text_bytes.decode("utf-8").strip("'\"")
-                    else:
-                        value = str(text_bytes).strip("'\"")
-                    return value
+            if node.type in ("string", "string_literal"):
+                decoded = self._safe_decode_text(node)
+                if decoded:
+                    return decoded.strip("'\"")
         return None
 
     def _lua_extract_pcall_require_arg(self, call_node: Node) -> str | None:
@@ -879,17 +875,10 @@ class ImportProcessor:
         # Look for string after 'require' identifier
         found_require = False
         for child in args.children:
-            if (
-                found_require
-                and child.type in ("string", "string_literal")
-                and child.text
-            ):
-                text_bytes = child.text
-                if isinstance(text_bytes, bytes):
-                    value = text_bytes.decode("utf-8").strip("'\"")
-                else:
-                    value = str(text_bytes).strip("'\"")
-                return value
+            if found_require and child.type in ("string", "string_literal"):
+                decoded = self._safe_decode_text(child)
+                if decoded:
+                    return decoded.strip("'\"")
             if child.type == "identifier" and child.text:
                 if self._safe_decode_with_fallback(child) == "require":
                     found_require = True
@@ -906,40 +895,22 @@ class ImportProcessor:
             }
 
         stmt = call_node.parent
-        for _ in range(6):
-            if stmt is None or _is_stmt(stmt):
-                break
+        while stmt and not _is_stmt(stmt):
             stmt = stmt.parent
 
         if not stmt:
             return None
 
-        call_start = getattr(call_node, "start_byte", None)
-        chosen: str | None = None
-
-        # Traverse children in order, pick last identifier before the call
+        # Look for the variable_list node which contains the identifier(s)
         for child in stmt.children:
-            # Stop once we reach the call node
-            if child is call_node:
-                break
-            # If child is after call (no start_byte), skip
-            if call_start is not None:
-                c_start = getattr(child, "start_byte", None)
-                if c_start is not None and c_start >= call_start:
-                    break
-            # Collect identifiers from this subtree
-            stack = [child]
-            while stack:
-                node = stack.pop()
-                if node is call_node:
-                    continue
-                if node.type == "identifier" and node.text:
-                    text_val = node.text.decode("utf-8")
-                    if text_val != "require":  # avoid picking callee name
-                        chosen = text_val
-                stack.extend(node.children)
+            if child.type == "variable_list":
+                # In `local var = require(...)`, the first identifier is the one we want.
+                for var_child in child.children:
+                    if var_child.type == "identifier":
+                        return self._safe_decode_text(var_child)
+                break  # Found variable_list, no need to check other children
 
-        return chosen
+        return None
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
         """Find the second identifier assigned from pcall(require, ...) pattern.
@@ -956,9 +927,7 @@ class ImportProcessor:
             }
 
         stmt = call_node.parent
-        for _ in range(6):
-            if stmt is None or _is_stmt(stmt):
-                break
+        while stmt is not None and not _is_stmt(stmt):
             stmt = stmt.parent
 
         if not stmt:
@@ -969,12 +938,10 @@ class ImportProcessor:
             if child.type == "variable_list":
                 identifiers = []
                 for var_child in child.children:
-                    if var_child.type == "identifier" and var_child.text:
-                        text_bytes = var_child.text
-                        if isinstance(text_bytes, bytes):
-                            identifiers.append(text_bytes.decode("utf-8"))
-                        else:
-                            identifiers.append(str(text_bytes))
+                    if var_child.type == "identifier":
+                        decoded = self._safe_decode_text(var_child)
+                        if decoded:
+                            identifiers.append(decoded)
                 # Return the second identifier if it exists
                 if len(identifiers) >= 2:
                     return identifiers[1]
@@ -1009,7 +976,7 @@ class ImportProcessor:
             # For bare name like mod -> mod.lua
             if (self.repo_path / f"{dotted}.lua").is_file():
                 return f"{self.project_name}.{dotted}"
-        except Exception:
+        except OSError:
             pass
 
         return dotted
