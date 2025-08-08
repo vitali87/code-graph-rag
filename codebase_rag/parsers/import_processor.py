@@ -816,13 +816,18 @@ class ImportProcessor:
         args = call_node.child_by_field_name("arguments")
         if not args:
             return False
-        require_found = False
-        for child in args.children:
-            if child.type == "identifier" and child.text:
-                if safe_decode_with_fallback(child) == "require":
-                    require_found = True
-                    break
-        return require_found
+
+        # Find the first expression node in the arguments
+        first_arg_node = next(
+            (child for child in args.children if child.type not in ["(", ")", ","]),
+            None,
+        )
+
+        return (
+            first_arg_node is not None
+            and first_arg_node.type == "identifier"
+            and safe_decode_text(first_arg_node) == "require"
+        )
 
     def _lua_extract_require_arg(self, call_node: Node) -> str | None:
         """Extract first string-like argument from a require call."""
@@ -859,17 +864,12 @@ class ImportProcessor:
 
     def _lua_find_ancestor_statement(self, node: Node) -> Node | None:
         """Find the nearest statement-like ancestor of a node."""
-
-        def _is_stmt(node: Node) -> bool:
-            return node.type.endswith("statement") or node.type in {
-                "assignment_statement",
-                "local_statement",
-            }
-
         stmt = node.parent
-        while stmt and not _is_stmt(stmt):
+        while stmt and not (
+            stmt.type.endswith("statement")
+            or stmt.type in {"assignment_statement", "local_statement"}
+        ):
             stmt = stmt.parent
-
         return stmt
 
     def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
