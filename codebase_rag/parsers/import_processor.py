@@ -394,7 +394,7 @@ class ImportProcessor:
                         func_node
                         and args_node
                         and func_node.type == "identifier"
-                        and safe_decode_with_fallback(func_node) == "require"
+                        and safe_decode_text(func_node) == "require"
                     ):
                         # Extract module path from first argument
                         for arg in args_node.children:
@@ -857,8 +857,8 @@ class ImportProcessor:
                 decoded = safe_decode_text(child)
                 if decoded:
                     return decoded.strip("'\"")
-            if child.type == "identifier" and child.text:
-                if safe_decode_with_fallback(child) == "require":
+            if child.type == "identifier":
+                if safe_decode_text(child) == "require":
                     found_require = True
         return None
 
