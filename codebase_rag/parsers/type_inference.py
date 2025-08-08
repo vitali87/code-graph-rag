@@ -7,7 +7,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from .import_processor import ImportProcessor
-from .utils import resolve_class_name
+from .python_utils import resolve_class_name
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}

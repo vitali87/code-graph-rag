@@ -20,7 +20,8 @@ from .cpp_utils import (
     is_cpp_exported,
 )
 from .import_processor import ImportProcessor
-from .utils import resolve_class_name, safe_decode_text
+from .python_utils import resolve_class_name
+from .utils import safe_decode_text
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
