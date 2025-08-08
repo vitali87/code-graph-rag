@@ -20,8 +20,8 @@ from .cpp_utils import (
     is_cpp_exported,
 )
 from .import_processor import ImportProcessor
+from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
-from .utils import contains_node, safe_decode_text
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -357,64 +357,11 @@ class DefinitionProcessor:
 
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
         """Extract function name from Lua assignment patterns like Calculator.divide = function()."""
-        # Look for parent assignment_statement
-        current = func_node.parent
-        while current and current.type != "assignment_statement":
-            current = current.parent
-
-        if not current:
-            return None
-
-        # Find the position of the function in the expression_list using field names
-        function_index = -1
-        expression_list = None
-
-        for child in current.children:
-            if child.type == "expression_list":
-                expression_list = child
-                break
-
-        if not expression_list:
-            return None
-
-        # Get all value fields from expression_list
-        values = []
-        for i in range(expression_list.child_count):
-            if expression_list.field_name_for_child(i) == "value":
-                values.append(expression_list.child(i))
-
-        # Find which value contains our function
-        for idx, value in enumerate(values):
-            if value == func_node or contains_node(value, func_node):
-                function_index = idx
-                break
-
-        if function_index == -1:
-            return None
-
-        # Find the variable_list and get the corresponding name field
-        variable_list = None
-        for child in current.children:
-            if child.type == "variable_list":
-                variable_list = child
-                break
-
-        if not variable_list:
-            return None
-
-        # Get all name fields from variable_list
-        names = []
-        for i in range(variable_list.child_count):
-            if variable_list.field_name_for_child(i) == "name":
-                names.append(variable_list.child(i))
-
-        # Get the corresponding variable name
-        if function_index < len(names):
-            var_child = names[function_index]
-            if var_child.type in ("dot_index_expression", "identifier"):
-                return safe_decode_text(var_child)
-
-        return None
+        # Use shared utility to extract the assigned name
+        # Accept both identifier and dot_index_expression for Lua assignments
+        return extract_lua_assigned_name(
+            func_node, accepted_var_types=("dot_index_expression", "identifier")
+        )
 
     def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
