@@ -7,7 +7,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
-from .utils import safe_decode_text, safe_decode_with_fallback
+from .utils import contains_node, safe_decode_text, safe_decode_with_fallback
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -888,7 +888,7 @@ class ImportProcessor:
                 expr_count = 0
                 for expr in child.children:
                     if expr.type not in [",", "(", ")"]:  # Skip punctuation
-                        if expr == call_node or self._contains_node(expr, call_node):
+                        if expr == call_node or contains_node(expr, call_node):
                             require_index = expr_count
                             break
                         expr_count += 1
@@ -910,15 +910,6 @@ class ImportProcessor:
                 break
 
         return None
-
-    def _contains_node(self, parent: Node, target: Node) -> bool:
-        """Check if parent node contains target node in its subtree."""
-        if parent == target:
-            return True
-        for child in parent.children:
-            if self._contains_node(child, target):
-                return True
-        return False
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
         """Find the second identifier assigned from pcall(require, ...) pattern.

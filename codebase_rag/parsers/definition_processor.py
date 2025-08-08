@@ -21,7 +21,7 @@ from .cpp_utils import (
 )
 from .import_processor import ImportProcessor
 from .python_utils import resolve_class_name
-from .utils import safe_decode_text
+from .utils import contains_node, safe_decode_text
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -373,7 +373,7 @@ class DefinitionProcessor:
                 # Find the index of our function in the expression list
                 for i, expr in enumerate(child.children):
                     if expr.type not in [",", "(", ")"]:  # Skip punctuation
-                        if expr == func_node or self._contains_node(expr, func_node):
+                        if expr == func_node or contains_node(expr, func_node):
                             function_index = i // 2  # Account for comma separators
                             break
                 break
@@ -396,15 +396,6 @@ class DefinitionProcessor:
                 break
 
         return None
-
-    def _contains_node(self, parent: Node, target: Node) -> bool:
-        """Check if parent node contains target node in its subtree."""
-        if parent == target:
-            return True
-        for child in parent.children:
-            if self._contains_node(child, target):
-                return True
-        return False
 
     def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
