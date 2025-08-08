@@ -146,6 +146,14 @@ def _import_language_loaders() -> dict[str, LanguageLoader]:
     except ImportError:
         loaders["cpp"] = _try_load_from_submodule("cpp")
 
+    # Lua support
+    try:
+        from tree_sitter_lua import language as lua_language_so
+
+        loaders["lua"] = lua_language_so
+    except ImportError:
+        loaders["lua"] = _try_load_from_submodule("lua")
+
     # Automatically try submodule loading for any language not already loaded
     for lang_name in LANGUAGE_CONFIGS.keys():
         if lang_name not in loaders or loaders[lang_name] is None:

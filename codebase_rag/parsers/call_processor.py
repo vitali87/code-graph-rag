@@ -13,8 +13,8 @@ from ..services.graph_service import MemgraphIngestor
 # No longer need constants import - using Tree-sitter directly
 from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
 from .import_processor import ImportProcessor
+from .python_utils import resolve_class_name
 from .type_inference import TypeInferenceEngine
-from .utils import resolve_class_name
 
 
 class CallProcessor:
@@ -172,6 +172,8 @@ class CallProcessor:
     ) -> None:
         """Process calls within class methods."""
         lang_queries = queries[language]
+        if not lang_queries.get("classes"):
+            return
 
         query = lang_queries["classes"]
         cursor = QueryCursor(query)

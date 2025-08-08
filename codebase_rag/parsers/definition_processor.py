@@ -20,7 +20,8 @@ from .cpp_utils import (
     is_cpp_exported,
 )
 from .import_processor import ImportProcessor
-from .utils import resolve_class_name
+from .lua_utils import extract_lua_assigned_name
+from .python_utils import resolve_class_name
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -354,6 +355,14 @@ class DefinitionProcessor:
         # For other anonymous functions (callbacks, etc.), use location-based name
         return f"anonymous_{func_node.start_point[0]}_{func_node.start_point[1]}"
 
+    def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
+        """Extract function name from Lua assignment patterns like Calculator.divide = function()."""
+        # Use shared utility to extract the assigned name
+        # Accept both identifier and dot_index_expression for Lua assignments
+        return extract_lua_assigned_name(
+            func_node, accepted_var_types=("dot_index_expression", "identifier")
+        )
+
     def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
     ) -> None:
@@ -393,6 +402,15 @@ class DefinitionProcessor:
                 is_exported = False  # Default for non-C++ languages
                 # Extract function name - handle arrow functions specially
                 func_name = self._extract_function_name(func_node)
+
+                # Special handling for Lua function_definition nodes in assignments
+                if (
+                    not func_name
+                    and language == "lua"
+                    and func_node.type == "function_definition"
+                ):
+                    func_name = self._extract_lua_assignment_function_name(func_node)
+
                 if not func_name:
                     # Generate synthetic name for anonymous functions (IIFEs, callbacks, etc.)
                     func_name = self._generate_anonymous_function_name(
@@ -696,6 +714,9 @@ class DefinitionProcessor:
     ) -> None:
         """Extract and ingest classes and their methods."""
         lang_queries = queries[language]
+        # Languages without classes (e.g., Lua) will not have a classes query
+        if not lang_queries.get("classes"):
+            return
 
         query = lang_queries["classes"]
         cursor = QueryCursor(query)

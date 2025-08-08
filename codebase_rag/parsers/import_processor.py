@@ -7,6 +7,11 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
+from .lua_utils import (
+    extract_lua_assigned_name,
+    extract_lua_pcall_second_identifier,
+)
+from .utils import safe_decode_text, safe_decode_with_fallback
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -75,6 +80,8 @@ class ImportProcessor:
                 self._parse_go_imports(captures, module_qn)
             elif language == "cpp":
                 self._parse_cpp_imports(captures, module_qn)
+            elif language == "lua":
+                self._parse_lua_imports(captures, module_qn)
             else:
                 # Generic fallback for other languages
                 self._parse_generic_imports(captures, module_qn, lang_config)
@@ -112,7 +119,7 @@ class ImportProcessor:
         """Handle 'import module' statements."""
         for child in import_node.named_children:
             if child.type == "dotted_name":
-                module_name = child.text.decode("utf-8") if child.text else ""
+                module_name = safe_decode_text(child) or ""
                 # For 'import a.b.c', the local name available in the scope is 'a'
                 local_name = module_name.split(".")[0]
 
@@ -131,14 +138,13 @@ class ImportProcessor:
                 module_name_node = child.child_by_field_name("name")
                 alias_node = child.child_by_field_name("alias")
 
-                if (
-                    module_name_node
-                    and alias_node
-                    and module_name_node.text
-                    and alias_node.text
-                ):
-                    module_name = module_name_node.text.decode("utf-8")
-                    alias = alias_node.text.decode("utf-8")
+                if module_name_node and alias_node:
+                    decoded_module_name = safe_decode_text(module_name_node)
+                    decoded_alias = safe_decode_text(alias_node)
+                    if not decoded_module_name or not decoded_alias:
+                        continue
+                    module_name = decoded_module_name
+                    alias = decoded_alias
 
                     # Determine the fully qualified name of the imported module
                     top_level_module = module_name.split(".")[0]
@@ -163,7 +169,10 @@ class ImportProcessor:
 
         # Extract module name
         if module_name_node.type == "dotted_name":
-            module_name = module_name_node.text.decode("utf-8")
+            decoded_name = safe_decode_text(module_name_node)
+            if not decoded_name:
+                return
+            module_name = decoded_name
         elif module_name_node.type == "relative_import":
             module_name = self._resolve_relative_import(module_name_node, module_qn)
         else:
@@ -177,15 +186,20 @@ class ImportProcessor:
         for name_node in import_node.children_by_field_name("name"):
             if name_node.type == "dotted_name":
                 # Simple import: from module import name
-                name = name_node.text.decode("utf-8")
+                decoded_name = safe_decode_text(name_node)
+                if not decoded_name:
+                    continue
+                name = decoded_name
                 imported_items.append((name, name))
             elif name_node.type == "aliased_import":
                 # Aliased import: from module import name as alias
                 original_name_node = name_node.child_by_field_name("name")
                 alias_node = name_node.child_by_field_name("alias")
                 if original_name_node and alias_node:
-                    original_name = original_name_node.text.decode("utf-8")
-                    alias = alias_node.text.decode("utf-8")
+                    original_name = safe_decode_text(original_name_node)
+                    alias = safe_decode_text(alias_node)
+                    if not original_name or not alias:
+                        continue
                     imported_items.append((alias, original_name))
 
         # Check for wildcard imports (direct children, not in "name" field)
@@ -230,9 +244,15 @@ class ImportProcessor:
 
         for child in relative_node.children:
             if child.type == "import_prefix":
-                dots = len(child.text.decode("utf-8"))
+                decoded_text = safe_decode_text(child)
+                if not decoded_text:
+                    continue
+                dots = len(decoded_text)
             elif child.type == "dotted_name":
-                module_name = child.text.decode("utf-8")
+                decoded_name = safe_decode_text(child)
+                if not decoded_name:
+                    continue
+                module_name = decoded_name
 
         # Calculate the target module - dots corresponds to levels to go up
         target_parts = module_parts[:-dots] if dots > 0 else module_parts
@@ -252,7 +272,7 @@ class ImportProcessor:
                 for child in import_node.children:
                     if child.type == "string":
                         # Extract module path from string (remove quotes)
-                        source_text = child.text.decode("utf-8").strip("'\"")
+                        source_text = safe_decode_with_fallback(child).strip("'\"")
                         source_module = self._resolve_js_module_path(
                             source_text, module_qn
                         )
@@ -304,7 +324,7 @@ class ImportProcessor:
         for child in clause_node.children:
             if child.type == "identifier":
                 # Default import: import React from 'react'
-                imported_name = child.text.decode("utf-8")
+                imported_name = safe_decode_with_fallback(child)
                 self.import_mapping[current_module][imported_name] = (
                     f"{source_module}.default"
                 )
@@ -322,11 +342,11 @@ class ImportProcessor:
 
                         name_node = grandchild.child_by_field_name("name")
                         alias_node = grandchild.child_by_field_name("alias")
-                        if name_node and name_node.text:
-                            imported_name = name_node.text.decode("utf-8")
+                        if name_node:
+                            imported_name = safe_decode_with_fallback(name_node)
                             local_name = (
-                                alias_node.text.decode("utf-8")
-                                if alias_node and alias_node.text
+                                safe_decode_with_fallback(alias_node)
+                                if alias_node
                                 else imported_name
                             )
                             self.import_mapping[current_module][local_name] = (
@@ -341,7 +361,7 @@ class ImportProcessor:
                 # Namespace import: import * as utils from './utils'
                 for grandchild in child.children:
                     if grandchild.type == "identifier":
-                        namespace_name = grandchild.text.decode("utf-8")
+                        namespace_name = safe_decode_with_fallback(grandchild)
                         self.import_mapping[current_module][namespace_name] = (
                             source_module
                         )
@@ -373,13 +393,15 @@ class ImportProcessor:
                         func_node
                         and args_node
                         and func_node.type == "identifier"
-                        and func_node.text.decode("utf-8") == "require"
+                        and safe_decode_text(func_node) == "require"
                     ):
                         # Extract module path from first argument
                         for arg in args_node.children:
                             if arg.type == "string":
-                                var_name = name_node.text.decode("utf-8")
-                                required_module = arg.text.decode("utf-8").strip("'\"")
+                                var_name = safe_decode_with_fallback(name_node)
+                                required_module = safe_decode_with_fallback(arg).strip(
+                                    "'\""
+                                )
 
                                 resolved_module = self._resolve_js_module_path(
                                     required_module, current_module
@@ -398,7 +420,7 @@ class ImportProcessor:
         source_module = None
         for child in export_node.children:
             if child.type == "string":
-                source_text = child.text.decode("utf-8").strip("'\"")
+                source_text = safe_decode_with_fallback(child).strip("'\"")
                 source_module = self._resolve_js_module_path(
                     source_text, current_module
                 )
@@ -415,11 +437,11 @@ class ImportProcessor:
                     if grandchild.type == "export_specifier":
                         name_node = grandchild.child_by_field_name("name")
                         alias_node = grandchild.child_by_field_name("alias")
-                        if name_node and name_node.text:
-                            original_name = name_node.text.decode("utf-8")
+                        if name_node:
+                            original_name = safe_decode_with_fallback(name_node)
                             exported_name = (
-                                alias_node.text.decode("utf-8")
-                                if alias_node and alias_node.text
+                                safe_decode_with_fallback(alias_node)
+                                if alias_node
                                 else original_name
                             )
                             self.import_mapping[current_module][exported_name] = (
@@ -449,7 +471,7 @@ class ImportProcessor:
                     if child.type == "static":
                         is_static = True
                     elif child.type == "scoped_identifier":
-                        imported_path = child.text.decode("utf-8")
+                        imported_path = safe_decode_with_fallback(child)
                     elif child.type == "asterisk":
                         is_wildcard = True
 
@@ -496,7 +518,7 @@ class ImportProcessor:
         for child in use_node.children:
             if child.type == "scoped_identifier":
                 # Simple use: use std::collections::HashMap;
-                full_path = child.text.decode("utf-8")
+                full_path = safe_decode_with_fallback(child)
                 parts = full_path.split("::")
                 if parts:
                     imported_name = parts[-1]
@@ -509,9 +531,9 @@ class ImportProcessor:
                 alias_name = None
                 for grandchild in child.children:
                     if grandchild.type == "scoped_identifier":
-                        original_path = grandchild.text.decode("utf-8")
+                        original_path = safe_decode_with_fallback(grandchild)
                     elif grandchild.type == "identifier":
-                        alias_name = grandchild.text.decode("utf-8")
+                        alias_name = safe_decode_with_fallback(grandchild)
 
                 if original_path and alias_name:
                     self.import_mapping[module_qn][alias_name] = original_path
@@ -524,12 +546,14 @@ class ImportProcessor:
 
                 for grandchild in child.children:
                     if grandchild.type == "identifier":
-                        base_path = grandchild.text.decode("utf-8")
+                        base_path = safe_decode_with_fallback(grandchild)
                     elif grandchild.type == "use_list":
                         # Extract names from the list
                         for list_child in grandchild.children:
                             if list_child.type == "identifier":
-                                imported_names.append(list_child.text.decode("utf-8"))
+                                imported_names.append(
+                                    safe_decode_with_fallback(list_child)
+                                )
 
                 if base_path:
                     for name in imported_names:
@@ -544,7 +568,7 @@ class ImportProcessor:
                         grandchild.type == "scoped_identifier"
                         or grandchild.type == "crate"
                     ):
-                        base_path = grandchild.text.decode("utf-8")
+                        base_path = safe_decode_with_fallback(grandchild)
                         # Store wildcard import for potential future use
                         self.import_mapping[module_qn][f"*{base_path}"] = base_path
                         logger.debug(f"Rust glob use: {base_path}::*")
@@ -577,10 +601,10 @@ class ImportProcessor:
         for child in spec_node.children:
             if child.type == "package_identifier":
                 # Aliased import: import f "fmt"
-                alias_name = child.text.decode("utf-8")
+                alias_name = safe_decode_with_fallback(child)
             elif child.type == "interpreted_string_literal":
                 # Extract import path from string literal
-                import_path = child.text.decode("utf-8").strip('"')
+                import_path = safe_decode_with_fallback(child).strip('"')
 
         if import_path:
             # Determine the package name
@@ -617,11 +641,11 @@ class ImportProcessor:
         for child in include_node.children:
             if child.type == "string_literal":
                 # Local include: #include "header.h"
-                include_path = child.text.decode("utf-8").strip('"')
+                include_path = safe_decode_with_fallback(child).strip('"')
                 is_system_include = False
             elif child.type == "system_lib_string":
                 # System include: #include <iostream>
-                include_path = child.text.decode("utf-8").strip("<>")
+                include_path = safe_decode_with_fallback(child).strip("<>")
                 is_system_include = True
 
         if include_path:
@@ -666,7 +690,7 @@ class ImportProcessor:
                 template_args_child = child
 
         # Only process if the identifier is "import"
-        if identifier_child and identifier_child.text.decode("utf-8") == "import":
+        if identifier_child and safe_decode_text(identifier_child) == "import":
             if template_args_child:
                 # Extract the module/header name from <...>
                 module_name = None
@@ -674,10 +698,10 @@ class ImportProcessor:
                     if child.type == "type_descriptor":
                         for desc_child in child.children:
                             if desc_child.type == "type_identifier":
-                                module_name = desc_child.text.decode("utf-8")
+                                module_name = safe_decode_with_fallback(desc_child)
                                 break
                     elif child.type == "type_identifier":
-                        module_name = child.text.decode("utf-8")
+                        module_name = safe_decode_with_fallback(child)
 
                 if module_name:
                     # This is a standard library module import like "import <iostream>;"
@@ -690,7 +714,10 @@ class ImportProcessor:
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
         """Parse C++20 module declarations and partition imports."""
         # Extract text to analyze the declaration
-        decl_text = decl_node.text.decode("utf-8").strip()
+        decoded_text = safe_decode_text(decl_node)
+        if not decoded_text:
+            return
+        decl_text = decoded_text.strip()
 
         if decl_text.startswith("module ") and not decl_text.startswith("module ;"):
             # Parse "module math_operations;" - this is a module implementation file
@@ -738,3 +765,144 @@ class ImportProcessor:
             logger.debug(
                 f"Generic import parsing for {lang_config.name}: {import_node.type}"
             )
+
+    # ============================= Lua support ==============================
+    def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
+        """Parse Lua require-based imports from function_call captures."""
+        for call_node in captures.get("import", []):
+            # Check for regular require() calls
+            if self._lua_is_require_call(call_node):
+                module_path = self._lua_extract_require_arg(call_node)
+                if module_path:
+                    local_name = (
+                        self._lua_extract_assignment_lhs(call_node)
+                        or module_path.split(".")[-1]
+                    )
+                    resolved = self._resolve_lua_module_path(module_path, module_qn)
+                    self.import_mapping[module_qn][local_name] = resolved
+            # Check for pcall(require, 'module') pattern
+            elif self._lua_is_pcall_require(call_node):
+                module_path = self._lua_extract_pcall_require_arg(call_node)
+                if module_path:
+                    # For pcall, get the second variable in assignment (first is ok/err)
+                    local_name = (
+                        self._lua_extract_pcall_assignment_lhs(call_node)
+                        or module_path.split(".")[-1]
+                    )
+                    resolved = self._resolve_lua_module_path(module_path, module_qn)
+                    self.import_mapping[module_qn][local_name] = resolved
+
+    def _lua_is_require_call(self, call_node: Node) -> bool:
+        """Return True if function_call represents require(...) or require 'x'."""
+        # In Lua tree-sitter, function calls have the function name as the first child
+        first_child = call_node.children[0] if call_node.children else None
+        if first_child and first_child.type == "identifier":
+            return safe_decode_text(first_child) == "require"
+        return False
+
+    def _lua_is_pcall_require(self, call_node: Node) -> bool:
+        """Return True if function_call represents pcall(require, 'module')."""
+        # Check if first child is 'pcall'
+        first_child = call_node.children[0] if call_node.children else None
+        if not (
+            first_child
+            and first_child.type == "identifier"
+            and safe_decode_text(first_child) == "pcall"
+        ):
+            return False
+
+        # Check if first argument is 'require' identifier
+        args = call_node.child_by_field_name("arguments")
+        if not args:
+            return False
+
+        # Find the first expression node in the arguments
+        first_arg_node = next(
+            (child for child in args.children if child.type not in ["(", ")", ","]),
+            None,
+        )
+
+        return (
+            first_arg_node is not None
+            and first_arg_node.type == "identifier"
+            and safe_decode_text(first_arg_node) == "require"
+        )
+
+    def _lua_extract_require_arg(self, call_node: Node) -> str | None:
+        """Extract first string-like argument from a require call."""
+        # Look under arguments node if present
+        args = call_node.child_by_field_name("arguments")
+        candidates = []
+        if args:
+            candidates.extend(args.children)
+        else:
+            candidates.extend(call_node.children)
+        for node in candidates:
+            if node.type in ("string", "string_literal"):
+                decoded = safe_decode_text(node)
+                if decoded:
+                    return decoded.strip("'\"")
+        return None
+
+    def _lua_extract_pcall_require_arg(self, call_node: Node) -> str | None:
+        """Extract module path from pcall(require, 'module') pattern."""
+        args = call_node.child_by_field_name("arguments")
+        if not args:
+            return None
+        # Look for string after 'require' identifier
+        found_require = False
+        for child in args.children:
+            if found_require and child.type in ("string", "string_literal"):
+                decoded = safe_decode_text(child)
+                if decoded:
+                    return decoded.strip("'\"")
+            if child.type == "identifier":
+                if safe_decode_text(child) == "require":
+                    found_require = True
+        return None
+
+    def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
+        """Find identifier assigned from the require call (local or global)."""
+        # Use shared utility to extract the assigned name (only identifiers for require)
+        return extract_lua_assigned_name(call_node, accepted_var_types=("identifier",))
+
+    def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
+        """Find the second identifier assigned from pcall(require, ...) pattern.
+
+        In patterns like: local ok, json = pcall(require, 'json')
+        We want to extract 'json' (the second identifier).
+        """
+        # Use shared utility to extract the second identifier from pcall pattern
+        return extract_lua_pcall_second_identifier(call_node)
+
+    def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
+        """Resolve Lua module path for require. Handles ./ and ../ prefixes."""
+        if import_path.startswith("./") or import_path.startswith("../"):
+            parts = current_module.split(".")[:-1]
+            rel_parts = [p for p in import_path.replace("\\", "/").split("/")]
+            for p in rel_parts:
+                if p == ".":
+                    continue
+                if p == "..":
+                    if parts:
+                        parts.pop()
+                elif p:
+                    parts.append(p)
+            return ".".join(parts)
+        # Dotted or bare names: determine if they exist locally to prefix with project
+        # Convert any remaining path separators to dots
+        dotted = import_path.replace("/", ".")
+
+        # Try to detect local file presence
+        try:
+            # For dotted path like pkg.mod -> pkg/mod.lua
+            relative_file = dotted.replace(".", "/") + ".lua"
+            if (self.repo_path / relative_file).is_file():
+                return f"{self.project_name}.{dotted}"
+            # For bare name like mod -> mod.lua
+            if (self.repo_path / f"{dotted}.lua").is_file():
+                return f"{self.project_name}.{dotted}"
+        except OSError:
+            pass
+
+        return dotted

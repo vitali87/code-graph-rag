@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 
 
 class TestRelativeImportResolution:
@@ -20,8 +21,12 @@ class TestRelativeImportResolution:
     def mock_updater(self) -> GraphUpdater:
         """Create a GraphUpdater instance with mock dependencies for testing."""
         mock_ingestor = MagicMock()
+        parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor=mock_ingestor, repo_path=Path("/fake/repo"), parsers={}, queries={}
+            ingestor=mock_ingestor,
+            repo_path=Path("/fake/repo"),
+            parsers=parsers,
+            queries=queries,
         )
         return updater
 
@@ -34,11 +39,11 @@ class TestRelativeImportResolution:
         mock_relative_node = MagicMock()
         mock_import_prefix = MagicMock()
         mock_import_prefix.type = "import_prefix"
-        mock_import_prefix.text.decode.return_value = "."
+        mock_import_prefix.text = b"."
 
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "utils"
+        mock_dotted_name.text = b"utils"
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
@@ -60,11 +65,11 @@ class TestRelativeImportResolution:
         mock_relative_node = MagicMock()
         mock_import_prefix = MagicMock()
         mock_import_prefix.type = "import_prefix"
-        mock_import_prefix.text.decode.return_value = ".."
+        mock_import_prefix.text = b".."
 
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "shared"
+        mock_dotted_name.text = b"shared"
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
@@ -86,11 +91,11 @@ class TestRelativeImportResolution:
         mock_relative_node = MagicMock()
         mock_import_prefix = MagicMock()
         mock_import_prefix.type = "import_prefix"
-        mock_import_prefix.text.decode.return_value = "..."
+        mock_import_prefix.text = b"..."
 
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "common"
+        mock_dotted_name.text = b"common"
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
@@ -112,11 +117,11 @@ class TestRelativeImportResolution:
         mock_relative_node = MagicMock()
         mock_import_prefix = MagicMock()
         mock_import_prefix.type = "import_prefix"
-        mock_import_prefix.text.decode.return_value = "..."
+        mock_import_prefix.text = b"..."
 
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "config"
+        mock_dotted_name.text = b"config"
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
@@ -140,7 +145,7 @@ class TestRelativeImportResolution:
         mock_relative_node = MagicMock()
         mock_import_prefix = MagicMock()
         mock_import_prefix.type = "import_prefix"
-        mock_import_prefix.text.decode.return_value = ".."
+        mock_import_prefix.text = b".."
 
         mock_relative_node.children = [mock_import_prefix]  # No dotted_name
 
@@ -164,11 +169,11 @@ class TestRelativeImportResolution:
         mock_relative_node = MagicMock()
         mock_import_prefix = MagicMock()
         mock_import_prefix.type = "import_prefix"
-        mock_import_prefix.text.decode.return_value = ".."
+        mock_import_prefix.text = b".."
 
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "other"
+        mock_dotted_name.text = b"other"
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
@@ -192,11 +197,11 @@ class TestRelativeImportResolution:
         mock_relative_node = MagicMock()
         mock_import_prefix = MagicMock()
         mock_import_prefix.type = "import_prefix"
-        mock_import_prefix.text.decode.return_value = "."
+        mock_import_prefix.text = b"."
 
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
-        mock_dotted_name.text.decode.return_value = "helpers.database.models"
+        mock_dotted_name.text = b"helpers.database.models"
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 

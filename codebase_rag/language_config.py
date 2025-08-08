@@ -295,12 +295,13 @@ LANGUAGE_CONFIGS = {
     "lua": create_lang_config(
         file_extensions=[".lua"],
         function_node_types=[
-            "function_definition",
             "function_declaration",
+            "function_definition",  # For assignment patterns: Calculator.divide = function() end
         ],
         class_node_types=[],
         module_node_types=["chunk"],
         call_node_types=["function_call"],
+        import_node_types=["function_call"],
     ),
 }
 
