@@ -879,16 +879,46 @@ class ImportProcessor:
         if not stmt:
             return None
 
-        # Look for the variable_list node which contains the identifier(s)
+        # Find the position of the require call in the expression_list
+        require_index = -1
+
+        for child in stmt.children:
+            if child.type == "expression_list":
+                # Find the index of our require call in the expression list
+                expr_count = 0
+                for expr in child.children:
+                    if expr.type not in [",", "(", ")"]:  # Skip punctuation
+                        if expr == call_node or self._contains_node(expr, call_node):
+                            require_index = expr_count
+                            break
+                        expr_count += 1
+                break
+
+        if require_index == -1:
+            return None
+
+        # Look for the variable_list node and get the corresponding variable
         for child in stmt.children:
             if child.type == "variable_list":
-                # In `local var = require(...)`, the first identifier is the one we want.
-                for var_child in child.children:
+                variables = [
+                    var for var in child.children if var.type not in [",", "(", ")"]
+                ]
+                if require_index < len(variables):
+                    var_child = variables[require_index]
                     if var_child.type == "identifier":
                         return safe_decode_text(var_child)
-                break  # Found variable_list, no need to check other children
+                break
 
         return None
+
+    def _contains_node(self, parent: Node, target: Node) -> bool:
+        """Check if parent node contains target node in its subtree."""
+        if parent == target:
+            return True
+        for child in parent.children:
+            if self._contains_node(child, target):
+                return True
+        return False
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
         """Find the second identifier assigned from pcall(require, ...) pattern.

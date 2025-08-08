@@ -365,19 +365,46 @@ class DefinitionProcessor:
         if not current:
             return None
 
-        # Find the variable_list (left side of assignment)
+        # Find the position of the function in the expression_list
+        function_index = -1
+
+        for child in current.children:
+            if child.type == "expression_list":
+                # Find the index of our function in the expression list
+                for i, expr in enumerate(child.children):
+                    if expr.type not in [",", "(", ")"]:  # Skip punctuation
+                        if expr == func_node or self._contains_node(expr, func_node):
+                            function_index = i // 2  # Account for comma separators
+                            break
+                break
+
+        if function_index == -1:
+            return None
+
+        # Find the variable_list (left side of assignment) and get the corresponding variable
         for child in current.children:
             if child.type == "variable_list":
-                # Look for dot_index_expression like "Calculator.divide"
-                for var_child in child.children:
+                variables = [
+                    var for var in child.children if var.type not in [",", "(", ")"]
+                ]
+                if function_index < len(variables):
+                    var_child = variables[function_index]
                     if var_child.type == "dot_index_expression":
-                        # Extract the full dotted name
                         return safe_decode_text(var_child)
                     elif var_child.type == "identifier":
-                        # Simple identifier assignment
                         return safe_decode_text(var_child)
+                break
 
         return None
+
+    def _contains_node(self, parent: Node, target: Node) -> bool:
+        """Check if parent node contains target node in its subtree."""
+        if parent == target:
+            return True
+        for child in parent.children:
+            if self._contains_node(child, target):
+                return True
+        return False
 
     def _ingest_all_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
