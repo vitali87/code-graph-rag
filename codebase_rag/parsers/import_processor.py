@@ -7,6 +7,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
+from .utils import safe_decode_text, safe_decode_with_fallback
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -25,20 +26,6 @@ class ImportProcessor:
         self._project_name_getter = project_name_getter
         self.ingestor = ingestor
         self.import_mapping: dict[str, dict[str, str]] = {}
-
-    def _safe_decode_text(self, node: Node) -> str | None:
-        """Safely decode node.text to string, handling None case."""
-        if node is None or node.text is None:
-            return None
-        text_bytes = node.text
-        if isinstance(text_bytes, bytes):
-            return text_bytes.decode("utf-8")
-        return str(text_bytes)
-
-    def _safe_decode_with_fallback(self, node: Node, fallback: str = "") -> str:
-        """Safely decode node.text to string with fallback."""
-        result = self._safe_decode_text(node)
-        return result if result is not None else fallback
 
     @property
     def repo_path(self) -> Path:
@@ -128,7 +115,7 @@ class ImportProcessor:
         """Handle 'import module' statements."""
         for child in import_node.named_children:
             if child.type == "dotted_name":
-                module_name = self._safe_decode_text(child) or ""
+                module_name = safe_decode_text(child) or ""
                 # For 'import a.b.c', the local name available in the scope is 'a'
                 local_name = module_name.split(".")[0]
 
@@ -153,8 +140,8 @@ class ImportProcessor:
                     and module_name_node.text
                     and alias_node.text
                 ):
-                    decoded_module_name = self._safe_decode_text(module_name_node)
-                    decoded_alias = self._safe_decode_text(alias_node)
+                    decoded_module_name = safe_decode_text(module_name_node)
+                    decoded_alias = safe_decode_text(alias_node)
                     if not decoded_module_name or not decoded_alias:
                         continue
                     module_name = decoded_module_name
@@ -183,7 +170,7 @@ class ImportProcessor:
 
         # Extract module name
         if module_name_node.type == "dotted_name":
-            decoded_name = self._safe_decode_text(module_name_node)
+            decoded_name = safe_decode_text(module_name_node)
             if not decoded_name:
                 return
             module_name = decoded_name
@@ -200,7 +187,7 @@ class ImportProcessor:
         for name_node in import_node.children_by_field_name("name"):
             if name_node.type == "dotted_name":
                 # Simple import: from module import name
-                decoded_name = self._safe_decode_text(name_node)
+                decoded_name = safe_decode_text(name_node)
                 if not decoded_name:
                     continue
                 name = decoded_name
@@ -210,8 +197,8 @@ class ImportProcessor:
                 original_name_node = name_node.child_by_field_name("name")
                 alias_node = name_node.child_by_field_name("alias")
                 if original_name_node and alias_node:
-                    original_name = self._safe_decode_text(original_name_node)
-                    alias = self._safe_decode_text(alias_node)
+                    original_name = safe_decode_text(original_name_node)
+                    alias = safe_decode_text(alias_node)
                     if not original_name or not alias:
                         continue
                     imported_items.append((alias, original_name))
@@ -258,12 +245,12 @@ class ImportProcessor:
 
         for child in relative_node.children:
             if child.type == "import_prefix":
-                decoded_text = self._safe_decode_text(child)
+                decoded_text = safe_decode_text(child)
                 if not decoded_text:
                     continue
                 dots = len(decoded_text)
             elif child.type == "dotted_name":
-                decoded_name = self._safe_decode_text(child)
+                decoded_name = safe_decode_text(child)
                 if not decoded_name:
                     continue
                 module_name = decoded_name
@@ -286,9 +273,7 @@ class ImportProcessor:
                 for child in import_node.children:
                     if child.type == "string":
                         # Extract module path from string (remove quotes)
-                        source_text = self._safe_decode_with_fallback(child).strip(
-                            "'\""
-                        )
+                        source_text = safe_decode_with_fallback(child).strip("'\"")
                         source_module = self._resolve_js_module_path(
                             source_text, module_qn
                         )
@@ -340,7 +325,7 @@ class ImportProcessor:
         for child in clause_node.children:
             if child.type == "identifier":
                 # Default import: import React from 'react'
-                imported_name = self._safe_decode_with_fallback(child)
+                imported_name = safe_decode_with_fallback(child)
                 self.import_mapping[current_module][imported_name] = (
                     f"{source_module}.default"
                 )
@@ -359,9 +344,9 @@ class ImportProcessor:
                         name_node = grandchild.child_by_field_name("name")
                         alias_node = grandchild.child_by_field_name("alias")
                         if name_node and name_node.text:
-                            imported_name = self._safe_decode_with_fallback(name_node)
+                            imported_name = safe_decode_with_fallback(name_node)
                             local_name = (
-                                self._safe_decode_with_fallback(alias_node)
+                                safe_decode_with_fallback(alias_node)
                                 if alias_node and alias_node.text
                                 else imported_name
                             )
@@ -377,7 +362,7 @@ class ImportProcessor:
                 # Namespace import: import * as utils from './utils'
                 for grandchild in child.children:
                     if grandchild.type == "identifier":
-                        namespace_name = self._safe_decode_with_fallback(grandchild)
+                        namespace_name = safe_decode_with_fallback(grandchild)
                         self.import_mapping[current_module][namespace_name] = (
                             source_module
                         )
@@ -409,15 +394,15 @@ class ImportProcessor:
                         func_node
                         and args_node
                         and func_node.type == "identifier"
-                        and self._safe_decode_with_fallback(func_node) == "require"
+                        and safe_decode_with_fallback(func_node) == "require"
                     ):
                         # Extract module path from first argument
                         for arg in args_node.children:
                             if arg.type == "string":
-                                var_name = self._safe_decode_with_fallback(name_node)
-                                required_module = self._safe_decode_with_fallback(
-                                    arg
-                                ).strip("'\"")
+                                var_name = safe_decode_with_fallback(name_node)
+                                required_module = safe_decode_with_fallback(arg).strip(
+                                    "'\""
+                                )
 
                                 resolved_module = self._resolve_js_module_path(
                                     required_module, current_module
@@ -436,7 +421,7 @@ class ImportProcessor:
         source_module = None
         for child in export_node.children:
             if child.type == "string":
-                source_text = self._safe_decode_with_fallback(child).strip("'\"")
+                source_text = safe_decode_with_fallback(child).strip("'\"")
                 source_module = self._resolve_js_module_path(
                     source_text, current_module
                 )
@@ -454,9 +439,9 @@ class ImportProcessor:
                         name_node = grandchild.child_by_field_name("name")
                         alias_node = grandchild.child_by_field_name("alias")
                         if name_node and name_node.text:
-                            original_name = self._safe_decode_with_fallback(name_node)
+                            original_name = safe_decode_with_fallback(name_node)
                             exported_name = (
-                                self._safe_decode_with_fallback(alias_node)
+                                safe_decode_with_fallback(alias_node)
                                 if alias_node and alias_node.text
                                 else original_name
                             )
@@ -487,7 +472,7 @@ class ImportProcessor:
                     if child.type == "static":
                         is_static = True
                     elif child.type == "scoped_identifier":
-                        imported_path = self._safe_decode_with_fallback(child)
+                        imported_path = safe_decode_with_fallback(child)
                     elif child.type == "asterisk":
                         is_wildcard = True
 
@@ -534,7 +519,7 @@ class ImportProcessor:
         for child in use_node.children:
             if child.type == "scoped_identifier":
                 # Simple use: use std::collections::HashMap;
-                full_path = self._safe_decode_with_fallback(child)
+                full_path = safe_decode_with_fallback(child)
                 parts = full_path.split("::")
                 if parts:
                     imported_name = parts[-1]
@@ -547,9 +532,9 @@ class ImportProcessor:
                 alias_name = None
                 for grandchild in child.children:
                     if grandchild.type == "scoped_identifier":
-                        original_path = self._safe_decode_with_fallback(grandchild)
+                        original_path = safe_decode_with_fallback(grandchild)
                     elif grandchild.type == "identifier":
-                        alias_name = self._safe_decode_with_fallback(grandchild)
+                        alias_name = safe_decode_with_fallback(grandchild)
 
                 if original_path and alias_name:
                     self.import_mapping[module_qn][alias_name] = original_path
@@ -562,13 +547,13 @@ class ImportProcessor:
 
                 for grandchild in child.children:
                     if grandchild.type == "identifier":
-                        base_path = self._safe_decode_with_fallback(grandchild)
+                        base_path = safe_decode_with_fallback(grandchild)
                     elif grandchild.type == "use_list":
                         # Extract names from the list
                         for list_child in grandchild.children:
                             if list_child.type == "identifier":
                                 imported_names.append(
-                                    self._safe_decode_with_fallback(list_child)
+                                    safe_decode_with_fallback(list_child)
                                 )
 
                 if base_path:
@@ -584,7 +569,7 @@ class ImportProcessor:
                         grandchild.type == "scoped_identifier"
                         or grandchild.type == "crate"
                     ):
-                        base_path = self._safe_decode_with_fallback(grandchild)
+                        base_path = safe_decode_with_fallback(grandchild)
                         # Store wildcard import for potential future use
                         self.import_mapping[module_qn][f"*{base_path}"] = base_path
                         logger.debug(f"Rust glob use: {base_path}::*")
@@ -617,10 +602,10 @@ class ImportProcessor:
         for child in spec_node.children:
             if child.type == "package_identifier":
                 # Aliased import: import f "fmt"
-                alias_name = self._safe_decode_with_fallback(child)
+                alias_name = safe_decode_with_fallback(child)
             elif child.type == "interpreted_string_literal":
                 # Extract import path from string literal
-                import_path = self._safe_decode_with_fallback(child).strip('"')
+                import_path = safe_decode_with_fallback(child).strip('"')
 
         if import_path:
             # Determine the package name
@@ -657,11 +642,11 @@ class ImportProcessor:
         for child in include_node.children:
             if child.type == "string_literal":
                 # Local include: #include "header.h"
-                include_path = self._safe_decode_with_fallback(child).strip('"')
+                include_path = safe_decode_with_fallback(child).strip('"')
                 is_system_include = False
             elif child.type == "system_lib_string":
                 # System include: #include <iostream>
-                include_path = self._safe_decode_with_fallback(child).strip("<>")
+                include_path = safe_decode_with_fallback(child).strip("<>")
                 is_system_include = True
 
         if include_path:
@@ -706,10 +691,7 @@ class ImportProcessor:
                 template_args_child = child
 
         # Only process if the identifier is "import"
-        if (
-            identifier_child
-            and self._safe_decode_with_fallback(identifier_child) == "import"
-        ):
+        if identifier_child and safe_decode_with_fallback(identifier_child) == "import":
             if template_args_child:
                 # Extract the module/header name from <...>
                 module_name = None
@@ -717,12 +699,10 @@ class ImportProcessor:
                     if child.type == "type_descriptor":
                         for desc_child in child.children:
                             if desc_child.type == "type_identifier":
-                                module_name = self._safe_decode_with_fallback(
-                                    desc_child
-                                )
+                                module_name = safe_decode_with_fallback(desc_child)
                                 break
                     elif child.type == "type_identifier":
-                        module_name = self._safe_decode_with_fallback(child)
+                        module_name = safe_decode_with_fallback(child)
 
                 if module_name:
                     # This is a standard library module import like "import <iostream>;"
@@ -735,7 +715,7 @@ class ImportProcessor:
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
         """Parse C++20 module declarations and partition imports."""
         # Extract text to analyze the declaration
-        decoded_text = self._safe_decode_text(decl_node)
+        decoded_text = safe_decode_text(decl_node)
         if not decoded_text:
             return
         decl_text = decoded_text.strip()
@@ -818,7 +798,7 @@ class ImportProcessor:
         # In Lua tree-sitter, function calls have the function name as the first child
         first_child = call_node.children[0] if call_node.children else None
         if first_child and first_child.type == "identifier":
-            return self._safe_decode_text(first_child) == "require"
+            return safe_decode_text(first_child) == "require"
         return False
 
     def _lua_is_pcall_require(self, call_node: Node) -> bool:
@@ -828,7 +808,7 @@ class ImportProcessor:
         if not (
             first_child
             and first_child.type == "identifier"
-            and self._safe_decode_text(first_child) == "pcall"
+            and safe_decode_text(first_child) == "pcall"
         ):
             return False
 
@@ -839,7 +819,7 @@ class ImportProcessor:
         require_found = False
         for child in args.children:
             if child.type == "identifier" and child.text:
-                if self._safe_decode_with_fallback(child) == "require":
+                if safe_decode_with_fallback(child) == "require":
                     require_found = True
                     break
         return require_found
@@ -855,7 +835,7 @@ class ImportProcessor:
             candidates.extend(call_node.children)
         for node in candidates:
             if node.type in ("string", "string_literal"):
-                decoded = self._safe_decode_text(node)
+                decoded = safe_decode_text(node)
                 if decoded:
                     return decoded.strip("'\"")
         return None
@@ -869,11 +849,11 @@ class ImportProcessor:
         found_require = False
         for child in args.children:
             if found_require and child.type in ("string", "string_literal"):
-                decoded = self._safe_decode_text(child)
+                decoded = safe_decode_text(child)
                 if decoded:
                     return decoded.strip("'\"")
             if child.type == "identifier" and child.text:
-                if self._safe_decode_with_fallback(child) == "require":
+                if safe_decode_with_fallback(child) == "require":
                     found_require = True
         return None
 
@@ -905,7 +885,7 @@ class ImportProcessor:
                 # In `local var = require(...)`, the first identifier is the one we want.
                 for var_child in child.children:
                     if var_child.type == "identifier":
-                        return self._safe_decode_text(var_child)
+                        return safe_decode_text(var_child)
                 break  # Found variable_list, no need to check other children
 
         return None
@@ -927,7 +907,7 @@ class ImportProcessor:
                 identifiers = []
                 for var_child in child.children:
                     if var_child.type == "identifier":
-                        decoded = self._safe_decode_text(var_child)
+                        decoded = safe_decode_text(var_child)
                         if decoded:
                             identifiers.append(decoded)
                 # Return the second identifier if it exists
