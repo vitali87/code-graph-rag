@@ -365,35 +365,54 @@ class DefinitionProcessor:
         if not current:
             return None
 
-        # Find the position of the function in the expression_list
+        # Find the position of the function in the expression_list using field names
         function_index = -1
+        expression_list = None
 
         for child in current.children:
             if child.type == "expression_list":
-                # Find the index of our function in the expression list
-                for i, expr in enumerate(child.children):
-                    if expr.type not in [",", "(", ")"]:  # Skip punctuation
-                        if expr == func_node or contains_node(expr, func_node):
-                            function_index = i // 2  # Account for comma separators
-                            break
+                expression_list = child
+                break
+
+        if not expression_list:
+            return None
+
+        # Get all value fields from expression_list
+        values = []
+        for i in range(expression_list.child_count):
+            if expression_list.field_name_for_child(i) == "value":
+                values.append(expression_list.child(i))
+
+        # Find which value contains our function
+        for idx, value in enumerate(values):
+            if value == func_node or contains_node(value, func_node):
+                function_index = idx
                 break
 
         if function_index == -1:
             return None
 
-        # Find the variable_list (left side of assignment) and get the corresponding variable
+        # Find the variable_list and get the corresponding name field
+        variable_list = None
         for child in current.children:
             if child.type == "variable_list":
-                variables = [
-                    var for var in child.children if var.type not in [",", "(", ")"]
-                ]
-                if function_index < len(variables):
-                    var_child = variables[function_index]
-                    if var_child.type == "dot_index_expression":
-                        return safe_decode_text(var_child)
-                    elif var_child.type == "identifier":
-                        return safe_decode_text(var_child)
+                variable_list = child
                 break
+
+        if not variable_list:
+            return None
+
+        # Get all name fields from variable_list
+        names = []
+        for i in range(variable_list.child_count):
+            if variable_list.field_name_for_child(i) == "name":
+                names.append(variable_list.child(i))
+
+        # Get the corresponding variable name
+        if function_index < len(names):
+            var_child = names[function_index]
+            if var_child.type in ("dot_index_expression", "identifier"):
+                return safe_decode_text(var_child)
 
         return None
 

@@ -879,35 +879,53 @@ class ImportProcessor:
         if not stmt:
             return None
 
-        # Find the position of the require call in the expression_list
-        require_index = -1
-
+        # Find the expression_list containing our require call
+        expression_list = None
         for child in stmt.children:
             if child.type == "expression_list":
-                # Find the index of our require call in the expression list
-                expr_count = 0
-                for expr in child.children:
-                    if expr.type not in [",", "(", ")"]:  # Skip punctuation
-                        if expr == call_node or contains_node(expr, call_node):
-                            require_index = expr_count
-                            break
-                        expr_count += 1
+                expression_list = child
+                break
+
+        if not expression_list:
+            return None
+
+        # Get all value fields from expression_list
+        values = []
+        for i in range(expression_list.child_count):
+            if expression_list.field_name_for_child(i) == "value":
+                values.append(expression_list.child(i))
+
+        # Find which value contains our require call
+        require_index = -1
+        for idx, value in enumerate(values):
+            if value == call_node or contains_node(value, call_node):
+                require_index = idx
                 break
 
         if require_index == -1:
             return None
 
-        # Look for the variable_list node and get the corresponding variable
+        # Find the variable_list and get the corresponding name field
+        variable_list = None
         for child in stmt.children:
             if child.type == "variable_list":
-                variables = [
-                    var for var in child.children if var.type not in [",", "(", ")"]
-                ]
-                if require_index < len(variables):
-                    var_child = variables[require_index]
-                    if var_child.type == "identifier":
-                        return safe_decode_text(var_child)
+                variable_list = child
                 break
+
+        if not variable_list:
+            return None
+
+        # Get all name fields from variable_list
+        names = []
+        for i in range(variable_list.child_count):
+            if variable_list.field_name_for_child(i) == "name":
+                names.append(variable_list.child(i))
+
+        # Get the corresponding variable name
+        if require_index < len(names):
+            var_child = names[require_index]
+            if var_child.type == "identifier":
+                return safe_decode_text(var_child)
 
         return None
 
@@ -923,18 +941,28 @@ class ImportProcessor:
             return None
 
         # Look for variable_list node which contains the identifiers
+        variable_list = None
         for child in stmt.children:
             if child.type == "variable_list":
-                identifiers = []
-                for var_child in child.children:
-                    if var_child.type == "identifier":
-                        decoded = safe_decode_text(var_child)
-                        if decoded:
-                            identifiers.append(decoded)
-                # Return the second identifier if it exists
-                if len(identifiers) >= 2:
-                    return identifiers[1]
+                variable_list = child
                 break
+
+        if not variable_list:
+            return None
+
+        # Get all name fields from variable_list
+        names = []
+        for i in range(variable_list.child_count):
+            if variable_list.field_name_for_child(i) == "name":
+                name_node = variable_list.child(i)
+                if name_node.type == "identifier":
+                    decoded = safe_decode_text(name_node)
+                    if decoded:
+                        names.append(decoded)
+
+        # Return the second identifier if it exists (first is typically 'ok' or error status)
+        if len(names) >= 2:
+            return names[1]
 
         return None
 
