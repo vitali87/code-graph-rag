@@ -110,6 +110,11 @@ class DefinitionProcessor:
                 module_qn = ".".join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
+            elif file_path.name == "mod.rs":
+                # In Rust, mod.rs represents the parent module directory
+                module_qn = ".".join(
+                    [self.project_name] + list(relative_path.parent.parts)
+                )
 
             self.ingestor.ensure_node_batch(
                 "Module",
@@ -375,7 +380,9 @@ class DefinitionProcessor:
         captures = cursor.captures(root_node)
 
         func_nodes = captures.get("function", [])
+        method_nodes = captures.get("method", [])
 
+        # Process regular functions
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
                 logger.warning(
@@ -417,13 +424,18 @@ class DefinitionProcessor:
                         func_node, module_qn
                     )
 
-                # Build proper qualified name using existing nested infrastructure
-                func_qn = (
-                    self._build_nested_qualified_name(
-                        func_node, module_qn, func_name, lang_config
+                # Build proper qualified name - special handling for Rust inline modules
+                if language == "rust":
+                    func_qn = self._build_rust_function_qualified_name(
+                        func_node, module_qn, func_name
                     )
-                    or f"{module_qn}.{func_name}"
-                )  # Fallback to simple name
+                else:
+                    func_qn = (
+                        self._build_nested_qualified_name(
+                            func_node, module_qn, func_name, lang_config
+                        )
+                        or f"{module_qn}.{func_name}"
+                    )  # Fallback to simple name
 
             # Extract function properties
             decorators = self._extract_decorators(func_node)
@@ -459,6 +471,46 @@ class DefinitionProcessor:
                     "EXPORTS",
                     ("Function", "qualified_name", func_qn),
                 )
+
+        # Process methods (functions inside declaration_list, like Rust impl blocks)
+        for method_node in method_nodes:
+            if not isinstance(method_node, Node):
+                continue
+
+            # Extract method name
+            method_name_node = method_node.child_by_field_name("name")
+            if not method_name_node:
+                continue
+            text = method_name_node.text
+            if text is None:
+                continue
+            method_name = text.decode("utf8")
+
+            # Build qualified name - methods need special handling to include their container
+            if language == "rust":
+                # For Rust, find the impl target or module containing this method
+                method_qn = self._build_rust_method_qualified_name(
+                    method_node, module_qn, method_name
+                )
+            else:
+                # Fallback to nested qualified name building
+                temp_qn = self._build_nested_qualified_name(
+                    method_node, module_qn, method_name, lang_config
+                )
+                method_qn = temp_qn if temp_qn else f"{module_qn}.{method_name}"
+
+            method_props: dict[str, Any] = {
+                "qualified_name": method_qn,
+                "name": method_name,
+                "decorators": [],
+                "start_line": method_node.start_point[0] + 1,
+                "end_line": method_node.end_point[0] + 1,
+                "docstring": self._get_docstring(method_node),
+            }
+            logger.info(f"   Found Method: {method_name} (qn: {method_qn})")
+            self.ingestor.ensure_node_batch("Method", method_props)
+            self.function_registry[method_qn] = "Method"
+            self.simple_name_lookup[method_name].add(method_qn)
 
     def _ingest_top_level_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
@@ -532,6 +584,95 @@ class DefinitionProcessor:
             return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
         else:
             return f"{module_qn}.{func_name}"
+
+    def _build_nested_qualified_name_for_class(
+        self,
+        class_node: Node,
+        module_qn: str,
+        class_name: str,
+        lang_config: LanguageConfig,
+    ) -> str | None:
+        """Build qualified name for classes inside inline modules."""
+        path_parts = []
+        current = class_node.parent
+
+        if not isinstance(current, Node):
+            return None
+
+        while current and current.type != "source_file":
+            # Handle inline modules (mod_item for Rust)
+            if current.type == "mod_item":
+                if name_node := current.child_by_field_name("name"):
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode("utf8"))
+            # Handle other potential container types (classes, etc.)
+            elif (
+                current.type in lang_config.class_node_types
+                and current.type != "impl_item"
+            ):
+                if name_node := current.child_by_field_name("name"):
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode("utf8"))
+
+            current = current.parent
+
+        path_parts.reverse()
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{class_name}"
+        return None
+
+    def _build_rust_method_qualified_name(
+        self, method_node: Node, module_qn: str, method_name: str
+    ) -> str:
+        """Build qualified name for Rust methods, handling impl blocks and modules."""
+        from .rust_utils import extract_rust_impl_target
+
+        path_parts = []
+        current = method_node.parent
+
+        while current and current.type != "source_file":
+            if current.type == "impl_item":
+                # This method is inside an impl block - get the target type
+                impl_target = extract_rust_impl_target(current)
+                if impl_target:
+                    path_parts.append(impl_target)
+            elif current.type == "mod_item":
+                # This method is inside an inline module
+                if name_node := current.child_by_field_name("name"):
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode("utf8"))
+
+            current = current.parent
+
+        path_parts.reverse()
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{method_name}"
+        return f"{module_qn}.{method_name}"
+
+    def _build_rust_function_qualified_name(
+        self, func_node: Node, module_qn: str, func_name: str
+    ) -> str:
+        """Build qualified name for Rust functions, handling inline modules."""
+        path_parts = []
+        current = func_node.parent
+
+        while current and current.type != "source_file":
+            if current.type == "mod_item":
+                # This function is inside an inline module
+                if name_node := current.child_by_field_name("name"):
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode("utf8"))
+
+            current = current.parent
+
+        path_parts.reverse()
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
+        return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageConfig) -> bool:
         """Check if a function is actually a method inside a class."""
@@ -718,10 +859,13 @@ class DefinitionProcessor:
         if not lang_queries.get("classes"):
             return
 
+        lang_config: LanguageConfig = lang_queries["config"]
+
         query = lang_queries["classes"]
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
         class_nodes = captures.get("class", [])
+        module_nodes = captures.get("module", [])
 
         # For C++, also check for misclassified exported classes due to Tree-sitter grammar limitations
         if language == "cpp":
@@ -746,12 +890,74 @@ class DefinitionProcessor:
                 if not class_name:
                     continue
                 class_qn = build_cpp_qualified_name(class_node, module_qn, class_name)
+            elif language == "rust" and class_node.type == "impl_item":
+                # Special handling for Rust impl blocks
+                # Import the Rust utilities
+                from .rust_utils import extract_rust_impl_target
+
+                # Extract the type being implemented for
+                impl_target = extract_rust_impl_target(class_node)
+                if not impl_target:
+                    continue
+
+                # The impl block itself is not a class, but we need to process its methods
+                # and associate them with the actual struct/enum
+                class_qn = f"{module_qn}.{impl_target}"
+
+                # Process methods in the impl block
+                body_node = class_node.child_by_field_name("body")
+                if body_node:
+                    method_query = lang_queries["functions"]
+                    method_cursor = QueryCursor(method_query)
+                    method_captures = method_cursor.captures(body_node)
+                    method_nodes = method_captures.get("function", [])
+                    for method_node in method_nodes:
+                        if not isinstance(method_node, Node):
+                            continue
+
+                        method_name_node = method_node.child_by_field_name("name")
+                        if not method_name_node:
+                            continue
+                        text = method_name_node.text
+                        if text is None:
+                            continue
+                        method_name = text.decode("utf8")
+
+                        method_qn = f"{class_qn}.{method_name}"
+                        method_props: dict[str, Any] = {
+                            "qualified_name": method_qn,
+                            "name": method_name,
+                            "decorators": [],
+                            "start_line": method_node.start_point[0] + 1,
+                            "end_line": method_node.end_point[0] + 1,
+                            "docstring": self._get_docstring(method_node),
+                        }
+                        logger.info(
+                            f"    Found Method: {method_name} (qn: {method_qn})"
+                        )
+                        self.ingestor.ensure_node_batch("Method", method_props)
+                        self.function_registry[method_qn] = "Method"
+                        self.simple_name_lookup[method_name].add(method_qn)
+
+                        # Create relationship between the class and the method
+                        self.ingestor.ensure_relationship_batch(
+                            ("Class", "qualified_name", class_qn),
+                            "DEFINES_METHOD",
+                            ("Method", "qualified_name", method_qn),
+                        )
+
+                # Skip the rest of the processing for impl blocks
+                continue
             else:
                 is_exported = False  # Default for non-C++ languages
                 class_name = self._extract_class_name(class_node)
                 if not class_name:
                     continue
-                class_qn = f"{module_qn}.{class_name}"
+                # Build nested qualified name for classes inside inline modules
+                nested_qn = self._build_nested_qualified_name_for_class(
+                    class_node, module_qn, class_name, lang_config
+                )
+                class_qn = nested_qn if nested_qn else f"{module_qn}.{class_name}"
             decorators = self._extract_decorators(class_node)
             class_props: dict[str, Any] = {
                 "qualified_name": class_qn,
@@ -860,9 +1066,10 @@ class DefinitionProcessor:
 
                 # Use C++ specific method name extraction for C++
                 if language == "cpp":
-                    method_name = extract_cpp_function_name(method_node)
-                    if not method_name:
+                    temp_method_name = extract_cpp_function_name(method_node)
+                    if not temp_method_name:
                         continue
+                    method_name = temp_method_name
                 else:
                     method_name_node = method_node.child_by_field_name("name")
                     if not method_name_node:
@@ -874,7 +1081,7 @@ class DefinitionProcessor:
 
                 method_qn = f"{class_qn}.{method_name}"
                 decorators = self._extract_decorators(method_node)
-                method_props: dict[str, Any] = {
+                method_properties: dict[str, Any] = {
                     "qualified_name": method_qn,
                     "name": method_name,
                     "decorators": decorators,
@@ -884,7 +1091,7 @@ class DefinitionProcessor:
                 }
                 # All methods should be Method nodes for consistency across languages
                 logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
-                self.ingestor.ensure_node_batch("Method", method_props)
+                self.ingestor.ensure_node_batch("Method", method_properties)
                 self.function_registry[method_qn] = "Method"
                 self.simple_name_lookup[method_name].add(method_qn)
 
@@ -895,6 +1102,35 @@ class DefinitionProcessor:
                 )
 
                 # Note: OVERRIDES relationships will be processed later after all methods are collected
+
+        # Process inline modules (like Rust mod items)
+        for module_node in module_nodes:
+            if not isinstance(module_node, Node):
+                continue
+
+            module_name_node = module_node.child_by_field_name("name")
+            if not module_name_node:
+                continue
+            text = module_name_node.text
+            if text is None:
+                continue
+            module_name = text.decode("utf8")
+
+            # Build nested qualified name for inline modules
+            nested_qn = self._build_nested_qualified_name_for_class(
+                module_node, module_qn, module_name, lang_config
+            )
+            inline_module_qn = nested_qn if nested_qn else f"{module_qn}.{module_name}"
+
+            module_props: dict[str, Any] = {
+                "qualified_name": inline_module_qn,
+                "name": module_name,
+                "path": f"inline_module_{module_name}",
+            }
+            logger.info(
+                f"  Found Inline Module: {module_name} (qn: {inline_module_qn})"
+            )
+            self.ingestor.ensure_node_batch("Module", module_props)
 
     def process_all_method_overrides(self) -> None:
         """Process OVERRIDES relationships for all methods after collection is complete."""
@@ -960,16 +1196,19 @@ class DefinitionProcessor:
             # Handle different types of parent class specifications
             if base_child.type == "type_identifier":
                 # Simple inheritance: class Derived : public Base
-                parent_name = base_child.text.decode("utf8")
+                if base_child.text:
+                    parent_name = base_child.text.decode("utf8")
 
             elif base_child.type == "qualified_identifier":
                 # Namespace qualified: class Derived : public ns::Base
                 # Also handles qualified templates: class Derived : public ns::Base<T>
-                parent_name = base_child.text.decode("utf8")
+                if base_child.text:
+                    parent_name = base_child.text.decode("utf8")
 
             elif base_child.type == "template_type":
                 # Template inheritance: class Derived : public Base<T>
-                parent_name = base_child.text.decode("utf8")
+                if base_child.text:
+                    parent_name = base_child.text.decode("utf8")
 
             # Skip access specifiers, virtual keyword, commas, and colons
             elif base_child.type in ["access_specifier", "virtual", ",", ":"]:

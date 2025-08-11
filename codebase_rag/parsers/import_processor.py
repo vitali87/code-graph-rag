@@ -545,7 +545,7 @@ class ImportProcessor:
                 imported_names = []
 
                 for grandchild in child.children:
-                    if grandchild.type == "identifier":
+                    if grandchild.type in ("identifier", "scoped_identifier"):
                         base_path = safe_decode_with_fallback(grandchild)
                     elif grandchild.type == "use_list":
                         # Extract names from the list
@@ -554,6 +554,8 @@ class ImportProcessor:
                                 imported_names.append(
                                     safe_decode_with_fallback(list_child)
                                 )
+                            elif list_child.type == "self":
+                                imported_names.append("self")
 
                 if base_path:
                     for name in imported_names:

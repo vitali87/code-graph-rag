@@ -117,12 +117,66 @@ LANGUAGE_CONFIGS = {
     ),
     "rust": create_lang_config(
         file_extensions=[".rs"],
-        function_node_types=["function_item"],
-        class_node_types=["struct_item", "enum_item", "impl_item"],
-        module_node_types=["source_file"],
-        call_node_types=["call_expression"],
-        import_node_types=["use_declaration"],
+        function_node_types=[
+            "function_item",  # Regular functions: fn name() {}
+            "function_signature_item",  # Function signatures in traits
+            "closure_expression",  # Closures/lambdas: |x| x + 1
+        ],
+        class_node_types=[
+            "struct_item",  # Struct definitions
+            "enum_item",  # Enum definitions
+            "union_item",  # Union definitions
+            "trait_item",  # Trait definitions
+            "impl_item",  # Implementation blocks
+            "type_item",  # Type aliases: type Name = Type;
+        ],
+        module_node_types=[
+            "source_file",  # Root module file
+            "mod_item",  # Module declarations: mod name {}
+        ],
+        call_node_types=[
+            "call_expression",  # Function and method calls
+            "macro_invocation",  # Macro calls: println!()
+        ],
+        import_node_types=["use_declaration", "extern_crate_declaration"],
         import_from_node_types=["use_declaration"],  # Rust uses 'use' for all imports
+        package_indicators=["Cargo.toml"],  # Rust's package manifest
+        # Pre-formatted Tree-sitter queries based on official tree-sitter-rust grammar
+        function_query="""
+        (function_item
+            name: (identifier) @name) @function
+        (function_signature_item
+            name: (identifier) @name) @function
+        (closure_expression) @function
+        """,
+        class_query="""
+        (struct_item
+            name: (type_identifier) @name) @class
+        (enum_item
+            name: (type_identifier) @name) @class
+        (union_item
+            name: (type_identifier) @name) @class
+        (trait_item
+            name: (type_identifier) @name) @class
+        (type_item
+            name: (type_identifier) @name) @class
+        (impl_item) @class
+        (mod_item
+            name: (identifier) @name) @module
+        """,
+        call_query="""
+        (call_expression
+            function: (identifier) @name) @call
+        (call_expression
+            function: (field_expression
+                field: (field_identifier) @name)) @call
+        (call_expression
+            function: (scoped_identifier
+                "::"
+                name: (identifier) @name)) @call
+        (macro_invocation
+            macro: (identifier) @name) @call
+        """,
     ),
     "go": create_lang_config(
         file_extensions=[".go"],
