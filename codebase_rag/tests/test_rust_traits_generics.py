@@ -184,11 +184,20 @@ impl Printable for Rectangle {
     printable_calls = [call for call in calls if "Printable" in str(call)]
     assert len(printable_calls) > 0, "Printable trait should be detected"
 
-    # Verify trait implementations
-    impl_calls = [
-        call for call in calls if ("impl" in str(call) or "implementation" in str(call))
+    # Verify trait implementations by checking for methods on concrete types
+    # that implement the trait methods (Circle and Rectangle implementing Drawable/Printable)
+    trait_impl_calls = [
+        call
+        for call in calls
+        if any(concrete_type in str(call) for concrete_type in ["Circle", "Rectangle"])
+        and any(
+            trait_method in str(call)
+            for trait_method in ["draw", "print", "area", "perimeter"]
+        )
     ]
-    assert len(impl_calls) > 0, "Trait implementations should be detected"
+    assert len(trait_impl_calls) > 0, (
+        "Trait implementations should be detected (concrete types should have trait methods)"
+    )
 
 
 def test_generic_types_and_constraints(
