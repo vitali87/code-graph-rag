@@ -169,27 +169,231 @@ class DefinitionProcessor:
             return None
 
     def process_dependencies(self, filepath: Path) -> None:
-        """Parse pyproject.toml for dependencies."""
-        logger.info(f"  Parsing pyproject.toml: {filepath}")
+        """Parse various dependency files for external package dependencies."""
+        file_name = filepath.name.lower()
+        logger.info(f"  Parsing dependency file: {filepath}")
+
         try:
-            data = toml.load(filepath)
-            deps = (data.get("tool", {}).get("poetry", {}).get("dependencies", {})) or {
-                dep.split(">=")[0].split("==")[0].strip(): dep
-                for dep in data.get("project", {}).get("dependencies", [])
-            }
-            for dep_name, dep_spec in deps.items():
-                if dep_name.lower() == "python":
-                    continue
-                logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
-                self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
-                self.ingestor.ensure_relationship_batch(
-                    ("Project", "name", self.project_name),
-                    "DEPENDS_ON_EXTERNAL",
-                    ("ExternalPackage", "name", dep_name),
-                    properties={"version_spec": str(dep_spec)},
-                )
+            if file_name == "pyproject.toml":
+                self._parse_pyproject_toml(filepath)
+            elif file_name == "requirements.txt":
+                self._parse_requirements_txt(filepath)
+            elif file_name == "package.json":
+                self._parse_package_json(filepath)
+            elif file_name == "cargo.toml":
+                self._parse_cargo_toml(filepath)
+            elif file_name == "go.mod":
+                self._parse_go_mod(filepath)
+            elif file_name == "gemfile":
+                self._parse_gemfile(filepath)
+            elif file_name == "composer.json":
+                self._parse_composer_json(filepath)
+            elif filepath.suffix.lower() == ".csproj":
+                self._parse_csproj(filepath)
+            else:
+                logger.debug(f"    Unknown dependency file format: {filepath}")
         except Exception as e:
             logger.error(f"    Error parsing {filepath}: {e}")
+
+    def _parse_pyproject_toml(self, filepath: Path) -> None:
+        """Parse pyproject.toml for Python dependencies."""
+        data = toml.load(filepath)
+
+        # Handle Poetry dependencies
+        poetry_deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+        if poetry_deps:
+            for dep_name, dep_spec in poetry_deps.items():
+                if dep_name.lower() == "python":
+                    continue
+                self._add_dependency(dep_name, str(dep_spec))
+
+        # Handle PEP 621 project dependencies
+        project_deps = data.get("project", {}).get("dependencies", [])
+        if project_deps:
+            for dep_line in project_deps:
+                dep_name = (
+                    dep_line.split(">=")[0]
+                    .split("==")[0]
+                    .split("~=")[0]
+                    .split("<")[0]
+                    .split(">")[0]
+                    .split("!")[0]
+                    .strip()
+                )
+                self._add_dependency(dep_name, dep_line)
+
+        # Handle optional dependencies
+        optional_deps = data.get("project", {}).get("optional-dependencies", {})
+        for group_name, deps in optional_deps.items():
+            for dep_line in deps:
+                dep_name = (
+                    dep_line.split(">=")[0]
+                    .split("==")[0]
+                    .split("~=")[0]
+                    .split("<")[0]
+                    .split(">")[0]
+                    .split("!")[0]
+                    .strip()
+                )
+                self._add_dependency(dep_name, dep_line)
+
+    def _parse_requirements_txt(self, filepath: Path) -> None:
+        """Parse requirements.txt for Python dependencies."""
+        with open(filepath, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
+
+                # Extract package name and version spec from requirement specification
+                import re
+
+                # Match package name and version spec patterns
+                match = re.match(r"^([a-zA-Z0-9_.-]+)(.*)$", line)
+                if match:
+                    dep_name = match.group(1)
+                    version_spec = match.group(2).strip()
+                    self._add_dependency(dep_name, version_spec)
+
+    def _parse_package_json(self, filepath: Path) -> None:
+        """Parse package.json for Node.js dependencies."""
+        import json
+
+        with open(filepath, encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Regular dependencies
+        deps = data.get("dependencies", {})
+        for dep_name, dep_spec in deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+        # Development dependencies
+        dev_deps = data.get("devDependencies", {})
+        for dep_name, dep_spec in dev_deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+        # Peer dependencies
+        peer_deps = data.get("peerDependencies", {})
+        for dep_name, dep_spec in peer_deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+    def _parse_cargo_toml(self, filepath: Path) -> None:
+        """Parse Cargo.toml for Rust dependencies."""
+        data = toml.load(filepath)
+
+        # Regular dependencies
+        deps = data.get("dependencies", {})
+        for dep_name, dep_spec in deps.items():
+            version = (
+                dep_spec if isinstance(dep_spec, str) else dep_spec.get("version", "")
+            )
+            self._add_dependency(dep_name, version)
+
+        # Development dependencies
+        dev_deps = data.get("dev-dependencies", {})
+        for dep_name, dep_spec in dev_deps.items():
+            version = (
+                dep_spec if isinstance(dep_spec, str) else dep_spec.get("version", "")
+            )
+            self._add_dependency(dep_name, version)
+
+    def _parse_go_mod(self, filepath: Path) -> None:
+        """Parse go.mod for Go dependencies."""
+        with open(filepath, encoding="utf-8") as f:
+            in_require_block = False
+            for line in f:
+                line = line.strip()
+
+                if line.startswith("require ("):
+                    in_require_block = True
+                    continue
+                elif line == ")" and in_require_block:
+                    in_require_block = False
+                    continue
+                elif line.startswith("require ") and not in_require_block:
+                    # Single require statement
+                    parts = line.split()[1:]
+                    if len(parts) >= 2:
+                        dep_name = parts[0]
+                        version = parts[1]
+                        self._add_dependency(dep_name, version)
+                elif in_require_block and line and not line.startswith("//"):
+                    # Inside require block
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        dep_name = parts[0]
+                        version = parts[1]
+                        if not version.startswith("//"):  # Skip comments
+                            self._add_dependency(dep_name, version)
+
+    def _parse_gemfile(self, filepath: Path) -> None:
+        """Parse Gemfile for Ruby dependencies."""
+        with open(filepath, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("gem "):
+                    # Parse gem "name", "version" or gem "name", ">= version"
+                    import re
+
+                    match = re.match(
+                        r'gem\s+["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])?',
+                        line,
+                    )
+                    if match:
+                        dep_name = match.group(1)
+                        version = match.group(2) if match.group(2) else ""
+                        self._add_dependency(dep_name, version)
+
+    def _parse_composer_json(self, filepath: Path) -> None:
+        """Parse composer.json for PHP dependencies."""
+        import json
+
+        with open(filepath, encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Regular dependencies
+        deps = data.get("require", {})
+        for dep_name, dep_spec in deps.items():
+            if dep_name != "php":  # Skip PHP version requirement
+                self._add_dependency(dep_name, dep_spec)
+
+        # Development dependencies
+        dev_deps = data.get("require-dev", {})
+        for dep_name, dep_spec in dev_deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+    def _parse_csproj(self, filepath: Path) -> None:
+        """Parse .csproj files for .NET dependencies."""
+        import xml.etree.ElementTree as ET
+
+        try:
+            tree = ET.parse(filepath)
+            root = tree.getroot()
+
+            # Find all PackageReference elements
+            for pkg_ref in root.iter("PackageReference"):
+                include = pkg_ref.get("Include")
+                version = pkg_ref.get("Version")
+
+                if include:
+                    self._add_dependency(include, version or "")
+
+        except ET.ParseError as e:
+            logger.error(f"    Error parsing XML in {filepath}: {e}")
+
+    def _add_dependency(self, dep_name: str, dep_spec: str) -> None:
+        """Add a dependency to the graph."""
+        if not dep_name or dep_name.lower() in ["python", "php"]:
+            return
+
+        logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
+        self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
+        self.ingestor.ensure_relationship_batch(
+            ("Project", "name", self.project_name),
+            "DEPENDS_ON_EXTERNAL",
+            ("ExternalPackage", "name", dep_name),
+            properties={"version_spec": dep_spec} if dep_spec else {},
+        )
 
     def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""

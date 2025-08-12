@@ -144,6 +144,28 @@ class GraphUpdater:
             ast_cache=self.ast_cache,
         )
 
+    def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
+        """Check if a file is a dependency file that should be processed for external dependencies."""
+        dependency_files = {
+            "pyproject.toml",
+            "requirements.txt",
+            "package.json",
+            "cargo.toml",
+            "go.mod",
+            "gemfile",
+            "composer.json",
+        }
+
+        # Check by filename
+        if file_name.lower() in dependency_files:
+            return True
+
+        # Check by extension (for .csproj files)
+        if filepath.suffix.lower() == ".csproj":
+            return True
+
+        return False
+
     def _prepare_queries_with_parsers(
         self, queries: dict[str, Any], parsers: dict[str, Parser]
     ) -> dict[str, Any]:
@@ -246,8 +268,17 @@ class GraphUpdater:
                         root_node, language = result
                         self.ast_cache[filepath] = (root_node, language)
 
-                elif file_name == "pyproject.toml":
+                    # Also create CONTAINS_FILE relationship for parseable files
+                    self.factory.structure_processor.process_generic_file(
+                        filepath, file_name
+                    )
+
+                elif self._is_dependency_file(file_name, filepath):
                     self.factory.definition_processor.process_dependencies(filepath)
+                    # Also create CONTAINS_FILE relationship for dependency files
+                    self.factory.structure_processor.process_generic_file(
+                        filepath, file_name
+                    )
                 else:
                     # Use StructureProcessor to handle generic files
                     self.factory.structure_processor.process_generic_file(
