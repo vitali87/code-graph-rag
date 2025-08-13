@@ -22,6 +22,7 @@ from .cpp_utils import (
 from .import_processor import ImportProcessor
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
+from .utils import ingest_method
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -1078,35 +1079,15 @@ class DefinitionProcessor:
                         if not isinstance(method_node, Node):
                             continue
 
-                        method_name_node = method_node.child_by_field_name("name")
-                        if not method_name_node:
-                            continue
-                        text = method_name_node.text
-                        if text is None:
-                            continue
-                        method_name = text.decode("utf8")
-
-                        method_qn = f"{class_qn}.{method_name}"
-                        method_props: dict[str, Any] = {
-                            "qualified_name": method_qn,
-                            "name": method_name,
-                            "decorators": [],
-                            "start_line": method_node.start_point[0] + 1,
-                            "end_line": method_node.end_point[0] + 1,
-                            "docstring": self._get_docstring(method_node),
-                        }
-                        logger.info(
-                            f"    Found Method: {method_name} (qn: {method_qn})"
-                        )
-                        self.ingestor.ensure_node_batch("Method", method_props)
-                        self.function_registry[method_qn] = "Method"
-                        self.simple_name_lookup[method_name].add(method_qn)
-
-                        # Create relationship between the class and the method
-                        self.ingestor.ensure_relationship_batch(
-                            ("Class", "qualified_name", class_qn),
-                            "DEFINES_METHOD",
-                            ("Method", "qualified_name", method_qn),
+                        ingest_method(
+                            method_node,
+                            class_qn,
+                            "Class",
+                            self.ingestor,
+                            self.function_registry,
+                            self.simple_name_lookup,
+                            self._get_docstring,
+                            language,
                         )
 
                 # Skip the rest of the processing for impl blocks
@@ -1227,41 +1208,16 @@ class DefinitionProcessor:
                 if not isinstance(method_node, Node):
                     continue
 
-                # Use C++ specific method name extraction for C++
-                if language == "cpp":
-                    temp_method_name = extract_cpp_function_name(method_node)
-                    if not temp_method_name:
-                        continue
-                    method_name = temp_method_name
-                else:
-                    method_name_node = method_node.child_by_field_name("name")
-                    if not method_name_node:
-                        continue
-                    text = method_name_node.text
-                    if text is None:
-                        continue
-                    method_name = text.decode("utf8")
-
-                method_qn = f"{class_qn}.{method_name}"
-                decorators = self._extract_decorators(method_node)
-                method_properties: dict[str, Any] = {
-                    "qualified_name": method_qn,
-                    "name": method_name,
-                    "decorators": decorators,
-                    "start_line": method_node.start_point[0] + 1,
-                    "end_line": method_node.end_point[0] + 1,
-                    "docstring": self._get_docstring(method_node),
-                }
-                # All methods should be Method nodes for consistency across languages
-                logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
-                self.ingestor.ensure_node_batch("Method", method_properties)
-                self.function_registry[method_qn] = "Method"
-                self.simple_name_lookup[method_name].add(method_qn)
-
-                self.ingestor.ensure_relationship_batch(
-                    ("Class", "qualified_name", class_qn),
-                    "DEFINES_METHOD",
-                    ("Method", "qualified_name", method_qn),
+                ingest_method(
+                    method_node,
+                    class_qn,
+                    "Class",
+                    self.ingestor,
+                    self.function_registry,
+                    self.simple_name_lookup,
+                    self._get_docstring,
+                    language,
+                    self._extract_decorators,
                 )
 
                 # Note: OVERRIDES relationships will be processed later after all methods are collected
