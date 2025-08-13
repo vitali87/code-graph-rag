@@ -11,6 +11,7 @@ from .lua_utils import (
     extract_lua_assigned_name,
     extract_lua_pcall_second_identifier,
 )
+from .rust_utils import extract_rust_use_imports
 from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
 # Common language constants for performance optimization
@@ -515,8 +516,6 @@ class ImportProcessor:
 
     def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
         """Parse a single Rust use declaration using tree-sitter field access."""
-        from .rust_utils import extract_rust_use_imports
-
         # Use the improved tree-sitter-based function to extract imports
         imports = extract_rust_use_imports(use_node)
 
