@@ -200,6 +200,21 @@ class DefinitionProcessor:
         except Exception as e:
             logger.error(f"    Error parsing {filepath}: {e}")
 
+    def _extract_pep508_package_name(self, dep_string: str) -> tuple[str, str]:
+        """Extracts the package name and the rest of the spec from a PEP 508 string."""
+        # Match package name (with optional extras) - more robust than chain of splits
+        match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", dep_string.strip())
+        if not match:
+            return "", ""
+        name_with_extras = match.group(1)
+        # Extract just the package name without extras
+        name_match = re.match(r"^([a-zA-Z0-9_.-]+)", name_with_extras)
+        if not name_match:
+            return "", ""
+        name = name_match.group(1)
+        spec = dep_string[len(name_with_extras) :].strip()
+        return name, spec
+
     def _parse_pyproject_toml(self, filepath: Path) -> None:
         """Parse pyproject.toml for Python dependencies."""
         data = toml.load(filepath)
@@ -216,31 +231,17 @@ class DefinitionProcessor:
         project_deps = data.get("project", {}).get("dependencies", [])
         if project_deps:
             for dep_line in project_deps:
-                dep_name = (
-                    dep_line.split(">=")[0]
-                    .split("==")[0]
-                    .split("~=")[0]
-                    .split("<")[0]
-                    .split(">")[0]
-                    .split("!")[0]
-                    .strip()
-                )
-                self._add_dependency(dep_name, dep_line)
+                dep_name, _ = self._extract_pep508_package_name(dep_line)
+                if dep_name:
+                    self._add_dependency(dep_name, dep_line)
 
         # Handle optional dependencies
         optional_deps = data.get("project", {}).get("optional-dependencies", {})
         for group_name, deps in optional_deps.items():
             for dep_line in deps:
-                dep_name = (
-                    dep_line.split(">=")[0]
-                    .split("==")[0]
-                    .split("~=")[0]
-                    .split("<")[0]
-                    .split(">")[0]
-                    .split("!")[0]
-                    .strip()
-                )
-                self._add_dependency(dep_name, dep_line)
+                dep_name, _ = self._extract_pep508_package_name(dep_line)
+                if dep_name:
+                    self._add_dependency(dep_name, dep_line)
 
     def _parse_requirements_txt(self, filepath: Path) -> None:
         """Parse requirements.txt for Python dependencies."""
@@ -251,12 +252,8 @@ class DefinitionProcessor:
                     continue
 
                 # Extract package name and version spec from requirement specification
-
-                # Match package name and version spec patterns
-                match = re.match(r"^([a-zA-Z0-9_.-]+)(.*)$", line)
-                if match:
-                    dep_name = match.group(1)
-                    version_spec = match.group(2).strip()
+                dep_name, version_spec = self._extract_pep508_package_name(line)
+                if dep_name:
                     self._add_dependency(dep_name, version_spec)
 
     def _parse_package_json(self, filepath: Path) -> None:
