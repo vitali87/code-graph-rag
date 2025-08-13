@@ -42,12 +42,19 @@ class DirectoryLister:
             # If relative, resolve it against the root path
             safe_path = (self.project_root / file_path).resolve()
 
+        # Enhanced security check to prevent directory traversal attacks
         try:
-            safe_path.relative_to(self.project_root)
+            safe_path.relative_to(self.project_root.resolve())
         except ValueError as e:
             raise PermissionError(
                 "Access denied: Cannot access files outside the project root."
             ) from e
+
+        # Additional check for symlinks that might bypass relative_to
+        if not str(safe_path).startswith(str(self.project_root.resolve())):
+            raise PermissionError(
+                "Access denied: Cannot access files outside the project root."
+            )
 
         return safe_path
 

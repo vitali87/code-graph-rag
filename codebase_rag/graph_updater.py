@@ -103,10 +103,10 @@ class FunctionRegistryTrie:
         if child_empty:
             del node[part]
 
-        # Current node is empty if it has no children and no qualifiers
-        return len(node) == 0 or (
-            len(node) <= 2 and "__qn__" not in node and "__type__" not in node
-        )
+        # A node can be cleaned up if it's not an endpoint and has no children.
+        is_endpoint = "__qn__" in node
+        has_children = any(not key.startswith("__") for key in node)
+        return not has_children and not is_endpoint
 
     def keys(self) -> KeysView[str]:
         """Return all qualified names."""

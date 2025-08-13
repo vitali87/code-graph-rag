@@ -37,7 +37,21 @@ class FileReader:
         logger.info(f"[FileReader] Attempting to read file: {file_path}")
         try:
             full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root)  # Security check
+            # Enhanced security check to prevent directory traversal attacks
+            try:
+                full_path.relative_to(self.project_root.resolve())
+            except ValueError:
+                return FileReadResult(
+                    file_path=file_path,
+                    error_message="Security risk: Attempted to read file outside of project root.",
+                )
+
+            # Additional check for symlinks that might bypass relative_to
+            if not str(full_path).startswith(str(self.project_root.resolve())):
+                return FileReadResult(
+                    file_path=file_path,
+                    error_message="Security risk: Attempted to read file outside of project root.",
+                )
 
             if not full_path.is_file():
                 return FileReadResult(
