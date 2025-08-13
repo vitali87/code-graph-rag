@@ -23,7 +23,7 @@ from .import_processor import ImportProcessor
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
 from .rust_utils import build_rust_module_path
-from .utils import ingest_method
+from .utils import ingest_exported_function, ingest_method
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -1973,8 +1973,8 @@ class DefinitionProcessor:
                     export_functions = captures.get("export_function", [])
 
                     # Process exports.name = function patterns
-                    for i, (exports_obj, export_name, export_function) in enumerate(
-                        zip(exports_objs, export_names, export_functions)
+                    for exports_obj, export_name, export_function in zip(
+                        exports_objs, export_names, export_functions
                     ):
                         if (
                             exports_obj.text
@@ -1982,36 +1982,26 @@ class DefinitionProcessor:
                             and exports_obj.text.decode("utf8") == "exports"
                         ):
                             function_name = export_name.text.decode("utf8")
-
-                            # Skip if this export is inside a function (let regular processing handle it)
-                            if self._is_export_inside_function(export_function):
-                                continue
-
-                            function_qn = f"{module_qn}.{function_name}"
-
-                            function_props = {
-                                "qualified_name": function_qn,
-                                "name": function_name,
-                                "start_line": export_function.start_point[0] + 1,
-                                "end_line": export_function.end_point[0] + 1,
-                                "docstring": self._get_docstring(export_function),
-                            }
-
-                            logger.info(
-                                f"  Found CommonJS Export: {function_name} (qn: {function_qn})"
+                            ingest_exported_function(
+                                export_function,
+                                function_name,
+                                module_qn,
+                                "CommonJS Export",
+                                self.ingestor,
+                                self.function_registry,
+                                self.simple_name_lookup,
+                                self._get_docstring,
+                                self._is_export_inside_function,
                             )
-                            self.ingestor.ensure_node_batch("Function", function_props)
-                            self.function_registry[function_qn] = "Function"
-                            self.simple_name_lookup[function_name].add(function_qn)
 
                     # Process module.exports.name = function patterns
-                    for i, (
+                    for (
                         module_obj,
                         exports_prop,
                         export_name,
                         export_function,
-                    ) in enumerate(
-                        zip(module_objs, exports_props, export_names, export_functions)
+                    ) in zip(
+                        module_objs, exports_props, export_names, export_functions
                     ):
                         if (
                             module_obj.text
@@ -2021,27 +2011,17 @@ class DefinitionProcessor:
                             and exports_prop.text.decode("utf8") == "exports"
                         ):
                             function_name = export_name.text.decode("utf8")
-
-                            # Skip if this export is inside a function (let regular processing handle it)
-                            if self._is_export_inside_function(export_function):
-                                continue
-
-                            function_qn = f"{module_qn}.{function_name}"
-
-                            function_props = {
-                                "qualified_name": function_qn,
-                                "name": function_name,
-                                "start_line": export_function.start_point[0] + 1,
-                                "end_line": export_function.end_point[0] + 1,
-                                "docstring": self._get_docstring(export_function),
-                            }
-
-                            logger.info(
-                                f"  Found CommonJS Module Export: {function_name} (qn: {function_qn})"
+                            ingest_exported_function(
+                                export_function,
+                                function_name,
+                                module_qn,
+                                "CommonJS Module Export",
+                                self.ingestor,
+                                self.function_registry,
+                                self.simple_name_lookup,
+                                self._get_docstring,
+                                self._is_export_inside_function,
                             )
-                            self.ingestor.ensure_node_batch("Function", function_props)
-                            self.function_registry[function_qn] = "Function"
-                            self.simple_name_lookup[function_name].add(function_qn)
 
                 except Exception as e:
                     logger.debug(f"Failed to process CommonJS exports query: {e}")
@@ -2082,73 +2062,44 @@ class DefinitionProcessor:
                     export_functions = captures.get("export_function", [])
 
                     # Process export const name = function patterns
-                    for i, (export_name, export_function) in enumerate(
-                        zip(export_names, export_functions)
+                    for export_name, export_function in zip(
+                        export_names, export_functions
                     ):
                         if export_name.text and export_function:
                             function_name = export_name.text.decode("utf8")
-
-                            # Skip if this export is inside a function (let regular processing handle it)
-                            if self._is_export_inside_function(export_function):
-                                continue
-
-                            function_qn = f"{module_qn}.{function_name}"
-
-                            function_props = {
-                                "qualified_name": function_qn,
-                                "name": function_name,
-                                "start_line": export_function.start_point[0] + 1,
-                                "end_line": export_function.end_point[0] + 1,
-                                "docstring": self._get_docstring(export_function),
-                            }
-
-                            logger.debug(
-                                f"  Found ES6 Export Function: {function_name} (qn: {function_qn})"
+                            ingest_exported_function(
+                                export_function,
+                                function_name,
+                                module_qn,
+                                "ES6 Export Function",
+                                self.ingestor,
+                                self.function_registry,
+                                self.simple_name_lookup,
+                                self._get_docstring,
+                                self._is_export_inside_function,
                             )
-                            self.ingestor.ensure_node_batch("Function", function_props)
-                            self.function_registry[function_qn] = "Function"
-                            self.simple_name_lookup[function_name].add(function_qn)
 
                     # Process export function patterns (function declarations)
                     if not export_names:  # Only function declarations
                         for export_function in export_functions:
                             if export_function:
                                 # Get function name from the function declaration
-                                function_name = None
                                 if name_node := export_function.child_by_field_name(
                                     "name"
                                 ):
                                     if name_node.text:
                                         function_name = name_node.text.decode("utf8")
-
-                                if function_name:
-                                    # Skip if this export is inside a function (let regular processing handle it)
-                                    if self._is_export_inside_function(export_function):
-                                        continue
-
-                                    function_qn = f"{module_qn}.{function_name}"
-
-                                    function_props = {
-                                        "qualified_name": function_qn,
-                                        "name": function_name,
-                                        "start_line": export_function.start_point[0]
-                                        + 1,
-                                        "end_line": export_function.end_point[0] + 1,
-                                        "docstring": self._get_docstring(
-                                            export_function
-                                        ),
-                                    }
-
-                                    logger.debug(
-                                        f"  Found ES6 Export Function Declaration: {function_name} (qn: {function_qn})"
-                                    )
-                                    self.ingestor.ensure_node_batch(
-                                        "Function", function_props
-                                    )
-                                    self.function_registry[function_qn] = "Function"
-                                    self.simple_name_lookup[function_name].add(
-                                        function_qn
-                                    )
+                                        ingest_exported_function(
+                                            export_function,
+                                            function_name,
+                                            module_qn,
+                                            "ES6 Export Function Declaration",
+                                            self.ingestor,
+                                            self.function_registry,
+                                            self.simple_name_lookup,
+                                            self._get_docstring,
+                                            self._is_export_inside_function,
+                                        )
 
                 except Exception as e:
                     logger.debug(f"Failed to process ES6 exports query: {e}")

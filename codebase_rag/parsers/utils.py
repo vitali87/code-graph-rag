@@ -119,3 +119,49 @@ def ingest_method(
         "DEFINES_METHOD",
         ("Method", "qualified_name", method_qn),
     )
+
+
+def ingest_exported_function(
+    function_node: Node,
+    function_name: str,
+    module_qn: str,
+    export_type: str,
+    ingestor: "MemgraphIngestor",
+    function_registry: dict[str, str],
+    simple_name_lookup: dict[str, set[str]],
+    get_docstring_func: Any,
+    is_export_inside_function_func: Any,
+) -> None:
+    """Ingest an exported function into the graph database.
+
+    This helper eliminates duplication between CommonJS and ES6 export processing.
+
+    Args:
+        function_node: The tree-sitter node representing the function.
+        function_name: The name of the function.
+        module_qn: The qualified name of the module.
+        export_type: Description for logging (e.g., "CommonJS Export", "ES6 Export").
+        ingestor: The graph database ingestor.
+        function_registry: Registry mapping qualified names to function types.
+        simple_name_lookup: Lookup table for simple names to qualified names.
+        get_docstring_func: Function to extract docstring from a node.
+        is_export_inside_function_func: Function to check if export is inside a function.
+    """
+    # Skip if this export is inside a function (let regular processing handle it)
+    if is_export_inside_function_func(function_node):
+        return
+
+    function_qn = f"{module_qn}.{function_name}"
+
+    function_props = {
+        "qualified_name": function_qn,
+        "name": function_name,
+        "start_line": function_node.start_point[0] + 1,
+        "end_line": function_node.end_point[0] + 1,
+        "docstring": get_docstring_func(function_node),
+    }
+
+    logger.info(f"  Found {export_type}: {function_name} (qn: {function_qn})")
+    ingestor.ensure_node_batch("Function", function_props)
+    function_registry[function_qn] = "Function"
+    simple_name_lookup[function_name].add(function_qn)
