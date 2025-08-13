@@ -19,6 +19,9 @@ dev: ## Setup development environment (install deps + pre-commit hooks)
 test: ## Run tests
 	uv run pytest
 
+test-parallel: ## Run tests in parallel
+	uv run pytest -n auto
+
 clean: ## Clean up build artifacts and cache
 	rm -rf .pytest_cache/ .mypy_cache/ .ruff_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} +

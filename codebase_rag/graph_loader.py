@@ -1,4 +1,5 @@
 import json
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -192,8 +193,6 @@ def load_graph(file_path: str) -> GraphLoader:
 
 # Example usage
 if __name__ == "__main__":
-    import sys
-
     if len(sys.argv) != 2:
         print("Usage: python -m codebase_rag.graph_loader <graph_file.json>")
         sys.exit(1)

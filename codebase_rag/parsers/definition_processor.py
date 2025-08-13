@@ -1,6 +1,9 @@
 """Definition processor for extracting functions, classes and methods."""
 
+import json
+import re
 import textwrap
+import xml.etree.ElementTree as ET
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -22,7 +25,7 @@ from .cpp_utils import (
 from .import_processor import ImportProcessor
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
-from .rust_utils import build_rust_module_path
+from .rust_utils import build_rust_module_path, extract_rust_impl_target
 from .utils import ingest_exported_function, ingest_method
 
 # Common language constants for performance optimization
@@ -248,7 +251,6 @@ class DefinitionProcessor:
                     continue
 
                 # Extract package name and version spec from requirement specification
-                import re
 
                 # Match package name and version spec patterns
                 match = re.match(r"^([a-zA-Z0-9_.-]+)(.*)$", line)
@@ -259,7 +261,6 @@ class DefinitionProcessor:
 
     def _parse_package_json(self, filepath: Path) -> None:
         """Parse package.json for Node.js dependencies."""
-        import json
 
         with open(filepath, encoding="utf-8") as f:
             data = json.load(f)
@@ -335,7 +336,6 @@ class DefinitionProcessor:
                 line = line.strip()
                 if line.startswith("gem "):
                     # Parse gem "name", "version" or gem "name", ">= version"
-                    import re
 
                     match = re.match(
                         r'gem\s+["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])?',
@@ -348,7 +348,6 @@ class DefinitionProcessor:
 
     def _parse_composer_json(self, filepath: Path) -> None:
         """Parse composer.json for PHP dependencies."""
-        import json
 
         with open(filepath, encoding="utf-8") as f:
             data = json.load(f)
@@ -366,7 +365,6 @@ class DefinitionProcessor:
 
     def _parse_csproj(self, filepath: Path) -> None:
         """Parse .csproj files for .NET dependencies."""
-        import xml.etree.ElementTree as ET
 
         try:
             tree = ET.parse(filepath)
@@ -1008,8 +1006,6 @@ class DefinitionProcessor:
                 class_qn = build_cpp_qualified_name(class_node, module_qn, class_name)
             elif language == "rust" and class_node.type == "impl_item":
                 # Special handling for Rust impl blocks
-                # Import the Rust utilities
-                from .rust_utils import extract_rust_impl_target
 
                 # Extract the type being implemented for
                 impl_target = extract_rust_impl_target(class_node)

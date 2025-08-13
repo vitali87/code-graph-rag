@@ -19,6 +19,7 @@ dependencies = [
     "prompt-toolkit>=3.0.0",
     "diff-match-patch>=20241021",
     "click>=8.0.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.setuptools]

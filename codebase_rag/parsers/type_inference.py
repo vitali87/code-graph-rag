@@ -1,5 +1,6 @@
 """Type inference engine for determining variable types."""
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -666,8 +667,6 @@ class TypeInferenceEngine:
             # Check if there's a method call followed by more property/method access
             # e.g., "obj.method().prop" or "obj.method().other_method"
             # This regex looks for: anything.method_call().more_stuff
-            import re
-
             return bool(re.search(r"\)\.[^)]*$", call_name))
         return False
 
@@ -678,8 +677,6 @@ class TypeInferenceEngine:
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         """Infer return type for chained method calls like obj.method().other_method()."""
-        import re
-
         # Find the rightmost method that's not in parentheses
         match = re.search(r"\.([^.()]+)$", call_name)
         if not match:
@@ -1208,8 +1205,6 @@ class TypeInferenceEngine:
             return local_var_types
 
         try:
-            from tree_sitter import QueryCursor
-
             # Use tree-sitter's locals query to find variable definitions and references
             cursor = QueryCursor(locals_query)
             captures = cursor.captures(caller_node)
