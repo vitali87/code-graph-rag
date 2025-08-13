@@ -140,95 +140,165 @@ def extract_rust_macro_name(macro_node: Node) -> str | None:
     return None
 
 
-def extract_rust_use_path(use_node: Node) -> list[str]:
-    """Extract the full import path from a use declaration.
+def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
+    """Extract imports from a Rust use declaration with proper path mapping.
 
     Handles patterns like:
-    - use std::collections::HashMap;
-    - use std::io::{self, Read, Write};
-    - use super::module;
-    - use crate::utils::*;
+    - use std::collections::HashMap; -> {"HashMap": "std::collections::HashMap"}
+    - use std::io::{self, Read, Write}; -> {"self": "std::io", "Read": "std::io::Read", "Write": "std::io::Write"}
+    - use std::collections::HashMap as Map; -> {"Map": "std::collections::HashMap"}
+    - use crate::utils::*; -> {"*crate::utils": "crate::utils"}
 
     Args:
         use_node: The use_declaration node.
 
     Returns:
-        List of imported items (empty if not found).
+        Dictionary mapping imported names to their full paths.
     """
     if use_node.type != "use_declaration":
-        return []
+        return {}
 
-    imports = []
+    imports = {}
 
-    def traverse_use_tree(node: Node, prefix: str = "") -> None:
-        """Recursively traverse use tree to extract all imports."""
+    def extract_path_from_node(node: Node) -> str:
+        """Extract the full path from a scoped identifier or identifier."""
         if node.type == "identifier" or node.type == "type_identifier":
-            name = safe_decode_text(node)
-            if name:
-                full_path = f"{prefix}{name}" if prefix else name
-                imports.append(full_path)
-        elif node.type == "scoped_identifier" or node.type == "scoped_type_identifier":
+            return safe_decode_text(node) or ""
+        elif node.type in ("scoped_identifier", "scoped_type_identifier"):
+            # For scoped identifiers, we need to recursively build the path
             parts = []
-            for child in node.children:
-                if child.type in ("identifier", "type_identifier"):
-                    part = safe_decode_text(child)
+
+            def collect_path_parts(n: Node) -> None:
+                if n.type in ("identifier", "type_identifier"):
+                    part = safe_decode_text(n)
                     if part:
                         parts.append(part)
-            if parts:
-                imports.append("::".join(parts))
-        elif node.type == "use_wildcard":
-            # Handle glob imports like use module::*
-            imports.append(f"{prefix}*" if prefix else "*")
-        elif node.type == "use_list":
-            # Handle grouped imports like {Read, Write}
-            for child in node.children:
-                if child.type == "use_as_clause":
-                    # Handle aliased imports
-                    for subchild in child.children:
-                        if subchild.type in ("identifier", "type_identifier"):
-                            name = safe_decode_text(subchild)
-                            if name:
-                                traverse_use_tree(subchild, prefix)
-                                break
-                elif child.type != "," and child.type != "{" and child.type != "}":
-                    traverse_use_tree(child, prefix)
+                elif n.type in ("scoped_identifier", "scoped_type_identifier"):
+                    # Recursively process nested scoped identifiers
+                    for child in n.children:
+                        if child.type != "::":
+                            collect_path_parts(child)
+                elif n.type in ("crate", "super", "self"):
+                    part = safe_decode_text(n)
+                    if part:
+                        parts.append(part)
+
+            collect_path_parts(node)
+            return "::".join(parts)
+        elif node.type in ("crate", "super", "self"):
+            return safe_decode_text(node) or ""
+        return ""
+
+    def process_use_tree(node: Node, base_path: str = "") -> None:
+        """Process a use tree node and extract imports."""
+        if node.type in ("identifier", "type_identifier"):
+            # Simple identifier import
+            name = safe_decode_text(node)
+            if name:
+                full_path = f"{base_path}::{name}" if base_path else name
+                imports[name] = full_path
+
+        elif node.type in ("scoped_identifier", "scoped_type_identifier"):
+            # Scoped identifier - this is the final import
+            full_path = extract_path_from_node(node)
+            if full_path:
+                parts = full_path.split("::")
+                if parts:
+                    imported_name = parts[-1]
+                    imports[imported_name] = full_path
+
         elif node.type == "use_as_clause":
-            # Handle 'as' aliases - extract the original name
+            # Handle aliases: use path as alias
+            original_path = ""
+            alias_name = ""
+
+            # The structure is: path "as" alias
+            children = [c for c in node.children if c.type != "as"]
+            if len(children) == 2:
+                path_node, alias_node = children
+
+                # Handle special case of "self as Alias"
+                if path_node.type == "self":
+                    original_path = base_path if base_path else "self"
+                else:
+                    original_path = extract_path_from_node(path_node)
+                    if base_path and original_path:
+                        original_path = f"{base_path}::{original_path}"
+                    elif base_path:
+                        original_path = base_path
+
+                alias_name = safe_decode_text(alias_node) or ""
+
+            if alias_name and original_path:
+                imports[alias_name] = original_path
+
+        elif node.type == "use_wildcard":
+            # Wildcard import: use path::*
+            # Extract the base path from the wildcard node
+            wildcard_base = ""
             for child in node.children:
-                if child.type in ("identifier", "type_identifier", "scoped_identifier"):
-                    traverse_use_tree(child, prefix)
+                if child.type != "*":
+                    wildcard_base = extract_path_from_node(child)
                     break
+
+            if wildcard_base:
+                wildcard_key = f"*{wildcard_base}"
+                imports[wildcard_key] = wildcard_base
+            elif base_path:
+                wildcard_key = f"*{base_path}"
+                imports[wildcard_key] = base_path
+
+        elif node.type == "use_list":
+            # Process items in a use list: {item1, item2, ...}
+            for child in node.children:
+                if child.type not in ("{", "}", ","):
+                    process_use_tree(child, base_path)
+
+        elif node.type == "scoped_use_list":
+            # Handle scoped use list: path::{items}
+            new_base_path = ""
+
+            # Find the base path and the use list
+            for child in node.children:
+                if child.type in (
+                    "identifier",
+                    "scoped_identifier",
+                    "crate",
+                    "super",
+                    "self",
+                ):
+                    new_base_path = extract_path_from_node(child)
+                elif child.type == "use_list":
+                    # Process the list with the new base path
+                    final_base = (
+                        f"{base_path}::{new_base_path}" if base_path else new_base_path
+                    )
+                    process_use_tree(child, final_base)
+
+        elif node.type == "self":
+            # Handle 'self' import
+            imports["self"] = base_path if base_path else "self"
+
         else:
             # Recursively process children
             for child in node.children:
-                if child.type == "scoped_use_list":
-                    # Extract prefix for scoped use list
-                    new_prefix = ""
-                    for subchild in child.children:
-                        if subchild.type in ("identifier", "scoped_identifier"):
-                            path = []
-                            for part in subchild.children:
-                                if part.type == "identifier":
-                                    p = safe_decode_text(part)
-                                    if p:
-                                        path.append(p)
-                            if not path and subchild.type == "identifier":
-                                p = safe_decode_text(subchild)
-                                if p:
-                                    path.append(p)
-                            if path:
-                                new_prefix = "::".join(path) + "::"
-                        elif subchild.type == "use_list":
-                            traverse_use_tree(subchild, new_prefix)
-                else:
-                    traverse_use_tree(child, prefix)
+                process_use_tree(child, base_path)
 
-    # Start traversal from the use_declaration's argument
-    for i in range(use_node.child_count):
-        if use_node.field_name_for_child(i) == "argument":
-            traverse_use_tree(use_node.child(i))
+    # Find the argument field of the use declaration
+    argument_node = use_node.child_by_field_name("argument")
+    if argument_node:
+        process_use_tree(argument_node)
 
     return imports
+
+
+def extract_rust_use_path(use_node: Node) -> list[str]:
+    """Legacy function - use extract_rust_use_imports instead.
+
+    This function is deprecated and may not handle complex import patterns correctly.
+    """
+    import_dict = extract_rust_use_imports(use_node)
+    return list(import_dict.keys())
 
 
 def get_rust_visibility(node: Node) -> str:
