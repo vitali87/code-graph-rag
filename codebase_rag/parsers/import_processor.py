@@ -4,14 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node
 
 from ..language_config import LanguageConfig
 from .lua_utils import (
     extract_lua_assigned_name,
     extract_lua_pcall_second_identifier,
 )
-from .utils import safe_decode_text, safe_decode_with_fallback
+from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -64,7 +64,7 @@ class ImportProcessor:
         self.import_mapping[module_qn] = {}
 
         try:
-            cursor = QueryCursor(imports_query)
+            cursor = get_query_cursor(imports_query)
             captures = cursor.captures(root_node)
 
             # Handle different language import patterns

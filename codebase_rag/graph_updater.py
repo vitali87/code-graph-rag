@@ -5,8 +5,8 @@ This is the new modular version that maintains all functionality while
 splitting the monolithic class into logical components.
 """
 
-import os
-from collections import defaultdict
+import sys
+from collections import OrderedDict, defaultdict
 from collections.abc import ItemsView, KeysView
 from pathlib import Path
 from typing import Any
@@ -61,14 +61,52 @@ class FunctionRegistryTrie:
         self.insert(qualified_name, func_type)
 
     def __delitem__(self, qualified_name: str) -> None:
-        """Remove qualified name from registry.
+        """Remove qualified name from registry and clean up trie structure.
 
-        Note: This only removes the entry from the dictionary-like interface for performance
-        and simplicity. The node is not removed from the underlying trie structure, which
-        may lead to memory growth in long-running sessions with many file deletions.
+        Performs proper cleanup of the trie to prevent memory leaks during
+        long-running sessions with file deletions/updates.
         """
-        if qualified_name in self._entries:
-            del self._entries[qualified_name]
+        if qualified_name not in self._entries:
+            return
+
+        del self._entries[qualified_name]
+
+        # Clean up trie structure by removing empty nodes
+        parts = qualified_name.split(".")
+        self._cleanup_trie_path(parts, self.root)
+
+    def _cleanup_trie_path(self, parts: list[str], node: dict[str, Any]) -> bool:
+        """Recursively clean up empty trie nodes.
+
+        Args:
+            parts: Remaining parts of the qualified name path
+            node: Current trie node
+
+        Returns:
+            True if current node is empty and can be deleted
+        """
+        if not parts:
+            # Remove the qualifier markers if they exist
+            node.pop("__qn__", None)
+            node.pop("__type__", None)
+            # Node is empty if it has no children
+            return len(node) == 0
+
+        part = parts[0]
+        if part not in node:
+            return False  # Path doesn't exist
+
+        # Recursively check if child can be cleaned up
+        child_empty = self._cleanup_trie_path(parts[1:], node[part])
+
+        # If child is empty and has no other qualified names, remove it
+        if child_empty:
+            del node[part]
+
+        # Current node is empty if it has no children and no qualifiers
+        return len(node) == 0 or (
+            len(node) <= 2 and "__qn__" not in node and "__type__" not in node
+        )
 
     def keys(self) -> KeysView[str]:
         """Return all qualified names."""
@@ -113,6 +151,80 @@ class FunctionRegistryTrie:
         return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
 
+class BoundedASTCache:
+    """Memory-aware AST cache with automatic cleanup to prevent memory leaks.
+
+    Uses LRU eviction strategy and monitors memory usage to maintain
+    reasonable memory consumption during long-running analysis sessions.
+    """
+
+    def __init__(self, max_entries: int = 1000, max_memory_mb: int = 500):
+        """Initialize the bounded AST cache.
+
+        Args:
+            max_entries: Maximum number of AST entries to cache
+            max_memory_mb: Soft memory limit in MB for cache eviction
+        """
+        self.cache: OrderedDict[Path, tuple[Node, str]] = OrderedDict()
+        self.max_entries = max_entries
+        self.max_memory_bytes = max_memory_mb * 1024 * 1024
+
+    def __setitem__(self, key: Path, value: tuple[Node, str]) -> None:
+        """Add or update an AST cache entry with automatic cleanup."""
+        # Remove existing entry if present to update LRU order
+        if key in self.cache:
+            del self.cache[key]
+
+        # Add new entry
+        self.cache[key] = value
+
+        # Evict entries if we exceed limits
+        self._enforce_limits()
+
+    def __getitem__(self, key: Path) -> tuple[Node, str]:
+        """Get AST cache entry and mark as recently used."""
+        value = self.cache[key]
+        # Move to end to mark as recently used
+        self.cache.move_to_end(key)
+        return value
+
+    def __delitem__(self, key: Path) -> None:
+        """Remove entry from cache."""
+        if key in self.cache:
+            del self.cache[key]
+
+    def __contains__(self, key: Path) -> bool:
+        """Check if key exists in cache."""
+        return key in self.cache
+
+    def items(self) -> Any:
+        """Return all cache items."""
+        return self.cache.items()
+
+    def _enforce_limits(self) -> None:
+        """Enforce cache size and memory limits by evicting old entries."""
+        # Check entry count limit
+        while len(self.cache) > self.max_entries:
+            self.cache.popitem(last=False)  # Remove least recently used
+
+        # Check memory limit (rough estimate)
+        if self._should_evict_for_memory():
+            entries_to_remove = max(1, len(self.cache) // 10)  # Remove 10% of entries
+            for _ in range(entries_to_remove):
+                if self.cache:
+                    self.cache.popitem(last=False)
+
+    def _should_evict_for_memory(self) -> bool:
+        """Check if we should evict entries due to memory pressure."""
+        try:
+            # Use sys.getsizeof for a rough memory estimate
+            cache_size = sum(sys.getsizeof(v) for v in self.cache.values())
+            return cache_size > self.max_memory_bytes
+        except Exception:
+            # If memory checking fails, use conservative entry-based eviction
+            return len(self.cache) > self.max_entries * 0.8
+
+
 class GraphUpdater:
     """Parses code using Tree-sitter and updates the graph."""
 
@@ -130,7 +242,7 @@ class GraphUpdater:
         self.project_name = repo_path.name
         self.function_registry = FunctionRegistryTrie()
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
-        self.ast_cache: dict[Path, tuple[Node, str]] = {}
+        self.ast_cache = BoundedASTCache(max_entries=1000, max_memory_mb=500)
         self.ignore_dirs = IGNORE_PATTERNS
 
         # Create processor factory with all dependencies
@@ -246,14 +358,18 @@ class GraphUpdater:
                 logger.debug(f"  - Cleaned simple_name '{simple_name}'")
 
     def _process_files(self) -> None:
-        """Second pass: Walks the directory, parses files, and caches their ASTs."""
-        for root_str, dirs, files in os.walk(self.repo_path, topdown=True):
-            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
-            root = Path(root_str)
+        """Second pass: Efficiently processes all files, parses them, and caches their ASTs."""
 
-            for file_name in files:
-                filepath = root / file_name
+        def should_skip_path(path: Path) -> bool:
+            """Check if file path should be skipped based on ignore patterns."""
+            return any(
+                part in self.ignore_dirs
+                for part in path.relative_to(self.repo_path).parts
+            )
 
+        # Use pathlib.rglob for more efficient file iteration
+        for filepath in self.repo_path.rglob("*"):
+            if filepath.is_file() and not should_skip_path(filepath):
                 # Check if this file type is supported for parsing
                 lang_config = get_language_config(filepath.suffix)
                 if lang_config and lang_config.name in self.parsers:
@@ -270,19 +386,19 @@ class GraphUpdater:
 
                     # Also create CONTAINS_FILE relationship for parseable files
                     self.factory.structure_processor.process_generic_file(
-                        filepath, file_name
+                        filepath, filepath.name
                     )
 
-                elif self._is_dependency_file(file_name, filepath):
+                elif self._is_dependency_file(filepath.name, filepath):
                     self.factory.definition_processor.process_dependencies(filepath)
                     # Also create CONTAINS_FILE relationship for dependency files
                     self.factory.structure_processor.process_generic_file(
-                        filepath, file_name
+                        filepath, filepath.name
                     )
                 else:
                     # Use StructureProcessor to handle generic files
                     self.factory.structure_processor.process_generic_file(
-                        filepath, file_name
+                        filepath, filepath.name
                     )
 
     def _process_function_calls(self) -> None:

@@ -1,16 +1,33 @@
 """Common utility functions for all parser components."""
 
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from tree_sitter import Node
+from tree_sitter import Node, QueryCursor
 
 if TYPE_CHECKING:
     from ..services.graph_service import MemgraphIngestor
 
 
+@lru_cache(maxsize=10000)
+def _cached_decode_bytes(text_bytes: bytes) -> str:
+    """Cache decoded text to avoid repeated UTF-8 decoding operations.
+
+    This cache significantly improves performance for large codebases where
+    the same text content appears in multiple nodes.
+
+    Args:
+        text_bytes: Raw bytes to decode
+
+    Returns:
+        Decoded UTF-8 string
+    """
+    return text_bytes.decode("utf-8")
+
+
 def safe_decode_text(node: Node | None) -> str | None:
-    """Safely decode text from a tree-sitter node.
+    """Safely decode text from a tree-sitter node with performance caching.
 
     Args:
         node: Tree-sitter node to decode text from, can be None.
@@ -22,8 +39,23 @@ def safe_decode_text(node: Node | None) -> str | None:
         return None
     text_bytes = node.text
     if isinstance(text_bytes, bytes):
-        return text_bytes.decode("utf-8")
+        return _cached_decode_bytes(text_bytes)
     return str(text_bytes)
+
+
+def get_query_cursor(query: Any) -> QueryCursor:
+    """Create a query cursor for the given query.
+
+    This is a simple wrapper around QueryCursor construction to provide
+    a consistent interface across the codebase.
+
+    Args:
+        query: Query object to create cursor with
+
+    Returns:
+        A QueryCursor instance for the given query
+    """
+    return QueryCursor(query)
 
 
 def safe_decode_with_fallback(node: Node | None, fallback: str = "") -> str:

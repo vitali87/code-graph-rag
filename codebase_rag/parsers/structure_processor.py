@@ -1,6 +1,5 @@
 """Structure processor for identifying packages and folders."""
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +27,20 @@ class StructureProcessor:
         self.ignore_dirs = IGNORE_PATTERNS
 
     def identify_structure(self) -> None:
-        """First pass: Walks the directory to find all packages and folders."""
-        for root_str, dirs, _ in os.walk(self.repo_path, topdown=True):
-            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
-            root = Path(root_str)
+        """First pass: Efficiently walks the directory to find all packages and folders."""
+
+        def should_skip_dir(path: Path) -> bool:
+            """Check if directory should be skipped based on ignore patterns."""
+            return any(part in self.ignore_dirs for part in path.parts)
+
+        # Get all directories using pathlib, which is more efficient than os.walk
+        directories = {self.repo_path}  # Start with root
+        for path in self.repo_path.rglob("*"):
+            if path.is_dir() and not should_skip_dir(path.relative_to(self.repo_path)):
+                directories.add(path)
+
+        # Process directories in a deterministic order
+        for root in sorted(directories):
             relative_root = root.relative_to(self.repo_path)
 
             parent_rel_path = relative_root.parent

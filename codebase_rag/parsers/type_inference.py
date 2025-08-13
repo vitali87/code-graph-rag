@@ -22,7 +22,7 @@ class TypeInferenceEngine:
         function_registry: Any,
         repo_path: Path,
         project_name: str,
-        ast_cache: dict[Path, tuple[Node, str]],
+        ast_cache: Any,
         queries: dict[str, Any],
     ):
         self.import_processor = import_processor
