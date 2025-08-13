@@ -22,6 +22,7 @@ from .cpp_utils import (
 from .import_processor import ImportProcessor
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
+from .rust_utils import build_rust_module_path
 from .utils import ingest_method
 
 # Common language constants for performance optimization
@@ -757,32 +758,16 @@ class DefinitionProcessor:
         lang_config: LanguageConfig,
     ) -> str | None:
         """Build qualified name for classes inside inline modules."""
-        path_parts = []
-        current = class_node.parent
-
-        if not isinstance(current, Node):
+        if not isinstance(class_node.parent, Node):
             return None
 
-        while current and current.type != "source_file":
-            # Handle inline modules (mod_item for Rust)
-            if current.type == "mod_item":
-                if name_node := current.child_by_field_name("name"):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode("utf8"))
-            # Handle other potential container types (classes, etc.)
-            elif (
-                current.type in lang_config.class_node_types
-                and current.type != "impl_item"
-            ):
-                if name_node := current.child_by_field_name("name"):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode("utf8"))
+        # Use the shared helper which handles both Rust modules and nested classes
+        path_parts = build_rust_module_path(
+            class_node,
+            include_classes=True,
+            class_node_types=lang_config.class_node_types,
+        )
 
-            current = current.parent
-
-        path_parts.reverse()
         if path_parts:
             return f"{module_qn}.{'.'.join(path_parts)}.{class_name}"
         return None
@@ -791,27 +776,7 @@ class DefinitionProcessor:
         self, method_node: Node, module_qn: str, method_name: str
     ) -> str:
         """Build qualified name for Rust methods, handling impl blocks and modules."""
-        from .rust_utils import extract_rust_impl_target
-
-        path_parts = []
-        current = method_node.parent
-
-        while current and current.type != "source_file":
-            if current.type == "impl_item":
-                # This method is inside an impl block - get the target type
-                impl_target = extract_rust_impl_target(current)
-                if impl_target:
-                    path_parts.append(impl_target)
-            elif current.type == "mod_item":
-                # This method is inside an inline module
-                if name_node := current.child_by_field_name("name"):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode("utf8"))
-
-            current = current.parent
-
-        path_parts.reverse()
+        path_parts = build_rust_module_path(method_node, include_impl_targets=True)
         if path_parts:
             return f"{module_qn}.{'.'.join(path_parts)}.{method_name}"
         return f"{module_qn}.{method_name}"
@@ -820,20 +785,7 @@ class DefinitionProcessor:
         self, func_node: Node, module_qn: str, func_name: str
     ) -> str:
         """Build qualified name for Rust functions, handling inline modules."""
-        path_parts = []
-        current = func_node.parent
-
-        while current and current.type != "source_file":
-            if current.type == "mod_item":
-                # This function is inside an inline module
-                if name_node := current.child_by_field_name("name"):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode("utf8"))
-
-            current = current.parent
-
-        path_parts.reverse()
+        path_parts = build_rust_module_path(func_node)
         if path_parts:
             return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"

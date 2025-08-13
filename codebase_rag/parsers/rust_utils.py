@@ -255,3 +255,54 @@ def get_rust_visibility(node: Node) -> str:
                     return "public"
 
     return "private"
+
+
+def build_rust_module_path(
+    node: Node,
+    include_impl_targets: bool = False,
+    include_classes: bool = False,
+    class_node_types: list[str] | None = None,
+) -> list[str]:
+    """Build a path of containing modules/types for a Rust node.
+
+    Traverses up the AST from the given node to find all containing modules,
+    impl blocks, and optionally classes.
+
+    Args:
+        node: The tree-sitter node to start from.
+        include_impl_targets: If True, include impl block targets in the path.
+        include_classes: If True, include containing class types in the path.
+        class_node_types: List of node types to consider as classes (for include_classes).
+
+    Returns:
+        List of path components from outermost to innermost (excluding source_file).
+        For example: ["outer_mod", "inner_mod", "MyStruct"] for a method inside
+        nested modules and an impl block.
+    """
+    path_parts = []
+    current = node.parent
+
+    while current and current.type != "source_file":
+        if current.type == "mod_item":
+            # This is an inline module
+            if name_node := current.child_by_field_name("name"):
+                text = name_node.text
+                if text is not None:
+                    path_parts.append(text.decode("utf8"))
+        elif include_impl_targets and current.type == "impl_item":
+            # This is inside an impl block - get the target type
+            impl_target = extract_rust_impl_target(current)
+            if impl_target:
+                path_parts.append(impl_target)
+        elif include_classes and class_node_types and current.type in class_node_types:
+            # This is inside a class-like structure
+            if current.type != "impl_item":  # Skip impl_item as it's handled above
+                if name_node := current.child_by_field_name("name"):
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode("utf8"))
+
+        current = current.parent
+
+    path_parts.reverse()
+    return path_parts
