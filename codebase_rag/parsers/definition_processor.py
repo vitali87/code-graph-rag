@@ -241,7 +241,9 @@ class DefinitionProcessor:
             for dep_line in deps:
                 dep_name, _ = self._extract_pep508_package_name(dep_line)
                 if dep_name:
-                    self._add_dependency(dep_name, dep_line)
+                    self._add_dependency(
+                        dep_name, dep_line, properties={"group": group_name}
+                    )
 
     def _parse_requirements_txt(self, filepath: Path) -> None:
         """Parse requirements.txt for Python dependencies."""
@@ -378,18 +380,26 @@ class DefinitionProcessor:
         except ET.ParseError as e:
             logger.error(f"    Error parsing XML in {filepath}: {e}")
 
-    def _add_dependency(self, dep_name: str, dep_spec: str) -> None:
+    def _add_dependency(
+        self, dep_name: str, dep_spec: str, properties: dict[str, str] | None = None
+    ) -> None:
         """Add a dependency to the graph."""
         if not dep_name or dep_name.lower() in ["python", "php"]:
             return
 
         logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
         self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
+
+        # Build relationship properties
+        rel_properties = {"version_spec": dep_spec} if dep_spec else {}
+        if properties:
+            rel_properties.update(properties)
+
         self.ingestor.ensure_relationship_batch(
             ("Project", "name", self.project_name),
             "DEPENDS_ON_EXTERNAL",
             ("ExternalPackage", "name", dep_name),
-            properties={"version_spec": dep_spec} if dep_spec else {},
+            properties=rel_properties,
         )
 
     def _get_docstring(self, node: Node) -> str | None:

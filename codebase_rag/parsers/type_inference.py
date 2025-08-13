@@ -2,13 +2,16 @@
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from .import_processor import ImportProcessor
 from .python_utils import resolve_class_name
+
+if TYPE_CHECKING:
+    from .factory import ASTCacheProtocol
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -23,7 +26,7 @@ class TypeInferenceEngine:
         function_registry: Any,
         repo_path: Path,
         project_name: str,
-        ast_cache: Any,
+        ast_cache: "ASTCacheProtocol",
         queries: dict[str, Any],
     ):
         self.import_processor = import_processor
