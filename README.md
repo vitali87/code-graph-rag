@@ -48,7 +48,7 @@ Use the Makefile for:
   | ✅ TypeScript | **Fully Supported** | Complete AST parsing, type inference, call graphs |
   | ✅ C++ | **Fully Supported** | Complete AST parsing, operator overloading, templates, namespaces, C++20 modules |
   | ✅ Lua | **Fully Supported** | Complete AST parsing, import resolution, call graphs |
-  | 🚧 Rust | In Development | Basic parsing, full support underway |
+  | ✅ Rust | **Fully Supported** | Complete AST parsing, impl blocks, traits, associated functions |
   | 🚧 Go | In Development | Basic parsing, full support underway |
   | 🚧 Scala | In Development | Basic parsing, full support underway |
   | 🚧 Java | In Development | Basic parsing, full support underway |
