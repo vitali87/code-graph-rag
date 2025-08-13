@@ -1,4 +1,7 @@
+import importlib
 import os
+import subprocess
+import sys
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
@@ -21,9 +24,6 @@ def _try_load_from_submodule(lang_name: str) -> LanguageLoader:
         return None
 
     try:
-        import subprocess
-        import sys
-
         # Add the Python bindings to path
         if python_bindings_path not in sys.path:
             sys.path.insert(0, python_bindings_path)
@@ -51,8 +51,6 @@ def _try_load_from_submodule(lang_name: str) -> LanguageLoader:
                 logger.debug(f"Successfully built {lang_name} bindings")
 
             # Now try to import the module
-            import importlib
-
             logger.debug(f"Attempting to import module: {module_name}")
             module = importlib.import_module(module_name)
 

@@ -1,9 +1,12 @@
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import tree_sitter_python as tsp
+from tree_sitter import Language, Parser
 
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 
@@ -135,8 +138,6 @@ class TestImportParsing:
         )
 
         # Test with empty function registry
-        from codebase_rag.graph_updater import FunctionRegistryTrie
-
         graph_updater.function_registry = FunctionRegistryTrie()
         assert len(graph_updater.function_registry) == 0
 
@@ -152,11 +153,6 @@ class TestImportParsing:
 
     def test_python_alias_import_parsing(self, graph_updater: GraphUpdater) -> None:
         """Test Python aliased import parsing functionality."""
-        import tempfile
-
-        import tree_sitter_python as tsp
-        from tree_sitter import Language, Parser
-
         # Set up tree-sitter for Python
         PY_LANGUAGE = Language(tsp.language())
         parser = Parser(PY_LANGUAGE)

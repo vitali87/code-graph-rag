@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -530,8 +531,6 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     try:
         original_content = pathlib.Path(config_file).read_text()
         # Find and remove the language config entry with better pattern
-        import re
-
         # Match the entire language config entry including multiline content
         pattern = rf'    "{language_name}": LanguageConfig\([\s\S]*?\),\n'
         new_content = re.sub(pattern, "", original_content)
@@ -569,8 +568,6 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
                 # Clean up .git/modules directory (this is crucial!)
                 modules_path = f".git/modules/{submodule_path}"
                 if os.path.exists(modules_path):
-                    import shutil
-
                     shutil.rmtree(modules_path)
                     click.echo(f"🧹 Cleaned up git modules directory: {modules_path}")
 
@@ -601,8 +598,6 @@ def cleanup_orphaned_modules() -> None:
     try:
         with open(".gitmodules") as f:
             content = f.read()
-            import re
-
             # Find all submodule paths
             paths = re.findall(r"path = (grammars/tree-sitter-[^\\n]+)", content)
             gitmodules_submodules = set(paths)
@@ -623,8 +618,6 @@ def cleanup_orphaned_modules() -> None:
     click.echo(f"🔍 Found {len(orphaned)} orphaned module(s): {', '.join(orphaned)}")
 
     if click.confirm("Do you want to remove these orphaned modules?"):
-        import shutil
-
         for module in orphaned:
             module_path = os.path.join(modules_dir, module)
             shutil.rmtree(module_path)

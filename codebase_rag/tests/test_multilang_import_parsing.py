@@ -175,6 +175,84 @@ fn main() {
             )
 
 
+def test_rust_complex_import_patterns() -> None:
+    """Test complex Rust import patterns that were previously not supported."""
+    test_code = """
+// Nested groups
+use std::{io::{Read, Write}, fs::{self, File}};
+
+// Aliases within groups
+use std::io::{self as Sio, Read as ReadTrait};
+
+// Complex nested paths
+use super::super::module;
+use crate::{module1, module2::{submod1, submod2}};
+
+// Self imports
+use self::local_module;
+use super::{self, parent_module};
+
+fn main() {
+    let mut file = File::open("test.txt").unwrap();
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).unwrap();
+
+    Sio::stdout().write_all(&buffer).unwrap();
+    ReadTrait::read_exact(&mut file, &mut buffer).unwrap();
+}
+"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.rs"
+        test_file.write_text(test_code)
+
+        parsers, queries = load_parsers()
+        if "rust" not in parsers:
+            return  # Skip if Rust parser not available
+
+        mock_ingestor = MagicMock()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+
+        updater.run()
+
+        project_name = Path(temp_dir).name
+        test_module = f"{project_name}.test"
+
+        assert test_module in updater.factory.import_processor.import_mapping, (
+            f"No import mapping for {test_module}"
+        )
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
+
+        expected = {
+            # Nested groups: use std::{io::{Read, Write}, fs::{self, File}};
+            "Read": "std::io::Read",
+            "Write": "std::io::Write",
+            "File": "std::fs::File",
+            # Aliases within groups: use std::io::{self as Sio, Read as ReadTrait};
+            "Sio": "std::io",
+            "ReadTrait": "std::io::Read",
+            # Complex nested paths
+            "module": "super::super::module",
+            "module1": "crate::module1",
+            "submod1": "crate::module2::submod1",
+            "submod2": "crate::module2::submod2",
+            # Self imports - the last "self" import wins
+            "local_module": "self::local_module",
+            "parent_module": "super::parent_module",
+            "self": "super",  # Last self import: use super::{self, parent_module};
+        }
+
+        for name, path in expected.items():
+            assert name in actual_imports, f"Missing import: {name}"
+            assert actual_imports[name] == path, (
+                f"Wrong path for {name}: expected {path}, got {actual_imports[name]}"
+            )
+
+
 def test_go_import_parsing() -> None:
     """Test Go import parsing."""
     test_code = """

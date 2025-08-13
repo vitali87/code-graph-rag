@@ -2,7 +2,9 @@
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+
+from tree_sitter import Node
 
 from ..services.graph_service import MemgraphIngestor
 from .call_processor import CallProcessor
@@ -10,6 +12,16 @@ from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
 from .structure_processor import StructureProcessor
 from .type_inference import TypeInferenceEngine
+
+
+class ASTCacheProtocol(Protocol):
+    """Protocol for AST cache implementations."""
+
+    def __setitem__(self, key: Path, value: tuple[Node, str]) -> None: ...
+    def __getitem__(self, key: Path) -> tuple[Node, str]: ...
+    def __delitem__(self, key: Path) -> None: ...
+    def __contains__(self, key: Path) -> bool: ...
+    def items(self) -> Any: ...
 
 
 class ProcessorFactory:
@@ -23,7 +35,7 @@ class ProcessorFactory:
         queries: dict[str, Any],
         function_registry: Any,
         simple_name_lookup: dict[str, set[str]],
-        ast_cache: dict[Path, tuple[Any, str]],
+        ast_cache: ASTCacheProtocol,
     ) -> None:
         self.ingestor = ingestor
         self._repo_path_getter = repo_path_getter

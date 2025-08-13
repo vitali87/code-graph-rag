@@ -1,6 +1,9 @@
 """Definition processor for extracting functions, classes and methods."""
 
+import json
+import re
 import textwrap
+import xml.etree.ElementTree as ET
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,8 @@ from .cpp_utils import (
 from .import_processor import ImportProcessor
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
+from .rust_utils import build_rust_module_path, extract_rust_impl_target
+from .utils import ingest_exported_function, ingest_method
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -110,6 +115,11 @@ class DefinitionProcessor:
                 module_qn = ".".join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
+            elif file_path.name == "mod.rs":
+                # In Rust, mod.rs represents the parent module directory
+                module_qn = ".".join(
+                    [self.project_name] + list(relative_path.parent.parts)
+                )
 
             self.ingestor.ensure_node_batch(
                 "Module",
@@ -164,27 +174,233 @@ class DefinitionProcessor:
             return None
 
     def process_dependencies(self, filepath: Path) -> None:
-        """Parse pyproject.toml for dependencies."""
-        logger.info(f"  Parsing pyproject.toml: {filepath}")
+        """Parse various dependency files for external package dependencies."""
+        file_name = filepath.name.lower()
+        logger.info(f"  Parsing dependency file: {filepath}")
+
         try:
-            data = toml.load(filepath)
-            deps = (data.get("tool", {}).get("poetry", {}).get("dependencies", {})) or {
-                dep.split(">=")[0].split("==")[0].strip(): dep
-                for dep in data.get("project", {}).get("dependencies", [])
-            }
-            for dep_name, dep_spec in deps.items():
-                if dep_name.lower() == "python":
-                    continue
-                logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
-                self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
-                self.ingestor.ensure_relationship_batch(
-                    ("Project", "name", self.project_name),
-                    "DEPENDS_ON_EXTERNAL",
-                    ("ExternalPackage", "name", dep_name),
-                    properties={"version_spec": str(dep_spec)},
-                )
+            if file_name == "pyproject.toml":
+                self._parse_pyproject_toml(filepath)
+            elif file_name == "requirements.txt":
+                self._parse_requirements_txt(filepath)
+            elif file_name == "package.json":
+                self._parse_package_json(filepath)
+            elif file_name == "cargo.toml":
+                self._parse_cargo_toml(filepath)
+            elif file_name == "go.mod":
+                self._parse_go_mod(filepath)
+            elif file_name == "gemfile":
+                self._parse_gemfile(filepath)
+            elif file_name == "composer.json":
+                self._parse_composer_json(filepath)
+            elif filepath.suffix.lower() == ".csproj":
+                self._parse_csproj(filepath)
+            else:
+                logger.debug(f"    Unknown dependency file format: {filepath}")
         except Exception as e:
             logger.error(f"    Error parsing {filepath}: {e}")
+
+    def _extract_pep508_package_name(self, dep_string: str) -> tuple[str, str]:
+        """Extracts the package name and the rest of the spec from a PEP 508 string."""
+        # Match package name (with optional extras) - more robust than chain of splits
+        match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", dep_string.strip())
+        if not match:
+            return "", ""
+        name_with_extras = match.group(1)
+        # Extract just the package name without extras
+        name_match = re.match(r"^([a-zA-Z0-9_.-]+)", name_with_extras)
+        if not name_match:
+            return "", ""
+        name = name_match.group(1)
+        spec = dep_string[len(name_with_extras) :].strip()
+        return name, spec
+
+    def _parse_pyproject_toml(self, filepath: Path) -> None:
+        """Parse pyproject.toml for Python dependencies."""
+        data = toml.load(filepath)
+
+        # Handle Poetry dependencies
+        poetry_deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+        if poetry_deps:
+            for dep_name, dep_spec in poetry_deps.items():
+                if dep_name.lower() == "python":
+                    continue
+                self._add_dependency(dep_name, str(dep_spec))
+
+        # Handle PEP 621 project dependencies
+        project_deps = data.get("project", {}).get("dependencies", [])
+        if project_deps:
+            for dep_line in project_deps:
+                dep_name, _ = self._extract_pep508_package_name(dep_line)
+                if dep_name:
+                    self._add_dependency(dep_name, dep_line)
+
+        # Handle optional dependencies
+        optional_deps = data.get("project", {}).get("optional-dependencies", {})
+        for group_name, deps in optional_deps.items():
+            for dep_line in deps:
+                dep_name, _ = self._extract_pep508_package_name(dep_line)
+                if dep_name:
+                    self._add_dependency(
+                        dep_name, dep_line, properties={"group": group_name}
+                    )
+
+    def _parse_requirements_txt(self, filepath: Path) -> None:
+        """Parse requirements.txt for Python dependencies."""
+        with open(filepath, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
+
+                # Extract package name and version spec from requirement specification
+                dep_name, version_spec = self._extract_pep508_package_name(line)
+                if dep_name:
+                    self._add_dependency(dep_name, version_spec)
+
+    def _parse_package_json(self, filepath: Path) -> None:
+        """Parse package.json for Node.js dependencies."""
+
+        with open(filepath, encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Regular dependencies
+        deps = data.get("dependencies", {})
+        for dep_name, dep_spec in deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+        # Development dependencies
+        dev_deps = data.get("devDependencies", {})
+        for dep_name, dep_spec in dev_deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+        # Peer dependencies
+        peer_deps = data.get("peerDependencies", {})
+        for dep_name, dep_spec in peer_deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+    def _parse_cargo_toml(self, filepath: Path) -> None:
+        """Parse Cargo.toml for Rust dependencies."""
+        data = toml.load(filepath)
+
+        # Regular dependencies
+        deps = data.get("dependencies", {})
+        for dep_name, dep_spec in deps.items():
+            version = (
+                dep_spec if isinstance(dep_spec, str) else dep_spec.get("version", "")
+            )
+            self._add_dependency(dep_name, version)
+
+        # Development dependencies
+        dev_deps = data.get("dev-dependencies", {})
+        for dep_name, dep_spec in dev_deps.items():
+            version = (
+                dep_spec if isinstance(dep_spec, str) else dep_spec.get("version", "")
+            )
+            self._add_dependency(dep_name, version)
+
+    def _parse_go_mod(self, filepath: Path) -> None:
+        """Parse go.mod for Go dependencies."""
+        with open(filepath, encoding="utf-8") as f:
+            in_require_block = False
+            for line in f:
+                line = line.strip()
+
+                if line.startswith("require ("):
+                    in_require_block = True
+                    continue
+                elif line == ")" and in_require_block:
+                    in_require_block = False
+                    continue
+                elif line.startswith("require ") and not in_require_block:
+                    # Single require statement
+                    parts = line.split()[1:]
+                    if len(parts) >= 2:
+                        dep_name = parts[0]
+                        version = parts[1]
+                        self._add_dependency(dep_name, version)
+                elif in_require_block and line and not line.startswith("//"):
+                    # Inside require block
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        dep_name = parts[0]
+                        version = parts[1]
+                        if not version.startswith("//"):  # Skip comments
+                            self._add_dependency(dep_name, version)
+
+    def _parse_gemfile(self, filepath: Path) -> None:
+        """Parse Gemfile for Ruby dependencies."""
+        with open(filepath, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("gem "):
+                    # Parse gem "name", "version" or gem "name", ">= version"
+
+                    match = re.match(
+                        r'gem\s+["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])?',
+                        line,
+                    )
+                    if match:
+                        dep_name = match.group(1)
+                        version = match.group(2) if match.group(2) else ""
+                        self._add_dependency(dep_name, version)
+
+    def _parse_composer_json(self, filepath: Path) -> None:
+        """Parse composer.json for PHP dependencies."""
+
+        with open(filepath, encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Regular dependencies
+        deps = data.get("require", {})
+        for dep_name, dep_spec in deps.items():
+            if dep_name != "php":  # Skip PHP version requirement
+                self._add_dependency(dep_name, dep_spec)
+
+        # Development dependencies
+        dev_deps = data.get("require-dev", {})
+        for dep_name, dep_spec in dev_deps.items():
+            self._add_dependency(dep_name, dep_spec)
+
+    def _parse_csproj(self, filepath: Path) -> None:
+        """Parse .csproj files for .NET dependencies."""
+
+        try:
+            tree = ET.parse(filepath)
+            root = tree.getroot()
+
+            # Find all PackageReference elements
+            for pkg_ref in root.iter("PackageReference"):
+                include = pkg_ref.get("Include")
+                version = pkg_ref.get("Version")
+
+                if include:
+                    self._add_dependency(include, version or "")
+
+        except ET.ParseError as e:
+            logger.error(f"    Error parsing XML in {filepath}: {e}")
+
+    def _add_dependency(
+        self, dep_name: str, dep_spec: str, properties: dict[str, str] | None = None
+    ) -> None:
+        """Add a dependency to the graph."""
+        if not dep_name or dep_name.lower() in ["python", "php"]:
+            return
+
+        logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
+        self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
+
+        # Build relationship properties
+        rel_properties = {"version_spec": dep_spec} if dep_spec else {}
+        if properties:
+            rel_properties.update(properties)
+
+        self.ingestor.ensure_relationship_batch(
+            ("Project", "name", self.project_name),
+            "DEPENDS_ON_EXTERNAL",
+            ("ExternalPackage", "name", dep_name),
+            properties=rel_properties,
+        )
 
     def _get_docstring(self, node: Node) -> str | None:
         """Extracts the docstring from a function or class node's body."""
@@ -376,6 +592,7 @@ class DefinitionProcessor:
 
         func_nodes = captures.get("function", [])
 
+        # Process regular functions
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
                 logger.warning(
@@ -417,13 +634,18 @@ class DefinitionProcessor:
                         func_node, module_qn
                     )
 
-                # Build proper qualified name using existing nested infrastructure
-                func_qn = (
-                    self._build_nested_qualified_name(
-                        func_node, module_qn, func_name, lang_config
+                # Build proper qualified name - special handling for Rust inline modules
+                if language == "rust":
+                    func_qn = self._build_rust_function_qualified_name(
+                        func_node, module_qn, func_name
                     )
-                    or f"{module_qn}.{func_name}"
-                )  # Fallback to simple name
+                else:
+                    func_qn = (
+                        self._build_nested_qualified_name(
+                            func_node, module_qn, func_name, lang_config
+                        )
+                        or f"{module_qn}.{func_name}"
+                    )  # Fallback to simple name
 
             # Extract function properties
             decorators = self._extract_decorators(func_node)
@@ -532,6 +754,46 @@ class DefinitionProcessor:
             return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
         else:
             return f"{module_qn}.{func_name}"
+
+    def _build_nested_qualified_name_for_class(
+        self,
+        class_node: Node,
+        module_qn: str,
+        class_name: str,
+        lang_config: LanguageConfig,
+    ) -> str | None:
+        """Build qualified name for classes inside inline modules."""
+        if not isinstance(class_node.parent, Node):
+            return None
+
+        # Use the shared helper which handles both Rust modules and nested classes
+        path_parts = build_rust_module_path(
+            class_node,
+            include_classes=True,
+            class_node_types=lang_config.class_node_types,
+        )
+
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{class_name}"
+        return None
+
+    def _build_rust_method_qualified_name(
+        self, method_node: Node, module_qn: str, method_name: str
+    ) -> str:
+        """Build qualified name for Rust methods, handling impl blocks and modules."""
+        path_parts = build_rust_module_path(method_node, include_impl_targets=True)
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{method_name}"
+        return f"{module_qn}.{method_name}"
+
+    def _build_rust_function_qualified_name(
+        self, func_node: Node, module_qn: str, func_name: str
+    ) -> str:
+        """Build qualified name for Rust functions, handling inline modules."""
+        path_parts = build_rust_module_path(func_node)
+        if path_parts:
+            return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
+        return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageConfig) -> bool:
         """Check if a function is actually a method inside a class."""
@@ -718,10 +980,13 @@ class DefinitionProcessor:
         if not lang_queries.get("classes"):
             return
 
+        lang_config: LanguageConfig = lang_queries["config"]
+
         query = lang_queries["classes"]
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
         class_nodes = captures.get("class", [])
+        module_nodes = captures.get("module", [])
 
         # For C++, also check for misclassified exported classes due to Tree-sitter grammar limitations
         if language == "cpp":
@@ -746,12 +1011,52 @@ class DefinitionProcessor:
                 if not class_name:
                     continue
                 class_qn = build_cpp_qualified_name(class_node, module_qn, class_name)
+            elif language == "rust" and class_node.type == "impl_item":
+                # Special handling for Rust impl blocks
+
+                # Extract the type being implemented for
+                impl_target = extract_rust_impl_target(class_node)
+                if not impl_target:
+                    continue
+
+                # The impl block itself is not a class, but we need to process its methods
+                # and associate them with the actual struct/enum
+                class_qn = f"{module_qn}.{impl_target}"
+
+                # Process methods in the impl block
+                body_node = class_node.child_by_field_name("body")
+                if body_node:
+                    method_query = lang_queries["functions"]
+                    method_cursor = QueryCursor(method_query)
+                    method_captures = method_cursor.captures(body_node)
+                    method_nodes = method_captures.get("function", [])
+                    for method_node in method_nodes:
+                        if not isinstance(method_node, Node):
+                            continue
+
+                        ingest_method(
+                            method_node,
+                            class_qn,
+                            "Class",
+                            self.ingestor,
+                            self.function_registry,
+                            self.simple_name_lookup,
+                            self._get_docstring,
+                            language,
+                        )
+
+                # Skip the rest of the processing for impl blocks
+                continue
             else:
                 is_exported = False  # Default for non-C++ languages
                 class_name = self._extract_class_name(class_node)
                 if not class_name:
                     continue
-                class_qn = f"{module_qn}.{class_name}"
+                # Build nested qualified name for classes inside inline modules
+                nested_qn = self._build_nested_qualified_name_for_class(
+                    class_node, module_qn, class_name, lang_config
+                )
+                class_qn = nested_qn if nested_qn else f"{module_qn}.{class_name}"
             decorators = self._extract_decorators(class_node)
             class_props: dict[str, Any] = {
                 "qualified_name": class_qn,
@@ -858,43 +1163,48 @@ class DefinitionProcessor:
                 if not isinstance(method_node, Node):
                     continue
 
-                # Use C++ specific method name extraction for C++
-                if language == "cpp":
-                    method_name = extract_cpp_function_name(method_node)
-                    if not method_name:
-                        continue
-                else:
-                    method_name_node = method_node.child_by_field_name("name")
-                    if not method_name_node:
-                        continue
-                    text = method_name_node.text
-                    if text is None:
-                        continue
-                    method_name = text.decode("utf8")
-
-                method_qn = f"{class_qn}.{method_name}"
-                decorators = self._extract_decorators(method_node)
-                method_props: dict[str, Any] = {
-                    "qualified_name": method_qn,
-                    "name": method_name,
-                    "decorators": decorators,
-                    "start_line": method_node.start_point[0] + 1,
-                    "end_line": method_node.end_point[0] + 1,
-                    "docstring": self._get_docstring(method_node),
-                }
-                # All methods should be Method nodes for consistency across languages
-                logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
-                self.ingestor.ensure_node_batch("Method", method_props)
-                self.function_registry[method_qn] = "Method"
-                self.simple_name_lookup[method_name].add(method_qn)
-
-                self.ingestor.ensure_relationship_batch(
-                    ("Class", "qualified_name", class_qn),
-                    "DEFINES_METHOD",
-                    ("Method", "qualified_name", method_qn),
+                ingest_method(
+                    method_node,
+                    class_qn,
+                    "Class",
+                    self.ingestor,
+                    self.function_registry,
+                    self.simple_name_lookup,
+                    self._get_docstring,
+                    language,
+                    self._extract_decorators,
                 )
 
                 # Note: OVERRIDES relationships will be processed later after all methods are collected
+
+        # Process inline modules (like Rust mod items)
+        for module_node in module_nodes:
+            if not isinstance(module_node, Node):
+                continue
+
+            module_name_node = module_node.child_by_field_name("name")
+            if not module_name_node:
+                continue
+            text = module_name_node.text
+            if text is None:
+                continue
+            module_name = text.decode("utf8")
+
+            # Build nested qualified name for inline modules
+            nested_qn = self._build_nested_qualified_name_for_class(
+                module_node, module_qn, module_name, lang_config
+            )
+            inline_module_qn = nested_qn if nested_qn else f"{module_qn}.{module_name}"
+
+            module_props: dict[str, Any] = {
+                "qualified_name": inline_module_qn,
+                "name": module_name,
+                "path": f"inline_module_{module_name}",
+            }
+            logger.info(
+                f"  Found Inline Module: {module_name} (qn: {inline_module_qn})"
+            )
+            self.ingestor.ensure_node_batch("Module", module_props)
 
     def process_all_method_overrides(self) -> None:
         """Process OVERRIDES relationships for all methods after collection is complete."""
@@ -960,16 +1270,19 @@ class DefinitionProcessor:
             # Handle different types of parent class specifications
             if base_child.type == "type_identifier":
                 # Simple inheritance: class Derived : public Base
-                parent_name = base_child.text.decode("utf8")
+                if base_child.text:
+                    parent_name = base_child.text.decode("utf8")
 
             elif base_child.type == "qualified_identifier":
                 # Namespace qualified: class Derived : public ns::Base
                 # Also handles qualified templates: class Derived : public ns::Base<T>
-                parent_name = base_child.text.decode("utf8")
+                if base_child.text:
+                    parent_name = base_child.text.decode("utf8")
 
             elif base_child.type == "template_type":
                 # Template inheritance: class Derived : public Base<T>
-                parent_name = base_child.text.decode("utf8")
+                if base_child.text:
+                    parent_name = base_child.text.decode("utf8")
 
             # Skip access specifiers, virtual keyword, commas, and colons
             elif base_child.type in ["access_specifier", "virtual", ",", ":"]:
@@ -1663,8 +1976,8 @@ class DefinitionProcessor:
                     export_functions = captures.get("export_function", [])
 
                     # Process exports.name = function patterns
-                    for i, (exports_obj, export_name, export_function) in enumerate(
-                        zip(exports_objs, export_names, export_functions)
+                    for exports_obj, export_name, export_function in zip(
+                        exports_objs, export_names, export_functions
                     ):
                         if (
                             exports_obj.text
@@ -1672,36 +1985,26 @@ class DefinitionProcessor:
                             and exports_obj.text.decode("utf8") == "exports"
                         ):
                             function_name = export_name.text.decode("utf8")
-
-                            # Skip if this export is inside a function (let regular processing handle it)
-                            if self._is_export_inside_function(export_function):
-                                continue
-
-                            function_qn = f"{module_qn}.{function_name}"
-
-                            function_props = {
-                                "qualified_name": function_qn,
-                                "name": function_name,
-                                "start_line": export_function.start_point[0] + 1,
-                                "end_line": export_function.end_point[0] + 1,
-                                "docstring": self._get_docstring(export_function),
-                            }
-
-                            logger.info(
-                                f"  Found CommonJS Export: {function_name} (qn: {function_qn})"
+                            ingest_exported_function(
+                                export_function,
+                                function_name,
+                                module_qn,
+                                "CommonJS Export",
+                                self.ingestor,
+                                self.function_registry,
+                                self.simple_name_lookup,
+                                self._get_docstring,
+                                self._is_export_inside_function,
                             )
-                            self.ingestor.ensure_node_batch("Function", function_props)
-                            self.function_registry[function_qn] = "Function"
-                            self.simple_name_lookup[function_name].add(function_qn)
 
                     # Process module.exports.name = function patterns
-                    for i, (
+                    for (
                         module_obj,
                         exports_prop,
                         export_name,
                         export_function,
-                    ) in enumerate(
-                        zip(module_objs, exports_props, export_names, export_functions)
+                    ) in zip(
+                        module_objs, exports_props, export_names, export_functions
                     ):
                         if (
                             module_obj.text
@@ -1711,27 +2014,17 @@ class DefinitionProcessor:
                             and exports_prop.text.decode("utf8") == "exports"
                         ):
                             function_name = export_name.text.decode("utf8")
-
-                            # Skip if this export is inside a function (let regular processing handle it)
-                            if self._is_export_inside_function(export_function):
-                                continue
-
-                            function_qn = f"{module_qn}.{function_name}"
-
-                            function_props = {
-                                "qualified_name": function_qn,
-                                "name": function_name,
-                                "start_line": export_function.start_point[0] + 1,
-                                "end_line": export_function.end_point[0] + 1,
-                                "docstring": self._get_docstring(export_function),
-                            }
-
-                            logger.info(
-                                f"  Found CommonJS Module Export: {function_name} (qn: {function_qn})"
+                            ingest_exported_function(
+                                export_function,
+                                function_name,
+                                module_qn,
+                                "CommonJS Module Export",
+                                self.ingestor,
+                                self.function_registry,
+                                self.simple_name_lookup,
+                                self._get_docstring,
+                                self._is_export_inside_function,
                             )
-                            self.ingestor.ensure_node_batch("Function", function_props)
-                            self.function_registry[function_qn] = "Function"
-                            self.simple_name_lookup[function_name].add(function_qn)
 
                 except Exception as e:
                     logger.debug(f"Failed to process CommonJS exports query: {e}")
@@ -1772,73 +2065,44 @@ class DefinitionProcessor:
                     export_functions = captures.get("export_function", [])
 
                     # Process export const name = function patterns
-                    for i, (export_name, export_function) in enumerate(
-                        zip(export_names, export_functions)
+                    for export_name, export_function in zip(
+                        export_names, export_functions
                     ):
                         if export_name.text and export_function:
                             function_name = export_name.text.decode("utf8")
-
-                            # Skip if this export is inside a function (let regular processing handle it)
-                            if self._is_export_inside_function(export_function):
-                                continue
-
-                            function_qn = f"{module_qn}.{function_name}"
-
-                            function_props = {
-                                "qualified_name": function_qn,
-                                "name": function_name,
-                                "start_line": export_function.start_point[0] + 1,
-                                "end_line": export_function.end_point[0] + 1,
-                                "docstring": self._get_docstring(export_function),
-                            }
-
-                            logger.debug(
-                                f"  Found ES6 Export Function: {function_name} (qn: {function_qn})"
+                            ingest_exported_function(
+                                export_function,
+                                function_name,
+                                module_qn,
+                                "ES6 Export Function",
+                                self.ingestor,
+                                self.function_registry,
+                                self.simple_name_lookup,
+                                self._get_docstring,
+                                self._is_export_inside_function,
                             )
-                            self.ingestor.ensure_node_batch("Function", function_props)
-                            self.function_registry[function_qn] = "Function"
-                            self.simple_name_lookup[function_name].add(function_qn)
 
                     # Process export function patterns (function declarations)
                     if not export_names:  # Only function declarations
                         for export_function in export_functions:
                             if export_function:
                                 # Get function name from the function declaration
-                                function_name = None
                                 if name_node := export_function.child_by_field_name(
                                     "name"
                                 ):
                                     if name_node.text:
                                         function_name = name_node.text.decode("utf8")
-
-                                if function_name:
-                                    # Skip if this export is inside a function (let regular processing handle it)
-                                    if self._is_export_inside_function(export_function):
-                                        continue
-
-                                    function_qn = f"{module_qn}.{function_name}"
-
-                                    function_props = {
-                                        "qualified_name": function_qn,
-                                        "name": function_name,
-                                        "start_line": export_function.start_point[0]
-                                        + 1,
-                                        "end_line": export_function.end_point[0] + 1,
-                                        "docstring": self._get_docstring(
-                                            export_function
-                                        ),
-                                    }
-
-                                    logger.debug(
-                                        f"  Found ES6 Export Function Declaration: {function_name} (qn: {function_qn})"
-                                    )
-                                    self.ingestor.ensure_node_batch(
-                                        "Function", function_props
-                                    )
-                                    self.function_registry[function_qn] = "Function"
-                                    self.simple_name_lookup[function_name].add(
-                                        function_qn
-                                    )
+                                        ingest_exported_function(
+                                            export_function,
+                                            function_name,
+                                            module_qn,
+                                            "ES6 Export Function Declaration",
+                                            self.ingestor,
+                                            self.function_registry,
+                                            self.simple_name_lookup,
+                                            self._get_docstring,
+                                            self._is_export_inside_function,
+                                        )
 
                 except Exception as e:
                     logger.debug(f"Failed to process ES6 exports query: {e}")

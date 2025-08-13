@@ -4,14 +4,15 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node
 
 from ..language_config import LanguageConfig
 from .lua_utils import (
     extract_lua_assigned_name,
     extract_lua_pcall_second_identifier,
 )
-from .utils import safe_decode_text, safe_decode_with_fallback
+from .rust_utils import extract_rust_use_imports
+from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
@@ -64,7 +65,7 @@ class ImportProcessor:
         self.import_mapping[module_qn] = {}
 
         try:
-            cursor = QueryCursor(imports_query)
+            cursor = get_query_cursor(imports_query)
             captures = cursor.captures(root_node)
 
             # Handle different language import patterns
@@ -514,64 +515,14 @@ class ImportProcessor:
                 self._parse_rust_use_declaration(import_node, module_qn)
 
     def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
-        """Parse a single Rust use declaration."""
-        for child in use_node.children:
-            if child.type == "scoped_identifier":
-                # Simple use: use std::collections::HashMap;
-                full_path = safe_decode_with_fallback(child)
-                parts = full_path.split("::")
-                if parts:
-                    imported_name = parts[-1]
-                    self.import_mapping[module_qn][imported_name] = full_path
-                    logger.debug(f"Rust use: {imported_name} -> {full_path}")
+        """Parse a single Rust use declaration using tree-sitter field access."""
+        # Use the improved tree-sitter-based function to extract imports
+        imports = extract_rust_use_imports(use_node)
 
-            elif child.type == "use_as_clause":
-                # Aliased use: use std::collections::HashMap as Map;
-                original_path = None
-                alias_name = None
-                for grandchild in child.children:
-                    if grandchild.type == "scoped_identifier":
-                        original_path = safe_decode_with_fallback(grandchild)
-                    elif grandchild.type == "identifier":
-                        alias_name = safe_decode_with_fallback(grandchild)
-
-                if original_path and alias_name:
-                    self.import_mapping[module_qn][alias_name] = original_path
-                    logger.debug(f"Rust use as: {alias_name} -> {original_path}")
-
-            elif child.type == "scoped_use_list":
-                # Multiple use: use std::{fs, io};
-                base_path = None
-                imported_names = []
-
-                for grandchild in child.children:
-                    if grandchild.type == "identifier":
-                        base_path = safe_decode_with_fallback(grandchild)
-                    elif grandchild.type == "use_list":
-                        # Extract names from the list
-                        for list_child in grandchild.children:
-                            if list_child.type == "identifier":
-                                imported_names.append(
-                                    safe_decode_with_fallback(list_child)
-                                )
-
-                if base_path:
-                    for name in imported_names:
-                        full_path = f"{base_path}::{name}"
-                        self.import_mapping[module_qn][name] = full_path
-                        logger.debug(f"Rust use list: {name} -> {full_path}")
-
-            elif child.type == "use_wildcard":
-                # Glob use: use crate::utils::*;
-                for grandchild in child.children:
-                    if (
-                        grandchild.type == "scoped_identifier"
-                        or grandchild.type == "crate"
-                    ):
-                        base_path = safe_decode_with_fallback(grandchild)
-                        # Store wildcard import for potential future use
-                        self.import_mapping[module_qn][f"*{base_path}"] = base_path
-                        logger.debug(f"Rust glob use: {base_path}::*")
+        # Add all extracted imports to the import mapping
+        for imported_name, full_path in imports.items():
+            self.import_mapping[module_qn][imported_name] = full_path
+            logger.debug(f"Rust import: {imported_name} -> {full_path}")
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         """Parse Go import declarations."""
