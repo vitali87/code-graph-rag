@@ -584,7 +584,6 @@ class DefinitionProcessor:
         captures = cursor.captures(root_node)
 
         func_nodes = captures.get("function", [])
-        method_nodes = captures.get("method", [])
 
         # Process regular functions
         for func_node in func_nodes:
@@ -675,46 +674,6 @@ class DefinitionProcessor:
                     "EXPORTS",
                     ("Function", "qualified_name", func_qn),
                 )
-
-        # Process methods (functions inside declaration_list, like Rust impl blocks)
-        for method_node in method_nodes:
-            if not isinstance(method_node, Node):
-                continue
-
-            # Extract method name
-            method_name_node = method_node.child_by_field_name("name")
-            if not method_name_node:
-                continue
-            text = method_name_node.text
-            if text is None:
-                continue
-            method_name = text.decode("utf8")
-
-            # Build qualified name - methods need special handling to include their container
-            if language == "rust":
-                # For Rust, find the impl target or module containing this method
-                method_qn = self._build_rust_method_qualified_name(
-                    method_node, module_qn, method_name
-                )
-            else:
-                # Fallback to nested qualified name building
-                temp_qn = self._build_nested_qualified_name(
-                    method_node, module_qn, method_name, lang_config
-                )
-                method_qn = temp_qn if temp_qn else f"{module_qn}.{method_name}"
-
-            method_props: dict[str, Any] = {
-                "qualified_name": method_qn,
-                "name": method_name,
-                "decorators": [],
-                "start_line": method_node.start_point[0] + 1,
-                "end_line": method_node.end_point[0] + 1,
-                "docstring": self._get_docstring(method_node),
-            }
-            logger.info(f"   Found Method: {method_name} (qn: {method_qn})")
-            self.ingestor.ensure_node_batch("Method", method_props)
-            self.function_registry[method_qn] = "Method"
-            self.simple_name_lookup[method_name].add(method_qn)
 
     def _ingest_top_level_functions(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
