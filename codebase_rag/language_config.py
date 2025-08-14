@@ -226,6 +226,32 @@ LANGUAGE_CONFIGS = {
         call_node_types=["method_invocation"],
         import_node_types=COMMON_DECLARATION_IMPORT,
         import_from_node_types=COMMON_DECLARATION_IMPORT,  # Java uses same node for imports
+        # Pre-formatted Tree-sitter queries for comprehensive Java parsing
+        function_query="""
+        (method_declaration
+            name: (identifier) @name) @function
+        (constructor_declaration
+            name: (identifier) @name) @function
+        """,
+        class_query="""
+        (class_declaration
+            name: (identifier) @name) @class
+        (interface_declaration
+            name: (identifier) @name) @class
+        (enum_declaration
+            name: (identifier) @name) @class
+        (annotation_type_declaration
+            name: (identifier) @name) @class
+        """,
+        call_query="""
+        (method_invocation
+            name: (identifier) @name) @call
+        (method_invocation
+            object: (_)
+            name: (identifier) @name) @call
+        (object_creation_expression
+            type: (type_identifier) @name) @call
+        """,
     ),
     "cpp": create_lang_config(
         file_extensions=[
