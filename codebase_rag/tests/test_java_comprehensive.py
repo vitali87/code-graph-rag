@@ -288,11 +288,10 @@ public class AnnotatedClass {
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
-    interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
+    [call for call in all_calls if call[0][0] == "Interface"]
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
     created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
-    {call[0][1]["qualified_name"] for call in interface_calls}
 
     # Expected type qualified names
     project_name = java_project.name
