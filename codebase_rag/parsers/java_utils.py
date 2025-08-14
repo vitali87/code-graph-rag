@@ -105,6 +105,7 @@ def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | Non
         "interface_declaration",
         "enum_declaration",
         "annotation_type_declaration",
+        "record_declaration",
     ]:
         return {}
 
@@ -445,6 +446,7 @@ def build_java_qualified_name(
                 "interface_declaration",
                 "enum_declaration",
                 "annotation_type_declaration",
+                "record_declaration",
             ]
             and include_classes
         ):

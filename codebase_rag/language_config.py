@@ -220,6 +220,7 @@ LANGUAGE_CONFIGS = {
             "interface_declaration",
             "enum_declaration",
             "annotation_type_declaration",
+            "record_declaration",
         ],
         module_node_types=["program"],
         package_indicators=[],  # Java uses package declarations
@@ -241,6 +242,8 @@ LANGUAGE_CONFIGS = {
         (enum_declaration
             name: (identifier) @name) @class
         (annotation_type_declaration
+            name: (identifier) @name) @class
+        (record_declaration
             name: (identifier) @name) @class
         """,
         call_query="""

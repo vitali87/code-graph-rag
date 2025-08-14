@@ -122,8 +122,21 @@ def ingest_method(
             return
         method_name = text.decode("utf8")
 
-    # Build qualified name
-    method_qn = f"{container_qn}.{method_name}"
+    # Build qualified name (handle Java method overloading)
+    if language == "java":
+        from .java_utils import extract_java_method_info
+
+        method_info = extract_java_method_info(method_node)
+        parameters = method_info.get("parameters", [])
+        if parameters:
+            # Create method signature with parameter types for overloading
+            param_signature = "(" + ",".join(parameters) + ")"
+            method_qn = f"{container_qn}.{method_name}{param_signature}"
+        else:
+            # No parameters, use simple name
+            method_qn = f"{container_qn}.{method_name}()"
+    else:
+        method_qn = f"{container_qn}.{method_name}"
 
     # Extract decorators if function provided
     decorators = []
