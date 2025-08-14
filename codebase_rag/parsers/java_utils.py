@@ -131,13 +131,24 @@ def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | Non
                     info["superclass"] = safe_decode_text(child)
                     break
 
+    # Extract interfaces (interfaces field contains the super_interfaces node)
     interfaces_node = class_node.child_by_field_name("interfaces")
     if interfaces_node:
+        # Look for type_list containing the interface types
         for child in interfaces_node.children:
-            if child.type == "type_identifier":
-                interface_name = safe_decode_text(child)
-                if interface_name and isinstance(info["interfaces"], list):
-                    info["interfaces"].append(interface_name)
+            if child.type == "type_list":
+                for type_child in child.children:
+                    interface_name = None
+                    if type_child.type == "type_identifier":
+                        interface_name = safe_decode_text(type_child)
+                    elif type_child.type == "generic_type":
+                        # Handle generic interfaces like Comparable<T>
+                        for sub_child in type_child.children:
+                            if sub_child.type == "type_identifier":
+                                interface_name = safe_decode_text(sub_child)
+                                break
+                    if interface_name and isinstance(info["interfaces"], list):
+                        info["interfaces"].append(interface_name)
 
     # Extract type parameters
     type_params_node = class_node.child_by_field_name("type_parameters")
@@ -426,7 +437,12 @@ def build_java_qualified_name(
     while current and current.type != "program":
         if (
             current.type
-            in ["class_declaration", "interface_declaration", "enum_declaration"]
+            in [
+                "class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "annotation_type_declaration",
+            ]
             and include_classes
         ):
             name_node = current.child_by_field_name("name")

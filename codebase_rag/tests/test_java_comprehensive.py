@@ -146,7 +146,6 @@ public abstract class Shape {
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
     created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
-    created_classes | created_interfaces
 
     # Expected class qualified names (including interfaces)
     expected_classes = {
