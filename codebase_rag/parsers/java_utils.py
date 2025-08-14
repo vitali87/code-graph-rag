@@ -4,6 +4,9 @@ from tree_sitter import Node
 
 from .utils import safe_decode_text
 
+# Constants for delimiter tokens used in argument parsing
+DELIMITER_TOKENS = ["(", ")", ","]
+
 
 def extract_java_package_name(package_node: Node) -> str | None:
     """Extract the package name from a Java package declaration.
@@ -355,7 +358,7 @@ def extract_java_method_call_info(call_node: Node) -> dict[str, str | int | None
     if args_node:
         argument_count = 0
         for child in args_node.children:
-            if child.type not in ["(", ")", ","]:
+            if child.type not in DELIMITER_TOKENS:
                 argument_count += 1
         info["arguments"] = argument_count
 
@@ -498,7 +501,7 @@ def extract_java_annotation_info(
     args_node = annotation_node.child_by_field_name("arguments")
     if args_node:
         for child in args_node.children:
-            if child.type not in ["(", ")", ","]:
+            if child.type not in DELIMITER_TOKENS:
                 arg_value = safe_decode_text(child)
                 if arg_value and isinstance(info["arguments"], list):
                     info["arguments"].append(arg_value)
