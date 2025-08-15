@@ -285,6 +285,22 @@ class CallProcessor:
                 return convert_operator_symbol_to_name(operator_text)
 
         # For 'method_invocation' in Java
+        if call_node.type == "method_invocation":
+            # Get the object (receiver) part
+            object_node = call_node.child_by_field_name("object")
+            name_node = call_node.child_by_field_name("name")
+
+            if name_node and name_node.text:
+                method_name = str(name_node.text.decode("utf8"))
+
+                if object_node and object_node.text:
+                    object_text = str(object_node.text.decode("utf8"))
+                    return f"{object_text}.{method_name}"
+                else:
+                    # No object, likely this.method() or static method
+                    return method_name
+
+        # General case for other languages
         if name_node := call_node.child_by_field_name("name"):
             text = name_node.text
             if text is not None:

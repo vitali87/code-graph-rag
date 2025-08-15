@@ -179,19 +179,19 @@ public abstract class Shape {
 
     created_methods = {call[0][1]["qualified_name"] for call in method_calls}
 
-    # Expected method qualified names (constructors and methods)
+    # Expected method qualified names (constructors and methods with parameter signatures)
     expected_methods = {
-        f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.BasicClass",
-        f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.getName",
-        f"{project_name}.src.main.java.com.example.BasicClasses.ExtendedClass.ExtendedClass",
-        f"{project_name}.src.main.java.com.example.BasicClasses.ExtendedClass.getName",
-        f"{project_name}.src.main.java.com.example.BasicClasses.Drawable.draw",
-        f"{project_name}.src.main.java.com.example.BasicClasses.Drawable.clear",
-        f"{project_name}.src.main.java.com.example.BasicClasses.Circle.Circle",
-        f"{project_name}.src.main.java.com.example.BasicClasses.Circle.draw",
-        f"{project_name}.src.main.java.com.example.BasicClasses.Shape.Shape",
-        f"{project_name}.src.main.java.com.example.BasicClasses.Shape.area",
-        f"{project_name}.src.main.java.com.example.BasicClasses.Shape.getColor",
+        f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.BasicClass(String)",
+        f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.getName()",
+        f"{project_name}.src.main.java.com.example.BasicClasses.ExtendedClass.ExtendedClass(String,boolean)",
+        f"{project_name}.src.main.java.com.example.BasicClasses.ExtendedClass.getName()",
+        f"{project_name}.src.main.java.com.example.BasicClasses.Drawable.draw()",
+        f"{project_name}.src.main.java.com.example.BasicClasses.Drawable.clear()",
+        f"{project_name}.src.main.java.com.example.BasicClasses.Circle.Circle(double)",
+        f"{project_name}.src.main.java.com.example.BasicClasses.Circle.draw()",
+        f"{project_name}.src.main.java.com.example.BasicClasses.Shape.Shape(String)",
+        f"{project_name}.src.main.java.com.example.BasicClasses.Shape.area()",
+        f"{project_name}.src.main.java.com.example.BasicClasses.Shape.getColor()",
     }
 
     # Verify all expected methods were created
