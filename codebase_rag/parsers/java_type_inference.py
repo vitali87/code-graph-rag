@@ -113,6 +113,26 @@ class JavaTypeInferenceEngine:
                         local_var_types[param_name] = resolved_type
                         logger.debug(f"Parameter: {param_name} -> {resolved_type}")
 
+            elif child.type == "spread_parameter":
+                # Handle varargs (String... args) using tree-sitter traversal
+                param_name = None
+                param_type = None
+
+                for subchild in child.children:
+                    if subchild.type == "type_identifier":
+                        decoded_text = safe_decode_text(subchild)
+                        if decoded_text:
+                            param_type = decoded_text + "[]"  # Treat varargs as array
+                    elif subchild.type == "variable_declarator":
+                        name_node = subchild.child_by_field_name("name")
+                        if name_node:
+                            param_name = safe_decode_text(name_node)
+
+                if param_name and param_type:
+                    resolved_type = self._resolve_java_type_name(param_type, module_qn)
+                    local_var_types[param_name] = resolved_type
+                    logger.debug(f"Varargs parameter: {param_name} -> {resolved_type}")
+
     def _analyze_java_local_variables(
         self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
@@ -468,12 +488,11 @@ class JavaTypeInferenceEngine:
             if type_name in import_map:
                 return import_map[type_name]
 
-        # Check if it's a class in the same package
+        # Check if it's a class or interface in the same package
         same_package_qn = f"{module_qn}.{type_name}"
-        if (
-            same_package_qn in self.function_registry
-            and self.function_registry[same_package_qn] == "Class"
-        ):
+        if same_package_qn in self.function_registry and self.function_registry[
+            same_package_qn
+        ] in ["Class", "Interface"]:
             return same_package_qn
 
         # Fallback: return as-is (might be a simple class name)
@@ -633,50 +652,241 @@ class JavaTypeInferenceEngine:
         # Resolve object_type to fully qualified name
         resolved_type = self._resolve_java_type_name(object_type, module_qn)
 
-        # Look for the method in the class (try with empty parameter list first)
-        method_qn = f"{resolved_type}.{method_name}()"
-        if method_qn in self.function_registry:
-            return self.function_registry[method_qn], method_qn
+        # Look for the method in the class using flexible signature matching
+        method_result = self._find_method_with_any_signature(resolved_type, method_name)
+        if method_result:
+            return method_result
 
-        # Also try without parameters (fallback)
-        method_qn_bare = f"{resolved_type}.{method_name}"
-        if method_qn_bare in self.function_registry:
-            return self.function_registry[method_qn_bare], method_qn_bare
+        # Check inheritance hierarchy and interface implementations using tree-sitter navigation
+        inherited_result = self._find_inherited_method(
+            resolved_type, method_name, module_qn
+        )
+        if inherited_result:
+            return inherited_result
 
-        # Check inheritance hierarchy for inherited methods using tree-sitter navigation
-        return self._find_inherited_method(resolved_type, method_name, module_qn)
+        # Also check interface implementations
+        return self._find_interface_method(resolved_type, method_name, module_qn)
+
+    def _find_method_with_any_signature(
+        self, class_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        """Find a method with any parameter signature using function registry."""
+        # Search through all registered methods for this class and method name
+        for qn, method_type in self.function_registry.items():
+            if qn.startswith(f"{class_qn}.{method_name}"):
+                # Check if this matches the method pattern (either bare name or with parameters)
+                remaining = qn[len(f"{class_qn}.{method_name}") :]
+                if remaining == "" or remaining.startswith("("):
+                    return method_type, qn
+        return None
 
     def _find_inherited_method(
         self, class_qn: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        """Find an inherited method using tree-sitter to traverse inheritance."""
-        # Search through all classes in the registry to find potential parent classes
-        for qn, entity_type in self.function_registry.items():
-            if entity_type == "Class" and qn.startswith(module_qn + "."):
-                # Check if this could be a parent class by checking inheritance patterns
-                parent_method_qn = f"{qn}.{method_name}()"
-                if parent_method_qn in self.function_registry:
-                    # Found a potential inherited method
-                    return self.function_registry[parent_method_qn], parent_method_qn
+        """Find an inherited method using precise tree-sitter inheritance traversal."""
+        # Get the superclass using tree-sitter AST analysis
+        superclass_qn = self._get_superclass_name(class_qn)
+        if not superclass_qn:
+            return None
 
-                # Also try without parameters (fallback)
-                parent_method_qn_bare = f"{qn}.{method_name}"
-                if parent_method_qn_bare in self.function_registry:
-                    return self.function_registry[
-                        parent_method_qn_bare
-                    ], parent_method_qn_bare
+        # Look for the method in the superclass using flexible signature matching
+        method_result = self._find_method_with_any_signature(superclass_qn, method_name)
+        if method_result:
+            return method_result
+
+        # Recursively check the superclass's superclass
+        return self._find_inherited_method(superclass_qn, method_name, module_qn)
+
+    def _find_interface_method(
+        self, class_qn: str, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """Find a method in implemented interfaces using precise tree-sitter analysis."""
+        # Get all interfaces implemented by this class
+        implemented_interfaces = self._get_implemented_interfaces(class_qn)
+
+        for interface_qn in implemented_interfaces:
+            # Look for the method in the interface using flexible signature matching
+            method_result = self._find_method_with_any_signature(
+                interface_qn, method_name
+            )
+            if method_result:
+                return method_result
 
         return None
+
+    def _get_implemented_interfaces(self, class_qn: str) -> list[str]:
+        """Get all interfaces implemented by a class using tree-sitter AST analysis."""
+        # Extract module and class information
+        parts = class_qn.split(".")
+        if len(parts) < 4:  # Need project.folder.subfolder.class
+            return []
+
+        module_qn = ".".join(parts[:-1])
+        target_class_name = parts[-1]
+
+        # Construct file path
+        file_path_str = (
+            "/".join(parts[1:-1]) + ".java"
+        )  # Skip project name and class name
+        file_path = Path(file_path_str)
+
+        if file_path not in self.ast_cache:
+            return []
+
+        root_node, _ = self.ast_cache[file_path]
+
+        # Use tree-sitter to find the specific class and its implements clause
+        interfaces = self._find_interfaces_using_ast(
+            root_node, target_class_name, module_qn
+        )
+        return interfaces
+
+    def _find_interfaces_using_ast(
+        self, node: Node, target_class_name: str, module_qn: str
+    ) -> list[str]:
+        """Find implemented interfaces using precise tree-sitter AST traversal."""
+        if node.type == "class_declaration":
+            # Check if this is the target class
+            name_node = node.child_by_field_name("name")
+            if name_node and safe_decode_text(name_node) == target_class_name:
+                # Found the target class, now look for interfaces list
+                interfaces_node = node.child_by_field_name("interfaces")
+                if interfaces_node:
+                    # Extract interface names using tree-sitter traversal
+                    interface_list: list[str] = []
+                    self._extract_interface_names(
+                        interfaces_node, interface_list, module_qn
+                    )
+                    return interface_list
+
+        # Recursively traverse children using tree-sitter
+        for child in node.children:
+            result = self._find_interfaces_using_ast(
+                child, target_class_name, module_qn
+            )
+            if result:
+                return result
+
+        return []
+
+    def _extract_interface_names(
+        self, interfaces_node: Node, interface_list: list[str], module_qn: str
+    ) -> None:
+        """Extract interface names from the interfaces list using tree-sitter."""
+        for child in interfaces_node.children:
+            if child.type == "type_identifier":
+                interface_name = safe_decode_text(child)
+                if interface_name:
+                    # Resolve to fully qualified name
+                    resolved_interface = self._resolve_java_type_name(
+                        interface_name, module_qn
+                    )
+                    interface_list.append(resolved_interface)
+            # Recursively traverse for nested type structures
+            elif child.children:
+                self._extract_interface_names(child, interface_list, module_qn)
 
     def _get_current_class_name(self, module_qn: str) -> str | None:
-        """Extract current class name from module context."""
-        # This is a simplified implementation - in practice, you'd need
-        # to track the current class context during traversal
+        """Extract current class name from AST context using precise tree-sitter traversal."""
+        # Get the AST for the current module
+        module_parts = module_qn.split(".")
+        if len(module_parts) < 4:  # Need at least project.folder.subfolder.filename
+            return None
+
+        # Construct file path from module qualified name
+        file_path_str = "/".join(module_parts[1:]) + ".java"  # Skip project name
+        file_path = Path(file_path_str)
+
+        if file_path not in self.ast_cache:
+            return None
+
+        root_node, _ = self.ast_cache[file_path]
+
+        # Use tree-sitter to find class declarations in the current context
+        class_names: list[str] = []
+        self._traverse_for_class_declarations(root_node, class_names)
+
+        # Return the fully qualified name of the first class found
+        if class_names:
+            return f"{module_qn}.{class_names[0]}"
+
         return None
 
-    def _get_superclass_name(self, class_name: str) -> str | None:
-        """Get the superclass name for inheritance resolution."""
-        # This would require analyzing class inheritance from the AST
+    def _traverse_for_class_declarations(
+        self, node: Node, class_names: list[str]
+    ) -> None:
+        """Recursively traverse AST using tree-sitter to find class declarations."""
+        if node.type in [
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+        ]:
+            name_node = node.child_by_field_name("name")
+            if name_node:
+                class_name = safe_decode_text(name_node)
+                if class_name:
+                    class_names.append(class_name)
+
+        # Recursively traverse children using tree-sitter
+        for child in node.children:
+            self._traverse_for_class_declarations(child, class_names)
+
+    def _get_superclass_name(self, class_qn: str) -> str | None:
+        """Get the superclass name using precise tree-sitter AST analysis."""
+        # Extract module and class information
+        parts = class_qn.split(".")
+        if len(parts) < 4:  # Need project.folder.subfolder.class
+            return None
+
+        module_qn = ".".join(parts[:-1])
+        target_class_name = parts[-1]
+
+        # Construct file path
+        file_path_str = (
+            "/".join(parts[1:-1]) + ".java"
+        )  # Skip project name and class name
+        file_path = Path(file_path_str)
+
+        if file_path not in self.ast_cache:
+            return None
+
+        root_node, _ = self.ast_cache[file_path]
+
+        # Use tree-sitter to find the specific class and its extends clause
+        superclass = self._find_superclass_using_ast(
+            root_node, target_class_name, module_qn
+        )
+        return superclass
+
+    def _find_superclass_using_ast(
+        self, node: Node, target_class_name: str, module_qn: str
+    ) -> str | None:
+        """Find superclass using precise tree-sitter AST traversal."""
+        if node.type == "class_declaration":
+            # Check if this is the target class
+            name_node = node.child_by_field_name("name")
+            if name_node and safe_decode_text(name_node) == target_class_name:
+                # Found the target class, now look for extends clause
+                superclass_node = node.child_by_field_name("superclass")
+                if superclass_node:
+                    # Extract the superclass type using tree-sitter field access
+                    type_node = superclass_node.child_by_field_name("type")
+                    if type_node:
+                        superclass_name = safe_decode_text(type_node)
+                        if superclass_name:
+                            # Resolve to fully qualified name
+                            return self._resolve_java_type_name(
+                                superclass_name, module_qn
+                            )
+
+        # Recursively traverse children using tree-sitter
+        for child in node.children:
+            result = self._find_superclass_using_ast(
+                child, target_class_name, module_qn
+            )
+            if result:
+                return result
+
         return None
 
     def _analyze_java_enhanced_for_loops(
