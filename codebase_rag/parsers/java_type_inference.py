@@ -433,21 +433,88 @@ class JavaTypeInferenceEngine:
         self, class_type: str, field_name: str, module_qn: str
     ) -> str | None:
         """Look up the type of a field in a Java class."""
+        if not class_type or not field_name:
+            return None
+
         # Resolve class_type to fully qualified name if needed
-        self._resolve_java_type_name(class_type, module_qn)
+        resolved_class_type = self._resolve_java_type_name(class_type, module_qn)
 
-        # Look for the field in the class definition
-        # This would require analyzing the class AST from the cache
-        # For now, return a placeholder
+        # Construct class qualified name - assume it's in the same module for now
+        class_qn = f"{module_qn}.{resolved_class_type}"
 
-        # TODO: Implement full field type lookup from AST
-        return None
+        # Extract module and class information
+        parts = class_qn.split(".")
+        if len(parts) < 2:
+            return None
+
+        # Get the module qualified name and target class
+        target_module_qn = ".".join(parts[:-1])
+        target_class_name = parts[-1]
+
+        # Try different path construction strategies
+        potential_paths = [
+            Path("/".join(parts[1:-1]) + ".java"),  # Skip project and class
+            Path("/".join(parts[:-1]) + ".java"),  # Include project, skip class
+            Path(
+                "/".join(parts[2:-1]) + ".java"
+            ),  # Skip project and first folder, skip class
+        ]
+
+        file_path = None
+        for path in potential_paths:
+            if path in self.ast_cache:
+                file_path = path
+                break
+
+        if file_path is None:
+            return None
+
+        root_node, _ = self.ast_cache[file_path]
+
+        # Find the class and its field using tree-sitter
+        field_type = self._find_field_type_in_class(
+            root_node, target_class_name, field_name, target_module_qn
+        )
+
+        return field_type
 
     def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None:
-        """Look up the type of a variable from previous analysis."""
-        # This would require maintaining state across calls or
-        # re-analyzing the scope. For now, return None to indicate
-        # that this needs to be integrated with the main type map building.
+        """Look up the type of a variable by analyzing the module scope."""
+        if not var_name or not module_qn:
+            return None
+
+        # Get the AST for the module
+        module_parts = module_qn.split(".")
+        if len(module_parts) < 2:
+            return None
+
+        # Try different path construction strategies
+        potential_paths = [
+            Path("/".join(module_parts[1:]) + ".java"),  # Skip project name
+            Path("/".join(module_parts) + ".java"),  # Include all parts
+            Path("/".join(module_parts[2:]) + ".java"),  # Skip project and first folder
+        ]
+
+        file_path = None
+        for path in potential_paths:
+            if path in self.ast_cache:
+                file_path = path
+                break
+
+        if file_path is None:
+            return None
+
+        root_node, _ = self.ast_cache[file_path]
+
+        # Build variable type map for this module and look up the variable
+        variable_types = self.build_java_variable_type_map(root_node, module_qn)
+
+        # Check different forms of the variable name
+        if var_name in variable_types:
+            return variable_types[var_name]
+        elif f"this.{var_name}" in variable_types:
+            return variable_types[f"this.{var_name}"]
+
         return None
 
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
@@ -980,3 +1047,29 @@ class JavaTypeInferenceEngine:
                                                 f"Enhanced for loop variable (alt): {var_name} -> {resolved_type}"
                                             )
                                             break
+
+    def _find_field_type_in_class(
+        self, root_node: Node, class_name: str, field_name: str, module_qn: str
+    ) -> str | None:
+        """Find the type of a specific field in a class using tree-sitter AST analysis."""
+        from .java_utils import extract_java_class_info, extract_java_field_info
+
+        # Find the target class in the AST
+        for child in root_node.children:
+            if child.type == "class_declaration":
+                class_info = extract_java_class_info(child)
+                if class_info.get("name") == class_name:
+                    # Found the target class, look for the field
+                    class_body = child.child_by_field_name("body")
+                    if class_body:
+                        for field_child in class_body.children:
+                            if field_child.type == "field_declaration":
+                                field_info = extract_java_field_info(field_child)
+                                if field_info.get("name") == field_name:
+                                    field_type = field_info.get("type")
+                                    if field_type:
+                                        # Resolve the field type to fully qualified name
+                                        return self._resolve_java_type_name(
+                                            str(field_type), module_qn
+                                        )
+        return None
