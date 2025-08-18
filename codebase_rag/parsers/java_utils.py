@@ -367,7 +367,10 @@ def extract_java_method_call_info(call_node: Node) -> dict[str, str | int | None
 
 
 def is_java_main_method(method_node: Node) -> bool:
-    """Check if a Java method is a main method.
+    """Check if a Java method is a main method using tree-sitter analysis.
+
+    Validates the complete Java main method signature:
+    public static void main(String[] args)
 
     Args:
         method_node: The method_declaration node.
@@ -378,22 +381,71 @@ def is_java_main_method(method_node: Node) -> bool:
     if method_node.type != "method_declaration":
         return False
 
-    # Check method name
+    # Check method name using correct tree-sitter field access
     name_node = method_node.child_by_field_name("name")
     if not name_node or safe_decode_text(name_node) != "main":
         return False
 
-    # Check modifiers (should be public static)
+    # Check return type using correct tree-sitter field access
+    type_node = method_node.child_by_field_name("type")
+    if not type_node or type_node.type != "void_type":
+        return False
+
+    # Check modifiers using tree-sitter AST traversal
     has_public = False
     has_static = False
 
     for child in method_node.children:
-        if child.type == "public":
-            has_public = True
-        elif child.type == "static":
-            has_static = True
+        if child.type == "modifiers":
+            # Look inside the modifiers node using tree-sitter traversal
+            for modifier_child in child.children:
+                if modifier_child.type == "public":
+                    has_public = True
+                elif modifier_child.type == "static":
+                    has_static = True
 
-    return has_public and has_static
+    if not (has_public and has_static):
+        return False
+
+    # Check parameter signature using correct tree-sitter field access
+    parameters_node = method_node.child_by_field_name("parameters")
+    if not parameters_node:
+        return False
+
+    # Should have exactly one parameter: String[] args (or String... args)
+    param_count = 0
+    valid_param = False
+
+    for child in parameters_node.children:
+        if child.type == "formal_parameter":
+            param_count += 1
+
+            # Use tree-sitter field access to get parameter type
+            type_node = child.child_by_field_name("type")
+            if type_node:
+                type_text = safe_decode_text(type_node)
+                # Accept String[], String..., or variations like java.lang.String[]
+                if type_text and (
+                    "String[]" in type_text
+                    or "String..." in type_text
+                    or type_text.endswith("String[]")
+                    or type_text.endswith("String...")
+                ):
+                    valid_param = True
+
+        elif child.type == "spread_parameter":
+            # Handle varargs (String... args) using tree-sitter traversal
+            param_count += 1
+
+            # Check if it contains String type
+            for subchild in child.children:
+                if subchild.type == "type_identifier":
+                    type_text = safe_decode_text(subchild)
+                    if type_text == "String":
+                        valid_param = True
+                        break
+
+    return param_count == 1 and valid_param
 
 
 def get_java_visibility(node: Node) -> str:
