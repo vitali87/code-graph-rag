@@ -288,16 +288,20 @@ public class AnnotatedClass {
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
-    [call for call in all_calls if call[0][0] == "Interface"]
+    interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
     created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
+    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
 
     # Expected type qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.AnnotatedClass",
-        f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.MyAnnotation",  # Annotations are processed as classes
+    }
+
+    expected_interfaces = {
+        f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.MyAnnotation",  # Annotations are processed as interfaces
     }
 
     expected_enums = {
@@ -308,9 +312,13 @@ public class AnnotatedClass {
     # Verify all expected types were created in their respective categories
     missing_classes = expected_classes - created_classes
     missing_enums = expected_enums - created_enums
+    missing_interfaces = expected_interfaces - created_interfaces
 
     assert not missing_classes, f"Missing classes: {sorted(list(missing_classes))}"
     assert not missing_enums, f"Missing enums: {sorted(list(missing_enums))}"
+    assert not missing_interfaces, (
+        f"Missing interfaces: {sorted(list(missing_interfaces))}"
+    )
 
 
 def test_java_generics_and_collections(

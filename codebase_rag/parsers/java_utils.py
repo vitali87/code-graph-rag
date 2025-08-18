@@ -1,11 +1,52 @@
 """Utilities for processing Java code with tree-sitter."""
 
+from typing import TypedDict
+
 from tree_sitter import Node
 
 from .utils import safe_decode_text
 
 # Constants for delimiter tokens used in argument parsing
 DELIMITER_TOKENS = ["(", ")", ","]
+
+
+class JavaClassInfo(TypedDict):
+    """Type definition for Java class information."""
+
+    name: str | None
+    type: str
+    superclass: str | None
+    interfaces: list[str]
+    modifiers: list[str]
+    type_parameters: list[str]
+
+
+class JavaMethodInfo(TypedDict):
+    """Type definition for Java method information."""
+
+    name: str | None
+    type: str
+    return_type: str | None
+    parameters: list[str]
+    modifiers: list[str]
+    type_parameters: list[str]
+    annotations: list[str]
+
+
+class JavaFieldInfo(TypedDict):
+    """Type definition for Java field information."""
+
+    name: str | None
+    type: str | None
+    modifiers: list[str]
+    annotations: list[str]
+
+
+class JavaAnnotationInfo(TypedDict):
+    """Type definition for Java annotation information."""
+
+    name: str | None
+    arguments: list[str]
 
 
 def extract_java_package_name(package_node: Node) -> str | None:
@@ -84,7 +125,7 @@ def extract_java_import_path(import_node: Node) -> dict[str, str]:
     return imports
 
 
-def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | None]:
+def extract_java_class_info(class_node: Node) -> JavaClassInfo:
     """Extract information from a Java class declaration.
 
     Args:
@@ -107,9 +148,16 @@ def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | Non
         "annotation_type_declaration",
         "record_declaration",
     ]:
-        return {}
+        return JavaClassInfo(
+            name=None,
+            type="",
+            superclass=None,
+            interfaces=[],
+            modifiers=[],
+            type_parameters=[],
+        )
 
-    info: dict[str, str | list[str] | None] = {
+    info: JavaClassInfo = {
         "name": None,
         "type": class_node.type.replace("_declaration", ""),
         "superclass": None,
@@ -151,7 +199,7 @@ def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | Non
                             if sub_child.type == "type_identifier":
                                 interface_name = safe_decode_text(sub_child)
                                 break
-                    if interface_name and isinstance(info["interfaces"], list):
+                    if interface_name:
                         info["interfaces"].append(interface_name)
 
     # Extract type parameters
@@ -160,7 +208,7 @@ def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | Non
         for child in type_params_node.children:
             if child.type == "type_parameter":
                 param_name = safe_decode_text(child.child_by_field_name("name"))
-                if param_name and isinstance(info["type_parameters"], list):
+                if param_name:
                     info["type_parameters"].append(param_name)
 
     # Extract modifiers using correct tree-sitter traversal
@@ -177,13 +225,13 @@ def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | Non
                     "abstract",
                 ]:
                     modifier = safe_decode_text(modifier_child)
-                    if modifier and isinstance(info["modifiers"], list):
+                    if modifier:
                         info["modifiers"].append(modifier)
 
     return info
 
 
-def extract_java_method_info(method_node: Node) -> dict[str, str | list[str] | None]:
+def extract_java_method_info(method_node: Node) -> JavaMethodInfo:
     """Extract information from a Java method or constructor declaration.
 
     Args:
@@ -200,9 +248,17 @@ def extract_java_method_info(method_node: Node) -> dict[str, str | list[str] | N
         - annotations: List of annotations
     """
     if method_node.type not in ["method_declaration", "constructor_declaration"]:
-        return {}
+        return JavaMethodInfo(
+            name=None,
+            type="",
+            return_type=None,
+            parameters=[],
+            modifiers=[],
+            type_parameters=[],
+            annotations=[],
+        )
 
-    info: dict[str, str | list[str] | None] = {
+    info: JavaMethodInfo = {
         "name": None,
         "type": "constructor"
         if method_node.type == "constructor_declaration"
@@ -233,7 +289,7 @@ def extract_java_method_info(method_node: Node) -> dict[str, str | list[str] | N
                 param_type_node = child.child_by_field_name("type")
                 if param_type_node:
                     param_type = safe_decode_text(param_type_node)
-                    if param_type and isinstance(info["parameters"], list):
+                    if param_type:
                         info["parameters"].append(param_type)
             elif child.type == "spread_parameter":
                 # Handle varargs (String... args) using tree-sitter traversal
@@ -242,8 +298,7 @@ def extract_java_method_info(method_node: Node) -> dict[str, str | list[str] | N
                         param_type_text = safe_decode_text(subchild)
                         if param_type_text:
                             param_type = param_type_text + "..."
-                            if isinstance(info["parameters"], list):
-                                info["parameters"].append(param_type)
+                            info["parameters"].append(param_type)
                         break
 
     # Extract modifiers and annotations using correct tree-sitter traversal
@@ -261,17 +316,17 @@ def extract_java_method_info(method_node: Node) -> dict[str, str | list[str] | N
                     "synchronized",
                 ]:
                     modifier = safe_decode_text(modifier_child)
-                    if modifier and isinstance(info["modifiers"], list):
+                    if modifier:
                         info["modifiers"].append(modifier)
                 elif modifier_child.type == "annotation":
                     annotation = safe_decode_text(modifier_child)
-                    if annotation and isinstance(info["annotations"], list):
+                    if annotation:
                         info["annotations"].append(annotation)
 
     return info
 
 
-def extract_java_field_info(field_node: Node) -> dict[str, str | list[str] | None]:
+def extract_java_field_info(field_node: Node) -> JavaFieldInfo:
     """Extract information from a Java field declaration.
 
     Args:
@@ -285,9 +340,14 @@ def extract_java_field_info(field_node: Node) -> dict[str, str | list[str] | Non
         - annotations: List of annotations
     """
     if field_node.type != "field_declaration":
-        return {}
+        return JavaFieldInfo(
+            name=None,
+            type=None,
+            modifiers=[],
+            annotations=[],
+        )
 
-    info: dict[str, str | list[str] | None] = {
+    info: JavaFieldInfo = {
         "name": None,
         "type": None,
         "modifiers": [],
@@ -321,11 +381,11 @@ def extract_java_field_info(field_node: Node) -> dict[str, str | list[str] | Non
                     "volatile",
                 ]:
                     modifier = safe_decode_text(modifier_child)
-                    if modifier and isinstance(info["modifiers"], list):
+                    if modifier:
                         info["modifiers"].append(modifier)
                 elif modifier_child.type == "annotation":
                     annotation = safe_decode_text(modifier_child)
-                    if annotation and isinstance(info["annotations"], list):
+                    if annotation:
                         info["annotations"].append(annotation)
 
     return info
@@ -544,7 +604,7 @@ def build_java_qualified_name(
 
 def extract_java_annotation_info(
     annotation_node: Node,
-) -> dict[str, str | list[str] | None]:
+) -> JavaAnnotationInfo:
     """Extract information from a Java annotation.
 
     Handles patterns like:
@@ -561,9 +621,9 @@ def extract_java_annotation_info(
         - arguments: List of argument values
     """
     if annotation_node.type != "annotation":
-        return {}
+        return JavaAnnotationInfo(name=None, arguments=[])
 
-    info: dict[str, str | list[str] | None] = {"name": None, "arguments": []}
+    info: JavaAnnotationInfo = {"name": None, "arguments": []}
 
     # Extract annotation name
     name_node = annotation_node.child_by_field_name("name")
@@ -576,7 +636,7 @@ def extract_java_annotation_info(
         for child in args_node.children:
             if child.type not in DELIMITER_TOKENS:
                 arg_value = safe_decode_text(child)
-                if arg_value and isinstance(info["arguments"], list):
+                if arg_value:
                     info["arguments"].append(arg_value)
 
     return info
