@@ -8,6 +8,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from .import_processor import ImportProcessor
+from .java_type_inference import JavaTypeInferenceEngine
 from .python_utils import resolve_class_name
 
 if TYPE_CHECKING:
@@ -36,6 +37,9 @@ class TypeInferenceEngine:
         self.ast_cache = ast_cache
         self.queries = queries
 
+        # Java-specific type inference engine
+        self.java_type_inference: JavaTypeInferenceEngine | None = None
+
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, language: str
     ) -> dict[str, str]:
@@ -53,6 +57,9 @@ class TypeInferenceEngine:
             return self._build_js_local_variable_type_map(
                 caller_node, module_qn, language
             )
+        elif language == "java":
+            # Use Java-specific type inference
+            return self._build_java_local_variable_type_map(caller_node, module_qn)
         else:
             # Unsupported language
             return local_var_types
@@ -1261,3 +1268,21 @@ class TypeInferenceEngine:
             current = current.parent
 
         return None
+
+    def _build_java_local_variable_type_map(
+        self, caller_node: Node, module_qn: str
+    ) -> dict[str, str]:
+        """Build local variable type map for Java using JavaTypeInferenceEngine."""
+        if self.java_type_inference is None:
+            self.java_type_inference = JavaTypeInferenceEngine(
+                import_processor=self.import_processor,
+                function_registry=self.function_registry,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                ast_cache=self.ast_cache,
+                queries=self.queries,
+            )
+
+        return self.java_type_inference.build_java_variable_type_map(
+            caller_node, module_qn
+        )

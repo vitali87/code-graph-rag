@@ -343,6 +343,10 @@ class CallProcessor:
         captures = cursor.captures(caller_node)
         call_nodes = captures.get("call", [])
 
+        logger.debug(
+            f"Found {len(call_nodes)} call nodes in {language} for {caller_qn}"
+        )
+
         for call_node in call_nodes:
             if not isinstance(call_node, Node):
                 continue
@@ -361,9 +365,15 @@ class CallProcessor:
             if not call_name:
                 continue
 
-            callee_info = self._resolve_function_call(
-                call_name, module_qn, local_var_types, class_context
-            )
+            # Use Java-specific resolution for Java method calls
+            if language == "java" and call_node.type == "method_invocation":
+                callee_info = self._resolve_java_method_call(
+                    call_node, module_qn, local_var_types, language
+                )
+            else:
+                callee_info = self._resolve_function_call(
+                    call_name, module_qn, local_var_types, class_context
+                )
             if not callee_info:
                 # Check if it's a built-in JavaScript method
                 builtin_info = self._resolve_builtin_call(call_name)
@@ -1043,3 +1053,39 @@ class CallProcessor:
                 return True
             current = current.parent
         return False
+
+    def _resolve_java_method_call(
+        self,
+        call_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str],
+        language: str,
+    ) -> tuple[str, str] | None:
+        """Resolve Java method calls using the JavaTypeInferenceEngine."""
+        # Get the Java type inference engine from the main type inference engine
+        java_engine = self.type_inference.java_type_inference
+        if java_engine is None:
+            # Initialize it if not already done
+            from .java_type_inference import JavaTypeInferenceEngine
+
+            java_engine = JavaTypeInferenceEngine(
+                import_processor=self.import_processor,
+                function_registry=self.function_registry,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                ast_cache=self.type_inference.ast_cache,
+                queries=self.type_inference.queries,
+            )
+            self.type_inference.java_type_inference = java_engine
+
+        # Use the Java engine to resolve the method call
+        result = java_engine.resolve_java_method_call(
+            call_node, local_var_types, module_qn
+        )
+
+        if result:
+            logger.debug(
+                f"Java method call resolved: {call_node.text.decode('utf8') if call_node.text else 'unknown'} -> {result[1]}"
+            )
+
+        return result

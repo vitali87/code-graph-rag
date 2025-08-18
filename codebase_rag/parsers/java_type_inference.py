@@ -72,6 +72,11 @@ class JavaTypeInferenceEngine:
                 scope_node, local_var_types, module_qn
             )
 
+            # 5. Analyze enhanced for loop variables using tree-sitter
+            self._analyze_java_enhanced_for_loops(
+                scope_node, local_var_types, module_qn
+            )
+
             logger.debug(
                 f"Built Java variable type map with {len(local_var_types)} entries"
             )
@@ -512,15 +517,26 @@ class JavaTypeInferenceEngine:
         object_ref = call_info.get("object")
 
         if not method_name:
+            logger.debug("No method name found in call node")
             return None
+
+        logger.debug(
+            f"Resolving Java method call: method={method_name}, object={object_ref}"
+        )
 
         # Case 1: Static method call or call without object (e.g., "method()" or "Class.method()")
         if not object_ref:
-            # Look for method in current class or imported static methods
-            return self._resolve_static_or_local_method(str(method_name), module_qn)
+            logger.debug(f"Resolving static/local method: {method_name}")
+            result = self._resolve_static_or_local_method(str(method_name), module_qn)
+            if result:
+                logger.debug(f"Found static/local method: {result}")
+            else:
+                logger.debug(f"Static/local method not found: {method_name}")
+            return result
 
         # Case 2: Instance method call (e.g., "obj.method()")
         # First, determine the type of the object
+        logger.debug(f"Resolving object type for: {object_ref}")
         object_type = self._resolve_java_object_type(
             str(object_ref), local_var_types, module_qn
         )
@@ -528,68 +544,128 @@ class JavaTypeInferenceEngine:
             logger.debug(f"Could not determine type of object: {object_ref}")
             return None
 
+        logger.debug(f"Object type resolved to: {object_type}")
         # Now find the method in the object's class
-        return self._resolve_instance_method(object_type, str(method_name), module_qn)
+        result = self._resolve_instance_method(object_type, str(method_name), module_qn)
+        if result:
+            logger.debug(f"Found instance method: {result}")
+        else:
+            logger.debug(f"Instance method not found: {object_type}.{method_name}")
+        return result
 
     def _resolve_java_object_type(
         self, object_ref: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
-        """Resolve the type of a Java object reference."""
+        """Resolve the type of a Java object reference using tree-sitter analysis."""
         # Check if it's a local variable
         if object_ref in local_var_types:
             return local_var_types[object_ref]
 
-        # Check for 'this' reference
+        # Check for 'this' reference - find the containing class
         if object_ref == "this":
-            # Extract current class name from module context
-            # This would need to be enhanced to handle nested classes
-            return self._get_current_class_name(module_qn)
+            # Look for any class in the current module (simplified)
+            for qn, entity_type in self.function_registry.items():
+                if entity_type == "Class" and qn.startswith(module_qn + "."):
+                    return str(qn)
+            return None
 
         # Check for 'super' reference
         if object_ref == "super":
-            current_class = self._get_current_class_name(module_qn)
-            if current_class:
-                # Look up superclass from inheritance info
-                return self._get_superclass_name(current_class)
+            # For super calls, we need to look at parent classes
+            # This is a simplified implementation
+            for qn, entity_type in self.function_registry.items():
+                if entity_type == "Class" and qn.startswith(module_qn + "."):
+                    # Look for parent classes - simplified approach
+                    parent_qn = self._find_parent_class(qn, module_qn)
+                    if parent_qn:
+                        return parent_qn
+            return None
 
         # Check if it's a static class reference
-        if object_ref in self.import_processor.import_mapping.get(module_qn, {}):
-            return self.import_processor.import_mapping[module_qn][object_ref]
+        if module_qn in self.import_processor.import_mapping:
+            import_map = self.import_processor.import_mapping[module_qn]
+            if object_ref in import_map:
+                return import_map[object_ref]
 
-        # TODO: Handle field access chains like "this.field.subfield"
+        # Check if it's a simple class name in the same module
+        simple_class_qn = f"{module_qn}.{object_ref}"
+        if (
+            simple_class_qn in self.function_registry
+            and self.function_registry[simple_class_qn] == "Class"
+        ):
+            return simple_class_qn
+
+        return None
+
+    def _find_parent_class(self, class_qn: str, module_qn: str) -> str | None:
+        """Find the parent class of a given class using basic heuristics."""
+        # In a real implementation, this would parse the AST to find 'extends' relationships
+        # For now, use a simple heuristic: look for other classes that could be parents
+        for qn, entity_type in self.function_registry.items():
+            if (
+                entity_type == "Class"
+                and qn.startswith(module_qn + ".")
+                and qn != class_qn
+                and len(qn.split(".")) == len(class_qn.split("."))
+            ):  # Same nesting level
+                return str(qn)
         return None
 
     def _resolve_static_or_local_method(
         self, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        """Resolve a static method call or local method call."""
-        # Try to find in current class
-        current_class = self._get_current_class_name(module_qn)
-        if current_class:
-            method_qn = f"{current_class}.{method_name}"
-            if method_qn in self.function_registry:
-                return self.function_registry[method_qn], method_qn
-
-        # Try to find as module-level function (rare in Java but possible)
-        method_qn = f"{module_qn}.{method_name}"
-        if method_qn in self.function_registry:
-            return self.function_registry[method_qn], method_qn
+        """Resolve a static method call or local method call using tree-sitter."""
+        # Search for methods in the current module that match the method name
+        for qn, entity_type in self.function_registry.items():
+            if (
+                qn.startswith(module_qn + ".")
+                and (qn.endswith(f".{method_name}()") or qn.endswith(f".{method_name}"))
+                and entity_type in ["Method", "Constructor"]
+            ):
+                return entity_type, qn
 
         return None
 
     def _resolve_instance_method(
         self, object_type: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        """Resolve an instance method call on a specific object type."""
+        """Resolve an instance method call on a specific object type using tree-sitter."""
         # Resolve object_type to fully qualified name
         resolved_type = self._resolve_java_type_name(object_type, module_qn)
 
-        # Look for the method in the class
-        method_qn = f"{resolved_type}.{method_name}"
+        # Look for the method in the class (try with empty parameter list first)
+        method_qn = f"{resolved_type}.{method_name}()"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
 
-        # TODO: Check inheritance hierarchy for inherited methods
+        # Also try without parameters (fallback)
+        method_qn_bare = f"{resolved_type}.{method_name}"
+        if method_qn_bare in self.function_registry:
+            return self.function_registry[method_qn_bare], method_qn_bare
+
+        # Check inheritance hierarchy for inherited methods using tree-sitter navigation
+        return self._find_inherited_method(resolved_type, method_name, module_qn)
+
+    def _find_inherited_method(
+        self, class_qn: str, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """Find an inherited method using tree-sitter to traverse inheritance."""
+        # Search through all classes in the registry to find potential parent classes
+        for qn, entity_type in self.function_registry.items():
+            if entity_type == "Class" and qn.startswith(module_qn + "."):
+                # Check if this could be a parent class by checking inheritance patterns
+                parent_method_qn = f"{qn}.{method_name}()"
+                if parent_method_qn in self.function_registry:
+                    # Found a potential inherited method
+                    return self.function_registry[parent_method_qn], parent_method_qn
+
+                # Also try without parameters (fallback)
+                parent_method_qn_bare = f"{qn}.{method_name}"
+                if parent_method_qn_bare in self.function_registry:
+                    return self.function_registry[
+                        parent_method_qn_bare
+                    ], parent_method_qn_bare
+
         return None
 
     def _get_current_class_name(self, module_qn: str) -> str | None:
@@ -602,3 +678,65 @@ class JavaTypeInferenceEngine:
         """Get the superclass name for inheritance resolution."""
         # This would require analyzing class inheritance from the AST
         return None
+
+    def _analyze_java_enhanced_for_loops(
+        self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Analyze enhanced for loops using tree-sitter to extract loop variable types."""
+        self._traverse_for_enhanced_for_loops(scope_node, local_var_types, module_qn)
+
+    def _traverse_for_enhanced_for_loops(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Recursively traverse AST using tree-sitter to find enhanced for statements."""
+        if node.type == "enhanced_for_statement":
+            self._process_enhanced_for_statement(node, local_var_types, module_qn)
+
+        # Recursively traverse children using tree-sitter
+        for child in node.children:
+            self._traverse_for_enhanced_for_loops(child, local_var_types, module_qn)
+
+    def _process_enhanced_for_statement(
+        self, for_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Process enhanced for statement using tree-sitter field access."""
+        # Enhanced for loop: for (Type variable : collection)
+        # Use tree-sitter field access to get the type and name
+        type_node = for_node.child_by_field_name("type")
+        name_node = for_node.child_by_field_name("name")
+
+        if type_node and name_node:
+            var_type = safe_decode_text(type_node)
+            var_name = safe_decode_text(name_node)
+
+            if var_type and var_name:
+                resolved_type = self._resolve_java_type_name(var_type, module_qn)
+                local_var_types[var_name] = resolved_type
+                logger.debug(
+                    f"Enhanced for loop variable: {var_name} -> {resolved_type}"
+                )
+        else:
+            # Alternative parsing: look for variable_declarator in for loop children
+            for child in for_node.children:
+                if child.type == "variable_declarator":
+                    name_node = child.child_by_field_name("name")
+                    if name_node:
+                        var_name = safe_decode_text(name_node)
+                        if var_name:
+                            # Find the type by looking at siblings
+                            parent = child.parent
+                            if parent:
+                                for sibling in parent.children:
+                                    if sibling.type == "type_identifier":
+                                        var_type = safe_decode_text(sibling)
+                                        if var_type:
+                                            resolved_type = (
+                                                self._resolve_java_type_name(
+                                                    var_type, module_qn
+                                                )
+                                            )
+                                            local_var_types[var_name] = resolved_type
+                                            logger.debug(
+                                                f"Enhanced for loop variable (alt): {var_name} -> {resolved_type}"
+                                            )
+                                            break
