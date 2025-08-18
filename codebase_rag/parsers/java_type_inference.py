@@ -720,19 +720,28 @@ class JavaTypeInferenceEngine:
         """Get all interfaces implemented by a class using tree-sitter AST analysis."""
         # Extract module and class information
         parts = class_qn.split(".")
-        if len(parts) < 4:  # Need project.folder.subfolder.class
+        if len(parts) < 2:  # Need at least project.class
             return []
 
         module_qn = ".".join(parts[:-1])
         target_class_name = parts[-1]
 
-        # Construct file path
-        file_path_str = (
-            "/".join(parts[1:-1]) + ".java"
-        )  # Skip project name and class name
-        file_path = Path(file_path_str)
+        # Construct file path - try different strategies for flexibility
+        potential_paths = [
+            Path("/".join(parts[1:-1]) + ".java"),  # Skip project and class
+            Path("/".join(parts[:-1]) + ".java"),  # Include project, skip class
+            Path(
+                "/".join(parts[2:-1]) + ".java"
+            ),  # Skip project and first folder, skip class
+        ]
 
-        if file_path not in self.ast_cache:
+        file_path = None
+        for path in potential_paths:
+            if path in self.ast_cache:
+                file_path = path
+                break
+
+        if file_path is None:
             return []
 
         root_node, _ = self.ast_cache[file_path]
@@ -792,14 +801,24 @@ class JavaTypeInferenceEngine:
         """Extract current class name from AST context using precise tree-sitter traversal."""
         # Get the AST for the current module
         module_parts = module_qn.split(".")
-        if len(module_parts) < 4:  # Need at least project.folder.subfolder.filename
+        if len(module_parts) < 2:  # Need at least project.filename
             return None
 
         # Construct file path from module qualified name
-        file_path_str = "/".join(module_parts[1:]) + ".java"  # Skip project name
-        file_path = Path(file_path_str)
+        # Try different path construction strategies for flexibility
+        potential_paths = [
+            Path("/".join(module_parts[1:]) + ".java"),  # Skip project name
+            Path("/".join(module_parts) + ".java"),  # Include all parts
+            Path("/".join(module_parts[2:]) + ".java"),  # Skip project and first folder
+        ]
 
-        if file_path not in self.ast_cache:
+        file_path = None
+        for path in potential_paths:
+            if path in self.ast_cache:
+                file_path = path
+                break
+
+        if file_path is None:
             return None
 
         root_node, _ = self.ast_cache[file_path]
@@ -837,19 +856,28 @@ class JavaTypeInferenceEngine:
         """Get the superclass name using precise tree-sitter AST analysis."""
         # Extract module and class information
         parts = class_qn.split(".")
-        if len(parts) < 4:  # Need project.folder.subfolder.class
+        if len(parts) < 2:  # Need at least project.class
             return None
 
         module_qn = ".".join(parts[:-1])
         target_class_name = parts[-1]
 
-        # Construct file path
-        file_path_str = (
-            "/".join(parts[1:-1]) + ".java"
-        )  # Skip project name and class name
-        file_path = Path(file_path_str)
+        # Construct file path - try different strategies for flexibility
+        potential_paths = [
+            Path("/".join(parts[1:-1]) + ".java"),  # Skip project and class
+            Path("/".join(parts[:-1]) + ".java"),  # Include project, skip class
+            Path(
+                "/".join(parts[2:-1]) + ".java"
+            ),  # Skip project and first folder, skip class
+        ]
 
-        if file_path not in self.ast_cache:
+        file_path = None
+        for path in potential_paths:
+            if path in self.ast_cache:
+                file_path = path
+                break
+
+        if file_path is None:
             return None
 
         root_node, _ = self.ast_cache[file_path]
