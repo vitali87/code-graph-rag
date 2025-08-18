@@ -163,19 +163,22 @@ def extract_java_class_info(class_node: Node) -> dict[str, str | list[str] | Non
                 if param_name and isinstance(info["type_parameters"], list):
                     info["type_parameters"].append(param_name)
 
-    # Extract modifiers
+    # Extract modifiers using correct tree-sitter traversal
     for child in class_node.children:
-        if child.type in [
-            "public",
-            "private",
-            "protected",
-            "static",
-            "final",
-            "abstract",
-        ]:
-            modifier = safe_decode_text(child)
-            if modifier and isinstance(info["modifiers"], list):
-                info["modifiers"].append(modifier)
+        if child.type == "modifiers":
+            # Look inside the modifiers node for actual modifier tokens
+            for modifier_child in child.children:
+                if modifier_child.type in [
+                    "public",
+                    "private",
+                    "protected",
+                    "static",
+                    "final",
+                    "abstract",
+                ]:
+                    modifier = safe_decode_text(modifier_child)
+                    if modifier and isinstance(info["modifiers"], list):
+                        info["modifiers"].append(modifier)
 
     return info
 
@@ -222,7 +225,7 @@ def extract_java_method_info(method_node: Node) -> dict[str, str | list[str] | N
         if type_node:
             info["return_type"] = safe_decode_text(type_node)
 
-    # Extract parameters
+    # Extract parameters using tree-sitter field access
     params_node = method_node.child_by_field_name("parameters")
     if params_node:
         for child in params_node.children:
@@ -232,25 +235,38 @@ def extract_java_method_info(method_node: Node) -> dict[str, str | list[str] | N
                     param_type = safe_decode_text(param_type_node)
                     if param_type and isinstance(info["parameters"], list):
                         info["parameters"].append(param_type)
+            elif child.type == "spread_parameter":
+                # Handle varargs (String... args) using tree-sitter traversal
+                for subchild in child.children:
+                    if subchild.type == "type_identifier":
+                        param_type_text = safe_decode_text(subchild)
+                        if param_type_text:
+                            param_type = param_type_text + "..."
+                            if isinstance(info["parameters"], list):
+                                info["parameters"].append(param_type)
+                        break
 
-    # Extract modifiers and annotations
+    # Extract modifiers and annotations using correct tree-sitter traversal
     for child in method_node.children:
-        if child.type in [
-            "public",
-            "private",
-            "protected",
-            "static",
-            "final",
-            "abstract",
-            "synchronized",
-        ]:
-            modifier = safe_decode_text(child)
-            if modifier and isinstance(info["modifiers"], list):
-                info["modifiers"].append(modifier)
-        elif child.type == "annotation":
-            annotation = safe_decode_text(child)
-            if annotation and isinstance(info["annotations"], list):
-                info["annotations"].append(annotation)
+        if child.type == "modifiers":
+            # Look inside the modifiers node for actual modifier tokens
+            for modifier_child in child.children:
+                if modifier_child.type in [
+                    "public",
+                    "private",
+                    "protected",
+                    "static",
+                    "final",
+                    "abstract",
+                    "synchronized",
+                ]:
+                    modifier = safe_decode_text(modifier_child)
+                    if modifier and isinstance(info["modifiers"], list):
+                        info["modifiers"].append(modifier)
+                elif modifier_child.type == "annotation":
+                    annotation = safe_decode_text(modifier_child)
+                    if annotation and isinstance(info["annotations"], list):
+                        info["annotations"].append(annotation)
 
     return info
 
@@ -290,24 +306,27 @@ def extract_java_field_info(field_node: Node) -> dict[str, str | list[str] | Non
         if name_node:
             info["name"] = safe_decode_text(name_node)
 
-    # Extract modifiers and annotations
+    # Extract modifiers and annotations using correct tree-sitter traversal
     for child in field_node.children:
-        if child.type in [
-            "public",
-            "private",
-            "protected",
-            "static",
-            "final",
-            "transient",
-            "volatile",
-        ]:
-            modifier = safe_decode_text(child)
-            if modifier and isinstance(info["modifiers"], list):
-                info["modifiers"].append(modifier)
-        elif child.type == "annotation":
-            annotation = safe_decode_text(child)
-            if annotation and isinstance(info["annotations"], list):
-                info["annotations"].append(annotation)
+        if child.type == "modifiers":
+            # Look inside the modifiers node for actual modifier tokens
+            for modifier_child in child.children:
+                if modifier_child.type in [
+                    "public",
+                    "private",
+                    "protected",
+                    "static",
+                    "final",
+                    "transient",
+                    "volatile",
+                ]:
+                    modifier = safe_decode_text(modifier_child)
+                    if modifier and isinstance(info["modifiers"], list):
+                        info["modifiers"].append(modifier)
+                elif modifier_child.type == "annotation":
+                    annotation = safe_decode_text(modifier_child)
+                    if annotation and isinstance(info["annotations"], list):
+                        info["annotations"].append(annotation)
 
     return info
 
