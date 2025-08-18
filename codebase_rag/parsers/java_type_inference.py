@@ -247,7 +247,9 @@ class JavaTypeInferenceEngine:
                     local_var_types[this_field_ref] = resolved_type
 
                     # Also store without 'this.' for direct field access
-                    local_var_types[str(field_name)] = resolved_type
+                    # Only add if not already present (respect variable shadowing)
+                    if str(field_name) not in local_var_types:
+                        local_var_types[str(field_name)] = resolved_type
                     logger.debug(f"Class field: {field_name} -> {resolved_type}")
 
     def _analyze_java_constructor_assignments(
