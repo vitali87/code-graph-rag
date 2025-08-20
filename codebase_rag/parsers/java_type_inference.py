@@ -410,29 +410,126 @@ class JavaTypeInferenceEngine:
     def _resolve_java_method_return_type(
         self, method_call: str, module_qn: str
     ) -> str | None:
-        """Resolve the return type of a Java method call."""
-        # This is a simplified implementation - would need to analyze method signatures
-        # and return types from the AST cache in a full implementation
+        """Resolve the return type of a Java method call using AST analysis."""
+        if not method_call:
+            return None
 
-        # For now, use heuristics based on common Java patterns
+        # Parse the method call to extract object and method parts
+        parts = method_call.split(".")
+        if len(parts) < 2:
+            # Simple method call without object - look in current class
+            method_name = method_call
+            current_class_qn = self._get_current_class_name(module_qn)
+            if current_class_qn:
+                return self._find_method_return_type(current_class_qn, method_name)
+        else:
+            # Method call on an object - resolve the object type first
+            object_part = ".".join(parts[:-1])
+            method_name = parts[-1]
+
+            # Try to resolve object type
+            object_type = self._lookup_variable_type(object_part, module_qn)
+            if object_type:
+                return self._find_method_return_type(object_type, method_name)
+
+            # Check if it's a static method call on a class
+            potential_class_qn = f"{module_qn}.{object_part}"
+            if potential_class_qn in self.function_registry:
+                return self._find_method_return_type(potential_class_qn, method_name)
+
+        # Fallback to heuristics for common patterns
+        return self._heuristic_method_return_type(method_call)
+
+    def _find_method_return_type(self, class_qn: str, method_name: str) -> str | None:
+        """Find the return type of a method in a specific class using AST analysis."""
+        if not class_qn or not method_name:
+            return None
+
+        # Extract module and class information
+        parts = class_qn.split(".")
+        if len(parts) < 2:
+            return None
+
+        module_qn = ".".join(parts[:-1])
+        target_class_name = parts[-1]
+
+        # Get the AST for the module
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is None or file_path not in self.ast_cache:
+            return None
+
+        root_node, _ = self.ast_cache[file_path]
+
+        # Find the method in the class and extract its return type
+        return self._find_method_return_type_in_ast(
+            root_node, target_class_name, method_name, module_qn
+        )
+
+    def _find_method_return_type_in_ast(
+        self, node: Node, class_name: str, method_name: str, module_qn: str
+    ) -> str | None:
+        """Find method return type by traversing the AST."""
+        if node.type == "class_declaration":
+            # Check if this is the target class
+            name_node = node.child_by_field_name("name")
+            if name_node and safe_decode_text(name_node) == class_name:
+                # Found the target class, look for the method
+                body_node = node.child_by_field_name("body")
+                if body_node:
+                    return self._search_methods_in_class_body(
+                        body_node, method_name, module_qn
+                    )
+
+        # Recursively traverse children
+        for child in node.children:
+            result = self._find_method_return_type_in_ast(
+                child, class_name, method_name, module_qn
+            )
+            if result:
+                return result
+
+        return None
+
+    def _search_methods_in_class_body(
+        self, body_node: Node, method_name: str, module_qn: str
+    ) -> str | None:
+        """Search for a specific method in a class body and return its return type."""
+        for child in body_node.children:
+            if child.type == "method_declaration":
+                # Check method name
+                name_node = child.child_by_field_name("name")
+                if name_node and safe_decode_text(name_node) == method_name:
+                    # Found the method, extract return type
+                    type_node = child.child_by_field_name("type")
+                    if type_node:
+                        return_type = safe_decode_text(type_node)
+                        if return_type:
+                            # Resolve to fully qualified name
+                            return self._resolve_java_type_name(return_type, module_qn)
+        return None
+
+    def _heuristic_method_return_type(self, method_call: str) -> str | None:
+        """Fallback heuristics for common Java patterns when AST analysis fails."""
         if "get" in method_call.lower():
             # Getter methods often return the field type
             if "string" in method_call.lower() or "name" in method_call.lower():
-                return "String"
+                return "java.lang.String"
             elif "id" in method_call.lower():
-                return "Long"
+                return "java.lang.Long"
+            elif "size" in method_call.lower() or "length" in method_call.lower():
+                return "int"
         elif "create" in method_call.lower() or "new" in method_call.lower():
             # Factory methods often return instances of the class they're creating
             parts = method_call.split(".")
             if len(parts) >= 2:
-                # Try to infer return type from method name
                 method_name = parts[-1]
                 if "user" in method_name.lower():
                     return "User"
                 elif "order" in method_name.lower():
                     return "Order"
+        elif "is" in method_call.lower() or "has" in method_call.lower():
+            return "boolean"
 
-        # TODO: Implement full method signature analysis
         return None
 
     def _lookup_java_field_type(
