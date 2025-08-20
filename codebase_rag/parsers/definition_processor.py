@@ -23,6 +23,7 @@ from .cpp_utils import (
     is_cpp_exported,
 )
 from .import_processor import ImportProcessor
+from .java_utils import extract_java_method_info
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
 from .rust_utils import build_rust_module_path, extract_rust_impl_target
@@ -1181,8 +1182,6 @@ class DefinitionProcessor:
                 # Handle Java method overloading with parameter types
                 method_qualified_name = None
                 if language == "java":
-                    from .java_utils import extract_java_method_info
-
                     method_info = extract_java_method_info(method_node)
                     method_name = method_info.get("name")
                     parameters = method_info.get("parameters", [])

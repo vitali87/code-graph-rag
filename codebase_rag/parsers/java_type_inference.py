@@ -808,9 +808,9 @@ class JavaTypeInferenceEngine:
         # Search for methods in the current module that match the method name
         for qn, entity_type in self.function_registry.items():
             if (
-                qn.startswith(module_qn + ".")
-                and (qn.endswith(f".{method_name}()") or qn.endswith(f".{method_name}"))
+                qn.startswith(f"{module_qn}.")
                 and entity_type in ["Method", "Constructor"]
+                and qn.split("(")[0].endswith(f".{method_name}")
             ):
                 return entity_type, qn
 
