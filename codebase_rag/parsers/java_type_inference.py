@@ -28,6 +28,7 @@ class JavaTypeInferenceEngine:
         project_name: str,
         ast_cache: "ASTCacheProtocol",
         queries: dict[str, Any],
+        module_qn_to_file_path: dict[str, Path],
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -35,6 +36,11 @@ class JavaTypeInferenceEngine:
         self.project_name = project_name
         self.ast_cache = ast_cache
         self.queries = queries
+        self.module_qn_to_file_path = module_qn_to_file_path
+
+        # Cache for variable type lookups to prevent infinite recursion
+        self._lookup_cache: dict[str, str | None] = {}
+        self._lookup_in_progress: set[str] = set()
 
     def build_java_variable_type_map(
         self, scope_node: Node, module_qn: str
@@ -451,22 +457,9 @@ class JavaTypeInferenceEngine:
         target_module_qn = ".".join(parts[:-1])
         target_class_name = parts[-1]
 
-        # Try different path construction strategies
-        potential_paths = [
-            Path("/".join(parts[1:-1]) + ".java"),  # Skip project and class
-            Path("/".join(parts[:-1]) + ".java"),  # Include project, skip class
-            Path(
-                "/".join(parts[2:-1]) + ".java"
-            ),  # Skip project and first folder, skip class
-        ]
-
-        file_path = None
-        for path in potential_paths:
-            if path in self.ast_cache:
-                file_path = path
-                break
-
-        if file_path is None:
+        # Use the direct mapping from module QN to file path - much more robust!
+        file_path = self.module_qn_to_file_path.get(target_module_qn)
+        if file_path is None or file_path not in self.ast_cache:
             return None
 
         root_node, _ = self.ast_cache[file_path]
@@ -483,39 +476,50 @@ class JavaTypeInferenceEngine:
         if not var_name or not module_qn:
             return None
 
-        # Get the AST for the module
-        module_parts = module_qn.split(".")
-        if len(module_parts) < 2:
-            return None
+        # Create a cache key to prevent infinite recursion
+        cache_key = f"{module_qn}:{var_name}"
+        if cache_key in self._lookup_cache:
+            return self._lookup_cache[cache_key]
 
-        # Try different path construction strategies
-        potential_paths = [
-            Path("/".join(module_parts[1:]) + ".java"),  # Skip project name
-            Path("/".join(module_parts) + ".java"),  # Include all parts
-            Path("/".join(module_parts[2:]) + ".java"),  # Skip project and first folder
-        ]
+        # Mark as being processed to detect cycles
+        if cache_key in self._lookup_in_progress:
+            return None  # Cycle detected, return None to break recursion
 
-        file_path = None
-        for path in potential_paths:
-            if path in self.ast_cache:
-                file_path = path
-                break
+        self._lookup_in_progress.add(cache_key)
 
-        if file_path is None:
-            return None
+        try:
+            # Get the AST for the module
+            module_parts = module_qn.split(".")
+            if len(module_parts) < 2:
+                result = None
+            else:
+                # Use the direct mapping from module QN to file path - much more robust!
+                file_path = self.module_qn_to_file_path.get(module_qn)
+                if file_path is None or file_path not in self.ast_cache:
+                    result = None
+                else:
+                    root_node, _ = self.ast_cache[file_path]
 
-        root_node, _ = self.ast_cache[file_path]
+                    # Build variable type map for this module and look up the variable
+                    variable_types = self.build_java_variable_type_map(
+                        root_node, module_qn
+                    )
 
-        # Build variable type map for this module and look up the variable
-        variable_types = self.build_java_variable_type_map(root_node, module_qn)
+                    # Check different forms of the variable name
+                    if var_name in variable_types:
+                        result = variable_types[var_name]
+                    elif f"this.{var_name}" in variable_types:
+                        result = variable_types[f"this.{var_name}"]
+                    else:
+                        result = None
 
-        # Check different forms of the variable name
-        if var_name in variable_types:
-            return variable_types[var_name]
-        elif f"this.{var_name}" in variable_types:
-            return variable_types[f"this.{var_name}"]
+            # Cache the result
+            self._lookup_cache[cache_key] = result
+            return result
 
-        return None
+        finally:
+            # Always remove from in-progress set
+            self._lookup_in_progress.discard(cache_key)
 
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
         """Resolve a Java type name to its fully qualified name."""
@@ -793,22 +797,9 @@ class JavaTypeInferenceEngine:
         module_qn = ".".join(parts[:-1])
         target_class_name = parts[-1]
 
-        # Construct file path - try different strategies for flexibility
-        potential_paths = [
-            Path("/".join(parts[1:-1]) + ".java"),  # Skip project and class
-            Path("/".join(parts[:-1]) + ".java"),  # Include project, skip class
-            Path(
-                "/".join(parts[2:-1]) + ".java"
-            ),  # Skip project and first folder, skip class
-        ]
-
-        file_path = None
-        for path in potential_paths:
-            if path in self.ast_cache:
-                file_path = path
-                break
-
-        if file_path is None:
+        # Use the direct mapping from module QN to file path - much more robust!
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is None or file_path not in self.ast_cache:
             return []
 
         root_node, _ = self.ast_cache[file_path]
@@ -871,21 +862,9 @@ class JavaTypeInferenceEngine:
         if len(module_parts) < 2:  # Need at least project.filename
             return None
 
-        # Construct file path from module qualified name
-        # Try different path construction strategies for flexibility
-        potential_paths = [
-            Path("/".join(module_parts[1:]) + ".java"),  # Skip project name
-            Path("/".join(module_parts) + ".java"),  # Include all parts
-            Path("/".join(module_parts[2:]) + ".java"),  # Skip project and first folder
-        ]
-
-        file_path = None
-        for path in potential_paths:
-            if path in self.ast_cache:
-                file_path = path
-                break
-
-        if file_path is None:
+        # Use the direct mapping from module QN to file path - much more robust!
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is None or file_path not in self.ast_cache:
             return None
 
         root_node, _ = self.ast_cache[file_path]
@@ -929,22 +908,9 @@ class JavaTypeInferenceEngine:
         module_qn = ".".join(parts[:-1])
         target_class_name = parts[-1]
 
-        # Construct file path - try different strategies for flexibility
-        potential_paths = [
-            Path("/".join(parts[1:-1]) + ".java"),  # Skip project and class
-            Path("/".join(parts[:-1]) + ".java"),  # Include project, skip class
-            Path(
-                "/".join(parts[2:-1]) + ".java"
-            ),  # Skip project and first folder, skip class
-        ]
-
-        file_path = None
-        for path in potential_paths:
-            if path in self.ast_cache:
-                file_path = path
-                break
-
-        if file_path is None:
+        # Use the direct mapping from module QN to file path - much more robust!
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is None or file_path not in self.ast_cache:
             return None
 
         root_node, _ = self.ast_cache[file_path]

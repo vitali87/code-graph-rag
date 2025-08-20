@@ -43,6 +43,7 @@ class DefinitionProcessor:
         function_registry: Any,
         simple_name_lookup: dict[str, set[str]],
         import_processor: ImportProcessor,
+        module_qn_to_file_path: dict[str, Path],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -50,6 +51,7 @@ class DefinitionProcessor:
         self.function_registry = function_registry
         self.simple_name_lookup = simple_name_lookup
         self.import_processor = import_processor
+        self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
@@ -120,6 +122,9 @@ class DefinitionProcessor:
                 module_qn = ".".join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
+
+            # Populate the module QN to file path mapping for efficient lookups
+            self.module_qn_to_file_path[module_qn] = file_path
 
             self.ingestor.ensure_node_batch(
                 "Module",

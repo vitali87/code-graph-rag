@@ -45,6 +45,9 @@ class ProcessorFactory:
         self.simple_name_lookup = simple_name_lookup
         self.ast_cache = ast_cache
 
+        # Mapping from module qualified names to file paths for efficient lookups
+        self.module_qn_to_file_path: dict[str, Path] = {}
+
         # Create processors with proper dependencies
         self._import_processor: ImportProcessor | None = None
         self._structure_processor: StructureProcessor | None = None
@@ -104,6 +107,7 @@ class ProcessorFactory:
                 function_registry=self.function_registry,
                 simple_name_lookup=self.simple_name_lookup,
                 import_processor=self.import_processor,
+                module_qn_to_file_path=self.module_qn_to_file_path,
             )
         return self._definition_processor
 
@@ -118,6 +122,7 @@ class ProcessorFactory:
                 project_name=self.project_name,
                 ast_cache=self.ast_cache,
                 queries=self.queries,
+                module_qn_to_file_path=self.module_qn_to_file_path,
             )
         return self._type_inference
 
