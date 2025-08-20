@@ -1347,6 +1347,20 @@ class DefinitionProcessor:
 
         return parent_text
 
+    def _resolve_superclass_from_type_identifier(
+        self, type_identifier_node: Node, module_qn: str
+    ) -> str | None:
+        """Resolve a superclass name from a type_identifier node."""
+        parent_text = type_identifier_node.text
+        if parent_text:
+            parent_name = parent_text.decode("utf8")
+            # Resolve to full qualified name if possible
+            return (
+                self._resolve_class_name(parent_name, module_qn)
+                or f"{module_qn}.{parent_name}"
+            )
+        return None
+
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
         """Extract parent class names from a class definition."""
         parent_classes = []
@@ -1367,27 +1381,22 @@ class DefinitionProcessor:
             if superclass_node:
                 # Java superclass is a single type identifier
                 if superclass_node.type == "type_identifier":
-                    parent_text = superclass_node.text
-                    if parent_text:
-                        parent_name = parent_text.decode("utf8")
-                        # Resolve to full qualified name if possible
-                        resolved_superclass = (
-                            self._resolve_class_name(parent_name, module_qn)
-                            or f"{module_qn}.{parent_name}"
-                        )
+                    resolved_superclass = self._resolve_superclass_from_type_identifier(
+                        superclass_node, module_qn
+                    )
+                    if resolved_superclass:
                         parent_classes.append(resolved_superclass)
                 else:
                     # Look for type_identifier children in superclass node
                     for child in superclass_node.children:
                         if child.type == "type_identifier":
-                            parent_text = child.text
-                            if parent_text:
-                                parent_name = parent_text.decode("utf8")
-                                resolved_superclass_child = (
-                                    self._resolve_class_name(parent_name, module_qn)
-                                    or f"{module_qn}.{parent_name}"
+                            resolved_superclass = (
+                                self._resolve_superclass_from_type_identifier(
+                                    child, module_qn
                                 )
-                                parent_classes.append(resolved_superclass_child)
+                            )
+                            if resolved_superclass:
+                                parent_classes.append(resolved_superclass)
                                 break
 
         # Look for superclasses in Python class definition
