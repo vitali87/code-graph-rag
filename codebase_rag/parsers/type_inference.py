@@ -30,6 +30,7 @@ class TypeInferenceEngine:
         ast_cache: "ASTCacheProtocol",
         queries: dict[str, Any],
         module_qn_to_file_path: dict[str, Path],
+        class_inheritance: dict[str, list[str]],
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -38,6 +39,7 @@ class TypeInferenceEngine:
         self.ast_cache = ast_cache
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
+        self.class_inheritance = class_inheritance
 
         # Java-specific type inference engine (lazy-loaded)
         self._java_type_inference: JavaTypeInferenceEngine | None = None
@@ -54,6 +56,7 @@ class TypeInferenceEngine:
                 ast_cache=self.ast_cache,
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
+                class_inheritance=self.class_inheritance,
             )
         return self._java_type_inference
 

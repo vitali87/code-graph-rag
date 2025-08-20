@@ -123,6 +123,7 @@ class ProcessorFactory:
                 ast_cache=self.ast_cache,
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
+                class_inheritance=self.definition_processor.class_inheritance,
             )
         return self._type_inference
 

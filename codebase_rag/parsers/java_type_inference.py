@@ -30,6 +30,7 @@ class JavaTypeInferenceEngine:
         ast_cache: "ASTCacheProtocol",
         queries: dict[str, Any],
         module_qn_to_file_path: dict[str, Path],
+        class_inheritance: dict[str, list[str]],
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -38,6 +39,7 @@ class JavaTypeInferenceEngine:
         self.ast_cache = ast_cache
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
+        self.class_inheritance = class_inheritance
 
         # Cache for variable type lookups to prevent infinite recursion
         self._lookup_cache: dict[str, str | None] = {}
@@ -766,7 +768,7 @@ class JavaTypeInferenceEngine:
             for qn, entity_type in self.function_registry.items():
                 if entity_type == "Class" and qn.startswith(module_qn + "."):
                     # Look for parent classes - simplified approach
-                    parent_qn = self._find_parent_class(qn, module_qn)
+                    parent_qn = self._find_parent_class(qn)
                     if parent_qn:
                         return parent_qn
             return None
@@ -787,18 +789,16 @@ class JavaTypeInferenceEngine:
 
         return None
 
-    def _find_parent_class(self, class_qn: str, module_qn: str) -> str | None:
-        """Find the parent class of a given class using basic heuristics."""
-        # In a real implementation, this would parse the AST to find 'extends' relationships
-        # For now, use a simple heuristic: look for other classes that could be parents
-        for qn, entity_type in self.function_registry.items():
-            if (
-                entity_type == "Class"
-                and qn.startswith(module_qn + ".")
-                and qn != class_qn
-                and len(qn.split(".")) == len(class_qn.split("."))
-            ):  # Same nesting level
-                return str(qn)
+    def _find_parent_class(self, class_qn: str) -> str | None:
+        """Find the parent class of a given class using actual inheritance data."""
+        # Look up the parent class from the parsed inheritance information
+        parent_classes = self.class_inheritance.get(class_qn, [])
+
+        # Return the first parent class if any exists
+        # In Java, there's only one direct superclass due to single inheritance
+        if parent_classes:
+            return parent_classes[0]
+
         return None
 
     def _resolve_static_or_local_method(
