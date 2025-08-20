@@ -549,8 +549,12 @@ class JavaTypeInferenceEngine:
         # Resolve class_type to fully qualified name if needed
         resolved_class_type = self._resolve_java_type_name(class_type, module_qn)
 
-        # Construct class qualified name - assume it's in the same module for now
-        class_qn = f"{module_qn}.{resolved_class_type}"
+        # If resolved_class_type is already a FQN, use it directly.
+        # Otherwise, assume it's a class in the same package.
+        if "." in resolved_class_type:
+            class_qn = resolved_class_type
+        else:
+            class_qn = f"{module_qn}.{resolved_class_type}"
 
         # Extract module and class information
         parts = class_qn.split(".")
