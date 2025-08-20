@@ -1064,19 +1064,6 @@ class CallProcessor:
         """Resolve Java method calls using the JavaTypeInferenceEngine."""
         # Get the Java type inference engine from the main type inference engine
         java_engine = self.type_inference.java_type_inference
-        if java_engine is None:
-            # Initialize it if not already done
-            from .java_type_inference import JavaTypeInferenceEngine
-
-            java_engine = JavaTypeInferenceEngine(
-                import_processor=self.import_processor,
-                function_registry=self.function_registry,
-                repo_path=self.repo_path,
-                project_name=self.project_name,
-                ast_cache=self.type_inference.ast_cache,
-                queries=self.type_inference.queries,
-            )
-            self.type_inference.java_type_inference = java_engine
 
         # Use the Java engine to resolve the method call
         result = java_engine.resolve_java_method_call(

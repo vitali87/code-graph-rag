@@ -37,8 +37,22 @@ class TypeInferenceEngine:
         self.ast_cache = ast_cache
         self.queries = queries
 
-        # Java-specific type inference engine
-        self.java_type_inference: JavaTypeInferenceEngine | None = None
+        # Java-specific type inference engine (lazy-loaded)
+        self._java_type_inference: JavaTypeInferenceEngine | None = None
+
+    @property
+    def java_type_inference(self) -> JavaTypeInferenceEngine:
+        """Lazy-loaded Java type inference engine."""
+        if self._java_type_inference is None:
+            self._java_type_inference = JavaTypeInferenceEngine(
+                import_processor=self.import_processor,
+                function_registry=self.function_registry,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                ast_cache=self.ast_cache,
+                queries=self.queries,
+            )
+        return self._java_type_inference
 
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, language: str
@@ -1273,16 +1287,6 @@ class TypeInferenceEngine:
         self, caller_node: Node, module_qn: str
     ) -> dict[str, str]:
         """Build local variable type map for Java using JavaTypeInferenceEngine."""
-        if self.java_type_inference is None:
-            self.java_type_inference = JavaTypeInferenceEngine(
-                import_processor=self.import_processor,
-                function_registry=self.function_registry,
-                repo_path=self.repo_path,
-                project_name=self.project_name,
-                ast_cache=self.ast_cache,
-                queries=self.queries,
-            )
-
         return self.java_type_inference.build_java_variable_type_map(
             caller_node, module_qn
         )
