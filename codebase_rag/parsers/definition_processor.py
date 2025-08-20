@@ -23,6 +23,7 @@ from .cpp_utils import (
     is_cpp_exported,
 )
 from .import_processor import ImportProcessor
+from .java_utils import extract_java_method_info
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
 from .rust_utils import build_rust_module_path, extract_rust_impl_target
@@ -43,6 +44,7 @@ class DefinitionProcessor:
         function_registry: Any,
         simple_name_lookup: dict[str, set[str]],
         import_processor: ImportProcessor,
+        module_qn_to_file_path: dict[str, Path],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -50,6 +52,7 @@ class DefinitionProcessor:
         self.function_registry = function_registry
         self.simple_name_lookup = simple_name_lookup
         self.import_processor = import_processor
+        self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
@@ -120,6 +123,9 @@ class DefinitionProcessor:
                 module_qn = ".".join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
+
+            # Populate the module QN to file path mapping for efficient lookups
+            self.module_qn_to_file_path[module_qn] = file_path
 
             self.ingestor.ensure_node_batch(
                 "Module",
@@ -1151,6 +1157,16 @@ class DefinitionProcessor:
                     node_type, class_qn, parent_class_qn
                 )
 
+            # Handle Java interface implementations
+            if class_node.type == "class_declaration":
+                implemented_interfaces = self._extract_implemented_interfaces(
+                    class_node, module_qn
+                )
+                for interface_qn in implemented_interfaces:
+                    self._create_implements_relationship(
+                        node_type, class_qn, interface_qn
+                    )
+
             body_node = class_node.child_by_field_name("body")
             if not body_node:
                 continue
@@ -1163,6 +1179,23 @@ class DefinitionProcessor:
                 if not isinstance(method_node, Node):
                     continue
 
+                # Handle Java method overloading with parameter types
+                method_qualified_name = None
+                if language == "java":
+                    method_info = extract_java_method_info(method_node)
+                    method_name = method_info.get("name")
+                    parameters = method_info.get("parameters", [])
+                    if method_name:
+                        if parameters:
+                            # Create method signature with parameter types for overloading
+                            param_signature = "(" + ",".join(parameters) + ")"
+                            method_qualified_name = (
+                                f"{class_qn}.{method_name}{param_signature}"
+                            )
+                        else:
+                            # No parameters, use simple name
+                            method_qualified_name = f"{class_qn}.{method_name}()"
+
                 ingest_method(
                     method_node,
                     class_qn,
@@ -1173,6 +1206,7 @@ class DefinitionProcessor:
                     self._get_docstring,
                     language,
                     self._extract_decorators,
+                    method_qualified_name,
                 )
 
                 # Note: OVERRIDES relationships will be processed later after all methods are collected
@@ -1313,6 +1347,20 @@ class DefinitionProcessor:
 
         return parent_text
 
+    def _resolve_superclass_from_type_identifier(
+        self, type_identifier_node: Node, module_qn: str
+    ) -> str | None:
+        """Resolve a superclass name from a type_identifier node."""
+        parent_text = type_identifier_node.text
+        if parent_text:
+            parent_name = parent_text.decode("utf8")
+            # Resolve to full qualified name if possible
+            return (
+                self._resolve_class_name(parent_name, module_qn)
+                or f"{module_qn}.{parent_name}"
+            )
+        return None
+
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
         """Extract parent class names from a class definition."""
         parent_classes = []
@@ -1326,6 +1374,30 @@ class DefinitionProcessor:
                         self._parse_cpp_base_classes(child, class_node, module_qn)
                     )
             return parent_classes
+
+        # Look for superclass in Java class definition (extends clause)
+        if class_node.type == "class_declaration":
+            superclass_node = class_node.child_by_field_name("superclass")
+            if superclass_node:
+                # Java superclass is a single type identifier
+                if superclass_node.type == "type_identifier":
+                    resolved_superclass = self._resolve_superclass_from_type_identifier(
+                        superclass_node, module_qn
+                    )
+                    if resolved_superclass:
+                        parent_classes.append(resolved_superclass)
+                else:
+                    # Look for type_identifier children in superclass node
+                    for child in superclass_node.children:
+                        if child.type == "type_identifier":
+                            resolved_superclass = (
+                                self._resolve_superclass_from_type_identifier(
+                                    child, module_qn
+                                )
+                            )
+                            if resolved_superclass:
+                                parent_classes.append(resolved_superclass)
+                                break
 
         # Look for superclasses in Python class definition
         superclasses_node = class_node.child_by_field_name("superclasses")
@@ -1343,11 +1415,11 @@ class DefinitionProcessor:
                                 parent_classes.append(import_map[parent_name])
                             else:
                                 # Try to resolve within same module
-                                resolved_parent = self._resolve_class_name(
-                                    parent_name, module_qn
+                                resolved_python_parent: str | None = (
+                                    self._resolve_class_name(parent_name, module_qn)
                                 )
-                                if resolved_parent is not None:
-                                    parent_classes.append(resolved_parent)
+                                if resolved_python_parent is not None:
+                                    parent_classes.append(resolved_python_parent)
                                 else:
                                     # Fallback: assume same module
                                     parent_classes.append(f"{module_qn}.{parent_name}")
@@ -2491,3 +2563,49 @@ class DefinitionProcessor:
             return f"{module_qn}.{'.'.join(path_parts)}.{function_name}"
         else:
             return f"{module_qn}.{function_name}"
+
+    def _extract_implemented_interfaces(
+        self, class_node: Node, module_qn: str
+    ) -> list[str]:
+        """Extract implemented interface names from a Java class definition."""
+        implemented_interfaces: list[str] = []
+
+        # Look for interfaces field in Java class declaration
+        interfaces_node = class_node.child_by_field_name("interfaces")
+        if interfaces_node:
+            # The interfaces node contains a super_interfaces structure
+            # which has a type_list with comma-separated interface types
+            self._extract_java_interface_names(
+                interfaces_node, implemented_interfaces, module_qn
+            )
+
+        return implemented_interfaces
+
+    def _extract_java_interface_names(
+        self, interfaces_node: Node, interface_list: list[str], module_qn: str
+    ) -> None:
+        """Extract interface names from Java interfaces clause using tree-sitter."""
+        for child in interfaces_node.children:
+            if child.type == "type_list":
+                # Type list contains the actual interface types
+                for type_child in child.children:
+                    if type_child.type == "type_identifier":
+                        interface_name = type_child.text
+                        if interface_name:
+                            interface_name_str = interface_name.decode("utf8")
+                            # Resolve to fully qualified name
+                            resolved_interface = (
+                                self._resolve_class_name(interface_name_str, module_qn)
+                                or f"{module_qn}.{interface_name_str}"
+                            )
+                            interface_list.append(resolved_interface)
+
+    def _create_implements_relationship(
+        self, class_type: str, class_qn: str, interface_qn: str
+    ) -> None:
+        """Create an IMPLEMENTS relationship between a class and an interface."""
+        self.ingestor.ensure_relationship_batch(
+            (class_type, "qualified_name", class_qn),
+            "IMPLEMENTS",
+            ("Interface", "qualified_name", interface_qn),
+        )

@@ -403,7 +403,9 @@ class GraphUpdater:
 
     def _process_function_calls(self) -> None:
         """Third pass: Process function calls using the cached ASTs."""
-        for file_path, (root_node, language) in self.ast_cache.items():
+        # Create a copy of items to prevent "OrderedDict mutated during iteration" errors
+        ast_cache_items = list(self.ast_cache.items())
+        for file_path, (root_node, language) in ast_cache_items:
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )

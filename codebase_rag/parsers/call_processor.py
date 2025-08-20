@@ -285,6 +285,22 @@ class CallProcessor:
                 return convert_operator_symbol_to_name(operator_text)
 
         # For 'method_invocation' in Java
+        if call_node.type == "method_invocation":
+            # Get the object (receiver) part
+            object_node = call_node.child_by_field_name("object")
+            name_node = call_node.child_by_field_name("name")
+
+            if name_node and name_node.text:
+                method_name = str(name_node.text.decode("utf8"))
+
+                if object_node and object_node.text:
+                    object_text = str(object_node.text.decode("utf8"))
+                    return f"{object_text}.{method_name}"
+                else:
+                    # No object, likely this.method() or static method
+                    return method_name
+
+        # General case for other languages
         if name_node := call_node.child_by_field_name("name"):
             text = name_node.text
             if text is not None:
@@ -327,6 +343,10 @@ class CallProcessor:
         captures = cursor.captures(caller_node)
         call_nodes = captures.get("call", [])
 
+        logger.debug(
+            f"Found {len(call_nodes)} call nodes in {language} for {caller_qn}"
+        )
+
         for call_node in call_nodes:
             if not isinstance(call_node, Node):
                 continue
@@ -345,9 +365,15 @@ class CallProcessor:
             if not call_name:
                 continue
 
-            callee_info = self._resolve_function_call(
-                call_name, module_qn, local_var_types, class_context
-            )
+            # Use Java-specific resolution for Java method calls
+            if language == "java" and call_node.type == "method_invocation":
+                callee_info = self._resolve_java_method_call(
+                    call_node, module_qn, local_var_types
+                )
+            else:
+                callee_info = self._resolve_function_call(
+                    call_name, module_qn, local_var_types, class_context
+                )
             if not callee_info:
                 # Check if it's a built-in JavaScript method
                 builtin_info = self._resolve_builtin_call(call_name)
@@ -1027,3 +1053,25 @@ class CallProcessor:
                 return True
             current = current.parent
         return False
+
+    def _resolve_java_method_call(
+        self,
+        call_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> tuple[str, str] | None:
+        """Resolve Java method calls using the JavaTypeInferenceEngine."""
+        # Get the Java type inference engine from the main type inference engine
+        java_engine = self.type_inference.java_type_inference
+
+        # Use the Java engine to resolve the method call
+        result = java_engine.resolve_java_method_call(
+            call_node, local_var_types, module_qn
+        )
+
+        if result:
+            logger.debug(
+                f"Java method call resolved: {call_node.text.decode('utf8') if call_node.text else 'unknown'} -> {result[1]}"
+            )
+
+        return result
