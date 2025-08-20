@@ -92,6 +92,7 @@ def ingest_method(
     get_docstring_func: Any,
     language: str = "",
     extract_decorators_func: Any = None,
+    method_qualified_name: str | None = None,
 ) -> None:
     """Ingest a method node into the graph database.
 
@@ -105,6 +106,7 @@ def ingest_method(
         get_docstring_func: Function to extract docstring from a node.
         language: The programming language (used for C++ specific handling).
         extract_decorators_func: Optional function to extract decorators.
+        method_qualified_name: Optional pre-computed qualified name to use instead of generating one.
     """
     # Extract method name based on language
     if language == "cpp":
@@ -122,20 +124,12 @@ def ingest_method(
             return
         method_name = text.decode("utf8")
 
-    # Build qualified name (handle Java method overloading)
-    if language == "java":
-        from .java_utils import extract_java_method_info
-
-        method_info = extract_java_method_info(method_node)
-        parameters = method_info.get("parameters", [])
-        if parameters:
-            # Create method signature with parameter types for overloading
-            param_signature = "(" + ",".join(parameters) + ")"
-            method_qn = f"{container_qn}.{method_name}{param_signature}"
-        else:
-            # No parameters, use simple name
-            method_qn = f"{container_qn}.{method_name}()"
+    # Build qualified name
+    if method_qualified_name is not None:
+        # Use pre-computed qualified name (for language-specific handling)
+        method_qn = method_qualified_name
     else:
+        # Default qualified name construction
         method_qn = f"{container_qn}.{method_name}"
 
     # Extract decorators if function provided

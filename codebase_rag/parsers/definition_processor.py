@@ -1178,6 +1178,25 @@ class DefinitionProcessor:
                 if not isinstance(method_node, Node):
                     continue
 
+                # Handle Java method overloading with parameter types
+                method_qualified_name = None
+                if language == "java":
+                    from .java_utils import extract_java_method_info
+
+                    method_info = extract_java_method_info(method_node)
+                    method_name = method_info.get("name")
+                    parameters = method_info.get("parameters", [])
+                    if method_name:
+                        if parameters:
+                            # Create method signature with parameter types for overloading
+                            param_signature = "(" + ",".join(parameters) + ")"
+                            method_qualified_name = (
+                                f"{class_qn}.{method_name}{param_signature}"
+                            )
+                        else:
+                            # No parameters, use simple name
+                            method_qualified_name = f"{class_qn}.{method_name}()"
+
                 ingest_method(
                     method_node,
                     class_qn,
@@ -1188,6 +1207,7 @@ class DefinitionProcessor:
                     self._get_docstring,
                     language,
                     self._extract_decorators,
+                    method_qualified_name,
                 )
 
                 # Note: OVERRIDES relationships will be processed later after all methods are collected

@@ -8,6 +8,7 @@ from tree_sitter import Node
 
 from .import_processor import ImportProcessor
 from .java_utils import (
+    extract_java_class_info,
     extract_java_field_info,
     extract_java_method_call_info,
     safe_decode_text,
@@ -1115,7 +1116,6 @@ class JavaTypeInferenceEngine:
         self, root_node: Node, class_name: str, field_name: str, module_qn: str
     ) -> str | None:
         """Find the type of a specific field in a class using tree-sitter AST analysis."""
-        from .java_utils import extract_java_class_info, extract_java_field_info
 
         # Find the target class in the AST
         for child in root_node.children:

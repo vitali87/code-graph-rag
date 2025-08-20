@@ -249,9 +249,6 @@ LANGUAGE_CONFIGS = {
         call_query="""
         (method_invocation
             name: (identifier) @name) @call
-        (method_invocation
-            object: (_)
-            name: (identifier) @name) @call
         (object_creation_expression
             type: (type_identifier) @name) @call
         """,
