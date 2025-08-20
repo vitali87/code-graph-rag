@@ -2599,16 +2599,6 @@ class DefinitionProcessor:
                                 or f"{module_qn}.{interface_name_str}"
                             )
                             interface_list.append(resolved_interface)
-            elif child.type == "type_identifier":
-                # Direct type identifier (fallback case)
-                interface_name = child.text
-                if interface_name:
-                    interface_name_str = interface_name.decode("utf8")
-                    resolved_interface = (
-                        self._resolve_class_name(interface_name_str, module_qn)
-                        or f"{module_qn}.{interface_name_str}"
-                    )
-                    interface_list.append(resolved_interface)
 
     def _create_implements_relationship(
         self, class_type: str, class_qn: str, interface_qn: str

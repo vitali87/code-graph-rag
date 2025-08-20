@@ -368,7 +368,7 @@ class CallProcessor:
             # Use Java-specific resolution for Java method calls
             if language == "java" and call_node.type == "method_invocation":
                 callee_info = self._resolve_java_method_call(
-                    call_node, module_qn, local_var_types, language
+                    call_node, module_qn, local_var_types
                 )
             else:
                 callee_info = self._resolve_function_call(
@@ -1059,7 +1059,6 @@ class CallProcessor:
         call_node: Node,
         module_qn: str,
         local_var_types: dict[str, str],
-        language: str,
     ) -> tuple[str, str] | None:
         """Resolve Java method calls using the JavaTypeInferenceEngine."""
         # Get the Java type inference engine from the main type inference engine
