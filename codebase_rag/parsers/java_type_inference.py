@@ -430,12 +430,16 @@ class JavaTypeInferenceEngine:
             object_part = ".".join(parts[:-1])
             method_name = parts[-1]
 
-            # Try to resolve object type
+            # Check if it's a static method call on a fully qualified class
+            if object_part in self.function_registry:
+                return self._find_method_return_type(object_part, method_name)
+
+            # Try to resolve object type as a local variable
             object_type = self._lookup_variable_type(object_part, module_qn)
             if object_type:
                 return self._find_method_return_type(object_type, method_name)
 
-            # Check if it's a static method call on a class
+            # Check if it's a static method call on a class in the same package
             potential_class_qn = f"{module_qn}.{object_part}"
             if potential_class_qn in self.function_registry:
                 return self._find_method_return_type(potential_class_qn, method_name)

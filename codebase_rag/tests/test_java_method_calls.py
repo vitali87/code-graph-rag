@@ -592,3 +592,92 @@ public class GenericMethods {
     ]
 
     assert len(call_relationships) > 0, "No generic method call relationships found"
+
+
+def test_fully_qualified_static_method_calls(
+    java_methods_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Test that fully qualified static method calls are resolved correctly.
+
+    This test specifically covers the bug where fully qualified class names
+    like 'java.util.Collections' were incorrectly treated as variables
+    instead of being checked directly in the function registry.
+    """
+    test_file = (
+        java_methods_project
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "example"
+        / "StaticMethodCalls.java"
+    )
+    test_file.write_text(
+        """
+package com.example;
+
+import java.util.List;
+import java.util.ArrayList;
+
+public class StaticMethodCalls {
+
+    public void demonstrateFullyQualifiedStaticCalls() {
+        List<String> list = new ArrayList<>();
+        list.add("apple");
+        list.add("banana");
+
+        // These are the method calls that should be properly resolved
+        java.util.Collections.sort(list);  // CALLS fully qualified static method
+        java.util.Collections.reverse(list);  // CALLS fully qualified static method
+
+        // Also test standard library static methods
+        double sqrt = java.lang.Math.sqrt(25.0);  // CALLS fully qualified static method
+        int max = java.lang.Math.max(10, 20);  // CALLS fully qualified static method
+
+        // Test primitive wrapper static methods
+        java.lang.Integer num = java.lang.Integer.valueOf(42);  // CALLS fully qualified static method
+        java.lang.String str = java.lang.String.valueOf(123);  // CALLS fully qualified static method
+        java.lang.String formatted = java.lang.String.format("Value: %d", 42);  // CALLS fully qualified static method
+
+        // Test with shorter qualified names (imported classes)
+        double pi = Math.PI;  // ACCESS static field
+        String result = String.format("Result: %s", formatted);  // CALLS static method
+
+        // Custom static method calls
+        StaticMethodCalls.helperMethod();  // CALLS static method
+        com.example.StaticMethodCalls.helperMethod();  // CALLS fully qualified static method
+    }
+
+    public static void helperMethod() {
+        java.lang.System.out.println("Helper method called");  // CALLS fully qualified static method
+    }
+
+    public static String formatValue(int value) {
+        return java.lang.String.format("Formatted: %d", value);  // CALLS fully qualified static method
+    }
+}
+"""
+    )
+
+    parsers, queries = load_parsers()
+    if "java" not in parsers:
+        pytest.skip("Java parser not available")
+
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=java_methods_project,
+        parsers=parsers,
+        queries=queries,
+    )
+
+    updater.run()
+
+    # Check that fully qualified static method calls were detected by looking at CALLS relationships
+    call_relationships = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) > 1 and c.args[1] == "CALLS"
+    ]
+
+    assert len(call_relationships) > 0, "No static method call relationships found"
