@@ -255,12 +255,18 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                         (identifier) @local.reference
                         """
                     else:  # typescript
-                        # TypeScript-specific patterns (very conservative to avoid grammar conflicts)
+                        # TypeScript-specific patterns (comprehensive like JavaScript)
                         locals_patterns = """
-                        ; Variable, function, and class definitions
+                        ; Variable definitions (TypeScript has multiple declaration types)
                         (variable_declarator name: (identifier) @local.definition)
+                        (lexical_declaration (variable_declarator name: (identifier) @local.definition))
+                        (variable_declaration (variable_declarator name: (identifier) @local.definition))
+
+                        ; Function definitions
                         (function_declaration name: (identifier) @local.definition)
-                        (class_declaration name: (identifier) @local.definition)
+
+                        ; Class definitions (uses type_identifier for class names)
+                        (class_declaration name: (type_identifier) @local.definition)
 
                         ; Variable references
                         (identifier) @local.reference
