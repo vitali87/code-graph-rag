@@ -477,7 +477,7 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 | Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                | impl blocks, associated functions |
 | Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                | Methods, type declarations |
 | Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations | Case classes, objects |
-| Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations | Annotations, constructors |
+| Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 
 ### Language-Specific Features
 
@@ -489,7 +489,7 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 - **Rust**: Functions, structs, enums, impl blocks, traits, and associated functions
 - **Go**: Functions, methods, type declarations, interfaces, and struct definitions
 - **Scala**: Functions, methods, classes, objects, traits, case classes, implicits, and Scala 3 syntax
-- **Java**: Methods, constructors, classes, interfaces, enums, annotations, and generics
+- **Java**: Methods, constructors, classes, interfaces, enums, annotations, generics, modern features (records, sealed classes, switch expressions), concurrency patterns, reflection, and enterprise frameworks
 
 
 ### Adding New Languages
