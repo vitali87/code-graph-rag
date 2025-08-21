@@ -49,9 +49,9 @@ Use the Makefile for:
   | ✅ C++ | **Fully Supported** | Complete AST parsing, operator overloading, templates, namespaces, C++20 modules |
   | ✅ Lua | **Fully Supported** | Complete AST parsing, import resolution, call graphs |
   | ✅ Rust | **Fully Supported** | Complete AST parsing, impl blocks, traits, associated functions |
+  | ✅ Java | **Fully Supported** | Complete AST parsing, generics, annotations, modern features (records/sealed classes), concurrency |
   | 🚧 Go | In Development | Basic parsing, full support underway |
   | 🚧 Scala | In Development | Basic parsing, full support underway |
-  | 🚧 Java | In Development | Basic parsing, full support underway |
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
