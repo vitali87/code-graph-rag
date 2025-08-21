@@ -41,18 +41,18 @@ Use the Makefile for:
 
 - **🌍 Multi-Language Support**:
 
-  | Language | Status |
-  |----------|--------|
-  | ✅ Python | **Fully Supported** |
-  | ✅ JavaScript | **Fully Supported** |
-  | ✅ TypeScript | **Fully Supported** |
-  | ✅ C++ | **Fully Supported** |
-  | ✅ Lua | **Fully Supported** |
-  | ✅ Rust | **Fully Supported** |
-  | ✅ Java | **Fully Supported** |
-  | 🚧 Go | In Development |
-  | 🚧 Scala | In Development |
-  | 🚧 C# | In Development |
+  | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
+  |----------|--------|------------|-----------|-----------------|---------|-------------------|---------------------|
+  | ✅ Python | **Fully Supported** | `.py` | ✅ | ✅ | ✅ | `__init__.py` | Type inference, decorators, nested functions |
+  | ✅ JavaScript | **Fully Supported** | `.js`, `.jsx` | ✅ | ✅ | ✅ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
+  | ✅ TypeScript | **Fully Supported** | `.ts`, `.tsx` | ✅ | ✅ | ✅ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
+  | ✅ C++ | **Fully Supported** | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`, `.ixx`, `.cppm`, `.ccm` | ✅ | ✅ (classes/structs/unions/enums) | ✅ | CMakeLists.txt, Makefile | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
+  | ✅ Lua | **Fully Supported** | `.lua` | ✅ | ✅ (tables/modules) | ✅ | - | Local/global functions, metatables, closures, coroutines |
+  | ✅ Rust | **Fully Supported** | `.rs` | ✅ | ✅ (structs/enums) | ✅ | - | impl blocks, associated functions |
+  | ✅ Java | **Fully Supported** | `.java` | ✅ | ✅ (classes/interfaces/enums) | ✅ | package declarations | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
+  | 🚧 Go | In Development | `.go` | ✅ | ✅ (structs) | ✅ | - | Methods, type declarations |
+  | 🚧 Scala | In Development | `.scala`, `.sc` | ✅ | ✅ (classes/objects/traits) | ✅ | package declarations | Case classes, objects |
+  | 🚧 C# | In Development | `.cs` | - | - | - | - | Classes, interfaces, generics (planned) |
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
@@ -466,20 +466,6 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 
 ## 🌍 Multi-Language Support
 
-### Supported Languages & Features
-
-| Language   | Extensions    | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
-|------------|---------------|-----------|-----------------|---------|-------------------|---------------------|
-| Python     | `.py`         | ✅        | ✅              | ✅      | `__init__.py`    | Type inference, decorators, nested functions |
-| JavaScript | `.js`, `.jsx` | ✅        | ✅              | ✅      | -                | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
-| TypeScript | `.ts`, `.tsx` | ✅        | ✅              | ✅      | -                | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
-| C++        | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`, `.ixx`, `.cppm`, `.ccm`| ✅      | ✅ (classes/structs/unions/enums) | ✅      | CMakeLists.txt, Makefile | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
-| Lua        | `.lua`        | ✅        | ✅ (tables/modules) | ✅    | -                | Local/global functions, metatables, closures, coroutines |
-| Rust       | `.rs`         | ✅        | ✅ (structs/enums) | ✅    | -                | impl blocks, associated functions |
-| Go         | `.go`         | ✅        | ✅ (structs)    | ✅      | -                | Methods, type declarations |
-| Scala      | `.scala`, `.sc` | ✅      | ✅ (classes/objects/traits) | ✅ | package declarations | Case classes, objects |
-| Java       | `.java`       | ✅        | ✅ (classes/interfaces/enums) | ✅ | package declarations | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
-
 ### Language-Specific Features
 
 - **Python**: Full support including nested functions, methods, classes, decorators, type hints, and package structure
@@ -496,6 +482,10 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 ### Adding New Languages
 
 Graph-Code makes it easy to add support for any language that has a Tree-sitter grammar. The system automatically handles grammar compilation and integration.
+
+> **⚠️ Recommendation**: While you can add languages yourself, we recommend waiting for official full support to ensure optimal parsing quality, comprehensive feature coverage, and robust integration. The languages marked as "In Development" above will receive dedicated optimization and testing.
+
+> **💡 Request Support**: If you want a specific language to be officially supported, please [submit an issue](https://github.com/vitali87/code-graph-rag/issues) with your language request.
 
 #### Quick Start: Add a Language
 
