@@ -20,6 +20,7 @@ dependencies = [
     "diff-match-patch>=20241021",
     "click>=8.0.0",
     "pytest-xdist>=3.8.0",
+    "protobuf>=5.27.0"
 ]
 
 [tool.setuptools]
@@ -34,6 +35,7 @@ dev = [
     "ruff>=0.5.5",
     "mypy>=1.11.0",
     "pre-commit>=4.2.0",
+    "types-protobuf>=5.0.0",
 ]
 
 treesitter-full = [
@@ -65,6 +67,8 @@ warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 disallow_untyped_defs = true
+explicit_package_bases = true
+mypy_path = "."
 
 [dependency-groups]
 dev = [
