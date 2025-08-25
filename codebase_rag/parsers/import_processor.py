@@ -163,7 +163,6 @@ class ImportProcessor:
         self, import_node: Node, module_qn: str
     ) -> None:
         """Handle 'from module import name' statements."""
-        # Use field-based parsing for robustness
         module_name_node = import_node.child_by_field_name("module_name")
         if not module_name_node:
             return

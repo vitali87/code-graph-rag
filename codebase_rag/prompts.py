@@ -16,14 +16,23 @@ Node Labels and Their Key Properties:
 - Class: {qualified_name: string, name: string, decorators: list[string]}
 - Function: {qualified_name: string, name: string, decorators: list[string]}
 - Method: {qualified_name: string, name: string, decorators: list[string]}
+- Interface: {qualified_name: string, name: string}
+- ModuleInterface: {qualified_name: string, name: string, path: string}
+- ModuleImplementation: {qualified_name: string, name: string, path: string, implements_module: string}
 - ExternalPackage: {name: string, version_spec: string}
 
 Relationships (source)-[REL_TYPE]->(target):
 - (Project|Package|Folder) -[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE]-> (various)
 - Module -[:DEFINES]-> (Class|Function)
+- Module -[:IMPORTS]-> Module
+- Module -[:EXPORTS]-> (Class|Function)
+- Module -[:EXPORTS_MODULE]-> ModuleInterface
+- Module -[:IMPLEMENTS_MODULE]-> ModuleImplementation
 - Class -[:DEFINES_METHOD]-> Method
 - Class -[:INHERITS]-> Class
+- Class -[:IMPLEMENTS]-> Interface
 - Method -[:OVERRIDES]-> Method
+- ModuleImplementation -[:IMPLEMENTS]-> ModuleInterface
 - Project -[:DEPENDS_ON_EXTERNAL]-> ExternalPackage
 - (Function|Method) -[:CALLS]-> (Function|Method)
 
