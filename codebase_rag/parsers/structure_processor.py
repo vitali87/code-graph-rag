@@ -6,7 +6,7 @@ from typing import Any
 from loguru import logger
 
 from ..config import IGNORE_PATTERNS
-from ..services.graph_service import MemgraphIngestor
+from ..services import IngestorProtocol
 
 
 class StructureProcessor:
@@ -14,7 +14,7 @@ class StructureProcessor:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
         queries: dict[str, Any],

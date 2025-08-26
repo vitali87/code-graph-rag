@@ -17,7 +17,7 @@ from tree_sitter import Node, Parser
 from .config import IGNORE_PATTERNS
 from .language_config import get_language_config
 from .parsers.factory import ProcessorFactory
-from .services.graph_service import MemgraphIngestor
+from .services import IngestorProtocol
 
 
 class FunctionRegistryTrie:
@@ -230,7 +230,7 @@ class GraphUpdater:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path: Path,
         parsers: dict[str, Parser],
         queries: dict[str, Any],
