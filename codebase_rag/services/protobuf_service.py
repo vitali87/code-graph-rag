@@ -37,7 +37,6 @@ class ProtobufFileIngestor:
     def __init__(self, output_path: str):
         self.output_path = Path(output_path)
         self._nodes: dict[str, pb.Node] = {}
-        # Mimic MERGE for indempotency
         self._relationships: dict[tuple[str, int, str], pb.Relationship] = {}
         logger.info(f"ProtobufFileIngestor initialized to write to: {self.output_path}")
 

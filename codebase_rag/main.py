@@ -29,9 +29,12 @@ from .config import (
     detect_provider_from_model,
     settings,
 )
-from .graph_updater import GraphUpdater, MemgraphIngestor
+from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
+from .services import QueryProtocol
+from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
+from .services.protobuf_service import ProtobufFileIngestor
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
@@ -664,7 +667,7 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -> Any:
+def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> Any:
     """Initializes all services and creates the RAG agent."""
     # Validate settings once before initializing any LLM services
     settings.validate_for_usage()
@@ -811,6 +814,42 @@ def start(
         console.print("\n[bold red]Application terminated by user.[/bold red]")
     except ValueError as e:
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
+
+
+@app.command()
+def index(
+    repo_path: str | None = typer.Option(
+        None, "--repo-path", help="Path to the target repository to index."
+    ),
+    output_proto: str = typer.Option(
+        ...,  # Make it a required option
+        "-o",
+        "--output-proto",
+        help="Required. Path to write the binary protobuf index file.",
+    ),
+) -> None:
+    """Parses a codebase and creates a portable binary index file."""
+    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    repo_to_index = Path(target_repo_path)
+
+    console.print(f"[bold green]Indexing codebase at: {repo_to_index}[/bold green]")
+    console.print(f"[bold cyan]Output will be written to: {output_proto}[/bold cyan]")
+
+    try:
+        # This command ONLY ever uses the ProtobufFileIngestor.
+        ingestor = ProtobufFileIngestor(output_path=output_proto)
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(ingestor, repo_to_index, parsers, queries)
+
+        updater.run()
+
+        console.print(
+            "[bold green]Indexing process completed successfully![/bold green]"
+        )
+    except Exception as e:
+        console.print(f"[bold red]An error occurred during indexing: {e}[/bold red]")
+        logger.error("Indexing failed", exc_info=True)
+        raise typer.Exit(1)
 
 
 @app.command()

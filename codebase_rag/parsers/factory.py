@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from tree_sitter import Node
 
-from ..services.graph_service import MemgraphIngestor
+from ..services import IngestorProtocol
 from .call_processor import CallProcessor
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
@@ -29,7 +29,7 @@ class ProcessorFactory:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path_getter: Callable[[], Path] | Path,
         project_name_getter: Callable[[], str] | str,
         queries: dict[str, Any],
