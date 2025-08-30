@@ -26,10 +26,12 @@ class ImportProcessor:
         repo_path_getter: Any,
         project_name_getter: Any,
         ingestor: Any | None = None,
+        function_registry: Any | None = None,
     ) -> None:
         self._repo_path_getter = repo_path_getter
         self._project_name_getter = project_name_getter
         self.ingestor = ingestor
+        self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
 
     @property
@@ -94,13 +96,17 @@ class ImportProcessor:
             # Create IMPORTS relationships for each parsed import
             if self.ingestor and module_qn in self.import_mapping:
                 for local_name, full_name in self.import_mapping[module_qn].items():
+                    # Extract just the module path for the IMPORTS relationship
+                    # This ensures Module -> Module relationships, not Module -> Class/Function
+                    module_path = self._extract_module_path(full_name)
+
                     self.ingestor.ensure_relationship_batch(
                         ("Module", "qualified_name", module_qn),
                         "IMPORTS",
-                        ("Module", "qualified_name", full_name),
+                        ("Module", "qualified_name", module_path),
                     )
                     logger.debug(
-                        f"  Created IMPORTS relationship: {module_qn} -> {full_name}"
+                        f"  Created IMPORTS relationship: {module_qn} -> {module_path} (from {full_name})"
                     )
 
         except Exception as e:
@@ -856,3 +862,51 @@ class ImportProcessor:
             pass
 
         return dotted
+
+    def _extract_module_path(self, full_qualified_name: str) -> str:
+        """Extract module path from a full qualified name using tree-sitter knowledge.
+
+        This method uses the function_registry (populated by tree-sitter parsing) to determine
+        whether the qualified name refers to a module file or to a class/function within a module.
+
+        The function_registry contains entries for all Class/Function/Method nodes discovered
+        by tree-sitter parsing. If a qualified name is in the registry, we know it's an entity
+        defined within a module, so we extract the module path by removing the entity name.
+
+        Args:
+            full_qualified_name: Full qualified name like "project.module.Class"
+
+        Returns:
+            Module path like "project.module"
+
+        Examples:
+            "project.my_app.db.base.BaseRepo" -> "project.my_app.db.base" (BaseRepo is a Class)
+            "project.my_app.db.base" -> "project.my_app.db.base" (base is the module file)
+        """
+        # Primary strategy: Use function_registry populated by tree-sitter parsing
+        if self.function_registry and full_qualified_name in self.function_registry:
+            entity_type = self.function_registry[full_qualified_name]
+            if entity_type in ("Class", "Function", "Method"):
+                # Tree-sitter identified this as a class/function/method defined within a module
+                # Extract the module path by removing the entity name
+                parts = full_qualified_name.rsplit(".", 1)
+                if len(parts) == 2:
+                    return parts[0]  # Return the module path
+
+        # If not in function_registry, it's either:
+        # 1. A module file itself (correct as-is)
+        # 2. An external/standard library entity we didn't parse
+        # 3. A misclassified entity (rare)
+
+        # For standard library imports like "collections.defaultdict", we use a simple heuristic
+        # since we don't parse standard library sources. Uppercase names are typically classes.
+        parts = full_qualified_name.split(".")
+        if len(parts) > 1:
+            last_part = parts[-1]
+            if last_part[0].isupper():
+                # Likely a class name - extract module path
+                return ".".join(parts[:-1])
+
+        # Default: assume it's already a module path
+        # This handles cases where the full name refers to a module file directly
+        return full_qualified_name

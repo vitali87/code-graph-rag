@@ -1222,9 +1222,6 @@ export { useReExports };
             f"Found imported modules: {imported_modules}"
         )
 
-    # Test the specific case that was broken before the fix
-    # Before fix: export { name as alias } would incorrectly map "name" instead of "alias"
-    # After fix: it should correctly map "alias" -> "source_module.name"
     print(
         "   - Aliased re-exports are correctly parsed (export { name as alias } bug fixed)"
     )
