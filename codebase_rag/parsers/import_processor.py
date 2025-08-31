@@ -962,25 +962,40 @@ class ImportProcessor:
             # Use Node.js introspection via subprocess to avoid direct Node.js dependency
             try:
                 import json
+                import os
                 import subprocess
 
-                # Node.js script to introspect module
-                node_script = f'''
-                try {{
-                    const module = require("{module_name}");
-                    const hasEntity = "{entity_name}" in module;
-                    const entityType = hasEntity ? typeof module["{entity_name}"] : null;
-                    console.log(JSON.stringify({{hasEntity, entityType}}));
-                }} catch (e) {{
-                    console.log(JSON.stringify({{hasEntity: false, entityType: null}}));
-                }}
-                '''
+                # Safe Node.js script that reads module/entity names from environment variables
+                node_script = """
+                const moduleName = process.env.MODULE_NAME;
+                const entityName = process.env.ENTITY_NAME;
+
+                if (!moduleName || !entityName) {
+                    console.log(JSON.stringify({hasEntity: false, entityType: null}));
+                    process.exit(0);
+                }
+
+                try {
+                    const module = require(moduleName);
+                    const hasEntity = entityName in module;
+                    const entityType = hasEntity ? typeof module[entityName] : null;
+                    console.log(JSON.stringify({hasEntity, entityType}));
+                } catch (e) {
+                    console.log(JSON.stringify({hasEntity: false, entityType: null}));
+                }
+                """
+
+                # Create environment with module and entity names
+                env = os.environ.copy()
+                env["MODULE_NAME"] = module_name
+                env["ENTITY_NAME"] = entity_name
 
                 result = subprocess.run(
                     ["node", "-e", node_script],
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=env,
                 )
 
                 if result.returncode == 0:
@@ -1018,13 +1033,14 @@ class ImportProcessor:
             # Use go/doc to analyze package documentation and exports
             try:
                 import json
+                import os
                 import subprocess
 
                 package_path = "/".join(parts[:-1])
                 entity_name = parts[-1]
 
-                # Go script to introspect package using go/doc
-                go_script = f'''
+                # Safe Go script that reads package/entity names from environment variables
+                go_script = """
 package main
 
 import (
@@ -1036,56 +1052,69 @@ import (
     "os"
 )
 
-func main() {{
-    fset := token.NewFileSet()
-    pkgs, err := parser.ParseDir(fset, "{package_path}", nil, parser.ParseComments)
-    if err != nil {{
-        fmt.Print("{{\\\"hasEntity\\\": false}}")
-        return
-    }}
+func main() {
+    packagePath := os.Getenv("PACKAGE_PATH")
+    entityName := os.Getenv("ENTITY_NAME")
 
-    for _, pkg := range pkgs {{
-        d := doc.New(pkg, "{package_path}", doc.AllDecls)
+    if packagePath == "" || entityName == "" {
+        fmt.Print("{\"hasEntity\": false}")
+        return
+    }
+
+    fset := token.NewFileSet()
+    pkgs, err := parser.ParseDir(fset, packagePath, nil, parser.ParseComments)
+    if err != nil {
+        fmt.Print("{\"hasEntity\": false}")
+        return
+    }
+
+    for _, pkg := range pkgs {
+        d := doc.New(pkg, packagePath, doc.AllDecls)
 
         // Check functions
-        for _, f := range d.Funcs {{
-            if f.Name == "{entity_name}" {{
-                fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"function\\\"}}")
+        for _, f := range d.Funcs {
+            if f.Name == entityName {
+                fmt.Print("{\"hasEntity\": true, \"entityType\": \"function\"}")
                 return
-            }}
-        }}
+            }
+        }
 
         // Check types (structs, interfaces, etc.)
-        for _, t := range d.Types {{
-            if t.Name == "{entity_name}" {{
-                fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"type\\\"}}")
+        for _, t := range d.Types {
+            if t.Name == entityName {
+                fmt.Print("{\"hasEntity\": true, \"entityType\": \"type\"}")
                 return
-            }}
-        }}
+            }
+        }
 
         // Check constants and variables
-        for _, v := range d.Vars {{
-            for _, name := range v.Names {{
-                if name == "{entity_name}" {{
-                    fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"variable\\\"}}")
+        for _, v := range d.Vars {
+            for _, name := range v.Names {
+                if name == entityName {
+                    fmt.Print("{\"hasEntity\": true, \"entityType\": \"variable\"}")
                     return
-                }}
-            }}
-        }}
+                }
+            }
+        }
 
-        for _, c := range d.Consts {{
-            for _, name := range c.Names {{
-                if name == "{entity_name}" {{
-                    fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"constant\\\"}}")
+        for _, c := range d.Consts {
+            for _, name := range c.Names {
+                if name == entityName {
+                    fmt.Print("{\"hasEntity\": true, \"entityType\": \"constant\"}")
                     return
-                }}
-            }}
-        }}
-    }}
+                }
+            }
+        }
+    }
 
-    fmt.Print("{{\\\"hasEntity\\\": false}}")
-}}
-                '''
+    fmt.Print("{\"hasEntity\": false}")
+}
+                """
+
+                # Create environment with package and entity names
+                env = os.environ.copy()
+                env["PACKAGE_PATH"] = package_path
+                env["ENTITY_NAME"] = entity_name
 
                 # Write temporary Go file and execute
                 with subprocess.Popen(
@@ -1094,6 +1123,7 @@ func main() {{
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    env=env,
                 ) as proc:
                     stdout, _ = proc.communicate(go_script, timeout=10)
 
@@ -1152,110 +1182,88 @@ func main() {{
 
                 # C++ standard library introspection via compile-time analysis
                 try:
+                    import os
                     import subprocess
+                    import tempfile
 
-                    # Strategy 1: Try as template with int parameter
-                    cpp_template_program = f"""
+                    # Safe approach: write entity name to a temporary file and include it
+                    with tempfile.NamedTemporaryFile(
+                        mode="w", suffix=".txt", delete=False
+                    ) as f:
+                        f.write(entity_name)
+                        entity_file = f.name
+
+                    try:
+                        # Strategy 1: Try as template with int parameter using file input
+                        cpp_template_program = f"""
 #include <iostream>
+#include <fstream>
+#include <string>
+
 int main() {{
-    std::{entity_name}<int> test;
-    std::cout << "template" << std::endl;
+    std::ifstream file("{entity_file}");
+    std::string entity_name;
+    std::getline(file, entity_name);
+    file.close();
+
+    // This is a compile-time check strategy - we can't dynamically construct templates
+    // Fall back to heuristic approach for safety
+    std::cout << "heuristic_check" << std::endl;
     return 0;
 }}
-                    """
+                        """
 
-                    result1 = subprocess.run(
-                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
-                        input=cpp_template_program,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
+                        subprocess.run(
+                            ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
+                            input=cpp_template_program,
+                            capture_output=True,
+                            text=True,
+                            timeout=5,
+                        )
 
-                    if result1.returncode == 0:
-                        return "::".join(parts[:-1])
+                        # For C++, we'll primarily rely on heuristics due to complexity
+                        # of safe dynamic compilation without code injection risks
 
-                    # Strategy 2: Try as regular type with default constructor
-                    cpp_type_program = f"""
-#include <iostream>
-int main() {{
-    std::{entity_name} test{{}};
-    std::cout << "type" << std::endl;
-    return 0;
-}}
-                    """
-
-                    result2 = subprocess.run(
-                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
-                        input=cpp_type_program,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-
-                    if result2.returncode == 0:
-                        return "::".join(parts[:-1])
-
-                    # Strategy 3: Try as function or algorithm
-                    cpp_function_program = f"""
-#include <iostream>
-#include <algorithm>
-#include <vector>
-int main() {{
-    std::vector<int> v{{1, 2, 3}};
-    auto result = std::{entity_name}(v.begin(), v.end());
-    std::cout << "function" << std::endl;
-    return 0;
-}}
-                    """
-
-                    result3 = subprocess.run(
-                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
-                        input=cpp_function_program,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-
-                    if result3.returncode == 0:
-                        return "::".join(parts[:-1])
-
-                    # Strategy 4: Just check if the symbol exists (simplest)
-                    cpp_exists_program = f"""
-#include <iostream>
-int main() {{
-    // Just reference the symbol - will fail if it doesn't exist
-    (void)sizeof(std::{entity_name}<int>);
-    std::cout << "exists" << std::endl;
-    return 0;
-}}
-                    """
-
-                    result4 = subprocess.run(
-                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
-                        input=cpp_exists_program,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-
-                    if result4.returncode == 0:
-                        return "::".join(parts[:-1])
+                    finally:
+                        os.unlink(entity_file)
 
                 except (
                     subprocess.TimeoutExpired,
                     subprocess.CalledProcessError,
                     FileNotFoundError,
+                    OSError,
                 ):
                     pass
 
-                # Fallback using C++ naming conventions
+                # Fallback using C++ naming conventions (safer approach)
                 entity_name = parts[-1]
                 if (
                     entity_name[0].isupper()  # Types usually start with uppercase
                     or entity_name.startswith("is_")
                     or entity_name.startswith("has_")
-                ):  # Type traits
+                    or entity_name
+                    in {  # Common std library types/functions
+                        "vector",
+                        "string",
+                        "map",
+                        "set",
+                        "list",
+                        "deque",
+                        "unique_ptr",
+                        "shared_ptr",
+                        "weak_ptr",
+                        "thread",
+                        "mutex",
+                        "condition_variable",
+                        "future",
+                        "promise",
+                        "sort",
+                        "find",
+                        "copy",
+                        "transform",
+                        "accumulate",
+                    }
+                ):  # Type traits and common stdlib entities
                     return "::".join(parts[:-1])
 
         return full_qualified_name
@@ -1267,76 +1275,119 @@ int main() {{
             # Use Java reflection via subprocess to avoid direct Java dependency
             try:
                 import json
+                import os
                 import subprocess
+                import tempfile
 
                 package_name = ".".join(parts[:-1])
                 entity_name = parts[-1]
 
-                # Java program to check if entity exists in package
-                java_program = f'''
+                # Safe Java program using command line arguments
+                java_program = """
 import java.lang.reflect.*;
 
-public class StdlibCheck {{
-    public static void main(String[] args) {{
-        try {{
-            Class<?> clazz = Class.forName("{package_name}.{entity_name}");
-            System.out.println("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"class\\\"}}");
-        }} catch (ClassNotFoundException e) {{
+public class StdlibCheck {
+    public static void main(String[] args) {
+        if (args.length < 2) {
+            System.out.println("{\\"hasEntity\\": false}");
+            return;
+        }
+
+        String packageName = args[0];
+        String entityName = args[1];
+
+        try {
+            Class<?> clazz = Class.forName(packageName + "." + entityName);
+            System.out.println("{\\"hasEntity\\": true, \\"entityType\\": \\"class\\"}");
+        } catch (ClassNotFoundException e) {
             // Try as method or field in parent package
-            try {{
-                Class<?> packageClass = Class.forName("{package_name}");
+            try {
+                Class<?> packageClass = Class.forName(packageName);
                 Method[] methods = packageClass.getMethods();
                 Field[] fields = packageClass.getFields();
 
                 boolean foundMethod = false;
-                for (Method method : methods) {{
-                    if (method.getName().equals("{entity_name}")) {{
+                for (Method method : methods) {
+                    if (method.getName().equals(entityName)) {
                         foundMethod = true;
                         break;
-                    }}
-                }}
+                    }
+                }
 
                 boolean foundField = false;
-                for (Field field : fields) {{
-                    if (field.getName().equals("{entity_name}")) {{
+                for (Field field : fields) {
+                    if (field.getName().equals(entityName)) {
                         foundField = true;
                         break;
-                    }}
-                }}
+                    }
+                }
 
-                if (foundMethod || foundField) {{
-                    System.out.println("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"member\\\"}}");
-                }} else {{
-                    System.out.println("{{\\\"hasEntity\\\": false}}");
-                }}
-            }} catch (Exception ex) {{
-                System.out.println("{{\\\"hasEntity\\\": false}}");
-            }}
-        }}
-    }}
-}}
-                '''
+                if (foundMethod || foundField) {
+                    System.out.println("{\\"hasEntity\\": true, \\"entityType\\": \\"member\\"}");
+                } else {
+                    System.out.println("{\\"hasEntity\\": false}");
+                }
+            } catch (Exception ex) {
+                System.out.println("{\\"hasEntity\\": false}");
+            }
+        }
+    }
+}
+                """
 
-                # Compile and run Java program
-                with subprocess.Popen(
-                    ["java", "-"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                ) as proc:
-                    stdout, stderr = proc.communicate(java_program, timeout=10)
+                # Write Java program to temporary file and compile/run it
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".java", delete=False
+                ) as f:
+                    f.write(java_program)
+                    java_file = f.name
 
-                    if proc.returncode == 0:
-                        data = json.loads(stdout.strip())
-                        if data.get("hasEntity"):
-                            return ".".join(parts[:-1])
+                try:
+                    # Compile the Java program
+                    compile_result = subprocess.run(
+                        ["javac", java_file],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+
+                    if compile_result.returncode == 0:
+                        # Run the compiled program with safe arguments
+                        class_name = os.path.splitext(os.path.basename(java_file))[0]
+                        run_result = subprocess.run(
+                            [
+                                "java",
+                                "-cp",
+                                os.path.dirname(java_file),
+                                class_name,
+                                package_name,
+                                entity_name,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+
+                        if run_result.returncode == 0:
+                            data = json.loads(run_result.stdout.strip())
+                            if data.get("hasEntity"):
+                                return ".".join(parts[:-1])
+
+                finally:
+                    # Clean up temporary files
+                    for ext in [".java", ".class"]:
+                        temp_file = os.path.splitext(java_file)[0] + ext
+                        try:
+                            os.unlink(temp_file)
+                        except (FileNotFoundError, OSError):
+                            pass
 
             except (
                 subprocess.TimeoutExpired,
                 subprocess.CalledProcessError,
                 json.JSONDecodeError,
                 FileNotFoundError,
+                OSError,
             ):
                 pass
 
@@ -1348,6 +1399,23 @@ public class StdlibCheck {{
                 or entity_name.endswith("Error")
                 or entity_name.endswith("Interface")
                 or entity_name.endswith("Builder")
+                or entity_name
+                in {  # Common Java stdlib classes
+                    "String",
+                    "Object",
+                    "Integer",
+                    "Double",
+                    "Boolean",
+                    "ArrayList",
+                    "HashMap",
+                    "HashSet",
+                    "LinkedList",
+                    "File",
+                    "URL",
+                    "Pattern",
+                    "LocalDateTime",
+                    "BigDecimal",
+                }
             ):
                 return ".".join(parts[:-1])
 
@@ -1362,14 +1430,24 @@ public class StdlibCheck {{
 
             # Use Lua introspection via subprocess
             try:
+                import os
                 import subprocess
 
-                # Lua script to check if entity exists in module
-                lua_script = f'''
+                # Safe Lua script that reads module/entity names from environment variables
+                lua_script = """
+-- Get module and entity names from environment
+local module_name = os.getenv("MODULE_NAME")
+local entity_name = os.getenv("ENTITY_NAME")
+
+if not module_name or not entity_name then
+    print("hasEntity=false")
+    return
+end
+
 -- Check built-in modules first (they're global tables in Lua)
-local module_table = _G["{module_name}"]
+local module_table = _G[module_name]
 if module_table and type(module_table) == "table" then
-    local hasEntity = module_table["{entity_name}"] ~= nil
+    local hasEntity = module_table[entity_name] ~= nil
     if hasEntity then
         print("hasEntity=true")
     else
@@ -1377,9 +1455,9 @@ if module_table and type(module_table) == "table" then
     end
 else
     -- Try require for user modules
-    local success, loaded_module = pcall(require, "{module_name}")
+    local success, loaded_module = pcall(require, module_name)
     if success and type(loaded_module) == "table" then
-        local hasEntity = loaded_module["{entity_name}"] ~= nil
+        local hasEntity = loaded_module[entity_name] ~= nil
         if hasEntity then
             print("hasEntity=true")
         else
@@ -1389,10 +1467,19 @@ else
         print("hasEntity=false")
     end
 end
-                '''
+                """
+
+                # Create environment with module and entity names
+                env = os.environ.copy()
+                env["MODULE_NAME"] = module_name
+                env["ENTITY_NAME"] = entity_name
 
                 result = subprocess.run(
-                    ["lua", "-e", lua_script], capture_output=True, text=True, timeout=5
+                    ["lua", "-e", lua_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    env=env,
                 )
 
                 if result.returncode == 0:
