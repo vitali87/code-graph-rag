@@ -1,5 +1,28 @@
-"""Import processor for parsing and resolving import statements."""
+"""Import processor for parsing and resolving import statements.
 
+This module provides dynamic standard library introspection capabilities that can
+accurately resolve entity imports (like collections.defaultdict) to their containing
+modules (like collections) using language-native reflection mechanisms.
+
+External Dependencies (Optional - Enhanced Accuracy):
+    For enhanced standard library introspection accuracy, the following external
+    tools can be installed. If unavailable, the system gracefully falls back to
+    heuristic-based approaches:
+
+    - Node.js: For JavaScript/TypeScript stdlib introspection
+    - Go compiler: For Go package analysis
+    - Java compiler: For Java reflection-based introspection
+    - Lua interpreter: For Lua module introspection
+    - C++ compiler (g++): For C++ standard library analysis
+
+Performance Optimizations:
+    - Results are cached in memory and persistently to disk (~/.cache/codebase_rag/)
+    - External tool availability is cached to avoid repeated PATH checks
+    - Fallback heuristics ensure functionality without external dependencies
+"""
+
+import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +40,102 @@ from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 # Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
 
+# Global cache for stdlib introspection results to avoid repeated subprocess calls
+_STDLIB_CACHE: dict[str, dict[str, str]] = {}
+_CACHE_TTL = 3600  # Cache results for 1 hour
+_CACHE_TIMESTAMPS: dict[str, float] = {}
+
+# External tool availability cache
+_EXTERNAL_TOOLS: dict[str, bool] = {}
+
+
+def _is_tool_available(tool_name: str) -> bool:
+    """Check if an external tool is available in the system PATH with caching."""
+    if tool_name in _EXTERNAL_TOOLS:
+        return _EXTERNAL_TOOLS[tool_name]
+
+    import subprocess
+
+    try:
+        subprocess.run([tool_name, "--version"], capture_output=True, timeout=2)
+        _EXTERNAL_TOOLS[tool_name] = True
+        return True
+    except (
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+        subprocess.CalledProcessError,
+    ):
+        _EXTERNAL_TOOLS[tool_name] = False
+        logger.debug(
+            f"External tool '{tool_name}' not available for stdlib introspection"
+        )
+        return False
+
+
+def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | None:
+    """Get cached stdlib introspection result if available and not expired."""
+    cache_key = f"{language}:{full_qualified_name}"
+
+    # Check if we have a cached result
+    if cache_key not in _STDLIB_CACHE:
+        return None
+
+    # Check if cache has expired
+    if cache_key in _CACHE_TIMESTAMPS:
+        if time.time() - _CACHE_TIMESTAMPS[cache_key] > _CACHE_TTL:
+            # Cache expired, remove it
+            del _STDLIB_CACHE[cache_key]
+            del _CACHE_TIMESTAMPS[cache_key]
+            return None
+
+    return _STDLIB_CACHE[cache_key].get(full_qualified_name)
+
+
+def _cache_stdlib_result(language: str, full_qualified_name: str, result: str) -> None:
+    """Cache stdlib introspection result."""
+    cache_key = f"{language}:{full_qualified_name}"
+
+    if cache_key not in _STDLIB_CACHE:
+        _STDLIB_CACHE[cache_key] = {}
+
+    _STDLIB_CACHE[cache_key][full_qualified_name] = result
+    _CACHE_TIMESTAMPS[cache_key] = time.time()
+
+
+def _load_persistent_cache() -> None:
+    """Load persistent cache from disk if available."""
+    try:
+        cache_file = Path.home() / ".cache" / "codebase_rag" / "stdlib_cache.json"
+        if cache_file.exists():
+            with cache_file.open() as f:
+                data = json.load(f)
+                _STDLIB_CACHE.update(data.get("cache", {}))
+                _CACHE_TIMESTAMPS.update(data.get("timestamps", {}))
+            logger.debug(f"Loaded stdlib cache from {cache_file}")
+    except (json.JSONDecodeError, OSError) as e:
+        logger.debug(f"Could not load stdlib cache: {e}")
+
+
+def _save_persistent_cache() -> None:
+    """Save persistent cache to disk."""
+    try:
+        cache_dir = Path.home() / ".cache" / "codebase_rag"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "stdlib_cache.json"
+
+        with cache_file.open("w") as f:
+            json.dump(
+                {
+                    "cache": _STDLIB_CACHE,
+                    "timestamps": _CACHE_TIMESTAMPS,
+                },
+                f,
+                indent=2,
+            )
+        logger.debug(f"Saved stdlib cache to {cache_file}")
+    except OSError as e:
+        logger.debug(f"Could not save stdlib cache: {e}")
+
 
 class ImportProcessor:
     """Handles parsing and processing of import statements."""
@@ -33,6 +152,48 @@ class ImportProcessor:
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
+
+        # Load persistent cache on initialization
+        _load_persistent_cache()
+
+    def __del__(self) -> None:
+        """Save cache when processor is destroyed."""
+        try:
+            _save_persistent_cache()
+        except Exception:
+            # Ignore errors during cleanup
+            pass
+
+    @staticmethod
+    def flush_stdlib_cache() -> None:
+        """Manually flush the stdlib cache to disk. Useful for ensuring persistence."""
+        _save_persistent_cache()
+
+    @staticmethod
+    def clear_stdlib_cache() -> None:
+        """Clear the stdlib cache from memory and disk."""
+        global _STDLIB_CACHE, _CACHE_TIMESTAMPS
+        _STDLIB_CACHE.clear()
+        _CACHE_TIMESTAMPS.clear()
+        try:
+            cache_file = Path.home() / ".cache" / "codebase_rag" / "stdlib_cache.json"
+            if cache_file.exists():
+                cache_file.unlink()
+                logger.debug("Cleared stdlib cache from disk")
+        except OSError as e:
+            logger.debug(f"Could not clear stdlib cache from disk: {e}")
+
+    @staticmethod
+    def get_stdlib_cache_stats() -> dict[str, Any]:
+        """Get statistics about the stdlib cache for monitoring/debugging."""
+        return {
+            "cache_entries": len(_STDLIB_CACHE),
+            "cache_languages": list(_STDLIB_CACHE.keys()),
+            "total_cached_results": sum(
+                len(lang_cache) for lang_cache in _STDLIB_CACHE.values()
+            ),
+            "external_tools_checked": _EXTERNAL_TOOLS.copy(),
+        }
 
     @property
     def repo_path(self) -> Path:
@@ -924,6 +1085,11 @@ class ImportProcessor:
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Python stdlib module path using runtime introspection."""
+        # Check cache first to avoid expensive importlib calls
+        cached_result = _get_cached_stdlib_result("python", full_qualified_name)
+        if cached_result is not None:
+            return cached_result
+
         parts = full_qualified_name.split(".")
         if len(parts) >= 2:
             module_name = parts[0]
@@ -942,87 +1108,103 @@ class ImportProcessor:
                         or inspect.isfunction(obj)
                         or not inspect.ismodule(obj)
                     ):
-                        return ".".join(parts[:-1])
+                        module_path = ".".join(parts[:-1])
+                        _cache_stdlib_result("python", full_qualified_name, module_path)
+                        return module_path
             except (ImportError, AttributeError):
                 pass
 
             # Fallback heuristic
             if entity_name[0].isupper():
-                return ".".join(parts[:-1])
+                result = ".".join(parts[:-1])
+            else:
+                result = full_qualified_name
+
+            _cache_stdlib_result("python", full_qualified_name, result)
+            return result
 
         return full_qualified_name
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract JavaScript/Node.js stdlib module path using runtime introspection."""
+        # Check cache first to avoid expensive subprocess calls
+        cached_result = _get_cached_stdlib_result("javascript", full_qualified_name)
+        if cached_result is not None:
+            return cached_result
+
         parts = full_qualified_name.split(".")
         if len(parts) >= 2:
             module_name = parts[0]
             entity_name = parts[-1]
 
-            # Use Node.js introspection via subprocess to avoid direct Node.js dependency
-            try:
-                import json
-                import os
-                import subprocess
+            # Try dynamic introspection only if Node.js is available
+            if _is_tool_available("node"):
+                try:
+                    import json
+                    import os
+                    import subprocess
 
-                # Safe Node.js script that reads module/entity names from environment variables
-                node_script = """
-                const moduleName = process.env.MODULE_NAME;
-                const entityName = process.env.ENTITY_NAME;
+                    # Safe Node.js script that reads module/entity names from environment variables
+                    node_script = """
+                    const moduleName = process.env.MODULE_NAME;
+                    const entityName = process.env.ENTITY_NAME;
 
-                if (!moduleName || !entityName) {
-                    console.log(JSON.stringify({hasEntity: false, entityType: null}));
-                    process.exit(0);
-                }
+                    if (!moduleName || !entityName) {
+                        console.log(JSON.stringify({hasEntity: false, entityType: null}));
+                        process.exit(0);
+                    }
 
-                try {
-                    const module = require(moduleName);
-                    const hasEntity = entityName in module;
-                    const entityType = hasEntity ? typeof module[entityName] : null;
-                    console.log(JSON.stringify({hasEntity, entityType}));
-                } catch (e) {
-                    console.log(JSON.stringify({hasEntity: false, entityType: null}));
-                }
-                """
+                    try {
+                        const module = require(moduleName);
+                        const hasEntity = entityName in module;
+                        const entityType = hasEntity ? typeof module[entityName] : null;
+                        console.log(JSON.stringify({hasEntity, entityType}));
+                    } catch (e) {
+                        console.log(JSON.stringify({hasEntity: false, entityType: null}));
+                    }
+                    """
 
-                # Create environment with module and entity names
-                env = os.environ.copy()
-                env["MODULE_NAME"] = module_name
-                env["ENTITY_NAME"] = entity_name
+                    # Create environment with module and entity names
+                    env = os.environ.copy()
+                    env["MODULE_NAME"] = module_name
+                    env["ENTITY_NAME"] = entity_name
 
-                result = subprocess.run(
-                    ["node", "-e", node_script],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    env=env,
-                )
+                    subprocess_result = subprocess.run(
+                        ["node", "-e", node_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        env=env,
+                    )
 
-                if result.returncode == 0:
-                    data = json.loads(result.stdout.strip())
-                    if data["hasEntity"] and data["entityType"] in [
-                        "function",
-                        "object",
-                    ]:
-                        return ".".join(parts[:-1])
+                    if subprocess_result.returncode == 0:
+                        data = json.loads(subprocess_result.stdout.strip())
+                        if data["hasEntity"] and data["entityType"] in [
+                            "function",
+                            "object",
+                        ]:
+                            module_path = ".".join(parts[:-1])
+                            _cache_stdlib_result(
+                                "javascript", full_qualified_name, module_path
+                            )
+                            return module_path
 
-            except (
-                subprocess.TimeoutExpired,
-                subprocess.CalledProcessError,
-                json.JSONDecodeError,
-                FileNotFoundError,
-            ):
-                pass
+                except (
+                    subprocess.TimeoutExpired,
+                    subprocess.CalledProcessError,
+                    json.JSONDecodeError,
+                ):
+                    pass
 
-            # Fallback heuristic for JS/TS
-            if entity_name[0].isupper() or entity_name in {
-                "setTimeout",
-                "setInterval",
-                "Promise",
-                "Array",
-                "Object",
-            }:
-                return ".".join(parts[:-1])
+            # Fallback to heuristic approach when Node.js unavailable or introspection fails
+            if entity_name[0].isupper():
+                result = ".".join(parts[:-1])
+            else:
+                result = full_qualified_name
+
+            # Cache the result to avoid repeated heuristic calculations
+            _cache_stdlib_result("javascript", full_qualified_name, result)
+            return result
 
         return full_qualified_name
 
