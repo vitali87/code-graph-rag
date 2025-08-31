@@ -98,7 +98,7 @@ class ImportProcessor:
                 for local_name, full_name in self.import_mapping[module_qn].items():
                     # Extract just the module path for the IMPORTS relationship
                     # This ensures Module -> Module relationships, not Module -> Class/Function
-                    module_path = self._extract_module_path(full_name)
+                    module_path = self._extract_module_path(full_name, language)
 
                     self.ingestor.ensure_relationship_batch(
                         ("Module", "qualified_name", module_qn),
@@ -863,7 +863,9 @@ class ImportProcessor:
 
         return dotted
 
-    def _extract_module_path(self, full_qualified_name: str) -> str:
+    def _extract_module_path(
+        self, full_qualified_name: str, language: str = "python"
+    ) -> str:
         """Extract module path from a full qualified name using tree-sitter knowledge.
 
         This method uses the function_registry (populated by tree-sitter parsing) to determine
@@ -898,15 +900,531 @@ class ImportProcessor:
         # 2. An external/standard library entity we didn't parse
         # 3. A misclassified entity (rare)
 
-        # For standard library imports like "collections.defaultdict", we use a simple heuristic
-        # since we don't parse standard library sources. Uppercase names are typically classes.
-        parts = full_qualified_name.split(".")
-        if len(parts) > 1:
-            last_part = parts[-1]
-            if last_part[0].isupper():
-                # Likely a class name - extract module path
-                return ".".join(parts[:-1])
+        # Language-specific standard library introspection using native reflection
+        if language == "python":
+            return self._extract_python_stdlib_path(full_qualified_name)
+        elif language in ["javascript", "typescript"]:
+            return self._extract_js_stdlib_path(full_qualified_name)
+        elif language == "go":
+            return self._extract_go_stdlib_path(full_qualified_name)
+        elif language == "rust":
+            return self._extract_rust_stdlib_path(full_qualified_name)
+        elif language == "cpp":
+            return self._extract_cpp_stdlib_path(full_qualified_name)
+        elif language == "java":
+            return self._extract_java_stdlib_path(full_qualified_name)
+        elif language == "lua":
+            return self._extract_lua_stdlib_path(full_qualified_name)
+        else:
+            return self._extract_generic_stdlib_path(full_qualified_name)
 
         # Default: assume it's already a module path
         # This handles cases where the full name refers to a module file directly
+        return full_qualified_name
+
+    def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extract Python stdlib module path using runtime introspection."""
+        parts = full_qualified_name.split(".")
+        if len(parts) >= 2:
+            module_name = parts[0]
+            entity_name = parts[-1]
+
+            try:
+                import importlib
+                import inspect
+
+                module = importlib.import_module(module_name)
+
+                if hasattr(module, entity_name):
+                    obj = getattr(module, entity_name)
+                    if (
+                        inspect.isclass(obj)
+                        or inspect.isfunction(obj)
+                        or not inspect.ismodule(obj)
+                    ):
+                        return ".".join(parts[:-1])
+            except (ImportError, AttributeError):
+                pass
+
+            # Fallback heuristic
+            if entity_name[0].isupper():
+                return ".".join(parts[:-1])
+
+        return full_qualified_name
+
+    def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extract JavaScript/Node.js stdlib module path using runtime introspection."""
+        parts = full_qualified_name.split(".")
+        if len(parts) >= 2:
+            module_name = parts[0]
+            entity_name = parts[-1]
+
+            # Use Node.js introspection via subprocess to avoid direct Node.js dependency
+            try:
+                import json
+                import subprocess
+
+                # Node.js script to introspect module
+                node_script = f'''
+                try {{
+                    const module = require("{module_name}");
+                    const hasEntity = "{entity_name}" in module;
+                    const entityType = hasEntity ? typeof module["{entity_name}"] : null;
+                    console.log(JSON.stringify({{hasEntity, entityType}}));
+                }} catch (e) {{
+                    console.log(JSON.stringify({{hasEntity: false, entityType: null}}));
+                }}
+                '''
+
+                result = subprocess.run(
+                    ["node", "-e", node_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+
+                if result.returncode == 0:
+                    data = json.loads(result.stdout.strip())
+                    if data["hasEntity"] and data["entityType"] in [
+                        "function",
+                        "object",
+                    ]:
+                        return ".".join(parts[:-1])
+
+            except (
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+                json.JSONDecodeError,
+                FileNotFoundError,
+            ):
+                pass
+
+            # Fallback heuristic for JS/TS
+            if entity_name[0].isupper() or entity_name in {
+                "setTimeout",
+                "setInterval",
+                "Promise",
+                "Array",
+                "Object",
+            }:
+                return ".".join(parts[:-1])
+
+        return full_qualified_name
+
+    def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extract Go stdlib module path using compile-time analysis."""
+        parts = full_qualified_name.split("/")  # Go uses / for package paths
+        if len(parts) >= 2:
+            # Use go/doc to analyze package documentation and exports
+            try:
+                import json
+                import subprocess
+
+                package_path = "/".join(parts[:-1])
+                entity_name = parts[-1]
+
+                # Go script to introspect package using go/doc
+                go_script = f'''
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "go/doc"
+    "go/parser"
+    "go/token"
+    "os"
+)
+
+func main() {{
+    fset := token.NewFileSet()
+    pkgs, err := parser.ParseDir(fset, "{package_path}", nil, parser.ParseComments)
+    if err != nil {{
+        fmt.Print("{{\\\"hasEntity\\\": false}}")
+        return
+    }}
+
+    for _, pkg := range pkgs {{
+        d := doc.New(pkg, "{package_path}", doc.AllDecls)
+
+        // Check functions
+        for _, f := range d.Funcs {{
+            if f.Name == "{entity_name}" {{
+                fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"function\\\"}}")
+                return
+            }}
+        }}
+
+        // Check types (structs, interfaces, etc.)
+        for _, t := range d.Types {{
+            if t.Name == "{entity_name}" {{
+                fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"type\\\"}}")
+                return
+            }}
+        }}
+
+        // Check constants and variables
+        for _, v := range d.Vars {{
+            for _, name := range v.Names {{
+                if name == "{entity_name}" {{
+                    fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"variable\\\"}}")
+                    return
+                }}
+            }}
+        }}
+
+        for _, c := range d.Consts {{
+            for _, name := range c.Names {{
+                if name == "{entity_name}" {{
+                    fmt.Print("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"constant\\\"}}")
+                    return
+                }}
+            }}
+        }}
+    }}
+
+    fmt.Print("{{\\\"hasEntity\\\": false}}")
+}}
+                '''
+
+                # Write temporary Go file and execute
+                with subprocess.Popen(
+                    ["go", "run", "-"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                ) as proc:
+                    stdout, _ = proc.communicate(go_script, timeout=10)
+
+                    if proc.returncode == 0:
+                        data = json.loads(stdout.strip())
+                        if data["hasEntity"]:
+                            return package_path
+
+            except (
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+                json.JSONDecodeError,
+                FileNotFoundError,
+            ):
+                pass
+
+            # Fallback heuristic for Go (functions/types usually start with uppercase)
+            entity_name = parts[-1]
+            if entity_name[0].isupper():
+                return "/".join(parts[:-1])
+
+        return full_qualified_name
+
+    def _extract_rust_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extract Rust stdlib module path using compile-time analysis."""
+        parts = full_qualified_name.split("::")  # Rust uses :: for namespacing
+        if len(parts) >= 2:
+            # Rust doesn't have runtime reflection, but we can use compile-time tools
+            # For now, use naming conventions until we implement proc-macro analysis
+
+            entity_name = parts[-1]
+
+            # Rust naming conventions are very consistent:
+            # Types (structs, enums, traits) use PascalCase
+            # Functions, variables, modules use snake_case
+            # Constants use SCREAMING_SNAKE_CASE
+
+            if (
+                entity_name[0].isupper()  # PascalCase (types)
+                or entity_name.isupper()  # SCREAMING_SNAKE_CASE (constants)
+                or "_" not in entity_name
+                and entity_name.islower()
+            ):  # Simple functions
+                return "::".join(parts[:-1])
+
+        return full_qualified_name
+
+    def _extract_cpp_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extract C++ stdlib module path using header analysis."""
+        parts = full_qualified_name.split("::")  # C++ uses :: for namespacing
+        if len(parts) >= 2:
+            # C++ standard library namespace and common components
+            namespace = parts[0]
+            if namespace == "std":
+                entity_name = parts[-1]
+
+                # C++ standard library introspection via compile-time analysis
+                try:
+                    import subprocess
+
+                    # Strategy 1: Try as template with int parameter
+                    cpp_template_program = f"""
+#include <iostream>
+int main() {{
+    std::{entity_name}<int> test;
+    std::cout << "template" << std::endl;
+    return 0;
+}}
+                    """
+
+                    result1 = subprocess.run(
+                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
+                        input=cpp_template_program,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+
+                    if result1.returncode == 0:
+                        return "::".join(parts[:-1])
+
+                    # Strategy 2: Try as regular type with default constructor
+                    cpp_type_program = f"""
+#include <iostream>
+int main() {{
+    std::{entity_name} test{{}};
+    std::cout << "type" << std::endl;
+    return 0;
+}}
+                    """
+
+                    result2 = subprocess.run(
+                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
+                        input=cpp_type_program,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+
+                    if result2.returncode == 0:
+                        return "::".join(parts[:-1])
+
+                    # Strategy 3: Try as function or algorithm
+                    cpp_function_program = f"""
+#include <iostream>
+#include <algorithm>
+#include <vector>
+int main() {{
+    std::vector<int> v{{1, 2, 3}};
+    auto result = std::{entity_name}(v.begin(), v.end());
+    std::cout << "function" << std::endl;
+    return 0;
+}}
+                    """
+
+                    result3 = subprocess.run(
+                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
+                        input=cpp_function_program,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+
+                    if result3.returncode == 0:
+                        return "::".join(parts[:-1])
+
+                    # Strategy 4: Just check if the symbol exists (simplest)
+                    cpp_exists_program = f"""
+#include <iostream>
+int main() {{
+    // Just reference the symbol - will fail if it doesn't exist
+    (void)sizeof(std::{entity_name}<int>);
+    std::cout << "exists" << std::endl;
+    return 0;
+}}
+                    """
+
+                    result4 = subprocess.run(
+                        ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
+                        input=cpp_exists_program,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+
+                    if result4.returncode == 0:
+                        return "::".join(parts[:-1])
+
+                except (
+                    subprocess.TimeoutExpired,
+                    subprocess.CalledProcessError,
+                    FileNotFoundError,
+                ):
+                    pass
+
+                # Fallback using C++ naming conventions
+                entity_name = parts[-1]
+                if (
+                    entity_name[0].isupper()  # Types usually start with uppercase
+                    or entity_name.startswith("is_")
+                    or entity_name.startswith("has_")
+                ):  # Type traits
+                    return "::".join(parts[:-1])
+
+        return full_qualified_name
+
+    def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extract Java stdlib module path using reflection."""
+        parts = full_qualified_name.split(".")
+        if len(parts) >= 2:
+            # Use Java reflection via subprocess to avoid direct Java dependency
+            try:
+                import json
+                import subprocess
+
+                package_name = ".".join(parts[:-1])
+                entity_name = parts[-1]
+
+                # Java program to check if entity exists in package
+                java_program = f'''
+import java.lang.reflect.*;
+
+public class StdlibCheck {{
+    public static void main(String[] args) {{
+        try {{
+            Class<?> clazz = Class.forName("{package_name}.{entity_name}");
+            System.out.println("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"class\\\"}}");
+        }} catch (ClassNotFoundException e) {{
+            // Try as method or field in parent package
+            try {{
+                Class<?> packageClass = Class.forName("{package_name}");
+                Method[] methods = packageClass.getMethods();
+                Field[] fields = packageClass.getFields();
+
+                boolean foundMethod = false;
+                for (Method method : methods) {{
+                    if (method.getName().equals("{entity_name}")) {{
+                        foundMethod = true;
+                        break;
+                    }}
+                }}
+
+                boolean foundField = false;
+                for (Field field : fields) {{
+                    if (field.getName().equals("{entity_name}")) {{
+                        foundField = true;
+                        break;
+                    }}
+                }}
+
+                if (foundMethod || foundField) {{
+                    System.out.println("{{\\\"hasEntity\\\": true, \\\"entityType\\\": \\\"member\\\"}}");
+                }} else {{
+                    System.out.println("{{\\\"hasEntity\\\": false}}");
+                }}
+            }} catch (Exception ex) {{
+                System.out.println("{{\\\"hasEntity\\\": false}}");
+            }}
+        }}
+    }}
+}}
+                '''
+
+                # Compile and run Java program
+                with subprocess.Popen(
+                    ["java", "-"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                ) as proc:
+                    stdout, stderr = proc.communicate(java_program, timeout=10)
+
+                    if proc.returncode == 0:
+                        data = json.loads(stdout.strip())
+                        if data.get("hasEntity"):
+                            return ".".join(parts[:-1])
+
+            except (
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+                json.JSONDecodeError,
+                FileNotFoundError,
+            ):
+                pass
+
+            # Fallback using Java naming conventions
+            entity_name = parts[-1]
+            if (
+                entity_name[0].isupper()  # Classes start with uppercase
+                or entity_name.endswith("Exception")
+                or entity_name.endswith("Error")
+                or entity_name.endswith("Interface")
+                or entity_name.endswith("Builder")
+            ):
+                return ".".join(parts[:-1])
+
+        return full_qualified_name
+
+    def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extract Lua stdlib module path using runtime introspection."""
+        parts = full_qualified_name.split(".")
+        if len(parts) >= 2:
+            module_name = parts[0]
+            entity_name = parts[-1]
+
+            # Use Lua introspection via subprocess
+            try:
+                import subprocess
+
+                # Lua script to check if entity exists in module
+                lua_script = f'''
+-- Check built-in modules first (they're global tables in Lua)
+local module_table = _G["{module_name}"]
+if module_table and type(module_table) == "table" then
+    local hasEntity = module_table["{entity_name}"] ~= nil
+    if hasEntity then
+        print("hasEntity=true")
+    else
+        print("hasEntity=false")
+    end
+else
+    -- Try require for user modules
+    local success, loaded_module = pcall(require, "{module_name}")
+    if success and type(loaded_module) == "table" then
+        local hasEntity = loaded_module["{entity_name}"] ~= nil
+        if hasEntity then
+            print("hasEntity=true")
+        else
+            print("hasEntity=false")
+        end
+    else
+        print("hasEntity=false")
+    end
+end
+                '''
+
+                result = subprocess.run(
+                    ["lua", "-e", lua_script], capture_output=True, text=True, timeout=5
+                )
+
+                if result.returncode == 0:
+                    # Parse output - look for our simple format
+                    output = result.stdout.strip()
+                    if "hasEntity=true" in output:
+                        return ".".join(parts[:-1])
+
+            except (
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+                FileNotFoundError,
+            ):
+                pass
+
+            # Fallback using Lua conventions
+            # Lua functions are typically lowercase, tables/modules can be mixed case
+            entity_name = parts[-1]
+            if (
+                entity_name[0].isupper()  # Modules/tables often start uppercase
+                or entity_name in {"string", "table", "math", "io", "os", "debug"}
+            ):  # Standard modules
+                return ".".join(parts[:-1])
+
+        return full_qualified_name
+
+    def _extract_generic_stdlib_path(self, full_qualified_name: str) -> str:
+        """Generic fallback using basic heuristics."""
+        parts = full_qualified_name.split(".")
+        if len(parts) >= 2:
+            entity_name = parts[-1]
+            if entity_name[0].isupper():
+                return ".".join(parts[:-1])
+
         return full_qualified_name

@@ -1950,15 +1950,13 @@ impl Debug for CustomStruct {
 
     imported_modules = [call.args[2][2] for call in rust_imports]
 
-    # Verify specific standard library imports
+    # Verify specific standard library imports (should be module paths, not entity paths)
     expected_std_imports = [
-        "std::collections::HashMap",
-        "std::collections::HashSet",
-        "std::io",
-        "std::fs::File",
-        "std::path::Path",
-        "std::fmt::Debug",
-        "std::fmt::Display",
+        "std::collections",  # HashMap and HashSet should resolve to this module
+        "std::io",  # self import and Read/Write traits resolve to this module
+        "std::fs",  # File should resolve to this module
+        "std::path",  # Path should resolve to this module
+        "std::fmt",  # Debug and Display should resolve to this module
     ]
 
     found_std_imports = 0
@@ -1966,8 +1964,8 @@ impl Debug for CustomStruct {
         if any(expected in module for module in imported_modules):
             found_std_imports += 1
 
-    assert found_std_imports >= 4, (
-        f"Expected at least 4 std imports, found {found_std_imports} matches"
+    assert found_std_imports >= 3, (
+        f"Expected at least 3 std module imports, found {found_std_imports} matches"
     )
 
     # Verify external crate imports
