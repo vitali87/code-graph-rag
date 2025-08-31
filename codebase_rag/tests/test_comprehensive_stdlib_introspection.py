@@ -700,7 +700,7 @@ public class StdlibImports {
 
 
 def test_lua_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) -> None:
-    """Test Lua standard library introspection with runtime available."""
+    """Test Lua standard library introspection resolves stdlib function calls to modules."""
     project = temp_repo / "lua_stdlib_test"
     project.mkdir()
 
@@ -784,12 +784,60 @@ return {
     )
 
     imported_modules = [call.args[2][2] for call in lua_imports]
+
     # Should have custom module imports
     assert any("my_custom_module" in module for module in imported_modules), (
         "Expected custom module import"
     )
     assert any("utils.helper" in module for module in imported_modules), (
         "Expected utils.helper import"
+    )
+
+    # Should have standard library module imports resolved correctly
+    # These should be resolved to their respective modules, not the full qualified names
+    expected_stdlib_modules = {
+        "string",
+        "math",
+        "table",
+        "os",
+        "io",
+        "debug",
+        "package",
+    }
+    found_stdlib_modules = {
+        module for module in imported_modules if module in expected_stdlib_modules
+    }
+
+    assert len(found_stdlib_modules) >= 3, (
+        f"Expected at least 3 stdlib modules (string, math, table/os/io), "
+        f"found: {found_stdlib_modules}"
+    )
+
+    # Verify specific expected modules are present
+    assert "string" in found_stdlib_modules, (
+        f"Expected 'string' module import for string.upper/lower calls, found: {found_stdlib_modules}"
+    )
+    assert "math" in found_stdlib_modules, (
+        f"Expected 'math' module import for math.floor/ceil calls, found: {found_stdlib_modules}"
+    )
+
+    # Ensure no full qualified names leak through (these should be resolved to modules)
+    bad_imports = [
+        module
+        for module in imported_modules
+        if any(
+            bad in module
+            for bad in [
+                "string.upper",
+                "math.floor",
+                "table.insert",
+                "os.date",
+                "io.open",
+            ]
+        )
+    ]
+    assert not bad_imports, (
+        f"Found unresolved qualified names that should be modules: {bad_imports}"
     )
 
 

@@ -909,6 +909,13 @@ class ImportProcessor:
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
 
+            # Check for standard library function calls (e.g., string.upper, math.floor)
+            elif self._lua_is_stdlib_call(call_node):
+                stdlib_module = self._lua_extract_stdlib_module(call_node)
+                if stdlib_module:
+                    # Create implicit import relationship for stdlib module
+                    self.import_mapping[module_qn][stdlib_module] = stdlib_module
+
     def _lua_is_require_call(self, call_node: Node) -> bool:
         """Return True if function_call represents require(...) or require 'x'."""
         # In Lua tree-sitter, function calls have the function name as the first child
@@ -1023,6 +1030,51 @@ class ImportProcessor:
             pass
 
         return dotted
+
+    def _lua_is_stdlib_call(self, call_node: Node) -> bool:
+        """Return True if function_call represents a Lua standard library call (e.g., string.upper, math.floor)."""
+        from .lua_utils import safe_decode_text
+
+        # Check if this is a method call (module.function format)
+        if not call_node.children:
+            return False
+
+        # Look for dot_index_expression pattern: module.function
+        first_child = call_node.children[0]
+        if first_child.type == "dot_index_expression":
+            # Get the module name (left side of the dot)
+            if first_child.children and first_child.children[0].type == "identifier":
+                module_name = safe_decode_text(first_child.children[0])
+                # Check if it's a known Lua standard library module
+                return module_name in {
+                    "string",
+                    "math",
+                    "table",
+                    "os",
+                    "io",
+                    "debug",
+                    "package",
+                    "coroutine",
+                    "utf8",
+                    "bit32",
+                }
+
+        return False
+
+    def _lua_extract_stdlib_module(self, call_node: Node) -> str | None:
+        """Extract the stdlib module name from a stdlib function call."""
+        from .lua_utils import safe_decode_text
+
+        if not call_node.children:
+            return None
+
+        first_child = call_node.children[0]
+        if first_child.type == "dot_index_expression":
+            # Get the module name (left side of the dot)
+            if first_child.children and first_child.children[0].type == "identifier":
+                return safe_decode_text(first_child.children[0])
+
+        return None
 
     def _extract_module_path(
         self, full_qualified_name: str, language: str = "python"
