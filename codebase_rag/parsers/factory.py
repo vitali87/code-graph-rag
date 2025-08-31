@@ -81,6 +81,7 @@ class ProcessorFactory:
                 repo_path_getter=lambda: self.repo_path,
                 project_name_getter=lambda: self.project_name,
                 ingestor=self.ingestor,
+                function_registry=self.function_registry,
             )
         return self._import_processor
 
