@@ -1217,6 +1217,24 @@ class ImportProcessor:
                 package_path = "/".join(parts[:-1])
                 entity_name = parts[-1]
 
+                # First, resolve the package import path to its filesystem directory
+                resolve_result = subprocess.run(
+                    ["go", "list", "-f", "{{.Dir}}", package_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+
+                if resolve_result.returncode != 0:
+                    # If we can't resolve the package path, fall back to heuristics
+                    raise subprocess.CalledProcessError(
+                        resolve_result.returncode, resolve_result.args
+                    )
+
+                package_dir = resolve_result.stdout.strip()
+                if not package_dir:
+                    raise subprocess.CalledProcessError(1, ["go", "list"])
+
                 # Safe Go script that reads package/entity names from environment variables
                 go_script = """
 package main
@@ -1289,9 +1307,9 @@ func main() {
 }
                 """
 
-                # Create environment with package and entity names
+                # Create environment with resolved package directory and entity names
                 env = os.environ.copy()
-                env["PACKAGE_PATH"] = package_path
+                env["PACKAGE_PATH"] = package_dir  # Use resolved directory path
                 env["ENTITY_NAME"] = entity_name
 
                 # Write temporary Go file and execute
