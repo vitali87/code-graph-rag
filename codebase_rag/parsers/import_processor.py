@@ -1079,10 +1079,6 @@ class ImportProcessor:
         else:
             return self._extract_generic_stdlib_path(full_qualified_name)
 
-        # Default: assume it's already a module path
-        # This handles cases where the full name refers to a module file directly
-        return full_qualified_name
-
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Python stdlib module path using runtime introspection."""
         # Check cache first to avoid expensive importlib calls
