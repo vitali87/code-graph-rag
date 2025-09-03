@@ -34,11 +34,12 @@ class ProtobufFileIngestor:
         v: k for k, v in LABEL_TO_ONEOF_FIELD.items()
     }
 
-    def __init__(self, output_path: str):
-        self.output_path = Path(output_path)
+    def __init__(self, output_path: str, split_index: bool = False):
+        self.output_dir = Path(output_path)
         self._nodes: dict[str, pb.Node] = {}
         self._relationships: dict[tuple[str, int, str], pb.Relationship] = {}
-        logger.info(f"ProtobufFileIngestor initialized to write to: {self.output_path}")
+        self.split_index = split_index
+        logger.info(f"ProtobufFileIngestor initialized to write to: {self.output_dir}")
 
     def _get_node_id(self, label: str, properties: dict) -> str:
         """Determines the primary/node key for a node."""
@@ -129,20 +130,54 @@ class ProtobufFileIngestor:
         else:
             self._relationships[unique_key] = rel
 
-    def flush_all(self) -> None:
-        """Assembles, writes the final Protobuf file"""
-        logger.info(f"Flushing data to {self.output_path}...")
+    def _flush_joint(self) -> None:
+        """Assembles index into a single Protobuf file"""
 
         index = pb.GraphCodeIndex()
         index.nodes.extend(self._nodes.values())
         index.relationships.extend(self._relationships.values())
 
-        serialized_data = index.SerializeToString()
-
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.output_path, "wb") as f:
-            f.write(serialized_data)
+        serialised_file = index.SerializeToString()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = self.output_dir / "index.bin"
+        with open(out_path, "wb") as f:
+            f.write(serialised_file)
 
         logger.success(
-            f"Successfully flushed {len(self._nodes)} unique nodes and {len(self._relationships)} unique relationships to {self.output_path}"
+            f"Successfully flushed {len(self._nodes)} unique nodes and {len(self._relationships)} unique relationships to {self.output_dir}"
         )
+
+    def _flush_split(self) -> None:
+        """Assembles index into two separate binary files in the output directory:
+        'nodes.bin' and 'relationships.bin'."""
+
+        nodes_index = pb.GraphCodeIndex()
+        rels_index = pb.GraphCodeIndex()
+        nodes_index.nodes.extend(self._nodes.values())
+        rels_index.relationships.extend(self._relationships.values())
+
+        serialised_nodes = nodes_index.SerializeToString()
+        serialised_rels = rels_index.SerializeToString()
+
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        nodes_path = self.output_dir / "nodes.bin"
+        rels_path = self.output_dir / "relationships.bin"
+
+        with open(nodes_path, "wb") as f:
+            f.write(serialised_nodes)
+
+        with open(rels_path, "wb") as f:
+            f.write(serialised_rels)
+
+        logger.success(
+            f"Successfully flushed {len(self._nodes)} unique nodes and {len(self._relationships)} unique relationships to {self.output_dir}"
+        )
+
+    def flush_all(self) -> None:
+        """Assembles and writes the final binary file(s)"""
+        logger.info(f"Flushing data to {self.output_dir}...")
+
+        if self.split_index:
+            return self._flush_split()
+        else:
+            return self._flush_joint()

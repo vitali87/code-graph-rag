@@ -42,29 +42,28 @@ namespace math { class Calculator { public: int add(int a, int b); }; }
 }
 
 
-def test_comprehensive_pipeline_produces_valid_artifact(tmp_path: Path) -> None:
+def test_comprehensive_pipeline_produces_valid_artifact_joint(tmp_path: Path) -> None:
     """
-    Tests that the GraphUpdater -> ProtobufFileIngestor pipeline can
-    successfully run on a comprehensive project and produce a valid,
-    non-empty, and deserializable binary artifact.
+    End-to-end validation for the joint output mode writing index.bin under the given directory.
     """
     project_dir = tmp_path / "golden_project"
     for file_path, content in COMPREHENSIVE_PROJECT_FIXTURE.items():
         full_path = project_dir / Path(file_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content)
-    output_file = tmp_path / "graph_output.proto.bin"
 
-    ingestor = ProtobufFileIngestor(str(output_file))
+    output_dir = tmp_path / "out_joint"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ingestor = ProtobufFileIngestor(str(output_dir), split_index=False)
     parsers, queries = load_parsers()
     updater = GraphUpdater(ingestor, project_dir, parsers, queries)
 
     updater.run()
 
-    assert output_file.exists(), "The protobuf output file was not created."
-    assert output_file.stat().st_size > 100, (
-        "The protobuf file is suspiciously small or empty."
-    )
+    output_file = output_dir / "index.bin"
+    assert output_file.exists(), "index.bin was not created."
+    assert output_file.stat().st_size > 100, "index.bin is suspiciously small or empty."
 
     deserialized_index = pb.GraphCodeIndex()
     try:
@@ -83,5 +82,53 @@ def test_comprehensive_pipeline_produces_valid_artifact(tmp_path: Path) -> None:
     )
 
     print(
-        "\n✅ Pipeline Integrity Test Passed: Successfully generated a valid and well-formed protobuf file."
+        "\n✅ Pipeline Integrity Test Passed (joint): Successfully generated a valid and well-formed index.bin."
+    )
+
+
+def test_comprehensive_pipeline_produces_valid_artifacts_split_index(
+    tmp_path: Path,
+) -> None:
+    """
+    End-to-end validation for the split-index output mode: nodes.bin and relationships.bin under the given directory.
+    """
+    project_dir = tmp_path / "golden_project_split"
+    for file_path, content in COMPREHENSIVE_PROJECT_FIXTURE.items():
+        full_path = project_dir / Path(file_path)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content)
+
+    output_dir = tmp_path / "out_split"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ingestor = ProtobufFileIngestor(str(output_dir), split_index=True)
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(ingestor, project_dir, parsers, queries)
+
+    updater.run()
+
+    nodes_path = output_dir / "nodes.bin"
+    rels_path = output_dir / "relationships.bin"
+
+    assert nodes_path.exists(), "nodes.bin was not created."
+    assert rels_path.exists(), "relationships.bin was not created."
+    assert nodes_path.stat().st_size > 100, "nodes.bin is suspiciously small or empty."
+    assert rels_path.stat().st_size > 100, (
+        "relationships.bin is suspiciously small or empty."
+    )
+
+    nodes_index = pb.GraphCodeIndex()
+    with open(nodes_path, "rb") as f:
+        nodes_index.ParseFromString(f.read())
+    assert len(nodes_index.nodes) > 5
+    assert len(nodes_index.relationships) == 0
+
+    rels_index = pb.GraphCodeIndex()
+    with open(rels_path, "rb") as f:
+        rels_index.ParseFromString(f.read())
+    assert len(rels_index.nodes) == 0
+    assert len(rels_index.relationships) > 5
+
+    print(
+        "\n✅ Pipeline Integrity Test Passed (split-index): Successfully generated valid nodes.bin and relationships.bin files."
     )

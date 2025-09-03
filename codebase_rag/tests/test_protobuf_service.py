@@ -44,13 +44,15 @@ SAMPLE_RELATIONSHIPS = [
 ]
 
 
-def test_protobuf_ingestor_serialization_and_deserialization(tmp_path: Path) -> None:
+def test_protobuf_ingestor_joint_serialization_and_deserialization(
+    tmp_path: Path,
+) -> None:
     """
-    Tests that the ProtobufFileIngestor correctly serializes data and that
-    the output can be deserialized back to the original structure.
+    Validates the joint output mode with standardized filename: index.bin under the provided directory.
     """
-    output_file = tmp_path / "test_graph.proto.bin"
-    ingestor = ProtobufFileIngestor(str(output_file))
+    output_dir = tmp_path / "out_joint"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ingestor = ProtobufFileIngestor(str(output_dir), split_index=False)
 
     for node_data in SAMPLE_NODES.values():
         ingestor.ensure_node_batch(
@@ -69,7 +71,7 @@ def test_protobuf_ingestor_serialization_and_deserialization(tmp_path: Path) -> 
 
     ingestor.flush_all()
 
-    # Assert the file was actually created
+    output_file = output_dir / "index.bin"
     assert output_file.exists()
     assert output_file.stat().st_size > 0
 
@@ -106,6 +108,65 @@ def test_protobuf_ingestor_serialization_and_deserialization(tmp_path: Path) -> 
     assert len(deserialized_index.relationships) == 1
 
     rel = deserialized_index.relationships[0]
+    assert rel.type == pb.Relationship.RelationshipType.Value("DEFINES_METHOD")
+    assert rel.source_id == "test_project.UserService"
+    assert rel.target_id == "test_project.UserService.get_user"
+
+
+def test_protobuf_ingestor_split_index_serialization_and_deserialization(
+    tmp_path: Path,
+) -> None:
+    """
+    Validates the split-index output mode with standardized filenames under the provided directory:
+    nodes.bin and relationships.bin.
+    """
+    output_dir = tmp_path / "out_split"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ingestor = ProtobufFileIngestor(str(output_dir), split_index=True)
+
+    for node_data in SAMPLE_NODES.values():
+        ingestor.ensure_node_batch(
+            str(node_data["label"]), cast(dict[str, Any], node_data["properties"])
+        )
+
+    for rel_data in SAMPLE_RELATIONSHIPS:
+        ingestor.ensure_relationship_batch(
+            cast(tuple[str, str, Any], rel_data["from_spec"]),
+            str(rel_data["rel_type"]),
+            cast(tuple[str, str, Any], rel_data["to_spec"]),
+            cast(dict[str, Any], rel_data["properties"])
+            if rel_data["properties"]
+            else None,
+        )
+
+    ingestor.flush_all()
+
+    nodes_path = output_dir / "nodes.bin"
+    rels_path = output_dir / "relationships.bin"
+
+    # Assert files exist and are non-empty
+    assert nodes_path.exists()
+    assert rels_path.exists()
+    assert nodes_path.stat().st_size > 0
+    assert rels_path.stat().st_size > 0
+
+    # Deserialize nodes file
+    nodes_index = pb.GraphCodeIndex()
+    with open(nodes_path, "rb") as f:
+        nodes_index.ParseFromString(f.read())
+
+    assert len(nodes_index.nodes) == 3
+    assert len(nodes_index.relationships) == 0
+
+    # Deserialize relationships file
+    rels_index = pb.GraphCodeIndex()
+    with open(rels_path, "rb") as f:
+        rels_index.ParseFromString(f.read())
+
+    assert len(rels_index.nodes) == 0
+    assert len(rels_index.relationships) == 1
+
+    rel = rels_index.relationships[0]
     assert rel.type == pb.Relationship.RelationshipType.Value("DEFINES_METHOD")
     assert rel.source_id == "test_project.UserService"
     assert rel.target_id == "test_project.UserService.get_user"
