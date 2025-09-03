@@ -827,6 +827,11 @@ def index(
         "--output-proto",
         help="Required. Path to write the binary protobuf index file.",
     ),
+    split_index: bool = typer.Option(
+        False,
+        "--split-index",
+        help="Write index to separate nodes.bin and relationships.bin files.",
+    ),
 ) -> None:
     """Parses a codebase and creates a portable binary index file."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
@@ -837,7 +842,9 @@ def index(
 
     try:
         # This command ONLY ever uses the ProtobufFileIngestor.
-        ingestor = ProtobufFileIngestor(output_path=output_proto)
+        ingestor = ProtobufFileIngestor(
+            output_path=output_proto, split_index=split_index
+        )
         parsers, queries = load_parsers()
         updater = GraphUpdater(ingestor, repo_to_index, parsers, queries)
 
