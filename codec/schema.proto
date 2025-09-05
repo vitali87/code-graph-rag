@@ -129,6 +129,8 @@ message GraphCodeIndex {
     string source_id = 2; // The Primary Key of the source node
     string target_id = 3; // The Primary Key of the target node
     google.protobuf.Struct properties = 4;
+    string source_label = 5; // The label of the source node
+    string target_label = 6; // The label of the target node
   }
 
 

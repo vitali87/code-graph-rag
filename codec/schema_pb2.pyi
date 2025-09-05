@@ -157,11 +157,17 @@ class Relationship(google.protobuf.message.Message):
     SOURCE_ID_FIELD_NUMBER: builtins.int
     TARGET_ID_FIELD_NUMBER: builtins.int
     PROPERTIES_FIELD_NUMBER: builtins.int
+    SOURCE_LABEL_FIELD_NUMBER: builtins.int
+    TARGET_LABEL_FIELD_NUMBER: builtins.int
     type: global___Relationship.RelationshipType.ValueType
     source_id: builtins.str
     """The Primary Key of the source node"""
     target_id: builtins.str
     """The Primary Key of the target node"""
+    source_label: builtins.str
+    """The label of the source node"""
+    target_label: builtins.str
+    """The label of the target node"""
     @property
     def properties(self) -> google.protobuf.struct_pb2.Struct: ...
     def __init__(
@@ -171,9 +177,11 @@ class Relationship(google.protobuf.message.Message):
         source_id: builtins.str = ...,
         target_id: builtins.str = ...,
         properties: google.protobuf.struct_pb2.Struct | None = ...,
+        source_label: builtins.str = ...,
+        target_label: builtins.str = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["properties", b"properties"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["properties", b"properties", "source_id", b"source_id", "target_id", b"target_id", "type", b"type"]) -> None: ...
+    def ClearField(self, field_name: typing.Literal["properties", b"properties", "source_id", b"source_id", "source_label", b"source_label", "target_id", b"target_id", "target_label", b"target_label", "type", b"type"]) -> None: ...
 
 global___Relationship = Relationship
 
