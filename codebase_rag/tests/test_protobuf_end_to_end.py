@@ -81,6 +81,10 @@ def test_comprehensive_pipeline_produces_valid_artifact_joint(tmp_path: Path) ->
         "The serialized graph contains too few relationships."
     )
 
+    for rel in deserialized_index.relationships:
+        assert rel.source_label != ""
+        assert rel.target_label != ""
+
     print(
         "\n✅ Pipeline Integrity Test Passed (joint): Successfully generated a valid and well-formed index.bin."
     )
@@ -128,6 +132,10 @@ def test_comprehensive_pipeline_produces_valid_artifacts_split_index(
         rels_index.ParseFromString(f.read())
     assert len(rels_index.nodes) == 0
     assert len(rels_index.relationships) > 5
+
+    for rel in rels_index.relationships:
+        assert rel.source_label != ""
+        assert rel.target_label != ""
 
     print(
         "\n✅ Pipeline Integrity Test Passed (split-index): Successfully generated valid nodes.bin and relationships.bin files."

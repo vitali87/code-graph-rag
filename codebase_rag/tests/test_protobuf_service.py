@@ -111,6 +111,8 @@ def test_protobuf_ingestor_joint_serialization_and_deserialization(
     assert rel.type == pb.Relationship.RelationshipType.Value("DEFINES_METHOD")
     assert rel.source_id == "test_project.UserService"
     assert rel.target_id == "test_project.UserService.get_user"
+    assert rel.source_label == "Class"
+    assert rel.target_label == "Method"
 
 
 def test_protobuf_ingestor_split_index_serialization_and_deserialization(
@@ -170,3 +172,5 @@ def test_protobuf_ingestor_split_index_serialization_and_deserialization(
     assert rel.type == pb.Relationship.RelationshipType.Value("DEFINES_METHOD")
     assert rel.source_id == "test_project.UserService"
     assert rel.target_id == "test_project.UserService.get_user"
+    assert rel.source_label == "Class"
+    assert rel.target_label == "Method"

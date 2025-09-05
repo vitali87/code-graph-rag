@@ -110,8 +110,13 @@ class ProtobufFileIngestor:
             )
             rel.type = pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
 
-        rel.source_id = str(from_spec[2])
-        rel.target_id = str(to_spec[2])
+        from_label, _, from_val = from_spec
+        to_label, _, to_val = to_spec
+
+        rel.source_id = str(from_val)
+        rel.source_label = str(from_label)
+        rel.target_id = str(to_val)
+        rel.target_label = str(to_label)
 
         if rel.source_id.strip() == "" or rel.target_id.strip() == "":
             logger.warning(
