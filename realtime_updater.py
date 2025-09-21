@@ -8,7 +8,7 @@ from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from codebase_rag.config import IGNORE_PATTERNS, IGNORE_SUFFIXES
+from codebase_rag.config import IGNORE_PATTERNS, IGNORE_SUFFIXES, settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_config import get_language_config
 from codebase_rag.parser_loader import load_parsers
@@ -81,12 +81,18 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         logger.success(f"Graph updated successfully for change in: {path.name}")
 
 
-def start_watcher(repo_path: str, host: str, port: int) -> None:
+def start_watcher(
+    repo_path: str, host: str, port: int, batch_size: int | None = None
+) -> None:
     """Initializes the graph updater and starts the file system watcher."""
     repo_path_obj = Path(repo_path).resolve()
     parsers, queries = load_parsers()
 
-    with MemgraphIngestor(host=host, port=port) as ingestor:
+    with MemgraphIngestor(
+        host=host,
+        port=port,
+        batch_size=batch_size or settings.MEMGRAPH_BATCH_SIZE,
+    ) as ingestor:
         updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
         # --- Perform an initial full scan to build the complete context ---
@@ -124,6 +130,15 @@ if __name__ == "__main__":
     parser.add_argument("repo_path", help="Path to the repository to watch.")
     parser.add_argument("--host", default="localhost", help="Memgraph host")
     parser.add_argument("--port", type=int, default=7687, help="Memgraph port")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Number of buffered nodes/relationships before flushing to Memgraph",
+    )
     args = parser.parse_args()
 
-    start_watcher(args.repo_path, args.host, args.port)
+    if args.batch_size is not None and args.batch_size < 1:
+        parser.error("--batch-size must be a positive integer")
+
+    start_watcher(args.repo_path, args.host, args.port, args.batch_size)

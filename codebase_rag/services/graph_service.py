@@ -107,6 +107,12 @@ class MemgraphIngestor:
     def ensure_node_batch(self, label: str, properties: dict[str, Any]) -> None:
         """Adds a node to the buffer."""
         self.node_buffer.append((label, properties))
+        if self.batch_size and len(self.node_buffer) >= self.batch_size:
+            logger.debug(
+                "Node buffer reached batch size ({}). Performing incremental flush.",
+                self.batch_size,
+            )
+            self.flush_nodes()
 
     def ensure_relationship_batch(
         self,
@@ -126,6 +132,14 @@ class MemgraphIngestor:
                 properties,
             )
         )
+        if self.batch_size and len(self.relationship_buffer) >= self.batch_size:
+            logger.debug(
+                "Relationship buffer reached batch size ({}). Performing incremental flush.",
+                self.batch_size,
+            )
+            # Ensure all pending nodes exist before we flush relationships
+            self.flush_nodes()
+            self.flush_relationships()
 
     def flush_nodes(self) -> None:
         """Flushes the buffered nodes to the database."""

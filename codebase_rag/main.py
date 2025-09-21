@@ -704,7 +704,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     return rag_agent
 
 
-async def main_async(repo_path: str) -> None:
+async def main_async(repo_path: str, batch_size: int | None = None) -> None:
     """Initializes services and runs the main application loop."""
     project_root = _setup_common_initialization(repo_path)
 
@@ -712,7 +712,9 @@ async def main_async(repo_path: str) -> None:
     console.print(table)
 
     with MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        batch_size=batch_size or settings.MEMGRAPH_BATCH_SIZE,
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
         console.print(
@@ -758,6 +760,12 @@ def start(
         "--no-confirm",
         help="Disable confirmation prompts for edit operations (YOLO mode)",
     ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help="Number of buffered nodes/relationships before flushing to Memgraph",
+    ),
 ) -> None:
     """Starts the Codebase RAG CLI."""
     global confirm_edits_globally
@@ -776,6 +784,8 @@ def start(
 
     _update_model_settings(orchestrator_model, cypher_model)
 
+    effective_batch_size = batch_size or settings.MEMGRAPH_BATCH_SIZE
+
     if update_graph:
         repo_to_update = Path(target_repo_path)
         console.print(
@@ -783,7 +793,9 @@ def start(
         )
 
         with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+            host=settings.MEMGRAPH_HOST,
+            port=settings.MEMGRAPH_PORT,
+            batch_size=effective_batch_size,
         ) as ingestor:
             if clean:
                 console.print("[bold yellow]Cleaning database...[/bold yellow]")
@@ -806,7 +818,7 @@ def start(
         return
 
     try:
-        asyncio.run(main_async(target_repo_path))
+        asyncio.run(main_async(target_repo_path, effective_batch_size))
     except KeyboardInterrupt:
         console.print("\n[bold red]Application terminated by user.[/bold red]")
     except ValueError as e:
@@ -833,7 +845,9 @@ def export(
 
     try:
         with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+            host=settings.MEMGRAPH_HOST,
+            port=settings.MEMGRAPH_PORT,
+            batch_size=settings.MEMGRAPH_BATCH_SIZE,
         ) as ingestor:
             console.print("[bold cyan]Exporting graph data...[/bold cyan]")
             if not _export_graph_to_file(ingestor, output):
@@ -851,6 +865,7 @@ async def main_optimize_async(
     reference_document: str | None = None,
     orchestrator_model: str | None = None,
     cypher_model: str | None = None,
+    batch_size: int | None = None,
 ) -> None:
     """Async wrapper for the optimization functionality."""
     project_root = _setup_common_initialization(target_repo_path)
@@ -868,7 +883,9 @@ async def main_optimize_async(
     console.print(table)
 
     with MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        batch_size=batch_size or settings.MEMGRAPH_BATCH_SIZE,
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
 
@@ -903,6 +920,12 @@ def optimize(
         "--no-confirm",
         help="Disable confirmation prompts for edit operations (YOLO mode)",
     ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help="Number of buffered nodes/relationships before flushing to Memgraph",
+    ),
 ) -> None:
     """Optimize a codebase for a specific programming language."""
     global confirm_edits_globally
@@ -920,6 +943,7 @@ def optimize(
                 reference_document,
                 orchestrator_model,
                 cypher_model,
+                batch_size,
             )
         )
     except KeyboardInterrupt:

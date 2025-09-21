@@ -36,6 +36,7 @@ class AppConfig(BaseSettings):
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
+    MEMGRAPH_BATCH_SIZE: int = 1000
 
     GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
 
