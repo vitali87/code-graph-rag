@@ -118,6 +118,13 @@ class AppConfig(BaseSettings):
         """Set the active cypher model."""
         self._active_cypher_model = model
 
+    def resolve_batch_size(self, batch_size: int | None) -> int:
+        """Return a validated batch size, falling back to config when needed."""
+        resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size
+        if resolved < 0:
+            raise ValueError("batch_size must be non-negative")
+        return resolved
+
 
 settings = AppConfig()
 

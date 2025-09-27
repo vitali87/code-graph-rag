@@ -88,12 +88,12 @@ def start_watcher(
     repo_path_obj = Path(repo_path).resolve()
     parsers, queries = load_parsers()
 
+    effective_batch_size = settings.resolve_batch_size(batch_size)
+
     with MemgraphIngestor(
         host=host,
         port=port,
-        batch_size=batch_size
-        if batch_size is not None
-        else settings.MEMGRAPH_BATCH_SIZE,
+        batch_size=effective_batch_size,
     ) as ingestor:
         updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 

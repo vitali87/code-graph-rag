@@ -12,6 +12,8 @@ class MemgraphIngestor:
     def __init__(self, host: str, port: int, batch_size: int = 1000):
         self._host = host
         self._port = port
+        if batch_size < 0:
+            raise ValueError("batch_size must be non-negative")
         self.batch_size = batch_size
         self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, Any]]] = []
@@ -146,9 +148,12 @@ class MemgraphIngestor:
         if not self.node_buffer:
             return
 
+        buffer_size = len(self.node_buffer)
         nodes_by_label = defaultdict(list)
         for label, props in self.node_buffer:
             nodes_by_label[label].append(props)
+        flushed_total = 0
+        skipped_total = 0
         for label, props_list in nodes_by_label.items():
             if not props_list:
                 continue
@@ -157,6 +162,7 @@ class MemgraphIngestor:
                 logger.warning(
                     f"No unique constraint defined for label '{label}'. Skipping flush."
                 )
+                skipped_total += len(props_list)
                 continue
 
             batch_rows: list[dict[str, Any]] = []
@@ -168,6 +174,7 @@ class MemgraphIngestor:
                         id_key,
                         props,
                     )
+                    skipped_total += 1
                     continue
                 row_props = {k: v for k, v in props.items() if k != id_key}
                 batch_rows.append({"id": props[id_key], "props": row_props})
@@ -175,9 +182,16 @@ class MemgraphIngestor:
             if not batch_rows:
                 continue
 
+            flushed_total += len(batch_rows)
+
             query = f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
             self._execute_batch(query, batch_rows)
-        logger.info(f"Flushed {len(self.node_buffer)} nodes.")
+        logger.info("Flushed {} of {} buffered nodes.", flushed_total, buffer_size)
+        if skipped_total:
+            logger.info(
+                "Skipped {} buffered nodes due to missing identifiers or constraints.",
+                skipped_total,
+            )
         self.node_buffer.clear()
 
     def flush_relationships(self) -> None:
