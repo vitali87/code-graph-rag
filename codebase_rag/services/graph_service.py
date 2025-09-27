@@ -12,8 +12,8 @@ class MemgraphIngestor:
     def __init__(self, host: str, port: int, batch_size: int = 1000):
         self._host = host
         self._port = port
-        if batch_size < 0:
-            raise ValueError("batch_size must be non-negative")
+        if batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
         self.batch_size = batch_size
         self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, Any]]] = []
