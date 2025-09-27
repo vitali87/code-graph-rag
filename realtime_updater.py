@@ -8,7 +8,7 @@ from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from codebase_rag.config import IGNORE_PATTERNS, IGNORE_SUFFIXES
+from codebase_rag.config import IGNORE_PATTERNS, IGNORE_SUFFIXES, settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_config import get_language_config
 from codebase_rag.parser_loader import load_parsers
@@ -81,12 +81,20 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         logger.success(f"Graph updated successfully for change in: {path.name}")
 
 
-def start_watcher(repo_path: str, host: str, port: int) -> None:
+def start_watcher(
+    repo_path: str, host: str, port: int, batch_size: int | None = None
+) -> None:
     """Initializes the graph updater and starts the file system watcher."""
     repo_path_obj = Path(repo_path).resolve()
     parsers, queries = load_parsers()
 
-    with MemgraphIngestor(host=host, port=port) as ingestor:
+    effective_batch_size = settings.resolve_batch_size(batch_size)
+
+    with MemgraphIngestor(
+        host=host,
+        port=port,
+        batch_size=effective_batch_size,
+    ) as ingestor:
         updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
         # --- Perform an initial full scan to build the complete context ---
@@ -124,6 +132,27 @@ if __name__ == "__main__":
     parser.add_argument("repo_path", help="Path to the repository to watch.")
     parser.add_argument("--host", default="localhost", help="Memgraph host")
     parser.add_argument("--port", type=int, default=7687, help="Memgraph port")
+
+    def positive_int(value: str) -> int:
+        """Argparse type that enforces positive integers."""
+        try:
+            ivalue = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not a valid integer"
+            ) from exc
+        if ivalue < 1:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not a valid positive integer"
+            )
+        return ivalue
+
+    parser.add_argument(
+        "--batch-size",
+        type=positive_int,
+        default=None,
+        help="Number of buffered nodes/relationships before flushing to Memgraph",
+    )
     args = parser.parse_args()
 
-    start_watcher(args.repo_path, args.host, args.port)
+    start_watcher(args.repo_path, args.host, args.port, args.batch_size)

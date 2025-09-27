@@ -36,6 +36,7 @@ class AppConfig(BaseSettings):
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
+    MEMGRAPH_BATCH_SIZE: int = 1000
 
     GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
 
@@ -116,6 +117,13 @@ class AppConfig(BaseSettings):
     def set_cypher_model(self, model: str) -> None:
         """Set the active cypher model."""
         self._active_cypher_model = model
+
+    def resolve_batch_size(self, batch_size: int | None) -> int:
+        """Return a validated batch size, falling back to config when needed."""
+        resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size
+        if resolved < 1:
+            raise ValueError("batch_size must be a positive integer")
+        return resolved
 
 
 settings = AppConfig()
