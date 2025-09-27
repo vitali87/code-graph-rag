@@ -833,6 +833,12 @@ def export(
     format_json: bool = typer.Option(
         True, "--json/--no-json", help="Export in JSON format"
     ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help="Number of buffered nodes/relationships before flushing to Memgraph",
+    ),
 ) -> None:
     """Export the current knowledge graph to a file."""
     if not format_json:
@@ -843,11 +849,13 @@ def export(
 
     console.print("[bold cyan]Connecting to Memgraph to export graph...[/bold cyan]")
 
+    effective_batch_size = settings.resolve_batch_size(batch_size)
+
     try:
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST,
             port=settings.MEMGRAPH_PORT,
-            batch_size=settings.MEMGRAPH_BATCH_SIZE,
+            batch_size=effective_batch_size,
         ) as ingestor:
             console.print("[bold cyan]Exporting graph data...[/bold cyan]")
             if not _export_graph_to_file(ingestor, output):
