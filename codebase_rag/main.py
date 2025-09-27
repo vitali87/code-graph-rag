@@ -704,21 +704,17 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     return rag_agent
 
 
-async def main_async(repo_path: str, batch_size: int | None = None) -> None:
+async def main_async(repo_path: str, batch_size: int) -> None:
     """Initializes services and runs the main application loop."""
     project_root = _setup_common_initialization(repo_path)
 
     table = _create_configuration_table(repo_path)
     console.print(table)
 
-    effective_batch_size = (
-        batch_size if batch_size is not None else settings.MEMGRAPH_BATCH_SIZE
-    )
-
     with MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
-        batch_size=effective_batch_size,
+        batch_size=batch_size,
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
         console.print(
