@@ -711,10 +711,14 @@ async def main_async(repo_path: str, batch_size: int | None = None) -> None:
     table = _create_configuration_table(repo_path)
     console.print(table)
 
+    effective_batch_size = (
+        batch_size if batch_size is not None else settings.MEMGRAPH_BATCH_SIZE
+    )
+
     with MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size or settings.MEMGRAPH_BATCH_SIZE,
+        batch_size=effective_batch_size,
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
         console.print(
@@ -784,7 +788,9 @@ def start(
 
     _update_model_settings(orchestrator_model, cypher_model)
 
-    effective_batch_size = batch_size or settings.MEMGRAPH_BATCH_SIZE
+    effective_batch_size = (
+        batch_size if batch_size is not None else settings.MEMGRAPH_BATCH_SIZE
+    )
 
     if update_graph:
         repo_to_update = Path(target_repo_path)
@@ -882,10 +888,14 @@ async def main_optimize_async(
     )
     console.print(table)
 
+    effective_batch_size = (
+        batch_size if batch_size is not None else settings.MEMGRAPH_BATCH_SIZE
+    )
+
     with MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size or settings.MEMGRAPH_BATCH_SIZE,
+        batch_size=effective_batch_size,
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
 
