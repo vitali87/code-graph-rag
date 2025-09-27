@@ -159,13 +159,24 @@ class MemgraphIngestor:
                 )
                 continue
 
-            prop_keys = list(props_list[0].keys())
-            set_clause = ", ".join([f"n.{key} = row.{key}" for key in prop_keys])
-            query = (
-                f"MERGE (n:{label} {{{id_key}: row.{id_key}}}) "
-                f"ON CREATE SET {set_clause} ON MATCH SET {set_clause}"
-            )
-            self._execute_batch(query, props_list)
+            batch_rows: list[dict[str, Any]] = []
+            for props in props_list:
+                if id_key not in props:
+                    logger.warning(
+                        "Skipping {} node missing required '{}' property: {}",
+                        label,
+                        id_key,
+                        props,
+                    )
+                    continue
+                row_props = {k: v for k, v in props.items() if k != id_key}
+                batch_rows.append({"id": props[id_key], "props": row_props})
+
+            if not batch_rows:
+                continue
+
+            query = f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
+            self._execute_batch(query, batch_rows)
         logger.info(f"Flushed {len(self.node_buffer)} nodes.")
         self.node_buffer.clear()
 

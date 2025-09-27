@@ -33,6 +33,34 @@ def test_node_batch_flushes_when_threshold_reached() -> None:
     cursor_mock.close.assert_called()
 
 
+def test_node_batch_preserves_per_row_properties() -> None:
+    ingestor, cursor_mock = _create_ingestor_with_mocked_connection()
+
+    ingestor.ensure_node_batch(
+        "Function",
+        {"qualified_name": "demo.fn1", "name": "fn1", "decorators": ["@a"]},
+    )
+    ingestor.ensure_node_batch(
+        "Function",
+        {"qualified_name": "demo.fn2", "name": "fn2"},
+    )
+
+    executed_query = cursor_mock.execute.call_args[0][0]
+    assert "SET n += row.props" in executed_query
+
+    batch_rows = cursor_mock.execute.call_args[0][1]["batch"]
+    assert batch_rows == [
+        {
+            "id": "demo.fn1",
+            "props": {"name": "fn1", "decorators": ["@a"]},
+        },
+        {
+            "id": "demo.fn2",
+            "props": {"name": "fn2"},
+        },
+    ]
+
+
 def test_relationship_batch_flushes_after_threshold_and_respects_node_flush() -> None:
     ingestor, cursor_mock = _create_ingestor_with_mocked_connection()
 
