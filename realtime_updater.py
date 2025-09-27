@@ -132,15 +132,27 @@ if __name__ == "__main__":
     parser.add_argument("repo_path", help="Path to the repository to watch.")
     parser.add_argument("--host", default="localhost", help="Memgraph host")
     parser.add_argument("--port", type=int, default=7687, help="Memgraph port")
+
+    def positive_int(value: str) -> int:
+        """Argparse type that enforces positive integers."""
+        try:
+            ivalue = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not a valid integer"
+            ) from exc
+        if ivalue < 1:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not a valid positive integer"
+            )
+        return ivalue
+
     parser.add_argument(
         "--batch-size",
-        type=int,
+        type=positive_int,
         default=None,
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     )
     args = parser.parse_args()
-
-    if args.batch_size is not None and args.batch_size < 1:
-        parser.error("--batch-size must be a positive integer")
 
     start_watcher(args.repo_path, args.host, args.port, args.batch_size)
