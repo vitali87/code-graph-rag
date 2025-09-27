@@ -86,6 +86,9 @@ class MemgraphIngestor:
         except Exception as e:
             if "already exists" not in str(e).lower():
                 logger.error(f"!!! Batch Cypher Error: {e}")
+                logger.error(f"    Query: {query}")
+                logger.error(f"    Params: {params_list}")
+            raise
         finally:
             if cursor:
                 cursor.close()
