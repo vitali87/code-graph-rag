@@ -210,6 +210,13 @@ python -m codebase_rag.main start --repo-path /path/to/repo2 --update-graph
 python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
 ```
 
+**Control Memgraph batch flushing:**
+```bash
+# Flush every 5,000 records instead of the default from settings
+python -m codebase_rag.main start --repo-path /path/to/repo --update-graph \
+  --batch-size 5000
+```
+
 The system automatically detects and processes files for all supported languages (see Multi-Language Support section).
 
 ### Step 2: Query the Codebase
@@ -263,6 +270,11 @@ python -m codebase_rag.main start --repo-path /path/to/repo --update-graph --cle
 **Export existing graph without updating:**
 ```bash
 python -m codebase_rag.main export -o my_graph.json
+```
+
+**Optional: adjust Memgraph batching during export:**
+```bash
+python -m codebase_rag.main export -o my_graph.json --batch-size 5000
 ```
 
 **Working with exported data:**
@@ -319,6 +331,10 @@ python -m codebase_rag.main optimize python \
 python -m codebase_rag.main optimize javascript \
   --repo-path /path/to/frontend \
   --orchestrator-model gemini-2.0-flash-thinking-exp-01-21
+
+# Optional: override Memgraph batch flushing during optimization
+python -m codebase_rag.main optimize javascript --repo-path /path/to/frontend \
+  --batch-size 5000
 ```
 
 **Supported Languages for Optimization:**
@@ -374,6 +390,7 @@ The agent will incorporate the guidance from your reference documents when sugge
 - `--orchestrator-model`: Specify model for main operations
 - `--cypher-model`: Specify model for graph queries
 - `--repo-path`: Path to repository (defaults to current directory)
+- `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
 - `--reference-document`: Path to reference documentation (optimization only)
 
 ## 📊 Graph Schema
