@@ -26,7 +26,6 @@ from .config import (
     EDIT_REQUEST_KEYWORDS,
     EDIT_TOOLS,
     ORANGE_STYLE,
-    detect_provider_from_model,
     settings,
 )
 from .graph_updater import GraphUpdater, MemgraphIngestor
@@ -189,19 +188,34 @@ def _create_configuration_table(
     if language:
         table.add_row("Target Language", language)
 
-    orchestrator_model = settings.active_orchestrator_model
-    orchestrator_provider = detect_provider_from_model(orchestrator_model)
+    orchestrator_config = settings.active_orchestrator_config
     table.add_row(
-        "Orchestrator Model", f"{orchestrator_model} ({orchestrator_provider})"
+        "Orchestrator Model",
+        f"{orchestrator_config.model_id} ({orchestrator_config.provider})",
     )
 
-    cypher_model = settings.active_cypher_model
-    cypher_provider = detect_provider_from_model(cypher_model)
-    table.add_row("Cypher Model", f"{cypher_model} ({cypher_provider})")
+    cypher_config = settings.active_cypher_config
+    table.add_row(
+        "Cypher Model", f"{cypher_config.model_id} ({cypher_config.provider})"
+    )
 
-    # Show local endpoint if any model is using local provider
-    if orchestrator_provider == "local" or cypher_provider == "local":
-        table.add_row("Local Model Endpoint", str(settings.LOCAL_MODEL_ENDPOINT))
+    # Show endpoint for Ollama providers
+    orch_endpoint = (
+        orchestrator_config.endpoint
+        if orchestrator_config.provider == "ollama"
+        else None
+    )
+    cypher_endpoint = (
+        cypher_config.endpoint if cypher_config.provider == "ollama" else None
+    )
+
+    if orch_endpoint and cypher_endpoint and orch_endpoint == cypher_endpoint:
+        table.add_row("Ollama Endpoint", orch_endpoint)
+    else:
+        if orch_endpoint:
+            table.add_row("Ollama Endpoint (Orchestrator)", orch_endpoint)
+        if cypher_endpoint:
+            table.add_row("Ollama Endpoint (Cypher)", cypher_endpoint)
 
     # Show edit confirmation status
     confirmation_status = (
@@ -613,18 +627,45 @@ async def run_chat_loop(
             console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
 
 
+def _update_single_model_setting(role: str, model_string: str) -> None:
+    """Update a single model setting (orchestrator or cypher)."""
+    provider, model = settings.parse_model_string(model_string)
+
+    # Get current config to preserve existing values like API keys from env vars
+    if role == "orchestrator":
+        current_config = settings.active_orchestrator_config
+        set_method = settings.set_orchestrator
+    else:  # cypher
+        current_config = settings.active_cypher_config
+        set_method = settings.set_cypher
+
+    kwargs = {
+        "api_key": current_config.api_key,
+        "endpoint": current_config.endpoint,
+        "project_id": current_config.project_id,
+        "region": current_config.region,
+        "provider_type": current_config.provider_type,
+        "thinking_budget": current_config.thinking_budget,
+        "service_account_file": current_config.service_account_file,
+    }
+
+    # Override with provider-specific defaults only if not already set
+    if provider == "ollama" and not kwargs["endpoint"]:
+        kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
+        kwargs["api_key"] = "ollama"
+
+    set_method(provider, model, **kwargs)
+
+
 def _update_model_settings(
-    orchestrator_model: str | None,
-    cypher_model: str | None,
+    orchestrator: str | None,
+    cypher: str | None,
 ) -> None:
     """Update model settings based on command-line arguments."""
-    # Set orchestrator model if provided
-    if orchestrator_model:
-        settings.set_orchestrator_model(orchestrator_model)
-
-    # Set cypher model if provided
-    if cypher_model:
-        settings.set_cypher_model(cypher_model)
+    if orchestrator:
+        _update_single_model_setting("orchestrator", orchestrator)
+    if cypher:
+        _update_single_model_setting("cypher", cypher)
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -666,8 +707,29 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
 def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -> Any:
     """Initializes all services and creates the RAG agent."""
-    # Validate settings once before initializing any LLM services
-    settings.validate_for_usage()
+    # Validate provider configurations before initializing any LLM services
+    from .providers.base import get_provider
+
+    def _validate_provider_config(role: str, config: Any) -> None:
+        """Validate a single provider configuration."""
+        try:
+            provider = get_provider(
+                config.provider,
+                api_key=config.api_key,
+                endpoint=config.endpoint,
+                project_id=config.project_id,
+                region=config.region,
+                provider_type=config.provider_type,
+                thinking_budget=config.thinking_budget,
+                service_account_file=config.service_account_file,
+            )
+            provider.validate_config()
+        except Exception as e:
+            raise ValueError(f"{role.title()} configuration error: {e}") from e
+
+    # Validate both provider configurations
+    _validate_provider_config("orchestrator", settings.active_orchestrator_config)
+    _validate_provider_config("cypher", settings.active_cypher_config)
 
     cypher_generator = CypherGenerator()
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
@@ -749,11 +811,15 @@ def start(
         "--output",
         help="Export graph to JSON file after updating (requires --update-graph)",
     ),
-    orchestrator_model: str | None = typer.Option(
-        None, "--orchestrator-model", help="Specify the orchestrator model ID"
+    orchestrator: str | None = typer.Option(
+        None,
+        "--orchestrator",
+        help="Specify orchestrator as provider:model (e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)",
     ),
-    cypher_model: str | None = typer.Option(
-        None, "--cypher-model", help="Specify the Cypher generator model ID"
+    cypher: str | None = typer.Option(
+        None,
+        "--cypher",
+        help="Specify cypher model as provider:model (e.g., ollama:codellama, google:gemini-2.5-flash)",
     ),
     no_confirm: bool = typer.Option(
         False,
@@ -782,7 +848,7 @@ def start(
         )
         raise typer.Exit(1)
 
-    _update_model_settings(orchestrator_model, cypher_model)
+    _update_model_settings(orchestrator, cypher)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -871,14 +937,14 @@ async def main_optimize_async(
     language: str,
     target_repo_path: str,
     reference_document: str | None = None,
-    orchestrator_model: str | None = None,
-    cypher_model: str | None = None,
+    orchestrator: str | None = None,
+    cypher: str | None = None,
     batch_size: int | None = None,
 ) -> None:
     """Async wrapper for the optimization functionality."""
     project_root = _setup_common_initialization(target_repo_path)
 
-    _update_model_settings(orchestrator_model, cypher_model)
+    _update_model_settings(orchestrator, cypher)
 
     console.print(
         f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
@@ -919,11 +985,15 @@ def optimize(
         "--reference-document",
         help="Path to reference document/book for optimization guidance",
     ),
-    orchestrator_model: str | None = typer.Option(
-        None, "--orchestrator-model", help="Specify the orchestrator model ID"
+    orchestrator: str | None = typer.Option(
+        None,
+        "--orchestrator",
+        help="Specify orchestrator as provider:model (e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)",
     ),
-    cypher_model: str | None = typer.Option(
-        None, "--cypher-model", help="Specify the Cypher generator model ID"
+    cypher: str | None = typer.Option(
+        None,
+        "--cypher",
+        help="Specify cypher model as provider:model (e.g., ollama:codellama, google:gemini-2.5-flash)",
     ),
     no_confirm: bool = typer.Option(
         False,
@@ -951,8 +1021,8 @@ def optimize(
                 language,
                 target_repo_path,
                 reference_document,
-                orchestrator_model,
-                cypher_model,
+                orchestrator,
+                cypher,
                 batch_size,
             )
         )
