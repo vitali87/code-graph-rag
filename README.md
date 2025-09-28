@@ -470,7 +470,7 @@ Configuration is managed through environment variables in `.env` file:
 
 #### Orchestrator Model Configuration
 - `ORCHESTRATOR_PROVIDER`: Provider name (`google`, `openai`, `ollama`)
-- `ORCHESTRATOR_MODEL`: Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `2`)
+- `ORCHESTRATOR_MODEL`: Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `llama3.2`)
 - `ORCHESTRATOR_API_KEY`: API key for the provider (if required)
 - `ORCHESTRATOR_ENDPOINT`: Custom endpoint URL (if required)
 - `ORCHESTRATOR_PROJECT_ID`: Google Cloud project ID (for Vertex AI)

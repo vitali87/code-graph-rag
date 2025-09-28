@@ -34,7 +34,7 @@ class TestProviderConfiguration:
             # Test orchestrator config
             orch_config = config.active_orchestrator_config
             assert orch_config.provider == "ollama"
-            assert orch_config.model_id == "2"
+            assert orch_config.model_id == "llama3.2"
             assert orch_config.endpoint == "http://localhost:11434/v1"
 
             # Test cypher config
