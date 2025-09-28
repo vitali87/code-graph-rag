@@ -200,9 +200,9 @@ Get your Google API key from [Google AI Studio](https://aistudio.google.com/app/
 curl -fsSL https://ollama.ai/install.sh | sh
 
 # Pull required models
-ollama pull llama3
+ollama pull llama3.2
 # Or try other models like:
-# ollama pull llama3.2
+# ollama pull llama3
 # ollama pull mistral
 # ollama pull codellama
 
