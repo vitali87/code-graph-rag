@@ -146,6 +146,10 @@ class AppConfig(BaseSettings):
             # Default to ollama for bare model names
             return "ollama", model_string
         provider, model = model_string.split(":", 1)
+        if not provider:
+            raise ValueError(
+                "Provider name cannot be empty in 'provider:model' format."
+            )
         return provider.lower(), model
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
