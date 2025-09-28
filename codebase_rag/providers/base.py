@@ -143,24 +143,14 @@ class OllamaProvider(ModelProvider):
         return "ollama"
 
     def validate_config(self) -> None:
-        # Check if Ollama is running
-        try:
-            # Remove /v1 from endpoint for health check
-            base_url = self.endpoint.rstrip("/v1").rstrip("/")
-            health_url = urljoin(base_url, "/api/tags")
+        # Remove /v1 from endpoint for health check
+        base_url = self.endpoint.rstrip("/v1").rstrip("/")
 
-            with httpx.Client(timeout=5.0) as client:
-                response = client.get(health_url)
-                if response.status_code != 200:
-                    raise ValueError(
-                        f"Ollama server not responding at {base_url}. "
-                        f"Make sure Ollama is running: ollama serve"
-                    )
-        except (httpx.RequestError, httpx.TimeoutException) as e:
+        if not check_ollama_running(base_url):
             raise ValueError(
-                f"Cannot connect to Ollama at {self.endpoint}. "
-                f"Make sure Ollama is running: ollama serve. Error: {e}"
-            ) from e
+                f"Ollama server not responding at {base_url}. "
+                f"Make sure Ollama is running: ollama serve"
+            )
 
     def create_model(self, model_id: str, **kwargs: Any) -> OpenAIModel:
         self.validate_config()

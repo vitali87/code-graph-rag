@@ -216,7 +216,7 @@ class TestOllamaProvider:
         )
 
         provider = OllamaProvider()
-        with pytest.raises(ValueError, match="Cannot connect to Ollama"):
+        with pytest.raises(ValueError, match="Ollama server not responding"):
             provider.validate_config()
 
 

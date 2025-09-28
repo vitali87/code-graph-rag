@@ -78,44 +78,28 @@ class AppConfig(BaseSettings):
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
-    def _get_default_orchestrator_config(self) -> ModelConfig:
-        """Determine default orchestrator configuration."""
-        # Check for explicit provider configuration
-        if self.ORCHESTRATOR_PROVIDER and self.ORCHESTRATOR_MODEL:
-            return ModelConfig(
-                provider=self.ORCHESTRATOR_PROVIDER.lower(),
-                model_id=self.ORCHESTRATOR_MODEL,
-                api_key=self.ORCHESTRATOR_API_KEY,
-                endpoint=self.ORCHESTRATOR_ENDPOINT,
-                project_id=self.ORCHESTRATOR_PROJECT_ID,
-                region=self.ORCHESTRATOR_REGION,
-                provider_type=self.ORCHESTRATOR_PROVIDER_TYPE,
-                thinking_budget=self.ORCHESTRATOR_THINKING_BUDGET,
-                service_account_file=self.ORCHESTRATOR_SERVICE_ACCOUNT_FILE,
-            )
+    def _get_default_config(self, role: str) -> ModelConfig:
+        """Determine default configuration for orchestrator or cypher."""
+        role_upper = role.upper()
 
-        # Default to Ollama (will fail with helpful error if not running)
-        return ModelConfig(
-            provider="ollama",
-            model_id="llama3.2",
-            endpoint=str(self.LOCAL_MODEL_ENDPOINT),
-            api_key="ollama",
-        )
+        # Get role-specific environment variables
+        provider = getattr(self, f"{role_upper}_PROVIDER", None)
+        model = getattr(self, f"{role_upper}_MODEL", None)
 
-    def _get_default_cypher_config(self) -> ModelConfig:
-        """Determine default cypher configuration."""
         # Check for explicit provider configuration
-        if self.CYPHER_PROVIDER and self.CYPHER_MODEL:
+        if provider and model:
             return ModelConfig(
-                provider=self.CYPHER_PROVIDER.lower(),
-                model_id=self.CYPHER_MODEL,
-                api_key=self.CYPHER_API_KEY,
-                endpoint=self.CYPHER_ENDPOINT,
-                project_id=self.CYPHER_PROJECT_ID,
-                region=self.CYPHER_REGION,
-                provider_type=self.CYPHER_PROVIDER_TYPE,
-                thinking_budget=self.CYPHER_THINKING_BUDGET,
-                service_account_file=self.CYPHER_SERVICE_ACCOUNT_FILE,
+                provider=provider.lower(),
+                model_id=model,
+                api_key=getattr(self, f"{role_upper}_API_KEY", None),
+                endpoint=getattr(self, f"{role_upper}_ENDPOINT", None),
+                project_id=getattr(self, f"{role_upper}_PROJECT_ID", None),
+                region=getattr(self, f"{role_upper}_REGION", "us-central1"),
+                provider_type=getattr(self, f"{role_upper}_PROVIDER_TYPE", None),
+                thinking_budget=getattr(self, f"{role_upper}_THINKING_BUDGET", None),
+                service_account_file=getattr(
+                    self, f"{role_upper}_SERVICE_ACCOUNT_FILE", None
+                ),
             )
 
         # Default to Ollama
@@ -125,6 +109,14 @@ class AppConfig(BaseSettings):
             endpoint=str(self.LOCAL_MODEL_ENDPOINT),
             api_key="ollama",
         )
+
+    def _get_default_orchestrator_config(self) -> ModelConfig:
+        """Determine default orchestrator configuration."""
+        return self._get_default_config("orchestrator")
+
+    def _get_default_cypher_config(self) -> ModelConfig:
+        """Determine default cypher configuration."""
+        return self._get_default_config("cypher")
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:

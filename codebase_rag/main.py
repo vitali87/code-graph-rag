@@ -199,11 +199,23 @@ def _create_configuration_table(
         "Cypher Model", f"{cypher_config.model_id} ({cypher_config.provider})"
     )
 
-    # Show endpoint for non-default providers
-    if orchestrator_config.endpoint and orchestrator_config.provider == "ollama":
-        table.add_row("Ollama Endpoint", orchestrator_config.endpoint)
-    elif cypher_config.endpoint and cypher_config.provider == "ollama":
-        table.add_row("Ollama Endpoint", cypher_config.endpoint)
+    # Show endpoint for Ollama providers
+    orch_endpoint = (
+        orchestrator_config.endpoint
+        if orchestrator_config.provider == "ollama"
+        else None
+    )
+    cypher_endpoint = (
+        cypher_config.endpoint if cypher_config.provider == "ollama" else None
+    )
+
+    if orch_endpoint and cypher_endpoint and orch_endpoint == cypher_endpoint:
+        table.add_row("Ollama Endpoint", orch_endpoint)
+    else:
+        if orch_endpoint:
+            table.add_row("Ollama Endpoint (Orchestrator)", orch_endpoint)
+        if cypher_endpoint:
+            table.add_row("Ollama Endpoint (Cypher)", cypher_endpoint)
 
     # Show edit confirmation status
     confirmation_status = (
@@ -615,49 +627,45 @@ async def run_chat_loop(
             console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
 
 
+def _update_single_model_setting(role: str, model_string: str) -> None:
+    """Update a single model setting (orchestrator or cypher)."""
+    provider, model = settings.parse_model_string(model_string)
+
+    # Get current config to preserve existing values like API keys from env vars
+    if role == "orchestrator":
+        current_config = settings.active_orchestrator_config
+        set_method = settings.set_orchestrator
+    else:  # cypher
+        current_config = settings.active_cypher_config
+        set_method = settings.set_cypher
+
+    kwargs = {
+        "api_key": current_config.api_key,
+        "endpoint": current_config.endpoint,
+        "project_id": current_config.project_id,
+        "region": current_config.region,
+        "provider_type": current_config.provider_type,
+        "thinking_budget": current_config.thinking_budget,
+        "service_account_file": current_config.service_account_file,
+    }
+
+    # Override with provider-specific defaults only if not already set
+    if provider == "ollama" and not kwargs["endpoint"]:
+        kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
+        kwargs["api_key"] = "ollama"
+
+    set_method(provider, model, **kwargs)
+
+
 def _update_model_settings(
     orchestrator: str | None,
     cypher: str | None,
 ) -> None:
     """Update model settings based on command-line arguments."""
-    # Handle provider:model format
     if orchestrator:
-        provider, model = settings.parse_model_string(orchestrator)
-        # Get current config to preserve existing values like API keys from env vars
-        current_config = settings.active_orchestrator_config
-        kwargs = {
-            "api_key": current_config.api_key,
-            "endpoint": current_config.endpoint,
-            "project_id": current_config.project_id,
-            "region": current_config.region,
-            "provider_type": current_config.provider_type,
-            "thinking_budget": current_config.thinking_budget,
-            "service_account_file": current_config.service_account_file,
-        }
-        # Override with provider-specific defaults only if not already set
-        if provider == "ollama" and not kwargs["endpoint"]:
-            kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
-            kwargs["api_key"] = "ollama"
-        settings.set_orchestrator(provider, model, **kwargs)
-
+        _update_single_model_setting("orchestrator", orchestrator)
     if cypher:
-        provider, model = settings.parse_model_string(cypher)
-        # Get current config to preserve existing values like API keys from env vars
-        current_config = settings.active_cypher_config
-        kwargs = {
-            "api_key": current_config.api_key,
-            "endpoint": current_config.endpoint,
-            "project_id": current_config.project_id,
-            "region": current_config.region,
-            "provider_type": current_config.provider_type,
-            "thinking_budget": current_config.thinking_budget,
-            "service_account_file": current_config.service_account_file,
-        }
-        # Override with provider-specific defaults only if not already set
-        if provider == "ollama" and not kwargs["endpoint"]:
-            kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
-            kwargs["api_key"] = "ollama"
-        settings.set_cypher(provider, model, **kwargs)
+        _update_single_model_setting("cypher", cypher)
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -702,39 +710,26 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     # Validate provider configurations before initializing any LLM services
     from .providers.base import get_provider
 
-    # Validate orchestrator provider configuration
-    orch_config = settings.active_orchestrator_config
-    try:
-        orch_provider = get_provider(
-            orch_config.provider,
-            api_key=orch_config.api_key,
-            endpoint=orch_config.endpoint,
-            project_id=orch_config.project_id,
-            region=orch_config.region,
-            provider_type=orch_config.provider_type,
-            thinking_budget=orch_config.thinking_budget,
-            service_account_file=orch_config.service_account_file,
-        )
-        orch_provider.validate_config()
-    except Exception as e:
-        raise ValueError(f"Orchestrator configuration error: {e}") from e
+    def _validate_provider_config(role: str, config: Any) -> None:
+        """Validate a single provider configuration."""
+        try:
+            provider = get_provider(
+                config.provider,
+                api_key=config.api_key,
+                endpoint=config.endpoint,
+                project_id=config.project_id,
+                region=config.region,
+                provider_type=config.provider_type,
+                thinking_budget=config.thinking_budget,
+                service_account_file=config.service_account_file,
+            )
+            provider.validate_config()
+        except Exception as e:
+            raise ValueError(f"{role.title()} configuration error: {e}") from e
 
-    # Validate cypher provider configuration
-    cypher_config = settings.active_cypher_config
-    try:
-        cypher_provider = get_provider(
-            cypher_config.provider,
-            api_key=cypher_config.api_key,
-            endpoint=cypher_config.endpoint,
-            project_id=cypher_config.project_id,
-            region=cypher_config.region,
-            provider_type=cypher_config.provider_type,
-            thinking_budget=cypher_config.thinking_budget,
-            service_account_file=cypher_config.service_account_file,
-        )
-        cypher_provider.validate_config()
-    except Exception as e:
-        raise ValueError(f"Cypher configuration error: {e}") from e
+    # Validate both provider configurations
+    _validate_provider_config("orchestrator", settings.active_orchestrator_config)
+    _validate_provider_config("cypher", settings.active_cypher_config)
 
     cypher_generator = CypherGenerator()
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
