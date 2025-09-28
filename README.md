@@ -141,28 +141,58 @@ cp .env.example .env
 
 ### Configuration Options
 
-#### Option 1: Cloud Models (Gemini)
+The new provider-explicit configuration supports mixing different providers for orchestrator and cypher models.
+
+#### Option 1: All Ollama (Local Models)
 
 ```bash
 # .env file
-GEMINI_API_KEY=your_gemini_api_key_here
-```
-Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+ORCHESTRATOR_PROVIDER=ollama
+ORCHESTRATOR_MODEL=llama3.2
+ORCHESTRATOR_ENDPOINT=http://localhost:11434/v1
 
-#### Option 2: OpenAI Models
+CYPHER_PROVIDER=ollama
+CYPHER_MODEL=codellama
+CYPHER_ENDPOINT=http://localhost:11434/v1
+```
+
+#### Option 2: All OpenAI Models
 ```bash
 # .env file
-OPENAI_API_KEY=your_openai_api_key_here
+ORCHESTRATOR_PROVIDER=openai
+ORCHESTRATOR_MODEL=gpt-4o
+ORCHESTRATOR_API_KEY=sk-your-openai-key
+
+CYPHER_PROVIDER=openai
+CYPHER_MODEL=gpt-4o-mini
+CYPHER_API_KEY=sk-your-openai-key
 ```
 
-#### Option 3: Local Models (Ollama)
+#### Option 3: All Google Models
 ```bash
 # .env file
-LOCAL_MODEL_ENDPOINT=http://localhost:11434/v1
-LOCAL_ORCHESTRATOR_MODEL_ID=llama3
-LOCAL_CYPHER_MODEL_ID=llama3
-LOCAL_MODEL_API_KEY=ollama
+ORCHESTRATOR_PROVIDER=google
+ORCHESTRATOR_MODEL=gemini-2.5-pro
+ORCHESTRATOR_API_KEY=your-google-api-key
+
+CYPHER_PROVIDER=google
+CYPHER_MODEL=gemini-2.5-flash
+CYPHER_API_KEY=your-google-api-key
 ```
+
+#### Option 4: Mixed Providers
+```bash
+# .env file - Google orchestrator + Ollama cypher
+ORCHESTRATOR_PROVIDER=google
+ORCHESTRATOR_MODEL=gemini-2.5-pro
+ORCHESTRATOR_API_KEY=your-google-api-key
+
+CYPHER_PROVIDER=ollama
+CYPHER_MODEL=codellama
+CYPHER_ENDPOINT=http://localhost:11434/v1
+```
+
+Get your Google API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
 **Install and run Ollama**:
 ```bash
@@ -172,7 +202,7 @@ curl -fsSL https://ollama.ai/install.sh | sh
 # Pull required models
 ollama pull llama3
 # Or try other models like:
-# ollama pull llama3.1
+# ollama pull llama3.2
 # ollama pull mistral
 # ollama pull codellama
 
@@ -231,13 +261,18 @@ python -m codebase_rag.main start --repo-path /path/to/your/repo
 ```bash
 # Use specific local models
 python -m codebase_rag.main start --repo-path /path/to/your/repo \
-  --orchestrator-model llama3.1 \
-  --cypher-model codellama
+  --orchestrator ollama:llama3.2 \
+  --cypher ollama:codellama
 
 # Use specific Gemini models
 python -m codebase_rag.main start --repo-path /path/to/your/repo \
-  --orchestrator-model gemini-2.0-flash-thinking-exp-01-21 \
-  --cypher-model gemini-2.5-flash-lite-preview-06-17
+  --orchestrator google:gemini-2.0-flash-thinking-exp-01-21 \
+  --cypher google:gemini-2.5-flash-lite-preview-06-17
+
+# Use mixed providers
+python -m codebase_rag.main start --repo-path /path/to/your/repo \
+  --orchestrator google:gemini-2.0-flash-thinking-exp-01-21 \
+  --cypher ollama:codellama
 ```
 
 Example queries (works across all supported languages):
@@ -330,7 +365,7 @@ python -m codebase_rag.main optimize python \
 ```bash
 python -m codebase_rag.main optimize javascript \
   --repo-path /path/to/frontend \
-  --orchestrator-model gemini-2.0-flash-thinking-exp-01-21
+  --orchestrator google:gemini-2.0-flash-thinking-exp-01-21
 
 # Optional: override Memgraph batch flushing during optimization
 python -m codebase_rag.main optimize javascript --repo-path /path/to/frontend \
@@ -387,8 +422,8 @@ python -m codebase_rag.main optimize rust \
 The agent will incorporate the guidance from your reference documents when suggesting optimizations, ensuring they align with your project's standards and architectural decisions.
 
 **Common CLI Arguments:**
-- `--orchestrator-model`: Specify model for main operations
-- `--cypher-model`: Specify model for graph queries
+- `--orchestrator`: Specify provider:model for main operations (e.g., `google:gemini-2.0-flash-thinking-exp-01-21`, `ollama:llama3.2`)
+- `--cypher`: Specify provider:model for graph queries (e.g., `google:gemini-2.5-flash-lite-preview-06-17`, `ollama:codellama`)
 - `--repo-path`: Path to repository (defaults to current directory)
 - `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
 - `--reference-document`: Path to reference documentation (optimization only)
@@ -431,21 +466,38 @@ The knowledge graph uses the following node types and relationships:
 
 Configuration is managed through environment variables in `.env` file:
 
-### Gemini (Cloud) Configuration
-- `GEMINI_API_KEY`: Required when  using Google models.
-- `GEMINI_MODEL_ID`: Main model for orchestration (default: `gemini-2.5-pro`)
-- `MODEL_CYPHER_ID`: Model for Cypher generation (default: `gemini-2.5-flash-lite-preview-06-17`)
+### Provider-Specific Settings
 
-### Local Models Configuration
-- `LOCAL_MODEL_ENDPOINT`: Ollama endpoint (default: `http://localhost:11434/v1`)
-- `LOCAL_ORCHESTRATOR_MODEL_ID`: Model for main RAG orchestration (default: `llama3`)
-- `LOCAL_CYPHER_MODEL_ID`: Model for Cypher query generation (default: `llama3`)
-- `LOCAL_MODEL_API_KEY`: API key for local models (default: `ollama`)
+#### Orchestrator Model Configuration
+- `ORCHESTRATOR_PROVIDER`: Provider name (`google`, `openai`, `ollama`)
+- `ORCHESTRATOR_MODEL`: Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `2`)
+- `ORCHESTRATOR_API_KEY`: API key for the provider (if required)
+- `ORCHESTRATOR_ENDPOINT`: Custom endpoint URL (if required)
+- `ORCHESTRATOR_PROJECT_ID`: Google Cloud project ID (for Vertex AI)
+- `ORCHESTRATOR_REGION`: Google Cloud region (default: `us-central1`)
+- `ORCHESTRATOR_PROVIDER_TYPE`: Google provider type (`gla` or `vertex`)
+- `ORCHESTRATOR_THINKING_BUDGET`: Thinking budget for reasoning models
+- `ORCHESTRATOR_SERVICE_ACCOUNT_FILE`: Path to service account file (for Vertex AI)
 
-### Other Settings
+#### Cypher Model Configuration
+- `CYPHER_PROVIDER`: Provider name (`google`, `openai`, `ollama`)
+- `CYPHER_MODEL`: Model ID (e.g., `gemini-2.5-flash`, `gpt-4o-mini`, `codellama`)
+- `CYPHER_API_KEY`: API key for the provider (if required)
+- `CYPHER_ENDPOINT`: Custom endpoint URL (if required)
+- `CYPHER_PROJECT_ID`: Google Cloud project ID (for Vertex AI)
+- `CYPHER_REGION`: Google Cloud region (default: `us-central1`)
+- `CYPHER_PROVIDER_TYPE`: Google provider type (`gla` or `vertex`)
+- `CYPHER_THINKING_BUDGET`: Thinking budget for reasoning models
+- `CYPHER_SERVICE_ACCOUNT_FILE`: Path to service account file (for Vertex AI)
+
+### System Settings
 - `MEMGRAPH_HOST`: Memgraph hostname (default: `localhost`)
 - `MEMGRAPH_PORT`: Memgraph port (default: `7687`)
+- `MEMGRAPH_HTTP_PORT`: Memgraph HTTP port (default: `7444`)
+- `LAB_PORT`: Memgraph Lab port (default: `3000`)
+- `MEMGRAPH_BATCH_SIZE`: Batch size for Memgraph operations (default: `1000`)
 - `TARGET_REPO_PATH`: Default repository path (default: `.`)
+- `LOCAL_MODEL_ENDPOINT`: Fallback endpoint for Ollama (default: `http://localhost:11434/v1`)
 
 ### Key Dependencies
 - **tree-sitter**: Core Tree-sitter library for language-agnostic parsing

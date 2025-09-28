@@ -9,7 +9,7 @@ from google.genai.errors import ClientError
 from loguru import logger
 from pydantic_ai import Tool
 
-from ..config import detect_provider_from_model, settings
+from ..config import settings
 
 
 class _NotSupportedClient:
@@ -32,19 +32,20 @@ class DocumentAnalyzer:
 
         # Initialize client based on the orchestrator model's provider
         # Note: Document analysis uses the orchestrator model since it's the main reasoning model
-        orchestrator_model = settings.active_orchestrator_model
-        orchestrator_provider = detect_provider_from_model(orchestrator_model)
+        orchestrator_config = settings.active_orchestrator_config
+        orchestrator_provider = orchestrator_config.provider
 
-        if orchestrator_provider == "gemini":
-            if settings.GEMINI_PROVIDER == "gla":
-                self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            else:  # vertex provider
+        if orchestrator_provider == "google":
+            if orchestrator_config.provider_type == "vertex":
                 # For Vertex AI, use service account authentication
+                # Note: credentials_path is not a valid parameter for genai.Client
+                # Vertex AI authentication should be handled via environment variables or default credentials
                 self.client = genai.Client(
-                    project=settings.GCP_PROJECT_ID,
-                    location=settings.GCP_REGION,
-                    credentials_path=settings.GCP_SERVICE_ACCOUNT_FILE,
+                    project=orchestrator_config.project_id,
+                    location=orchestrator_config.region,
                 )
+            else:  # gla provider (default)
+                self.client = genai.Client(api_key=orchestrator_config.api_key)
         else:
             # Non-Gemini providers are not supported for document analysis yet.
             self.client = _NotSupportedClient()
@@ -108,8 +109,10 @@ class DocumentAnalyzer:
             ]
 
             # Call the model and get the response
+            # Use the orchestrator model ID since document analysis uses the orchestrator config
+            orchestrator_config = settings.active_orchestrator_config
             response = self.client.models.generate_content(
-                model=settings.GEMINI_MODEL_ID, contents=prompt_parts
+                model=orchestrator_config.model_id, contents=prompt_parts
             )
 
             logger.success(f"Successfully received analysis for '{file_path}'.")

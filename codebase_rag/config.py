@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any
 
 from dotenv import load_dotenv
 from prompt_toolkit.styles import Style
@@ -10,14 +11,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 load_dotenv()
 
 
-def detect_provider_from_model(model_name: str) -> Literal["gemini", "openai", "local"]:
-    """Detect the provider based on model name patterns."""
-    if model_name.startswith("gemini-"):
-        return "gemini"
-    elif model_name.startswith("gpt-") or model_name.startswith("o1-"):
-        return "openai"
-    else:
-        return "local"
+@dataclass
+class ModelConfig:
+    """Configuration for a specific model."""
+
+    provider: str
+    model_id: str
+    api_key: str | None = None
+    endpoint: str | None = None
+    project_id: str | None = None
+    region: str | None = None
+    provider_type: str | None = None
+    thinking_budget: int | None = None
+    service_account_file: str | None = None
 
 
 class AppConfig(BaseSettings):
@@ -32,91 +38,123 @@ class AppConfig(BaseSettings):
         case_sensitive=False,
     )
 
+    # Memgraph settings
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
 
-    GEMINI_PROVIDER: Literal["gla", "vertex"] = "gla"
+    # Provider-specific settings for orchestrator
+    ORCHESTRATOR_PROVIDER: str = ""
+    ORCHESTRATOR_MODEL: str = ""
+    ORCHESTRATOR_API_KEY: str | None = None
+    ORCHESTRATOR_ENDPOINT: str | None = None
+    ORCHESTRATOR_PROJECT_ID: str | None = None
+    ORCHESTRATOR_REGION: str = "us-central1"
+    ORCHESTRATOR_PROVIDER_TYPE: str | None = None
+    ORCHESTRATOR_THINKING_BUDGET: int | None = None
+    ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
 
-    GEMINI_MODEL_ID: str = "gemini-2.5-pro"  # DO NOT CHANGE THIS
-    GEMINI_VISION_MODEL_ID: str = "gemini-2.5-flash"  # DO NOT CHANGE THIS
-    MODEL_CYPHER_ID: str = "gemini-2.5-flash-lite-preview-06-17"  # DO NOT CHANGE THIS
-    GEMINI_API_KEY: str | None = None
-    GEMINI_THINKING_BUDGET: int | None = None
+    # Provider-specific settings for cypher
+    CYPHER_PROVIDER: str = ""
+    CYPHER_MODEL: str = ""
+    CYPHER_API_KEY: str | None = None
+    CYPHER_ENDPOINT: str | None = None
+    CYPHER_PROJECT_ID: str | None = None
+    CYPHER_REGION: str = "us-central1"
+    CYPHER_PROVIDER_TYPE: str | None = None
+    CYPHER_THINKING_BUDGET: int | None = None
+    CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
-    GCP_PROJECT_ID: str | None = None
-    GCP_REGION: str = "us-central1"
-    GCP_SERVICE_ACCOUNT_FILE: str | None = None
-
+    # Fallback endpoint for ollama
     LOCAL_MODEL_ENDPOINT: AnyHttpUrl = AnyHttpUrl("http://localhost:11434/v1")
-    LOCAL_ORCHESTRATOR_MODEL_ID: str = "llama3"
-    LOCAL_CYPHER_MODEL_ID: str = "llama3"
-    LOCAL_MODEL_API_KEY: str = "ollama"
 
-    OPENAI_API_KEY: str | None = None
-    OPENAI_ORCHESTRATOR_MODEL_ID: str = "gpt-4o-mini"
-    OPENAI_CYPHER_MODEL_ID: str = "gpt-4o-mini"
-
+    # General settings
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
-    # Active models (set via CLI or defaults)
-    _active_orchestrator_model: str | None = None
-    _active_cypher_model: str | None = None
+    # Runtime overrides
+    _active_orchestrator: ModelConfig | None = None
+    _active_cypher: ModelConfig | None = None
 
-    def validate_for_usage(self) -> None:
-        """Validate that required API keys are set for the providers being used."""
-        # Get the providers for active models
-        orchestrator_provider = detect_provider_from_model(
-            self.active_orchestrator_model
+    def _get_default_orchestrator_config(self) -> ModelConfig:
+        """Determine default orchestrator configuration."""
+        # Check for explicit provider configuration
+        if self.ORCHESTRATOR_PROVIDER and self.ORCHESTRATOR_MODEL:
+            return ModelConfig(
+                provider=self.ORCHESTRATOR_PROVIDER.lower(),
+                model_id=self.ORCHESTRATOR_MODEL,
+                api_key=self.ORCHESTRATOR_API_KEY,
+                endpoint=self.ORCHESTRATOR_ENDPOINT,
+                project_id=self.ORCHESTRATOR_PROJECT_ID,
+                region=self.ORCHESTRATOR_REGION,
+                provider_type=self.ORCHESTRATOR_PROVIDER_TYPE,
+                thinking_budget=self.ORCHESTRATOR_THINKING_BUDGET,
+                service_account_file=self.ORCHESTRATOR_SERVICE_ACCOUNT_FILE,
+            )
+
+        # Default to Ollama (will fail with helpful error if not running)
+        return ModelConfig(
+            provider="ollama",
+            model_id="llama3.2",
+            endpoint=str(self.LOCAL_MODEL_ENDPOINT),
+            api_key="ollama",
         )
-        cypher_provider = detect_provider_from_model(self.active_cypher_model)
 
-        # Check required API keys for each provider being used
-        providers_in_use = {orchestrator_provider, cypher_provider}
+    def _get_default_cypher_config(self) -> ModelConfig:
+        """Determine default cypher configuration."""
+        # Check for explicit provider configuration
+        if self.CYPHER_PROVIDER and self.CYPHER_MODEL:
+            return ModelConfig(
+                provider=self.CYPHER_PROVIDER.lower(),
+                model_id=self.CYPHER_MODEL,
+                api_key=self.CYPHER_API_KEY,
+                endpoint=self.CYPHER_ENDPOINT,
+                project_id=self.CYPHER_PROJECT_ID,
+                region=self.CYPHER_REGION,
+                provider_type=self.CYPHER_PROVIDER_TYPE,
+                thinking_budget=self.CYPHER_THINKING_BUDGET,
+                service_account_file=self.CYPHER_SERVICE_ACCOUNT_FILE,
+            )
 
-        if "gemini" in providers_in_use:
-            if self.GEMINI_PROVIDER == "gla" and not self.GEMINI_API_KEY:
-                raise ValueError(
-                    "Configuration Error: GEMINI_API_KEY is required when using Gemini models with 'gla' provider."
-                )
-            if self.GEMINI_PROVIDER == "vertex" and not self.GCP_PROJECT_ID:
-                raise ValueError(
-                    "Configuration Error: GCP_PROJECT_ID is required when using Gemini models with 'vertex' provider."
-                )
-
-        if "openai" in providers_in_use:
-            if not self.OPENAI_API_KEY:
-                raise ValueError(
-                    "Configuration Error: OPENAI_API_KEY is required when using OpenAI models."
-                )
-        return
-
-    @property
-    def active_orchestrator_model(self) -> str:
-        """Determines the active orchestrator model ID."""
-        if self._active_orchestrator_model:
-            return self._active_orchestrator_model
-        # Default fallback to Gemini
-        return self.GEMINI_MODEL_ID
+        # Default to Ollama
+        return ModelConfig(
+            provider="ollama",
+            model_id="llama3.2",
+            endpoint=str(self.LOCAL_MODEL_ENDPOINT),
+            api_key="ollama",
+        )
 
     @property
-    def active_cypher_model(self) -> str:
-        """Determines the active cypher model ID."""
-        if self._active_cypher_model:
-            return self._active_cypher_model
-        # Default fallback to Gemini
-        return self.MODEL_CYPHER_ID
+    def active_orchestrator_config(self) -> ModelConfig:
+        """Get the active orchestrator model configuration."""
+        return self._active_orchestrator or self._get_default_orchestrator_config()
 
-    def set_orchestrator_model(self, model: str) -> None:
-        """Set the active orchestrator model."""
-        self._active_orchestrator_model = model
+    @property
+    def active_cypher_config(self) -> ModelConfig:
+        """Get the active cypher model configuration."""
+        return self._active_cypher or self._get_default_cypher_config()
 
-    def set_cypher_model(self, model: str) -> None:
-        """Set the active cypher model."""
-        self._active_cypher_model = model
+    def set_orchestrator(self, provider: str, model: str, **kwargs: Any) -> None:
+        """Set the active orchestrator configuration."""
+        self._active_orchestrator = ModelConfig(
+            provider=provider.lower(), model_id=model, **kwargs
+        )
+
+    def set_cypher(self, provider: str, model: str, **kwargs: Any) -> None:
+        """Set the active cypher configuration."""
+        self._active_cypher = ModelConfig(
+            provider=provider.lower(), model_id=model, **kwargs
+        )
+
+    def parse_model_string(self, model_string: str) -> tuple[str, str]:
+        """Parse provider:model string format."""
+        if ":" not in model_string:
+            # Default to ollama for bare model names
+            return "ollama", model_string
+        provider, model = model_string.split(":", 1)
+        return provider.lower(), model
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
         """Return a validated batch size, falling back to config when needed."""
@@ -127,6 +165,7 @@ class AppConfig(BaseSettings):
 
 
 settings = AppConfig()
+
 
 # --- Global Ignore Patterns ---
 # Directories and files to ignore during codebase scanning and real-time updates.
