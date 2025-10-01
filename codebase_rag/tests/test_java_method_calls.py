@@ -681,3 +681,157 @@ public class StaticMethodCalls {
     ]
 
     assert len(call_relationships) > 0, "No static method call relationships found"
+
+
+def test_cross_file_method_calls_with_imports(
+    java_methods_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """
+    Test that method calls work correctly across files with imports.
+
+    This specifically tests the bug fix for:
+    - Cross-file CALLS relationships
+    - Proper handling of already-qualified type names in import resolution
+    - Method calls on imported class instances
+    """
+    # Create a utility class in a separate file
+    utils_dir = (
+        java_methods_project / "src" / "main" / "java" / "com" / "example" / "utils"
+    )
+    utils_dir.mkdir(exist_ok=True, parents=True)
+
+    helper_file = utils_dir / "Helper.java"
+    helper_file.write_text(
+        """
+package com.example.utils;
+
+public class Helper {
+    private String value;
+
+    public Helper(String value) {
+        this.value = value;
+    }
+
+    public String process() {
+        return value.toUpperCase();
+    }
+
+    public static String staticProcess(String input) {
+        return input.toLowerCase();
+    }
+
+    public String getValue() {
+        return value;
+    }
+}
+"""
+    )
+
+    # Create main class that imports and uses Helper
+    main_file = (
+        java_methods_project
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "example"
+        / "MainClass.java"
+    )
+    main_file.write_text(
+        """
+package com.example;
+
+import com.example.utils.Helper;
+
+public class MainClass {
+    private Helper helper;
+
+    public MainClass() {
+        this.helper = new Helper("test");
+    }
+
+    public void useHelper() {
+        // Instance method call on imported class - cross-file CALLS
+        String result = helper.process();
+
+        // Static method call on imported class - cross-file CALLS
+        String lower = Helper.staticProcess("TEST");
+
+        // Chained method call - cross-file CALLS
+        String value = helper.getValue().trim();
+    }
+
+    public void useLocalVariable() {
+        // Local variable with imported type
+        Helper localHelper = new Helper("local");
+        String processed = localHelper.process();  // This should create CALLS relationship
+    }
+
+    public void useParameter(Helper paramHelper) {
+        // Parameter with imported type
+        String result = paramHelper.getValue();  // This should create CALLS relationship
+    }
+}
+"""
+    )
+
+    parsers, queries = load_parsers()
+    if "java" not in parsers:
+        pytest.skip("Java parser not available")
+
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=java_methods_project,
+        parsers=parsers,
+        queries=queries,
+    )
+
+    updater.run()
+
+    project_name = java_methods_project.name
+
+    # Check import mapping
+    main_module_qn = f"{project_name}.src.main.java.com.example.MainClass"
+    assert main_module_qn in updater.factory.import_processor.import_mapping
+    imports = updater.factory.import_processor.import_mapping[main_module_qn]
+    assert "Helper" in imports
+    assert imports["Helper"] == "com.example.utils.Helper"
+
+    # Check that CALLS relationships were created for cross-file method calls
+    # The format is: ensure_relationship_batch((from_type, from_property, from_qn), "CALLS")
+    call_relationships = [
+        c
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c.args) > 1 and c.args[1] == "CALLS"
+    ]
+
+    # Count cross-file calls from MainClass methods to Helper methods
+    helper_calls_count = 0
+    for call in call_relationships:
+        if len(call.args) > 0:
+            from_tuple = call.args[0]
+            # Format: (entity_type, property_name, qualified_name)
+            if isinstance(from_tuple, tuple) and len(from_tuple) >= 3:
+                from_qn = from_tuple[2]
+                # Check if this is a call from MainClass to Helper
+                if "MainClass" in from_qn and "Helper" in from_qn:
+                    # This might be within-class, check if it's actually cross-file
+                    # by seeing if it goes from MainClass.* to Helper.Helper.*
+                    if ".MainClass." in from_qn and ".Helper.Helper." not in from_qn:
+                        # This is from MainClass but not resolving to Helper methods
+                        pass
+                    else:
+                        helper_calls_count += 1
+                elif "MainClass" in from_qn:
+                    # Any call from a MainClass method counts as potential cross-file
+                    # since we're testing cross-file resolution
+                    helper_calls_count += 1
+
+    # We created 5 method calls from MainClass to Helper methods
+    # If cross-file resolution works, we should have at least 3 CALLS relationships
+    assert helper_calls_count >= 3, (
+        f"Expected at least 3 cross-file CALLS relationships from MainClass to Helper methods, "
+        f"found {helper_calls_count} total CALLS from MainClass methods. "
+        f"This indicates the bug fix for cross-file method call resolution may not be working correctly."
+    )

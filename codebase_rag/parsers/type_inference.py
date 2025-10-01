@@ -417,19 +417,19 @@ class TypeInferenceEngine:
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """Analyze assignments to self.attribute to determine instance variable types."""
-        # Traverse the AST looking for assignment statements
-        if node.type == "assignment":
-            left_node = node.child_by_field_name("left")
-            right_node = node.child_by_field_name("right")
+        stack: list[Node] = [node]
 
-            if left_node and right_node:
-                # Check if left side is self.something
-                if left_node.type == "attribute":
+        while stack:
+            current = stack.pop()
+
+            if current.type == "assignment":
+                left_node = current.child_by_field_name("left")
+                right_node = current.child_by_field_name("right")
+
+                if left_node and right_node and left_node.type == "attribute":
                     left_text = left_node.text
                     if left_text and left_text.decode("utf8").startswith("self."):
-                        attr_name = left_text.decode("utf8")  # e.g., "self.repo"
-
-                        # Analyze right side to determine type
+                        attr_name = left_text.decode("utf8")
                         assigned_type = self._infer_type_from_expression(
                             right_node, module_qn
                         )
@@ -440,9 +440,8 @@ class TypeInferenceEngine:
                                 f"{attr_name} -> {assigned_type}"
                             )
 
-        # Recursively traverse children
-        for child in node.children:
-            self._analyze_self_assignments(child, local_var_types, module_qn)
+            # Queue children in original order for consistent traversal
+            stack.extend(reversed(current.children))
 
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
@@ -490,25 +489,27 @@ class TypeInferenceEngine:
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """Traverse AST for simple assignments (constructors, literals) only."""
-        # Check if current node is an assignment
-        if node.type == "assignment":
-            self._process_assignment_simple(node, local_var_types, module_qn)
+        stack: list[Node] = [node]
 
-        # Recursively traverse children
-        for child in node.children:
-            self._traverse_for_assignments_simple(child, local_var_types, module_qn)
+        while stack:
+            current = stack.pop()
+            if current.type == "assignment":
+                self._process_assignment_simple(current, local_var_types, module_qn)
+
+            stack.extend(reversed(current.children))
 
     def _traverse_for_assignments_complex(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """Traverse AST for complex assignments (method calls) using existing variable types."""
-        # Check if current node is an assignment
-        if node.type == "assignment":
-            self._process_assignment_complex(node, local_var_types, module_qn)
+        stack: list[Node] = [node]
 
-        # Recursively traverse children
-        for child in node.children:
-            self._traverse_for_assignments_complex(child, local_var_types, module_qn)
+        while stack:
+            current = stack.pop()
+            if current.type == "assignment":
+                self._process_assignment_complex(current, local_var_types, module_qn)
+
+            stack.extend(reversed(current.children))
 
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -1146,12 +1147,15 @@ class TypeInferenceEngine:
         return None
 
     def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
-        """Recursively find all return statements in a node."""
-        if node.type == "return_statement":
-            return_nodes.append(node)
+        """Collect all return statements in a node using iterative traversal."""
+        stack: list[Node] = [node]
 
-        for child in node.children:
-            self._find_return_statements(child, return_nodes)
+        while stack:
+            current = stack.pop()
+            if current.type == "return_statement":
+                return_nodes.append(current)
+
+            stack.extend(current.children)
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
         """Analyze a return expression to infer its type."""

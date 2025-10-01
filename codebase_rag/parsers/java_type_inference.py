@@ -634,6 +634,14 @@ class JavaTypeInferenceEngine:
         if not type_name:
             return "Object"  # Default fallback
 
+        # If type_name is already a fully qualified name (contains '.'), return it directly
+        # This prevents trying to look up already-qualified names in import_map
+        # Exception: java.lang types might need special handling (already handled below)
+        if "." in type_name:
+            # Check if it's not a java.lang type that needs normalization
+            if not (type_name.startswith("java.lang.") and type_name.count(".") == 2):
+                return type_name
+
         # Handle primitive types
         if type_name in [
             "int",
@@ -857,6 +865,26 @@ class JavaTypeInferenceEngine:
                 remaining = qn[len(f"{class_qn}.{method_name}") :]
                 if remaining == "" or remaining.startswith("("):
                     return method_type, qn
+
+        # If exact match failed and class_qn looks like a Java package-qualified name,
+        # find the module that contains this class and search using that module_qn
+        if "." in class_qn and not class_qn.startswith(self.project_name):
+            simple_class_name = class_qn.split(".")[-1]
+            # Look for a module that matches this package structure
+            for module_qn in self.module_qn_to_file_path.keys():
+                # Check if this module ends with the package-qualified class name
+                # e.g., module_qn = "project.src.main.java.com.example.utils.Helper"
+                # class_qn = "com.example.utils.Helper"
+                if module_qn.endswith(f".{class_qn}"):
+                    # Build the registry key for this class
+                    registry_class_qn = f"{module_qn}.{simple_class_name}"
+                    # Search for the method
+                    for qn, method_type in self.function_registry.items():
+                        if qn.startswith(f"{registry_class_qn}.{method_name}"):
+                            remaining = qn[len(f"{registry_class_qn}.{method_name}") :]
+                            if remaining == "" or remaining.startswith("("):
+                                return method_type, qn
+
         return None
 
     def _find_inherited_method(
