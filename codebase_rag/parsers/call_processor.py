@@ -394,6 +394,11 @@ class CallProcessor:
                 f"(resolved as {callee_type}:{callee_qn})"
             )
 
+            # Ensure both caller and callee nodes exist before creating the relationship
+            # This handles cross-file calls where nodes may not have been parsed yet
+            self.ingestor.ensure_node_batch(caller_type, {"qualified_name": caller_qn})
+            self.ingestor.ensure_node_batch(callee_type, {"qualified_name": callee_qn})
+
             self.ingestor.ensure_relationship_batch(
                 (caller_type, "qualified_name", caller_qn),
                 "CALLS",
@@ -455,6 +460,13 @@ class CallProcessor:
                     logger.debug(
                         f"      Found nested call from {caller_qn} to {call_name} "
                         f"(resolved as {callee_type}:{callee_qn})"
+                    )
+                    # Ensure both caller and callee nodes exist before creating the relationship
+                    self.ingestor.ensure_node_batch(
+                        caller_type, {"qualified_name": caller_qn}
+                    )
+                    self.ingestor.ensure_node_batch(
+                        callee_type, {"qualified_name": callee_qn}
                     )
                     self.ingestor.ensure_relationship_batch(
                         (caller_type, "qualified_name", caller_qn),
