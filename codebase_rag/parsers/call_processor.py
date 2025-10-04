@@ -115,12 +115,8 @@ class CallProcessor:
             module_qn = ".".join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
-            if file_path.name == "__init__.py":
-                module_qn = ".".join(
-                    [self.project_name] + list(relative_path.parent.parts)
-                )
-            elif file_path.name == "mod.rs":
-                # In Rust, mod.rs represents the parent module directory
+            if file_path.name in ("__init__.py", "mod.rs"):
+                # In Python, __init__.py and in Rust, mod.rs represent the parent module directory
                 module_qn = ".".join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
@@ -488,7 +484,7 @@ class CallProcessor:
                         f"      Found nested call from {caller_qn} to {call_name} "
                         f"(resolved as {callee_type}:{callee_qn})"
                     )
-                    # NOTE: We don't call ensure_node_batch here - see comment at line 403
+                    # NOTE: We don't call ensure_node_batch here - nodes already exist from Pass 2
                     self.ingestor.ensure_relationship_batch(
                         (caller_type, "qualified_name", caller_qn),
                         "CALLS",
@@ -547,14 +543,12 @@ class CallProcessor:
             if "." in call_name or "::" in call_name or ":" in call_name:
                 # Split by '::' for C++, ':' for Lua, or '.' for other languages
                 if "::" in call_name:
-                    parts = call_name.split("::")
                     separator = "::"
                 elif ":" in call_name:
-                    parts = call_name.split(":")
                     separator = ":"
                 else:
-                    parts = call_name.split(".")
                     separator = "."
+                parts = call_name.split(separator)
 
                 # Handle JavaScript object method calls like "calculator.add"
                 if len(parts) == 2:
@@ -793,13 +787,7 @@ class CallProcessor:
         # 2b. Use the Trie to find any matching symbol
         # This is a fallback and can be imprecise, but better than nothing.
         # For qualified calls like "Class.method", "Class::method", or "object:method", extract just the method name
-        search_name = call_name
-        if "." in call_name:
-            search_name = call_name.split(".")[-1]
-        elif "::" in call_name:
-            search_name = call_name.split("::")[-1]
-        elif ":" in call_name:
-            search_name = call_name.split(":")[-1]
+        search_name = re.split(r"[.:]|::", call_name)[-1]
 
         possible_matches = self.function_registry.find_ending_with(search_name)
         if possible_matches:
