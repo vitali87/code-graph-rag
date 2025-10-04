@@ -612,7 +612,7 @@ class CallProcessor:
                             rust_parts = class_qn.split("::")
                             class_name = rust_parts[-1]
 
-                            # Use Trie's efficient suffix search instead of iterating all entries
+                            # Scan registry entries that end with this class name (linear helper)
                             matching_qns = self.function_registry.find_ending_with(
                                 class_name
                             )

@@ -1,5 +1,6 @@
 """Java-specific type inference engine using tree-sitter for precise semantic analysis."""
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -157,6 +158,26 @@ class JavaTypeInferenceEngine:
 
         ranked.sort(key=lambda item: item[0])
         return [candidate for _, candidate in ranked]
+
+    def _find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
+        """Yield registry entries beneath the given qualified-name prefix."""
+
+        finder = getattr(self.function_registry, "find_with_prefix", None)
+        if callable(finder):
+            matches = list(finder(prefix))  # type: ignore[arg-type]
+            if matches:
+                return matches
+
+        items = getattr(self.function_registry, "items", None)
+        if callable(items):
+            prefix_with_dot = f"{prefix}."
+            return [
+                (qn, method_type)
+                for qn, method_type in items()
+                if qn.startswith(prefix_with_dot) or qn == prefix
+            ]
+
+        return []
 
     def build_java_variable_type_map(
         self, scope_node: Node, module_qn: str
@@ -973,11 +994,19 @@ class JavaTypeInferenceEngine:
     ) -> tuple[str, str] | None:
         """Find a method with any parameter signature using function registry."""
         # Search through all registered methods for this class and method name
-        for qn, method_type in self.function_registry.items():
-            if qn.startswith(f"{class_qn}.{method_name}"):
-                # Check if this matches the method pattern (either bare name or with parameters)
-                remaining = qn[len(f"{class_qn}.{method_name}") :]
-                if remaining == "" or remaining.startswith("("):
+        if class_qn:
+            for qn, method_type in self._find_registry_entries_under(class_qn):
+                if qn == class_qn:
+                    continue
+                suffix = qn[len(class_qn) :]
+                if not suffix.startswith("."):
+                    continue
+                member = suffix[1:]
+                if (
+                    member == method_name
+                    or member.startswith(f"{method_name}(")
+                    or member == f"{method_name}()"
+                ):
                     return method_type, qn
 
         # If exact match failed and class_qn looks like a Java package-qualified name,
@@ -1006,11 +1035,21 @@ class JavaTypeInferenceEngine:
 
             for module_qn in ranked_candidates:
                 registry_class_qn = f"{module_qn}.{simple_class_name}"
-                for qn, method_type in self.function_registry.items():
-                    if qn.startswith(f"{registry_class_qn}.{method_name}"):
-                        remaining = qn[len(f"{registry_class_qn}.{method_name}") :]
-                        if remaining == "" or remaining.startswith("("):
-                            return method_type, qn
+                for qn, method_type in self._find_registry_entries_under(
+                    registry_class_qn
+                ):
+                    if qn == registry_class_qn:
+                        continue
+                    suffix = qn[len(registry_class_qn) :]
+                    if not suffix.startswith("."):
+                        continue
+                    member = suffix[1:]
+                    if (
+                        member == method_name
+                        or member.startswith(f"{method_name}(")
+                        or member == f"{method_name}()"
+                    ):
+                        return method_type, qn
 
         return None
 
