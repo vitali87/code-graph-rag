@@ -647,6 +647,8 @@ def find_java_package_start_index(parts: list[str]) -> int | None:
     Find where the Java package structure starts in a module QN.
 
     Handles both standard (src/main/java) and non-standard (src/main) layouts.
+    Note: In non-standard layouts, 'main' may be part of the package name itself
+    (e.g., "package main.Storage;" in TheNews project), not just a source directory.
 
     Args:
         parts: Module QN split by dots
@@ -655,9 +657,9 @@ def find_java_package_start_index(parts: list[str]) -> int | None:
         Index where package starts, or None if not found
 
     Examples:
-        ["project", "src", "main", "java", "com", "example", "Helper"] -> 4
-        ["project", "src", "main", "com", "example", "Helper"] -> 2
-        ["project", "src", "com", "example", "Helper"] -> 1
+        ["project", "src", "main", "java", "com", "example", "Helper"] -> 4 (com.example.Helper)
+        ["project", "src", "main", "com", "example", "Helper"] -> 2 (main.com.example.Helper)
+        ["project", "src", "com", "example", "Helper"] -> 2 (com.example.Helper)
     """
     for i, part in enumerate(parts):
         # Standard: after java/kotlin/scala folder
