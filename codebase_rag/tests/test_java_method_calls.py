@@ -809,24 +809,18 @@ public class MainClass {
     # Count cross-file calls from MainClass methods to Helper methods
     helper_calls_count = 0
     for call in call_relationships:
-        if len(call.args) > 0:
+        if len(call.args) > 2:
             from_tuple = call.args[0]
+            to_tuple = call.args[2]
             # Format: (entity_type, property_name, qualified_name)
             if isinstance(from_tuple, tuple) and len(from_tuple) >= 3:
                 from_qn = from_tuple[2]
-                # Check if this is a call from MainClass to Helper
-                if "MainClass" in from_qn and "Helper" in from_qn:
-                    # This might be within-class, check if it's actually cross-file
-                    # by seeing if it goes from MainClass.* to Helper.Helper.*
-                    if ".MainClass." in from_qn and ".Helper.Helper." not in from_qn:
-                        # This is from MainClass but not resolving to Helper methods
-                        pass
-                    else:
+                # Verify the call is FROM MainClass AND TO Helper
+                if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
+                    to_qn = to_tuple[2]
+                    # Check: source contains MainClass, destination contains Helper
+                    if "MainClass" in from_qn and "Helper" in to_qn:
                         helper_calls_count += 1
-                elif "MainClass" in from_qn:
-                    # Any call from a MainClass method counts as potential cross-file
-                    # since we're testing cross-file resolution
-                    helper_calls_count += 1
 
     # We created 5 method calls from MainClass to Helper methods
     # If cross-file resolution works, we should have at least 3 CALLS relationships
