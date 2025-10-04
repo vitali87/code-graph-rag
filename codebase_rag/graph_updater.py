@@ -150,6 +150,39 @@ class FunctionRegistryTrie:
         """Find all qualified names ending with the given suffix."""
         return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
+    def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
+        """Find all qualified names that start with the given prefix.
+
+        Args:
+            prefix: The prefix to search for (e.g., "module.Class.method")
+
+        Returns:
+            List of (qualified_name, type) tuples matching the prefix
+        """
+        results = []
+        prefix_parts = prefix.split(".")
+
+        # Navigate to prefix in trie
+        current = self.root
+        for part in prefix_parts:
+            if part not in current:
+                return []  # Prefix doesn't exist
+            current = current[part]
+
+        # DFS to find all entries under this prefix
+        def dfs(node: dict[str, Any]) -> None:
+            if "__qn__" in node:
+                qn = node["__qn__"]
+                func_type = node["__type__"]
+                results.append((qn, func_type))
+
+            for key, child in node.items():
+                if not key.startswith("__"):  # Skip metadata keys
+                    dfs(child)
+
+        dfs(current)
+        return results
+
 
 class BoundedASTCache:
     """Memory-aware AST cache with automatic cleanup to prevent memory leaks.

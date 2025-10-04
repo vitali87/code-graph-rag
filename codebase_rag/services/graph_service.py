@@ -100,6 +100,29 @@ class MemgraphIngestor:
             if cursor:
                 cursor.close()
 
+    def _execute_batch_with_return(
+        self, query: str, params_list: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Execute a batch query that returns results."""
+        if not self.conn or not params_list:
+            return []
+        cursor = None
+        try:
+            cursor = self.conn.cursor()
+            batch_query = f"UNWIND $batch AS row\n{query}"
+            cursor.execute(batch_query, {"batch": params_list})
+            if not cursor.description:
+                return []
+            column_names = [desc.name for desc in cursor.description]
+            return [dict(zip(column_names, row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"!!! Batch Cypher Error: {e}")
+            logger.error(f"    Query: {query}")
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+
     def clean_database(self) -> None:
         logger.info("--- Cleaning database... ---")
         self._execute_query("MATCH (n) DETACH DELETE n;")
@@ -214,17 +237,47 @@ class MemgraphIngestor:
             rels_by_pattern[pattern].append(
                 {"from_val": from_node[2], "to_val": to_node[2], "props": props or {}}
             )
+
+        total_attempted = 0
+        total_successful = 0
+
         for pattern, params_list in rels_by_pattern.items():
             from_label, from_key, rel_type, to_label, to_key = pattern
             query = (
                 f"MATCH (a:{from_label} {{{from_key}: row.from_val}}), "
                 f"(b:{to_label} {{{to_key}: row.to_val}})\n"
-                f"MERGE (a)-[r:{rel_type}]->(b)"
+                f"MERGE (a)-[r:{rel_type}]->(b)\n"
+                f"RETURN count(r) as created"
             )
             if any(p["props"] for p in params_list):
-                query += "\nSET r += row.props"
-            self._execute_batch(query, params_list)
-        logger.info(f"Flushed {len(self.relationship_buffer)} relationships.")
+                query = query.replace(
+                    "RETURN count(r) as created",
+                    "SET r += row.props\nRETURN count(r) as created",
+                )
+
+            total_attempted += len(params_list)
+            results = self._execute_batch_with_return(query, params_list)
+            batch_successful = (
+                sum(r.get("created", 0) for r in results) if results else 0
+            )
+            total_successful += batch_successful
+
+            # Log failures for CALLS relationships
+            if rel_type == "CALLS":
+                failed = len(params_list) - batch_successful
+                if failed > 0:
+                    logger.warning(
+                        f"Failed to create {failed} CALLS relationships - nodes may not exist"
+                    )
+                    # Log first 3 samples
+                    for i, sample in enumerate(params_list[:3]):
+                        logger.warning(
+                            f"  Sample {i + 1}: {from_label}.{sample['from_val']} -> {to_label}.{sample['to_val']}"
+                        )
+
+        logger.info(
+            f"Flushed {len(self.relationship_buffer)} relationships ({total_successful} successful, {total_attempted - total_successful} failed)."
+        )
         self.relationship_buffer.clear()
 
     def flush_all(self) -> None:

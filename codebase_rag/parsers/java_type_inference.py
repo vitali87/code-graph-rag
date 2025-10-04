@@ -1,5 +1,6 @@
 """Java-specific type inference engine using tree-sitter for precise semantic analysis."""
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,7 @@ from .java_utils import (
     extract_java_class_info,
     extract_java_field_info,
     extract_java_method_call_info,
+    find_java_package_start_index,
     safe_decode_text,
 )
 
@@ -44,6 +46,138 @@ class JavaTypeInferenceEngine:
         # Cache for variable type lookups to prevent infinite recursion
         self._lookup_cache: dict[str, str | None] = {}
         self._lookup_in_progress: set[str] = set()
+
+        # Pre-build reverse lookup map: Java FQN -> internal module QN
+        # This avoids O(modules × functions) nested loop during lookups
+        self._fqn_to_module_qn: dict[str, list[str]] = self._build_fqn_lookup_map()
+
+    def _build_fqn_lookup_map(self) -> dict[str, list[str]]:
+        """
+        Build a reverse lookup map from Java FQN to internal module QN.
+
+        This pre-processing step converts the nested loop O(modules × functions)
+        lookup into a O(1) dictionary lookup.
+
+        Example:
+            "com.example.utils.Helper" -> "project.src.main.java.com.example.utils.Helper"
+        """
+        fqn_map: dict[str, list[str]] = {}
+
+        def _add_mapping(key: str, value: str) -> None:
+            """Store all module candidates for a given FQN suffix."""
+            modules = fqn_map.setdefault(key, [])
+            if value not in modules:
+                modules.append(value)
+
+        for module_qn in self.module_qn_to_file_path.keys():
+            # Extract the package-qualified class name from the module QN
+            # e.g., module_qn = "project.src.main.java.com.example.utils.Helper"
+            #       class_qn = "com.example.utils.Helper"
+            parts = module_qn.split(".")
+            package_start_idx = find_java_package_start_index(parts)
+
+            if package_start_idx:
+                # Everything after the package start is the package-qualified class name
+                simple_class_name = ".".join(parts[package_start_idx:])
+                if simple_class_name:  # Skip empty names
+                    # Store the full FQN
+                    _add_mapping(simple_class_name, module_qn)
+
+                    # Also store all suffix variations for partial lookups
+                    # e.g., for "main.SceneController.SceneHandler":
+                    #   - "SceneController.SceneHandler"
+                    #   - "SceneHandler"
+                    class_parts = simple_class_name.split(".")
+                    for j in range(1, len(class_parts)):
+                        suffix = ".".join(class_parts[j:])
+                        _add_mapping(suffix, module_qn)
+
+        return fqn_map
+
+    def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
+        """Convert an internal module QN to a Java fully qualified class name."""
+        parts = module_qn.split(".")
+        package_start_idx = find_java_package_start_index(parts)
+        if package_start_idx is None:
+            return None
+        class_parts = parts[package_start_idx:]
+        return ".".join(class_parts) if class_parts else None
+
+    def _calculate_module_distance(
+        self, candidate_qn: str, caller_module_qn: str
+    ) -> int:
+        """Heuristic distance between the caller and a candidate module."""
+        caller_parts = caller_module_qn.split(".")
+        candidate_parts = candidate_qn.split(".")
+
+        common_prefix = 0
+        for caller_part, candidate_part in zip(caller_parts, candidate_parts):
+            if caller_part == candidate_part:
+                common_prefix += 1
+            else:
+                break
+
+        base_distance = max(len(caller_parts), len(candidate_parts)) - common_prefix
+
+        # Prefer siblings within the same package hierarchy when possible
+        if (
+            len(caller_parts) > 1
+            and candidate_parts[: len(caller_parts) - 1] == caller_parts[:-1]
+        ):
+            base_distance -= 1
+
+        return max(base_distance, 0)
+
+    def _rank_module_candidates(
+        self,
+        candidates: list[str],
+        class_qn: str,
+        current_module_qn: str | None,
+    ) -> list[str]:
+        """Order candidate modules by how well they match the desired class."""
+        if not candidates:
+            return candidates
+
+        if not current_module_qn:
+            return candidates
+
+        ranked: list[tuple[tuple[int, int, int], str]] = []
+        for idx, candidate in enumerate(candidates):
+            candidate_fqn = self._module_qn_to_java_fqn(candidate)
+
+            # Exact FQN matches should always win over suffix matches
+            if candidate_fqn == class_qn:
+                match_penalty = 0
+            elif candidate_fqn and class_qn.endswith(candidate_fqn):
+                match_penalty = 1
+            else:
+                match_penalty = 2
+
+            distance = self._calculate_module_distance(candidate, current_module_qn)
+            ranked.append(((match_penalty, distance, idx), candidate))
+
+        ranked.sort(key=lambda item: item[0])
+        return [candidate for _, candidate in ranked]
+
+    def _find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
+        """Yield registry entries beneath the given qualified-name prefix."""
+
+        finder = getattr(self.function_registry, "find_with_prefix", None)
+        if callable(finder):
+            matches = list(finder(prefix))  # type: ignore[arg-type]
+            if matches:
+                return matches
+
+        items = getattr(self.function_registry, "items", None)
+        if callable(items):
+            prefix_with_dot = f"{prefix}."
+            return [
+                (qn, method_type)
+                for qn, method_type in items()
+                if qn.startswith(prefix_with_dot) or qn == prefix
+            ]
+
+        return []
 
     def build_java_variable_type_map(
         self, scope_node: Node, module_qn: str
@@ -634,6 +768,13 @@ class JavaTypeInferenceEngine:
         if not type_name:
             return "Object"  # Default fallback
 
+        # If type_name is already a fully qualified name (contains '.'), return it directly
+        # This prevents trying to look up already-qualified names in import_map
+        if "." in type_name:
+            # All fully qualified types can be returned as-is
+            # (Simple java.lang types like "String" will be normalized below)
+            return type_name
+
         # Handle primitive types
         if type_name in [
             "int",
@@ -832,7 +973,9 @@ class JavaTypeInferenceEngine:
         resolved_type = self._resolve_java_type_name(object_type, module_qn)
 
         # Look for the method in the class using flexible signature matching
-        method_result = self._find_method_with_any_signature(resolved_type, method_name)
+        method_result = self._find_method_with_any_signature(
+            resolved_type, method_name, module_qn
+        )
         if method_result:
             return method_result
 
@@ -847,16 +990,67 @@ class JavaTypeInferenceEngine:
         return self._find_interface_method(resolved_type, method_name, module_qn)
 
     def _find_method_with_any_signature(
-        self, class_qn: str, method_name: str
+        self, class_qn: str, method_name: str, current_module_qn: str | None = None
     ) -> tuple[str, str] | None:
         """Find a method with any parameter signature using function registry."""
         # Search through all registered methods for this class and method name
-        for qn, method_type in self.function_registry.items():
-            if qn.startswith(f"{class_qn}.{method_name}"):
-                # Check if this matches the method pattern (either bare name or with parameters)
-                remaining = qn[len(f"{class_qn}.{method_name}") :]
-                if remaining == "" or remaining.startswith("("):
+        if class_qn:
+            for qn, method_type in self._find_registry_entries_under(class_qn):
+                if qn == class_qn:
+                    continue
+                suffix = qn[len(class_qn) :]
+                if not suffix.startswith("."):
+                    continue
+                member = suffix[1:]
+                if (
+                    member == method_name
+                    or member.startswith(f"{method_name}(")
+                    or member == f"{method_name}()"
+                ):
                     return method_type, qn
+
+        # If exact match failed and class_qn looks like a Java package-qualified name,
+        # use the pre-built FQN lookup map for O(1) resolution
+        if class_qn and not class_qn.startswith(self.project_name):
+            suffixes = class_qn.split(".") if class_qn else []
+            lookup_keys = [".".join(suffixes[i:]) for i in range(len(suffixes))]
+            if not lookup_keys:
+                lookup_keys = [class_qn]
+
+            candidate_modules: list[str] = []
+            seen_modules: set[str] = set()
+
+            for key in lookup_keys:
+                if key in self._fqn_to_module_qn:
+                    for module_candidate in self._fqn_to_module_qn[key]:
+                        if module_candidate not in seen_modules:
+                            candidate_modules.append(module_candidate)
+                            seen_modules.add(module_candidate)
+
+            ranked_candidates = self._rank_module_candidates(
+                candidate_modules, class_qn, current_module_qn
+            )
+
+            simple_class_name = class_qn.split(".")[-1]
+
+            for module_qn in ranked_candidates:
+                registry_class_qn = f"{module_qn}.{simple_class_name}"
+                for qn, method_type in self._find_registry_entries_under(
+                    registry_class_qn
+                ):
+                    if qn == registry_class_qn:
+                        continue
+                    suffix = qn[len(registry_class_qn) :]
+                    if not suffix.startswith("."):
+                        continue
+                    member = suffix[1:]
+                    if (
+                        member == method_name
+                        or member.startswith(f"{method_name}(")
+                        or member == f"{method_name}()"
+                    ):
+                        return method_type, qn
+
         return None
 
     def _find_inherited_method(
@@ -869,7 +1063,9 @@ class JavaTypeInferenceEngine:
             return None
 
         # Look for the method in the superclass using flexible signature matching
-        method_result = self._find_method_with_any_signature(superclass_qn, method_name)
+        method_result = self._find_method_with_any_signature(
+            superclass_qn, method_name, module_qn
+        )
         if method_result:
             return method_result
 
@@ -886,7 +1082,7 @@ class JavaTypeInferenceEngine:
         for interface_qn in implemented_interfaces:
             # Look for the method in the interface using flexible signature matching
             method_result = self._find_method_with_any_signature(
-                interface_qn, method_name
+                interface_qn, method_name, module_qn
             )
             if method_result:
                 return method_result

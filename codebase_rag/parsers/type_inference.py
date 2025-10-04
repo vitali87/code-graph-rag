@@ -9,6 +9,8 @@ from tree_sitter import Node, QueryCursor
 
 from .import_processor import ImportProcessor
 from .java_type_inference import JavaTypeInferenceEngine
+from .js_type_inference import JsTypeInferenceEngine
+from .lua_type_inference import LuaTypeInferenceEngine
 from .python_utils import resolve_class_name
 
 if TYPE_CHECKING:
@@ -41,8 +43,10 @@ class TypeInferenceEngine:
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance = class_inheritance
 
-        # Java-specific type inference engine (lazy-loaded)
+        # Language-specific type inference engines (lazy-loaded)
         self._java_type_inference: JavaTypeInferenceEngine | None = None
+        self._lua_type_inference: LuaTypeInferenceEngine | None = None
+        self._js_type_inference: JsTypeInferenceEngine | None = None
 
     @property
     def java_type_inference(self) -> JavaTypeInferenceEngine:
@@ -60,6 +64,29 @@ class TypeInferenceEngine:
             )
         return self._java_type_inference
 
+    @property
+    def lua_type_inference(self) -> LuaTypeInferenceEngine:
+        """Lazy-loaded Lua type inference engine."""
+        if self._lua_type_inference is None:
+            self._lua_type_inference = LuaTypeInferenceEngine(
+                import_processor=self.import_processor,
+                function_registry=self.function_registry,
+                project_name=self.project_name,
+            )
+        return self._lua_type_inference
+
+    @property
+    def js_type_inference(self) -> JsTypeInferenceEngine:
+        """Lazy-loaded JavaScript/TypeScript type inference engine."""
+        if self._js_type_inference is None:
+            self._js_type_inference = JsTypeInferenceEngine(
+                import_processor=self.import_processor,
+                function_registry=self.function_registry,
+                project_name=self.project_name,
+                find_method_ast_node_func=self._find_method_ast_node,
+            )
+        return self._js_type_inference
+
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, language: str
     ) -> dict[str, str]:
@@ -73,13 +100,20 @@ class TypeInferenceEngine:
             # Use existing Python type inference logic
             pass
         elif language in _JS_TYPESCRIPT_LANGUAGES:
-            # Use tree-sitter locals query for JavaScript/TypeScript
-            return self._build_js_local_variable_type_map(
+            # Use JavaScript/TypeScript type inference engine
+            return self.js_type_inference.build_js_local_variable_type_map(
                 caller_node, module_qn, language
             )
         elif language == "java":
-            # Use Java-specific type inference
-            return self._build_java_local_variable_type_map(caller_node, module_qn)
+            # Use Java-specific type inference engine
+            return self.java_type_inference.build_java_variable_type_map(
+                caller_node, module_qn
+            )
+        elif language == "lua":
+            # Use Lua-specific type inference engine
+            return self.lua_type_inference.build_lua_local_variable_type_map(
+                caller_node, module_qn
+            )
         else:
             # Unsupported language
             return local_var_types
@@ -417,19 +451,19 @@ class TypeInferenceEngine:
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """Analyze assignments to self.attribute to determine instance variable types."""
-        # Traverse the AST looking for assignment statements
-        if node.type == "assignment":
-            left_node = node.child_by_field_name("left")
-            right_node = node.child_by_field_name("right")
+        stack: list[Node] = [node]
 
-            if left_node and right_node:
-                # Check if left side is self.something
-                if left_node.type == "attribute":
+        while stack:
+            current = stack.pop()
+
+            if current.type == "assignment":
+                left_node = current.child_by_field_name("left")
+                right_node = current.child_by_field_name("right")
+
+                if left_node and right_node and left_node.type == "attribute":
                     left_text = left_node.text
                     if left_text and left_text.decode("utf8").startswith("self."):
-                        attr_name = left_text.decode("utf8")  # e.g., "self.repo"
-
-                        # Analyze right side to determine type
+                        attr_name = left_text.decode("utf8")
                         assigned_type = self._infer_type_from_expression(
                             right_node, module_qn
                         )
@@ -440,9 +474,8 @@ class TypeInferenceEngine:
                                 f"{attr_name} -> {assigned_type}"
                             )
 
-        # Recursively traverse children
-        for child in node.children:
-            self._analyze_self_assignments(child, local_var_types, module_qn)
+            # Queue children in original order for consistent traversal
+            stack.extend(reversed(current.children))
 
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
@@ -490,25 +523,27 @@ class TypeInferenceEngine:
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """Traverse AST for simple assignments (constructors, literals) only."""
-        # Check if current node is an assignment
-        if node.type == "assignment":
-            self._process_assignment_simple(node, local_var_types, module_qn)
+        stack: list[Node] = [node]
 
-        # Recursively traverse children
-        for child in node.children:
-            self._traverse_for_assignments_simple(child, local_var_types, module_qn)
+        while stack:
+            current = stack.pop()
+            if current.type == "assignment":
+                self._process_assignment_simple(current, local_var_types, module_qn)
+
+            stack.extend(reversed(current.children))
 
     def _traverse_for_assignments_complex(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """Traverse AST for complex assignments (method calls) using existing variable types."""
-        # Check if current node is an assignment
-        if node.type == "assignment":
-            self._process_assignment_complex(node, local_var_types, module_qn)
+        stack: list[Node] = [node]
 
-        # Recursively traverse children
-        for child in node.children:
-            self._traverse_for_assignments_complex(child, local_var_types, module_qn)
+        while stack:
+            current = stack.pop()
+            if current.type == "assignment":
+                self._process_assignment_complex(current, local_var_types, module_qn)
+
+            stack.extend(reversed(current.children))
 
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -1068,11 +1103,20 @@ class TypeInferenceEngine:
         self, root_node: Node, class_name: str, method_name: str, language: str
     ) -> Node | None:
         """Find a specific method within a class in the AST."""
-        if language != "python":
-            return None
+        if language == "python":
+            return self._find_python_method_in_ast(root_node, class_name, method_name)
+        elif language in ("javascript", "typescript"):
+            return self.js_type_inference.find_js_method_in_ast(
+                root_node, class_name, method_name
+            )
+        return None
 
+    def _find_python_method_in_ast(
+        self, root_node: Node, class_name: str, method_name: str
+    ) -> Node | None:
+        """Find a specific method within a Python class in the AST."""
         # Find the class first
-        lang_queries = self.queries[language]
+        lang_queries = self.queries["python"]
         class_query = lang_queries["classes"]
         cursor = QueryCursor(class_query)
         captures = cursor.captures(root_node)
@@ -1146,23 +1190,32 @@ class TypeInferenceEngine:
         return None
 
     def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
-        """Recursively find all return statements in a node."""
-        if node.type == "return_statement":
-            return_nodes.append(node)
+        """Collect all return statements in a node using iterative traversal."""
+        stack: list[Node] = [node]
 
-        for child in node.children:
-            self._find_return_statements(child, return_nodes)
+        while stack:
+            current = stack.pop()
+            if current.type == "return_statement":
+                return_nodes.append(current)
+
+            stack.extend(reversed(current.children))
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
         """Analyze a return expression to infer its type."""
-        # Handle direct constructor calls: return User(name)
+        # Handle direct constructor calls: return User(name) or return cls()
         if expr_node.type == "call":
             func_node = expr_node.child_by_field_name("function")
             if func_node and func_node.type == "identifier":
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = func_text.decode("utf8")
-                    if class_name[0].isupper():  # Class names start with uppercase
+                    # Handle @classmethod pattern: return cls()
+                    if class_name == "cls":
+                        # Extract class name from method qualified name
+                        qn_parts = method_qn.split(".")
+                        if len(qn_parts) >= 2:
+                            return qn_parts[-2]  # Class name is second to last
+                    elif class_name[0].isupper():  # Class names start with uppercase
                         # Try to resolve this to the full class name using the current module context
                         module_qn = ".".join(
                             method_qn.split(".")[:-2]
@@ -1184,13 +1237,14 @@ class TypeInferenceEngine:
                         method_call_text, module_qn
                     )
 
-        # Handle variable references: return existing, return user
+        # Handle variable references: return existing, return user, return self, return cls
         elif expr_node.type == "identifier":
             text = expr_node.text
             if text is not None:
                 identifier = text.decode("utf8")
-                if identifier == "self":
+                if identifier == "self" or identifier == "cls":
                     # Extract class name from method qualified name
+                    # Works for both instance methods (self) and classmethods (cls)
                     qn_parts = method_qn.split(".")
                     if len(qn_parts) >= 2:
                         return qn_parts[-2]  # Class name is second to last
@@ -1219,73 +1273,20 @@ class TypeInferenceEngine:
                     )
                     return None
 
-        return None
-
-    def _build_js_local_variable_type_map(
-        self, caller_node: "Node", module_qn: str, language: str
-    ) -> dict[str, str]:
-        """Build local variable type map for JavaScript/TypeScript using tree-sitter locals query."""
-        local_var_types: dict[str, str] = {}
-
-        if language not in self.queries:
-            return local_var_types
-
-        locals_query = self.queries[language].get("locals")
-        if not locals_query:
-            return local_var_types
-
-        try:
-            # Use tree-sitter's locals query to find variable definitions and references
-            cursor = QueryCursor(locals_query)
-            captures = cursor.captures(caller_node)
-
-            definitions = captures.get("local.definition", [])
-
-            for def_node in definitions:
-                if not hasattr(def_node, "text") or not def_node.text:
-                    continue
-
-                var_name = def_node.text.decode("utf8")
-
-                # Find the variable declarator or assignment that defines this variable
-                var_type = self._infer_js_variable_type(def_node, module_qn)
-                if var_type:
-                    local_var_types[var_name] = var_type
-
-        except Exception as e:
-            logger.debug(f"Error in JavaScript variable type inference: {e}")
-
-        return local_var_types
-
-    def _infer_js_variable_type(self, def_node: "Node", module_qn: str) -> str | None:
-        """Infer the type of a JavaScript variable from its definition."""
-        # Walk up the AST to find the variable declarator
-        current = def_node.parent
-
-        while current:
-            if current.type == "variable_declarator":
-                # Look for patterns like: const animal = new Animal(...)
-                value_node = current.child_by_field_name("value")
-                if value_node and value_node.type == "new_expression":
-                    # Extract the constructor name
-                    constructor_node = value_node.child_by_field_name("constructor")
-                    if constructor_node and constructor_node.type == "identifier":
-                        constructor_name = constructor_node.text
-                        if constructor_name:
-                            return str(constructor_name.decode("utf8"))
-
-                # Look for patterns like: const rect = Rectangle()
-                elif value_node and value_node.type == "call_expression":
-                    func_node = value_node.child_by_field_name("function")
-                    if func_node and func_node.type == "identifier":
-                        func_name = func_node.text
-                        if func_name:
-                            # Check if this is a class expression assignment like: const Rectangle = class { ... }
-                            return str(func_name.decode("utf8"))
-
-                break
-
-            current = current.parent
+        # Handle attribute access: return cls._instance, return self.attr
+        elif expr_node.type == "attribute":
+            # Get the object being accessed (e.g., "cls" in "cls._instance")
+            object_node = expr_node.child_by_field_name("object")
+            if object_node and object_node.type == "identifier":
+                object_text = object_node.text
+                if object_text is not None:
+                    object_name = object_text.decode("utf8")
+                    # Handle cls._instance pattern (common in singleton @classmethod)
+                    if object_name == "cls" or object_name == "self":
+                        # Return the containing class type
+                        qn_parts = method_qn.split(".")
+                        if len(qn_parts) >= 2:
+                            return qn_parts[-2]  # Class name is second to last
 
         return None
 

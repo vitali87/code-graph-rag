@@ -640,3 +640,66 @@ def extract_java_annotation_info(
                     info["arguments"].append(arg_value)
 
     return info
+
+
+def find_java_package_start_index(parts: list[str]) -> int | None:
+    """
+    Find where the Java package structure starts in a module QN.
+
+    Handles both standard (src/main/java) and non-standard (src/main) layouts.
+    Note: In non-standard layouts, 'main' may be part of the package name itself
+    (e.g., "package main.Storage;" in TheNews project), not just a source directory.
+
+    Args:
+        parts: Module QN split by dots
+
+    Returns:
+        Index where package starts, or None if not found
+
+    Examples:
+        ["project", "src", "main", "java", "com", "example", "Helper"] -> 4 (com.example.Helper)
+        ["project", "src", "main", "com", "example", "Helper"] -> 2 (main.com.example.Helper)
+        ["project", "src", "com", "example", "Helper"] -> 2 (com.example.Helper)
+    """
+    for i, part in enumerate(parts):
+        # Standard: after java/kotlin/scala folder
+        if part in ("java", "kotlin", "scala") and i > 0:
+            return i + 1
+
+        # Non-standard structures after "src"
+        if part == "src" and i + 1 < len(parts):
+            next_part = parts[i + 1]
+
+            # src/package (no main/test/java)
+            if next_part not in ("java", "kotlin", "scala", "main", "test"):
+                return i + 1
+
+            # src/main or src/test without java folder
+            if _is_non_standard_java_src_layout(parts, i):
+                return i + 1
+
+    return None
+
+
+def _is_non_standard_java_src_layout(parts: list[str], src_idx: int) -> bool:
+    """
+    Check if this is src/main or src/test without java/kotlin/scala folder.
+
+    Args:
+        parts: Module QN split by dots
+        src_idx: Index of "src" in parts
+
+    Returns:
+        True if non-standard layout, False otherwise
+    """
+    if src_idx + 2 >= len(parts):
+        return False
+
+    next_part = parts[src_idx + 1]
+    part_after_next = parts[src_idx + 2]
+
+    return next_part in ("main", "test") and part_after_next not in (
+        "java",
+        "kotlin",
+        "scala",
+    )
