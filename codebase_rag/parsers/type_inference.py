@@ -1533,12 +1533,21 @@ class TypeInferenceEngine:
     def _find_js_return_statements(
         self, node: "Node", return_nodes: list["Node"]
     ) -> None:
-        """Find all return statements in a JavaScript function."""
-        if node.type == "return_statement":
-            return_nodes.append(node)
+        """Find all return statements in a JavaScript function.
 
-        for child in node.children:
-            self._find_js_return_statements(child, return_nodes)
+        Uses iterative stack-based traversal to prevent RecursionError
+        for deeply nested code.
+        """
+        stack: list[Node] = [node]
+
+        while stack:
+            current = stack.pop()
+
+            if current.type == "return_statement":
+                return_nodes.append(current)
+
+            # Process children in reverse order to maintain traversal order
+            stack.extend(reversed(current.children))
 
     def _analyze_js_return_expression(
         self, expr_node: "Node", method_qn: str
