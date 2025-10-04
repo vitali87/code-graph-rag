@@ -11,6 +11,7 @@ from .java_utils import (
     extract_java_class_info,
     extract_java_field_info,
     extract_java_method_call_info,
+    find_java_package_start_index,
     safe_decode_text,
 )
 
@@ -66,29 +67,7 @@ class JavaTypeInferenceEngine:
             # e.g., module_qn = "project.src.main.java.com.example.utils.Helper"
             #       class_qn = "com.example.utils.Helper"
             parts = module_qn.split(".")
-
-            # Find where the Java package structure starts
-            # Standard: after src/main/java or src/test/java
-            # Non-standard: after src (when no main/test/java folders exist)
-            package_start_idx = None
-            for i, part in enumerate(parts):
-                if part in ("java", "kotlin", "scala") and i > 0:
-                    package_start_idx = i + 1
-                    break
-                # Handle non-standard structure: after src (no main/test/java folders)
-                elif part == "src" and i + 1 < len(parts):
-                    # Check if next part is java/kotlin/scala (standard)
-                    if parts[i + 1] not in ("java", "kotlin", "scala", "main", "test"):
-                        # Package starts right after src
-                        package_start_idx = i + 1
-                        break
-                    # Check if it's src/main or src/test without java folder
-                    elif i + 2 < len(parts) and parts[i + 1] in ("main", "test"):
-                        # Check if there's NO java/kotlin/scala after main/test
-                        if parts[i + 2] not in ("java", "kotlin", "scala"):
-                            # Package starts at main/test (include it in the package)
-                            package_start_idx = i + 1
-                            break
+            package_start_idx = find_java_package_start_index(parts)
 
             if package_start_idx:
                 # Everything after the package start is the package-qualified class name
