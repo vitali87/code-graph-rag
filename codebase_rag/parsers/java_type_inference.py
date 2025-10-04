@@ -939,7 +939,9 @@ class JavaTypeInferenceEngine:
             if module_qn:
                 # Build the registry key for this class
                 registry_class_qn = f"{module_qn}.{simple_class_name}"
-                # Search for the method
+                # Note: Cannot use Trie's find_with_prefix here because Java methods include
+                # signatures like "method(String,int)" in their QNs, making exact prefix
+                # matching impossible. Must iterate to check string prefixes.
                 for qn, method_type in self.function_registry.items():
                     if qn.startswith(f"{registry_class_qn}.{method_name}"):
                         remaining = qn[len(f"{registry_class_qn}.{method_name}") :]

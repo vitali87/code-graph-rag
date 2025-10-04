@@ -596,16 +596,13 @@ class CallProcessor:
                             rust_parts = class_qn.split("::")
                             class_name = rust_parts[-1]
 
-                            # Try to find the class in the function registry
-                            # Search for entries ending with the class name
-                            for (
-                                qn,
-                                func_type,
-                            ) in self.function_registry._entries.items():
-                                if (
-                                    qn.endswith(f".{class_name}")
-                                    and func_type == "Class"
-                                ):
+                            # Use Trie's efficient suffix search instead of iterating all entries
+                            matching_qns = self.function_registry.find_ending_with(
+                                class_name
+                            )
+                            # Find the first Class entry
+                            for qn in matching_qns:
+                                if self.function_registry.get(qn) == "Class":
                                     class_qn = qn
                                     break
 
