@@ -257,12 +257,14 @@ class MemgraphIngestor:
 
             total_attempted += len(params_list)
             results = self._execute_batch_with_return(query, params_list)
-            if results:
-                total_successful += sum(r.get("created", 0) for r in results)
+            batch_successful = (
+                sum(r.get("created", 0) for r in results) if results else 0
+            )
+            total_successful += batch_successful
 
             # Log failures for CALLS relationships
             if rel_type == "CALLS":
-                failed = total_attempted - total_successful
+                failed = len(params_list) - batch_successful
                 if failed > 0:
                     logger.warning(
                         f"Failed to create {failed} CALLS relationships - nodes may not exist"
