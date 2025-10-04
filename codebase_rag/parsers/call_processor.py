@@ -618,7 +618,8 @@ class CallProcessor:
                             # The extended path works, use it
                             class_qn = potential_class_qn
 
-                        # Construct method QN using . separator (function_registry always uses .)
+                        # Construct method QN - note: for static/class methods, use . separator
+                        # (even in Lua, static calls use . like module.function, not module:function)
                         method_qn = f"{class_qn}.{method_name}"
                         if method_qn in self.function_registry:
                             logger.debug(
