@@ -165,13 +165,42 @@ def test_cpp_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Note: C++ uses -> for pointers, method calls should still be detected
-    # Cross-file calls are verified by checking that we found some calls
+    # Expected cross-file calls
+    # Note: C++ header files with inline methods attribute calls to the class level,
+    # not individual methods, so we look for class-to-method calls
+    expected_calls = [
+        # From SceneController class to Storage methods (cross-file)
+        ("controllers.SceneController", "storage.Storage.Storage.getInstance"),
+        ("controllers.SceneController", "storage.Storage.Storage.clearAll"),
+        ("controllers.SceneController", "storage.Storage.Storage.save"),
+        ("controllers.SceneController", "storage.Storage.Storage.load"),
+        # From main module to SceneController methods (cross-file)
+        ("main", "controllers.SceneController.SceneController.loadMenuScene"),
+        ("main", "controllers.SceneController.SceneController.loadGameScene"),
+        # From main module to Storage methods (cross-file)
+        ("main", "storage.Storage.Storage.getInstance"),
+        ("main", "storage.Storage.Storage.load"),
+        # From main.main to Application.start
+        ("main.main", "main.Application.start"),
+    ]
 
-    # For now, just print what we found to understand C++ behavior
-    print(f"\n### Found {len(found_calls)} C++ calls:")
-    for caller, callee in sorted(found_calls):
-        print(f"  {caller} -> {callee}")
+    # Check for missing calls
+    missing_calls = []
+    for expected_caller, expected_callee in expected_calls:
+        if (expected_caller, expected_callee) not in found_calls:
+            missing_calls.append((expected_caller, expected_callee))
 
-    # Basic assertion: we should find at least some calls
-    assert len(found_calls) > 0, "Expected to find at least some C++ method calls"
+    # Print detailed info if test fails
+    if missing_calls:
+        print(f"\n### Missing {len(missing_calls)} expected C++ cross-file calls:")
+        for caller, callee in missing_calls:
+            print(f"  {caller} -> {callee}")
+
+        print(f"\n### Found {len(found_calls)} calls total:")
+        for caller, callee in sorted(found_calls):
+            print(f"  {caller} -> {callee}")
+
+        pytest.fail(
+            f"Missing {len(missing_calls)} expected C++ cross-file calls. "
+            f"See output above for details."
+        )

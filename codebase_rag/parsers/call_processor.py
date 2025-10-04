@@ -119,6 +119,11 @@ class CallProcessor:
                 module_qn = ".".join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
+            elif file_path.name == "mod.rs":
+                # In Rust, mod.rs represents the parent module directory
+                module_qn = ".".join(
+                    [self.project_name] + list(relative_path.parent.parts)
+                )
 
             self._process_calls_in_functions(root_node, module_qn, language, queries)
             self._process_calls_in_classes(root_node, module_qn, language, queries)
@@ -183,14 +188,31 @@ class CallProcessor:
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
-            name_node = class_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            class_name = text.decode("utf8")
-            class_qn = f"{module_qn}.{class_name}"
+
+            # Rust impl blocks don't have a "name" field, they have a "type" field
+            if language == "rust" and class_node.type == "impl_item":
+                # For Rust impl blocks, get the type being implemented
+                type_node = class_node.child_by_field_name("type")
+                if not type_node:
+                    # Might be a type_identifier child directly
+                    for child in class_node.children:
+                        if child.type == "type_identifier" and child.is_named:
+                            type_node = child
+                            break
+                if not type_node or not type_node.text:
+                    continue
+                class_name = type_node.text.decode("utf8")
+                class_qn = f"{module_qn}.{class_name}"
+            else:
+                # Standard class handling for other languages
+                name_node = class_node.child_by_field_name("name")
+                if not name_node:
+                    continue
+                text = name_node.text
+                if text is None:
+                    continue
+                class_name = text.decode("utf8")
+                class_qn = f"{module_qn}.{class_name}"
 
             body_node = class_node.child_by_field_name("body")
             if not body_node:
@@ -615,9 +637,12 @@ class CallProcessor:
                             # The extended path works, use it
                             class_qn = potential_class_qn
 
-                        # Construct method QN - note: for static/class methods, use . separator
-                        # (even in Lua, static calls use . like module.function, not module:function)
-                        method_qn = f"{class_qn}.{method_name}"
+                        # Construct method QN using the appropriate separator
+                        # For Lua, use : for both instance and class methods (Lua tables)
+                        # For Rust/C++, use . for registry lookup (even though call uses ::)
+                        # For others, use . for static/class methods
+                        registry_separator = separator if separator == ":" else "."
+                        method_qn = f"{class_qn}{registry_separator}{method_name}"
                         if method_qn in self.function_registry:
                             logger.debug(
                                 f"Import-resolved static call: {call_name} -> {method_qn}"

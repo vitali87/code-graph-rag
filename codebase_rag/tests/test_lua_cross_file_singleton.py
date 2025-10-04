@@ -173,11 +173,71 @@ def test_lua_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Print what we found to understand Lua behavior
-    print(f"\n### Found {len(found_calls)} Lua calls:")
-    for caller, callee in sorted(found_calls):
-        print(f"  {caller} -> {callee}")
+    # Expected cross-file calls for Lua singleton pattern
+    expected_calls = [
+        # From SceneController:loadMenuScene to Storage (cross-file, using : syntax)
+        (
+            "controllers.SceneController.SceneController:loadMenuScene",
+            "storage.Storage.Storage:getInstance",
+        ),
+        (
+            "controllers.SceneController.SceneController:loadMenuScene",
+            "storage.Storage.Storage:clearAll",
+        ),
+        (
+            "controllers.SceneController.SceneController:loadMenuScene",
+            "storage.Storage.Storage:save",
+        ),
+        (
+            "controllers.SceneController.SceneController:loadMenuScene",
+            "storage.Storage.Storage:load",
+        ),
+        # From SceneController:loadGameScene to Storage
+        (
+            "controllers.SceneController.SceneController:loadGameScene",
+            "storage.Storage.Storage:getInstance",
+        ),
+        (
+            "controllers.SceneController.SceneController:loadGameScene",
+            "storage.Storage.Storage:save",
+        ),
+        # From main.Application:start to SceneController (cross-file)
+        (
+            "main.Application:start",
+            "controllers.SceneController.SceneController:new",
+        ),
+        (
+            "main.Application:start",
+            "controllers.SceneController.SceneController:loadMenuScene",
+        ),
+        (
+            "main.Application:start",
+            "controllers.SceneController.SceneController:loadGameScene",
+        ),
+        # From main.Application:start to Storage (cross-file)
+        ("main.Application:start", "storage.Storage.Storage:getInstance"),
+        ("main.Application:start", "storage.Storage.Storage:load"),
+        # From main.main to Application
+        ("main.main", "main.Application:new"),
+    ]
 
-    # Basic assertion: we should find at least some calls
-    # We'll refine expectations based on what Lua actually supports
-    assert len(found_calls) > 0, "Expected to find at least some Lua method calls"
+    # Check for missing calls
+    missing_calls = []
+    for expected_caller, expected_callee in expected_calls:
+        if (expected_caller, expected_callee) not in found_calls:
+            missing_calls.append((expected_caller, expected_callee))
+
+    # Print detailed info if test fails
+    if missing_calls:
+        print(f"\n### Missing {len(missing_calls)} expected Lua cross-file calls:")
+        for caller, callee in missing_calls:
+            print(f"  {caller} -> {callee}")
+
+        print(f"\n### Found {len(found_calls)} calls total:")
+        for caller, callee in sorted(found_calls):
+            print(f"  {caller} -> {callee}")
+
+        pytest.fail(
+            f"Missing {len(missing_calls)} expected Lua cross-file calls. "
+            f"See output above for details."
+        )

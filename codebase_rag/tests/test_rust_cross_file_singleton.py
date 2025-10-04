@@ -193,11 +193,72 @@ def test_rust_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Print what we found to understand Rust behavior
-    print(f"\n### Found {len(found_calls)} Rust calls:")
-    for caller, callee in sorted(found_calls):
-        print(f"  {caller} -> {callee}")
+    # Expected cross-file calls for Rust singleton pattern
+    expected_calls = [
+        # From SceneController::load_menu_scene to Storage (cross-file)
+        (
+            "src.controllers.SceneController.load_menu_scene",
+            "src.storage.Storage.get_instance",
+        ),
+        (
+            "src.controllers.SceneController.load_menu_scene",
+            "src.storage.Storage.clear_all",
+        ),
+        (
+            "src.controllers.SceneController.load_menu_scene",
+            "src.storage.Storage.save",
+        ),
+        (
+            "src.controllers.SceneController.load_menu_scene",
+            "src.storage.Storage.load",
+        ),
+        # From SceneController::load_game_scene to Storage
+        (
+            "src.controllers.SceneController.load_game_scene",
+            "src.storage.Storage.get_instance",
+        ),
+        (
+            "src.controllers.SceneController.load_game_scene",
+            "src.storage.Storage.save",
+        ),
+        # From main.Application::start to SceneController (cross-file)
+        (
+            "src.main.Application.start",
+            "src.controllers.SceneController.new",
+        ),
+        (
+            "src.main.Application.start",
+            "src.controllers.SceneController.load_menu_scene",
+        ),
+        (
+            "src.main.Application.start",
+            "src.controllers.SceneController.load_game_scene",
+        ),
+        # From main.Application::start to Storage (cross-file)
+        ("src.main.Application.start", "src.storage.Storage.get_instance"),
+        ("src.main.Application.start", "src.storage.Storage.load"),
+        # From main::main to Application
+        ("src.main.main", "src.main.Application.new"),
+        ("src.main.main", "src.main.Application.start"),
+    ]
 
-    # Basic assertion: we should find at least some calls
-    # We'll refine expectations based on what Rust actually supports
-    assert len(found_calls) > 0, "Expected to find at least some Rust method calls"
+    # Check for missing calls
+    missing_calls = []
+    for expected_caller, expected_callee in expected_calls:
+        if (expected_caller, expected_callee) not in found_calls:
+            missing_calls.append((expected_caller, expected_callee))
+
+    # Print detailed info if test fails
+    if missing_calls:
+        print(f"\n### Missing {len(missing_calls)} expected Rust cross-file calls:")
+        for caller, callee in missing_calls:
+            print(f"  {caller} -> {callee}")
+
+        print(f"\n### Found {len(found_calls)} calls total:")
+        for caller, callee in sorted(found_calls):
+            print(f"  {caller} -> {callee}")
+
+        pytest.fail(
+            f"Missing {len(missing_calls)} expected Rust cross-file calls. "
+            f"See output above for details."
+        )
