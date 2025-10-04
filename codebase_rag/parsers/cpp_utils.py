@@ -197,9 +197,16 @@ def extract_destructor_name(destructor_node: Node) -> str:
 def _extract_name_from_function_definition(func_node: Node) -> str | None:
     """Extract function name from C++ function definition nodes."""
     # Look for function_declarator within these definitions
+    # For static methods with pointer return types, function_declarator may be nested
+    # inside pointer_declarator or reference_declarator
     for child in func_node.children:
         if child.type == "function_declarator":
             return extract_cpp_function_name(child)
+        elif child.type in ["pointer_declarator", "reference_declarator"]:
+            # Recursively search inside declarators for function_declarator
+            for grandchild in child.children:
+                if grandchild.type == "function_declarator":
+                    return extract_cpp_function_name(grandchild)
     return None
 
 
