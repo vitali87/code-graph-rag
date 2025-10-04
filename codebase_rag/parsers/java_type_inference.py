@@ -45,6 +45,71 @@ class JavaTypeInferenceEngine:
         self._lookup_cache: dict[str, str | None] = {}
         self._lookup_in_progress: set[str] = set()
 
+        # Pre-build reverse lookup map: Java FQN -> internal module QN
+        # This avoids O(modules × functions) nested loop during lookups
+        self._fqn_to_module_qn: dict[str, str] = self._build_fqn_lookup_map()
+
+    def _build_fqn_lookup_map(self) -> dict[str, str]:
+        """
+        Build a reverse lookup map from Java FQN to internal module QN.
+
+        This pre-processing step converts the nested loop O(modules × functions)
+        lookup into a O(1) dictionary lookup.
+
+        Example:
+            "com.example.utils.Helper" -> "project.src.main.java.com.example.utils.Helper"
+        """
+        fqn_map: dict[str, str] = {}
+
+        for module_qn in self.module_qn_to_file_path.keys():
+            # Extract the package-qualified class name from the module QN
+            # e.g., module_qn = "project.src.main.java.com.example.utils.Helper"
+            #       class_qn = "com.example.utils.Helper"
+            parts = module_qn.split(".")
+
+            # Find where the Java package structure starts
+            # Standard: after src/main/java or src/test/java
+            # Non-standard: after src (when no main/test/java folders exist)
+            package_start_idx = None
+            for i, part in enumerate(parts):
+                if part in ("java", "kotlin", "scala") and i > 0:
+                    package_start_idx = i + 1
+                    break
+                # Handle non-standard structure: after src (no main/test/java folders)
+                elif part == "src" and i + 1 < len(parts):
+                    # Check if next part is java/kotlin/scala (standard)
+                    if parts[i + 1] not in ("java", "kotlin", "scala", "main", "test"):
+                        # Package starts right after src
+                        package_start_idx = i + 1
+                        break
+                    # Check if it's src/main or src/test without java folder
+                    elif i + 2 < len(parts) and parts[i + 1] in ("main", "test"):
+                        # Check if there's NO java/kotlin/scala after main/test
+                        if parts[i + 2] not in ("java", "kotlin", "scala"):
+                            # Package starts at main/test (include it in the package)
+                            package_start_idx = i + 1
+                            break
+
+            if package_start_idx:
+                # Everything after the package start is the package-qualified class name
+                simple_class_name = ".".join(parts[package_start_idx:])
+                if simple_class_name:  # Skip empty names
+                    # Store the full FQN
+                    fqn_map[simple_class_name] = module_qn
+
+                    # Also store all suffix variations for partial lookups
+                    # e.g., for "main.SceneController.SceneHandler":
+                    #   - "SceneController.SceneHandler"
+                    #   - "SceneHandler"
+                    class_parts = simple_class_name.split(".")
+                    for j in range(1, len(class_parts)):
+                        suffix = ".".join(class_parts[j:])
+                        # Only add if not already present (first match wins)
+                        if suffix not in fqn_map:
+                            fqn_map[suffix] = module_qn
+
+        return fqn_map
+
     def build_java_variable_type_map(
         self, scope_node: Node, module_qn: str
     ) -> dict[str, str]:
@@ -866,23 +931,20 @@ class JavaTypeInferenceEngine:
                     return method_type, qn
 
         # If exact match failed and class_qn looks like a Java package-qualified name,
-        # find the module that contains this class and search using that module_qn
+        # use the pre-built FQN lookup map for O(1) resolution
         if "." in class_qn and not class_qn.startswith(self.project_name):
             simple_class_name = class_qn.split(".")[-1]
-            # Look for a module that matches this package structure
-            for module_qn in self.module_qn_to_file_path.keys():
-                # Check if this module ends with the package-qualified class name
-                # e.g., module_qn = "project.src.main.java.com.example.utils.Helper"
-                # class_qn = "com.example.utils.Helper"
-                if module_qn.endswith(f".{class_qn}"):
-                    # Build the registry key for this class
-                    registry_class_qn = f"{module_qn}.{simple_class_name}"
-                    # Search for the method
-                    for qn, method_type in self.function_registry.items():
-                        if qn.startswith(f"{registry_class_qn}.{method_name}"):
-                            remaining = qn[len(f"{registry_class_qn}.{method_name}") :]
-                            if remaining == "" or remaining.startswith("("):
-                                return method_type, qn
+            # Use the optimized lookup map instead of nested loop
+            module_qn = self._fqn_to_module_qn.get(class_qn)
+            if module_qn:
+                # Build the registry key for this class
+                registry_class_qn = f"{module_qn}.{simple_class_name}"
+                # Search for the method
+                for qn, method_type in self.function_registry.items():
+                    if qn.startswith(f"{registry_class_qn}.{method_name}"):
+                        remaining = qn[len(f"{registry_class_qn}.{method_name}") :]
+                        if remaining == "" or remaining.startswith("("):
+                            return method_type, qn
 
         return None
 
