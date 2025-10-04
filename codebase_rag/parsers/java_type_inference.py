@@ -636,11 +636,10 @@ class JavaTypeInferenceEngine:
 
         # If type_name is already a fully qualified name (contains '.'), return it directly
         # This prevents trying to look up already-qualified names in import_map
-        # Exception: java.lang types might need special handling (already handled below)
         if "." in type_name:
-            # Check if it's not a java.lang type that needs normalization
-            if not (type_name.startswith("java.lang.") and type_name.count(".") == 2):
-                return type_name
+            # All fully qualified types can be returned as-is
+            # (Simple java.lang types like "String" will be normalized below)
+            return type_name
 
         # Handle primitive types
         if type_name in [
