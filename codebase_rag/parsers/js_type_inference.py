@@ -6,6 +6,13 @@ from loguru import logger
 from tree_sitter import Node
 
 from .import_processor import ImportProcessor
+from .js_utils import (
+    analyze_js_return_expression,
+    extract_js_constructor_name,
+    extract_js_method_call,
+    find_js_method_in_ast,
+    find_js_return_statements,
+)
 
 if TYPE_CHECKING:
     pass
@@ -87,14 +94,11 @@ class JsTypeInferenceEngine:
         # Look for patterns like: const animal = new Animal(...)
         if value_node.type == "new_expression":
             # Extract the constructor name
-            constructor_node = value_node.child_by_field_name("constructor")
-            if constructor_node and constructor_node.type == "identifier":
-                constructor_name = constructor_node.text
-                if constructor_name:
-                    class_name = str(constructor_node.text.decode("utf8"))
-                    # Resolve to fully qualified name
-                    class_qn = self._resolve_js_class_name(class_name, module_qn)
-                    return class_qn if class_qn else class_name
+            class_name = extract_js_constructor_name(value_node)
+            if class_name:
+                # Resolve to fully qualified name
+                class_qn = self._resolve_js_class_name(class_name, module_qn)
+                return class_qn if class_qn else class_name
 
         # Look for patterns like: const storage = Storage.getInstance()
         elif value_node.type == "call_expression":
@@ -106,7 +110,7 @@ class JsTypeInferenceEngine:
             # Handle method calls like Storage.getInstance()
             if func_node and func_node.type == "member_expression":
                 # Extract the full method call text
-                method_call_text = self._extract_js_method_call(func_node)
+                method_call_text = extract_js_method_call(func_node)
                 logger.debug(f"Extracted method call: {method_call_text}")
                 if method_call_text:
                     # Try to infer the return type of the method
@@ -133,26 +137,6 @@ class JsTypeInferenceEngine:
         logger.debug(
             f"No type inference pattern matched for value node type: {value_node.type}"
         )
-        return None
-
-    def _extract_js_method_call(self, member_expr_node: Node) -> str | None:
-        """Extract method call text from JavaScript member expression like Storage.getInstance."""
-        try:
-            # member_expression has 'object' and 'property' fields
-            object_node = member_expr_node.child_by_field_name("object")
-            property_node = member_expr_node.child_by_field_name("property")
-
-            if object_node and property_node:
-                object_text = object_node.text
-                property_text = property_node.text
-
-                if object_text and property_text:
-                    object_name = object_text.decode("utf8")
-                    property_name = property_text.decode("utf8")
-                    return f"{object_name}.{property_name}"
-        except Exception as e:
-            logger.debug(f"Error extracting JS method call: {e}")
-
         return None
 
     def _infer_js_method_return_type(
@@ -242,7 +226,7 @@ class JsTypeInferenceEngine:
         """Analyze JavaScript return statements to infer return type."""
         # Find all return statements
         return_nodes: list[Node] = []
-        self._find_js_return_statements(method_node, return_nodes)
+        find_js_return_statements(method_node, return_nodes)
 
         for return_node in return_nodes:
             # Get the returned expression (skip "return" keyword)
@@ -251,72 +235,9 @@ class JsTypeInferenceEngine:
                     continue
 
                 # Analyze what's being returned
-                inferred_type = self._analyze_js_return_expression(child, method_qn)
+                inferred_type = analyze_js_return_expression(child, method_qn)
                 if inferred_type:
                     return inferred_type
-
-        return None
-
-    def _find_js_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
-        """Find all return statements in a JavaScript function.
-
-        Uses iterative stack-based traversal to prevent RecursionError
-        for deeply nested code.
-        """
-        stack: list[Node] = [node]
-
-        while stack:
-            current = stack.pop()
-
-            if current.type == "return_statement":
-                return_nodes.append(current)
-
-            # Process children in reverse order to maintain traversal order
-            stack.extend(reversed(current.children))
-
-    def _analyze_js_return_expression(
-        self, expr_node: Node, method_qn: str
-    ) -> str | None:
-        """Analyze a JavaScript return expression to infer its type."""
-        # Handle: return new Storage()
-        if expr_node.type == "new_expression":
-            constructor_node = expr_node.child_by_field_name("constructor")
-            if constructor_node and constructor_node.type == "identifier":
-                constructor_text = constructor_node.text
-                if constructor_text:
-                    class_name: str = constructor_text.decode("utf8")
-                    # Return the full class QN from method QN
-                    # For JS: "project.storage.Storage.Storage.getInstance" -> "project.storage.Storage.Storage"
-                    qn_parts = method_qn.split(".")
-                    if len(qn_parts) >= 2:
-                        return ".".join(qn_parts[:-1])  # Everything except method name
-                    return class_name
-
-        # Handle: return this
-        elif expr_node.type == "this":
-            # Return the full class QN from method QN
-            qn_parts = method_qn.split(".")
-            if len(qn_parts) >= 2:
-                return ".".join(qn_parts[:-1])  # Everything except method name
-
-        # Handle: return Storage.instance or return this.instance
-        elif expr_node.type == "member_expression":
-            object_node = expr_node.child_by_field_name("object")
-            if object_node:
-                if object_node.type == "this":
-                    # return this.instance -> return the class type
-                    qn_parts = method_qn.split(".")
-                    if len(qn_parts) >= 2:
-                        return ".".join(qn_parts[:-1])
-                elif object_node.type == "identifier":
-                    object_text = object_node.text
-                    if object_text:
-                        object_name = object_text.decode("utf8")
-                        # Handle: return Storage.instance in static method
-                        # Assume it returns the class type
-                        qn_parts = method_qn.split(".")
-                        if len(qn_parts) >= 2 and object_name == qn_parts[-2]:
-                            return ".".join(qn_parts[:-1])
 
         return None
 
@@ -324,40 +245,4 @@ class JsTypeInferenceEngine:
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:
         """Find a specific method within a JavaScript/TypeScript class in the AST."""
-        # Use stack-based traversal to find the class
-        stack: list[Node] = [root_node]
-
-        while stack:
-            current = stack.pop()
-
-            # Look for class declaration
-            if current.type == "class_declaration":
-                name_node = current.child_by_field_name("name")
-                if name_node and name_node.text:
-                    found_class_name = name_node.text.decode("utf8")
-                    if found_class_name == class_name:
-                        # Found the class, now find the method
-                        body_node = current.child_by_field_name("body")
-                        if body_node:
-                            return self._find_js_method_in_class_body(
-                                body_node, method_name
-                            )
-
-            stack.extend(reversed(current.children))
-
-        return None
-
-    def _find_js_method_in_class_body(
-        self, class_body_node: Node, method_name: str
-    ) -> Node | None:
-        """Find a method by name within a JavaScript class body."""
-        for child in class_body_node.children:
-            # Look for method_definition nodes
-            if child.type == "method_definition":
-                name_node = child.child_by_field_name("name")
-                if name_node and name_node.text:
-                    found_name = name_node.text.decode("utf8")
-                    if found_name == method_name:
-                        return child
-
-        return None
+        return find_js_method_in_ast(root_node, class_name, method_name)
