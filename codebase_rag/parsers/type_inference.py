@@ -1207,7 +1207,7 @@ class TypeInferenceEngine:
             if current.type == "return_statement":
                 return_nodes.append(current)
 
-            stack.extend(current.children)
+            stack.extend(reversed(current.children))
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
         """Analyze a return expression to infer its type."""
