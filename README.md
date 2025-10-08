@@ -257,6 +257,54 @@ Start the interactive RAG CLI:
 python -m codebase_rag.main start --repo-path /path/to/your/repo
 ```
 
+### Step 2.5: Real-Time Graph Updates (Optional)
+
+For active development, you can keep your knowledge graph automatically synchronized with code changes using the realtime updater. This is particularly useful when you're actively modifying code and want the AI assistant to always work with the latest codebase structure.
+
+**What it does:**
+- Watches your repository for file changes (create, modify, delete)
+- Automatically updates the knowledge graph in real-time
+- Maintains consistency by recalculating all function call relationships
+- Filters out irrelevant files (`.git`, `node_modules`, etc.)
+
+**How to use:**
+
+Run the realtime updater in a separate terminal:
+
+```bash
+# Using Python directly
+python realtime_updater.py /path/to/your/repo
+
+# Or using the Makefile
+make watch REPO_PATH=/path/to/your/repo
+```
+
+**With custom Memgraph settings:**
+```bash
+# Python
+python realtime_updater.py /path/to/your/repo --host localhost --port 7687 --batch-size 1000
+
+# Makefile
+make watch REPO_PATH=/path/to/your/repo HOST=localhost PORT=7687 BATCH_SIZE=1000
+```
+
+**Multi-terminal workflow:**
+```bash
+# Terminal 1: Start the realtime updater
+python realtime_updater.py ~/my-project
+
+# Terminal 2: Run the AI assistant
+python -m codebase_rag.main start --repo-path ~/my-project
+```
+
+**Performance note:** The updater recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes.
+
+**CLI Arguments:**
+- `repo_path` (required): Path to repository to watch
+- `--host`: Memgraph host (default: `localhost`)
+- `--port`: Memgraph port (default: `7687`)
+- `--batch-size`: Number of buffered nodes/relationships before flushing to Memgraph
+
 **Specify Custom Models:**
 ```bash
 # Use specific local models

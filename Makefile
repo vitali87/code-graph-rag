@@ -29,3 +29,13 @@ clean: ## Clean up build artifacts and cache
 build-grammars: ## Build grammar submodules
 	git submodule update --init --recursive --depth 1
 	@echo "Grammars built!"
+
+watch: ## Watch repository for changes and update graph in real-time
+	@if [ -z "$(REPO_PATH)" ]; then \
+		echo "Error: REPO_PATH is required. Usage: make watch REPO_PATH=/path/to/repo"; \
+		exit 1; \
+	fi
+	.venv/bin/python realtime_updater.py $(REPO_PATH) \
+		--host $(or $(HOST),localhost) \
+		--port $(or $(PORT),7687) \
+		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),)
