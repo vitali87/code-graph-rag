@@ -297,7 +297,7 @@ python realtime_updater.py ~/my-project
 python -m codebase_rag.main start --repo-path ~/my-project
 ```
 
-**Performance note:** The updater recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes.
+**Performance note:** The updater currently recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. **Note:** Optimization of this behavior is a work in progress.
 
 **CLI Arguments:**
 - `repo_path` (required): Path to repository to watch
@@ -341,7 +341,7 @@ Example queries (works across all supported languages):
 - "Add error handling to authentication methods"
 - "Optimize this function for better performance"
 
-### Step 3: Export Graph Data (New!)
+### Step 3: Export Graph Data
 
 For programmatic access and integration with other tools, you can export the entire knowledge graph to JSON:
 
@@ -393,7 +393,7 @@ This provides a reliable, programmatic way to access your codebase structure wit
 - Building documentation generators
 - Creating code metrics dashboards
 
-### Step 4: Code Optimization (New!)
+### Step 4: Code Optimization
 
 For AI-powered codebase optimization with best practices guidance:
 
