@@ -65,6 +65,8 @@ def build_binary() -> bool:
         "loguru",
         "--collect-all",
         "toml",
+        "--collect-all",
+        "protobuf",
         # Entry point
         "main.py",
     ]
