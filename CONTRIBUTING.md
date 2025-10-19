@@ -108,6 +108,9 @@ make dev
 # Run all tests
 make test
 
+# Run tests in parallel for faster execution
+make test-parallel
+
 # Clean up build artifacts and cache
 make clean
 

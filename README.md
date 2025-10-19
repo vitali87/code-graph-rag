@@ -34,6 +34,7 @@ Use the Makefile for:
 - **make python**: Install dependencies for Python only.
 - **make dev**: Setup dev environment (install deps + pre-commit hooks).
 - **make test**: Run all tests.
+- **make test-parallel**: Run tests in parallel for faster execution.
 - **make clean**: Clean up build artifacts and cache.
 - **make help**: Show available commands.
 
