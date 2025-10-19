@@ -1,10 +1,3 @@
-"""
-Refactored GraphUpdater with modular architecture.
-
-This is the new modular version that maintains all functionality while
-splitting the monolithic class into logical components.
-"""
-
 import sys
 from collections import OrderedDict, defaultdict
 from collections.abc import ItemsView, KeysView
