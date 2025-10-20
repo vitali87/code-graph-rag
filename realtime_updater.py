@@ -2,7 +2,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 from watchdog.events import FileSystemEventHandler
@@ -47,7 +47,8 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # --- Step 1: Delete all old data from the graph for this file ---
         # This provides a clean slate for the updated information.
         delete_query = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
-        self.updater.ingestor.execute_write(delete_query, {"path": relative_path_str})
+        ingestor = cast(MemgraphIngestor, self.updater.ingestor)
+        ingestor.execute_write(delete_query, {"path": relative_path_str})
         logger.debug(f"Ran deletion query for path: {relative_path_str}")
 
         # --- Step 2: Clear the specific in-memory state for the file ---
@@ -73,7 +74,8 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # This is the key to fixing the "island" problem. It ensures that changes
         # in one file are correctly reflected in relationships from all other files.
         logger.info("Recalculating all function call relationships for consistency...")
-        self.updater.ingestor.execute_write("MATCH ()-[r:CALLS]->() DELETE r")
+        ingestor = cast(MemgraphIngestor, self.updater.ingestor)
+        ingestor.execute_write("MATCH ()-[r:CALLS]->() DELETE r")
         self.updater._process_function_calls()
 
         # --- Step 5: Flush all collected changes to the database ---

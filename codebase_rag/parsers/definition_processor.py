@@ -13,7 +13,7 @@ from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
 from ..language_config import LanguageConfig
-from ..services.graph_service import MemgraphIngestor
+from ..services import IngestorProtocol
 
 # No longer need constants import - using Tree-sitter directly
 from .cpp_utils import (
@@ -38,7 +38,7 @@ class DefinitionProcessor:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
         function_registry: Any,

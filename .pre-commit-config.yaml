@@ -1,6 +1,6 @@
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
     -   id: trailing-whitespace
     -   id: end-of-file-fixer
@@ -11,12 +11,19 @@ repos:
     hooks:
     -   id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        exclude: ^codec/schema_pb2\.(py|pyi)$
     -   id: ruff-format
+        exclude: ^codec/schema_pb2\.(py|pyi)$
 -   repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.16.1
     hooks:
     -   id: mypy
-        additional_dependencies: [types-toml]
+        files: \.py$
+        exclude: ^codec/.*_pb2\.py$
+        additional_dependencies: [
+            types-toml,
+            "types-protobuf>=5.0.0",
+            ]
 -   repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.2.0
     hooks:
