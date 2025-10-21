@@ -3,6 +3,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import ItemsView, KeysView
 from pathlib import Path
 from typing import Any
+import importlib.util
 
 from loguru import logger
 from tree_sitter import Node, Parser
@@ -340,6 +341,9 @@ class GraphUpdater:
 
         logger.info("\n--- Analysis complete. Flushing all data to database... ---")
         self.ingestor.flush_all()
+        
+        # Generate embeddings for functions and methods if semantic deps available
+        self._generate_semantic_embeddings()
 
     def remove_file_from_state(self, file_path: Path) -> None:
         """Removes all state associated with a file from the updater's memory."""
@@ -435,3 +439,124 @@ class GraphUpdater:
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )
+    
+    def _generate_semantic_embeddings(self) -> None:
+        """Generate and store semantic embeddings for functions and methods."""
+        _HAS_SEMANTIC = (
+            importlib.util.find_spec("qdrant_client") is not None and
+            importlib.util.find_spec("torch") is not None and
+            importlib.util.find_spec("transformers") is not None
+        )
+        
+        if not _HAS_SEMANTIC:
+            logger.info("Semantic search dependencies not available, skipping embedding generation")
+            return
+            
+        try:
+            from .embedder import embed_code
+            from .vector_store import store_embedding
+            
+            logger.info("--- Pass 4: Generating semantic embeddings ---")
+            
+            # Query database for all Function and Method nodes with their source info
+            query = """
+            MATCH (m:Module)-[:DEFINES]->(n)
+            WHERE n:Function OR n:Method
+            RETURN id(n) AS node_id, n.qualified_name AS qualified_name, 
+                   n.start_line AS start_line, n.end_line AS end_line, 
+                   m.path AS path
+            ORDER BY n.qualified_name
+            """
+            
+            results = self.ingestor._execute_query(query)
+            
+            if not results:
+                logger.info("No functions or methods found for embedding generation")
+                return
+                
+            logger.info(f"Generating embeddings for {len(results)} functions/methods")
+            
+            embedded_count = 0
+            for result in results:
+                node_id = result["node_id"]
+                qualified_name = result["qualified_name"]
+                start_line = result.get("start_line")
+                end_line = result.get("end_line")
+                file_path = result.get("path")
+                
+                # Try to extract source code from cached AST or file
+                source_code = self._extract_source_code(
+                    qualified_name, file_path, start_line, end_line
+                )
+                
+                if source_code:
+                    try:
+                        embedding = embed_code(source_code)
+                        store_embedding(node_id, embedding, qualified_name)
+                        embedded_count += 1
+                        
+                        if embedded_count % 10 == 0:
+                            logger.debug(f"Generated {embedded_count}/{len(results)} embeddings")
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to embed {qualified_name}: {e}")
+                else:
+                    logger.debug(f"No source code found for {qualified_name}")
+                    
+            logger.info(f"Successfully generated {embedded_count} semantic embeddings")
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate semantic embeddings: {e}")
+    
+    def _extract_source_code(self, qualified_name: str, file_path: str, start_line: int, end_line: int) -> str | None:
+        """Extract source code for a function/method from cached AST or file."""
+        if not file_path or not start_line or not end_line:
+            return None
+            
+        try:
+            # First try to find the node in cached AST for precise extraction
+            file_path_obj = Path(file_path)
+            if file_path_obj in self.ast_cache:
+                root_node, language = self.ast_cache[file_path_obj]
+                source_code = self._find_function_source_in_ast(root_node, qualified_name)
+                if source_code:
+                    return source_code
+            
+            # Fallback: extract by line numbers from file
+            if file_path_obj.exists():
+                with open(file_path_obj, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    if start_line <= len(lines) and end_line <= len(lines):
+                        # Convert to 0-based indexing
+                        function_lines = lines[start_line-1:end_line]
+                        return ''.join(function_lines).strip()
+                        
+        except Exception as e:
+            logger.debug(f"Failed to extract source for {qualified_name}: {e}")
+            
+        return None
+    
+    def _find_function_source_in_ast(self, root_node: Node, qualified_name: str) -> str | None:
+        """Find function/method source code in AST by qualified name."""
+        # Simple implementation: traverse all function/method nodes and match by name
+        def traverse_for_functions(node: Node) -> str | None:
+            # Check if this is a function or method node
+            if node.type in ["function_definition", "method_definition", "function_declaration", 
+                           "arrow_function", "function_expression", "method_definition"]:
+                # Try to extract the function text
+                if node.text:
+                    source = node.text.decode('utf-8')
+                    # Basic heuristic: if qualified name parts appear in source, it's likely a match
+                    name_parts = qualified_name.split('.')
+                    if any(part in source for part in name_parts[-2:]):  # Check last 2 parts
+                        return source
+            
+            # Recursively check children
+            for child in node.children:
+                result = traverse_for_functions(child)
+                if result:
+                    return result
+                    
+            return None
+            
+        return traverse_for_functions(root_node)
