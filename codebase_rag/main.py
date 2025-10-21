@@ -39,6 +39,7 @@ from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
 from .tools.shell_command import ShellCommander, create_shell_command_tool
+from .tools.semantic_search import create_semantic_search_tool, create_get_function_source_tool
 
 # Style constants
 confirm_edits_globally = True
@@ -750,6 +751,8 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     shell_command_tool = create_shell_command_tool(shell_commander)
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
+    semantic_search_tool = create_semantic_search_tool()
+    function_source_tool = create_get_function_source_tool()
 
     rag_agent = create_rag_orchestrator(
         tools=[
@@ -761,6 +764,8 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
             shell_command_tool,
             directory_lister_tool,
             document_analyzer_tool,
+            semantic_search_tool,
+            function_source_tool,
         ]
     )
     return rag_agent
