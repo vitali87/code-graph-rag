@@ -14,7 +14,7 @@ class UniXcoder(nn.Module):
 
             * `model_name`- huggingface model card name. e.g. microsoft/unixcoder-base
         """        
-        super(UniXcoder, self).__init__()
+        super().__init__()
         self.tokenizer = RobertaTokenizer.from_pretrained(model_name)
         self.config = RobertaConfig.from_pretrained(model_name)
         self.config.is_decoder = True
