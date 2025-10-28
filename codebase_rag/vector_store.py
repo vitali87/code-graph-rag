@@ -1,11 +1,9 @@
 # codebase_rag/vector_store.py
-import importlib.util
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from loguru import logger
+from .utils.dependencies import has_qdrant_client
 
-_HAS_QDRANT = importlib.util.find_spec("qdrant_client") is not None
-
-if _HAS_QDRANT:
+if has_qdrant_client():
     from qdrant_client import QdrantClient
     from qdrant_client.models import PointStruct, VectorParams, Distance
 
@@ -45,7 +43,7 @@ if _HAS_QDRANT:
         except Exception as e:
             logger.warning(f"Failed to store embedding for {qualified_name}: {e}")
 
-    def search_embeddings(query_embedding: List[float], top_k: int = 5) -> List[int]:
+    def search_embeddings(query_embedding: List[float], top_k: int = 5) -> List[Tuple[int, float]]:
         """Search for similar code embeddings.
         
         Args:
@@ -53,7 +51,7 @@ if _HAS_QDRANT:
             top_k: Number of results to return
             
         Returns:
-            List of Memgraph node IDs
+            List of (node_id, similarity_score) tuples ordered by relevance
         """
         try:
             client = get_qdrant_client()
@@ -62,7 +60,7 @@ if _HAS_QDRANT:
                 query_vector=query_embedding,
                 limit=top_k
             )
-            return [hit.payload["node_id"] for hit in hits]
+            return [(hit.payload["node_id"], hit.score) for hit in hits]
         except Exception as e:
             logger.warning(f"Failed to search embeddings: {e}")
             return []
@@ -72,6 +70,6 @@ else:
         """No-op when Qdrant not available."""
         pass
 
-    def search_embeddings(query_embedding: List[float], top_k: int = 5) -> List[int]:
+    def search_embeddings(query_embedding: List[float], top_k: int = 5) -> List[Tuple[int, float]]:
         """Return empty list when Qdrant not available."""
         return []

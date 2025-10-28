@@ -36,12 +36,15 @@ def semantic_code_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         # Generate embedding for the query
         query_embedding = embed_code(query)
         
-        # Search for similar embeddings
-        node_ids = search_embeddings(query_embedding, top_k=top_k)
+        # Search for similar embeddings - returns (node_id, score) tuples
+        search_results = search_embeddings(query_embedding, top_k=top_k)
         
-        if not node_ids:
+        if not search_results:
             logger.info(f"No semantic matches found for query: {query}")
             return []
+        
+        # Extract node_ids for database query
+        node_ids = [node_id for node_id, _ in search_results]
         
         # Get node details from Memgraph
         with MemgraphIngestor(
@@ -62,23 +65,21 @@ def semantic_code_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
             params = {str(i): node_id for i, node_id in enumerate(node_ids)}
             results = ingestor._execute_query(cypher_query, params)
             
-            # Format results and preserve search order
+            # Create O(1) lookup map for graph results
+            results_map = {res["node_id"]: res for res in results}
+            
+            # Format results and preserve search order with real similarity scores
             formatted_results = []
-            for node_id in node_ids:  # Preserve order from vector search
-                for result in results:
-                    if result["node_id"] == node_id:
-                        # Calculate approximate score based on position
-                        position = node_ids.index(node_id)
-                        score = 1.0 - (position / len(node_ids))
-                        
-                        formatted_results.append({
-                            "node_id": node_id,
-                            "qualified_name": result["qualified_name"],
-                            "name": result["name"],
-                            "type": result["type"][0] if result["type"] else "Unknown",
-                            "score": round(score, 3)
-                        })
-                        break
+            for node_id, score in search_results:  # Preserve order from vector search
+                if node_id in results_map:
+                    result = results_map[node_id]
+                    formatted_results.append({
+                        "node_id": node_id,
+                        "qualified_name": result["qualified_name"],
+                        "name": result["name"],
+                        "type": result["type"][0] if result["type"] else "Unknown",
+                        "score": round(score, 3)  # Use real similarity score from Qdrant
+                    })
             
             logger.info(f"Found {len(formatted_results)} semantic matches for: {query}")
             return formatted_results
