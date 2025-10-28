@@ -9,9 +9,10 @@ from loguru import logger
 from tree_sitter import Node, Parser
 
 from .config import IGNORE_PATTERNS
-from .language_config import get_language_config
+from .language_config import get_language_config, LANGUAGE_FQN_CONFIGS
 from .parsers.factory import ProcessorFactory
 from .services.graph_service import MemgraphIngestor
+from .utils.fqn_resolver import find_function_source_by_fqn
 
 
 class FunctionRegistryTrie:
@@ -512,51 +513,37 @@ class GraphUpdater:
         """Extract source code for a function/method from cached AST or file."""
         if not file_path or not start_line or not end_line:
             return None
+
+        file_path_obj = Path(file_path)
+        
+        # Try AST-based FQN resolution first
+        if file_path_obj in self.ast_cache:
+            root_node, language = self.ast_cache[file_path_obj]
             
-        try:
-            # First try to find the node in cached AST for precise extraction
-            file_path_obj = Path(file_path)
-            if file_path_obj in self.ast_cache:
-                root_node, language = self.ast_cache[file_path_obj]
-                source_code = self._find_function_source_in_ast(root_node, qualified_name)
-                if source_code:
-                    return source_code
+            # Get FQN config for this language
+            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
             
-            # Fallback: extract by line numbers from file
-            if file_path_obj.exists():
+            if fqn_config:
+                source = find_function_source_by_fqn(
+                    root_node,
+                    qualified_name,
+                    file_path_obj,
+                    self.repo_path,
+                    self.project_name,
+                    fqn_config,
+                )
+                if source:
+                    return source
+
+        # Fallback: line-based extraction
+        if file_path_obj.exists():
+            try:
                 with open(file_path_obj, 'r', encoding='utf-8') as f:
                     lines = f.readlines()
-                    if start_line <= len(lines) and end_line <= len(lines):
-                        # Convert to 0-based indexing
-                        function_lines = lines[start_line-1:end_line]
-                        return ''.join(function_lines).strip()
-                        
-        except Exception as e:
-            logger.debug(f"Failed to extract source for {qualified_name}: {e}")
-            
+                    if 1 <= start_line <= len(lines) and 1 <= end_line <= len(lines):
+                        return ''.join(lines[start_line-1:end_line]).strip()
+            except Exception as e:
+                logger.debug(f"Line-based fallback failed for {qualified_name}: {e}")
+        
         return None
     
-    def _find_function_source_in_ast(self, root_node: Node, qualified_name: str) -> str | None:
-        """Find function/method source code in AST by qualified name."""
-        # Simple implementation: traverse all function/method nodes and match by name
-        def traverse_for_functions(node: Node) -> str | None:
-            # Check if this is a function or method node
-            if node.type in ["function_definition", "method_definition", "function_declaration", 
-                           "arrow_function", "function_expression", "method_definition"]:
-                # Try to extract the function text
-                if node.text:
-                    source = node.text.decode('utf-8')
-                    # Basic heuristic: if qualified name parts appear in source, it's likely a match
-                    name_parts = qualified_name.split('.')
-                    if any(part in source for part in name_parts[-2:]):  # Check last 2 parts
-                        return source
-            
-            # Recursively check children
-            for child in node.children:
-                result = traverse_for_functions(child)
-                if result:
-                    return result
-                    
-            return None
-            
-        return traverse_for_functions(root_node)

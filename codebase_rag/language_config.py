@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    pass
+    from tree_sitter import Node
 
 
 # Shared node type constants to eliminate duplication
@@ -31,6 +32,86 @@ CPP_IMPORTS = [
     "template_function",
     "declaration",
 ]  # #include, import <>, module declarations
+
+
+@dataclass
+class FQNConfig:
+    """Configuration for language-specific FQN resolution."""
+    # Node types that create a new scope (e.g., class, namespace)
+    scope_node_types: set[str]
+    # Node types that represent a function/method
+    function_node_types: set[str]
+    # Function to extract name from a node (e.g., child_by_field_name("name"))
+    get_name: Callable[["Node"], str | None]
+    # Function to convert file path → module parts (e.g., strip .py, handle __init__)
+    file_to_module_parts: Callable[[Path, Path], list[str]]  # (file_path, repo_root)
+
+
+def _python_get_name(node: "Node") -> str | None:
+    """Extract name from Python AST node."""
+    name_node = node.child_by_field_name("name")
+    return name_node.text.decode("utf-8") if name_node else None
+
+
+def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    """Convert Python file path to module parts."""
+    try:
+        rel = file_path.relative_to(repo_root)
+        parts = list(rel.with_suffix("").parts)
+        if parts and parts[-1] == "__init__":
+            parts = parts[:-1]
+        return parts
+    except Exception:
+        return []
+
+
+def _js_get_name(node: "Node") -> str | None:
+    """Extract name from JavaScript/TypeScript AST node."""
+    if node.type in ("function_declaration", "class_declaration", "method_definition"):
+        name_node = node.child_by_field_name("name")
+        return name_node.text.decode("utf-8") if name_node else None
+    return None
+
+
+def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    """Convert JavaScript/TypeScript file path to module parts."""
+    try:
+        rel = file_path.relative_to(repo_root)
+        parts = list(rel.with_suffix("").parts)
+        # Handle index files
+        if parts and parts[-1] == "index":
+            parts = parts[:-1]
+        return parts
+    except Exception:
+        return []
+
+
+PYTHON_FQN_CONFIG = FQNConfig(
+    scope_node_types={"class_definition", "module"},
+    function_node_types={"function_definition"},
+    get_name=_python_get_name,
+    file_to_module_parts=_python_file_to_module,
+)
+
+JAVASCRIPT_FQN_CONFIG = FQNConfig(
+    scope_node_types={"class_declaration", "program"},
+    function_node_types={"function_declaration", "method_definition", "arrow_function", "function_expression"},
+    get_name=_js_get_name,
+    file_to_module_parts=_js_file_to_module,
+)
+
+TYPESCRIPT_FQN_CONFIG = FQNConfig(
+    scope_node_types={"class_declaration", "interface_declaration", "namespace_definition", "program"},
+    function_node_types={"function_declaration", "method_definition", "arrow_function", "function_expression", "function_signature"},
+    get_name=_js_get_name,
+    file_to_module_parts=_js_file_to_module,
+)
+
+LANGUAGE_FQN_CONFIGS = {
+    "python": PYTHON_FQN_CONFIG,
+    "javascript": JAVASCRIPT_FQN_CONFIG,
+    "typescript": TYPESCRIPT_FQN_CONFIG,
+}
 
 
 def create_lang_config(**kwargs: Any) -> "LanguageConfig":
