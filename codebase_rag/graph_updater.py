@@ -13,6 +13,7 @@ from .parsers.factory import ProcessorFactory
 from .services.graph_service import MemgraphIngestor
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
+from .utils.source_extraction import extract_source_with_fallback
 
 
 class FunctionRegistryTrie:
@@ -510,34 +511,21 @@ class GraphUpdater:
 
         file_path_obj = Path(file_path)
         
-        # Try AST-based FQN resolution first
+        # Create AST extractor function if AST is available
+        ast_extractor = None
         if file_path_obj in self.ast_cache:
             root_node, language = self.ast_cache[file_path_obj]
-            
-            # Get FQN config for this language
             fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
             
             if fqn_config:
-                source = find_function_source_by_fqn(
-                    root_node,
-                    qualified_name,
-                    file_path_obj,
-                    self.repo_path,
-                    self.project_name,
-                    fqn_config,
-                )
-                if source:
-                    return source
+                def ast_extractor_func(qname: str, path: Path) -> str | None:
+                    return find_function_source_by_fqn(
+                        root_node, qname, path, self.repo_path, self.project_name, fqn_config
+                    )
+                ast_extractor = ast_extractor_func
 
-        # Fallback: line-based extraction
-        if file_path_obj.exists():
-            try:
-                with open(file_path_obj, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                    if 1 <= start_line <= len(lines) and 1 <= end_line <= len(lines):
-                        return ''.join(lines[start_line-1:end_line]).strip()
-            except Exception as e:
-                logger.debug(f"Line-based fallback failed for {qualified_name}: {e}")
-        
-        return None
+        # Use shared utility with AST-based extraction and line-based fallback
+        return extract_source_with_fallback(
+            file_path_obj, start_line, end_line, qualified_name, ast_extractor
+        )
     

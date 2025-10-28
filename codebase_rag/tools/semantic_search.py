@@ -102,7 +102,7 @@ def get_function_source_code(node_id: int) -> str | None:
     try:
         from ..services.graph_service import MemgraphIngestor
         from ..config import settings
-        from pathlib import Path
+        from ..utils.source_extraction import extract_source_lines, validate_source_location
         
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST, 
@@ -128,25 +128,13 @@ def get_function_source_code(node_id: int) -> str | None:
             start_line = result.get("start_line")
             end_line = result.get("end_line")
             
-            if not all([file_path, start_line, end_line]):
-                logger.warning(f"Missing source location info for node {node_id}")
+            # Validate and extract source code using shared utility
+            is_valid, file_path_obj = validate_source_location(file_path, start_line, end_line)
+            if not is_valid:
+                logger.warning(f"Missing or invalid source location info for node {node_id}")
                 return None
                 
-            # Extract source code from file
-            file_path_obj = Path(file_path)
-            if not file_path_obj.exists():
-                logger.warning(f"Source file not found: {file_path}")
-                return None
-                
-            with open(file_path_obj, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                if start_line <= len(lines) and end_line <= len(lines):
-                    # Convert to 0-based indexing
-                    function_lines = lines[start_line-1:end_line]
-                    return ''.join(function_lines).strip()
-                else:
-                    logger.warning(f"Invalid line range for {file_path}: {start_line}-{end_line}")
-                    return None
+            return extract_source_lines(file_path_obj, start_line, end_line)
                     
     except Exception as e:
         logger.error(f"Failed to get source code for node {node_id}: {e}")
