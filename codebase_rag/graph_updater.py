@@ -3,7 +3,6 @@ from collections import OrderedDict, defaultdict
 from collections.abc import ItemsView, KeysView
 from pathlib import Path
 from typing import Any
-import importlib.util
 
 from loguru import logger
 from tree_sitter import Node, Parser
@@ -12,6 +11,7 @@ from .config import IGNORE_PATTERNS
 from .language_config import get_language_config, LANGUAGE_FQN_CONFIGS
 from .parsers.factory import ProcessorFactory
 from .services.graph_service import MemgraphIngestor
+from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 
 
@@ -443,13 +443,7 @@ class GraphUpdater:
     
     def _generate_semantic_embeddings(self) -> None:
         """Generate and store semantic embeddings for functions and methods."""
-        _HAS_SEMANTIC = (
-            importlib.util.find_spec("qdrant_client") is not None and
-            importlib.util.find_spec("torch") is not None and
-            importlib.util.find_spec("transformers") is not None
-        )
-        
-        if not _HAS_SEMANTIC:
+        if not has_semantic_dependencies():
             logger.info("Semantic search dependencies not available, skipping embedding generation")
             return
             

@@ -1,8 +1,8 @@
 # codebase_rag/tools/semantic_search.py
 from typing import List, Dict, Any
 from loguru import logger
-import importlib.util
 from pydantic_ai import Tool
+from ..utils.dependencies import has_semantic_dependencies
 
 def semantic_code_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
@@ -23,13 +23,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
             }
         ]
     """
-    _HAS_SEMANTIC = (
-        importlib.util.find_spec("qdrant_client") is not None and
-        importlib.util.find_spec("torch") is not None and
-        importlib.util.find_spec("transformers") is not None
-    )
-    
-    if not _HAS_SEMANTIC:
+    if not has_semantic_dependencies():
         logger.warning("Semantic search requires 'semantic' extra: uv sync --extra semantic")
         return []
     

@@ -1,12 +1,8 @@
 # codebase_rag/embedder.py
-import importlib.util
 from typing import List
+from .utils.dependencies import has_torch, has_transformers
 
-# Lazy loading to avoid hard dependency
-_HAS_TORCH = importlib.util.find_spec("torch") is not None
-_HAS_TRANSFORMERS = importlib.util.find_spec("transformers") is not None
-
-if _HAS_TORCH and _HAS_TRANSFORMERS:
+if has_torch() and has_transformers():
     from .unixcoder import UniXcoder
     import torch
 
