@@ -1,4 +1,5 @@
 # codebase_rag/embedder.py
+import functools
 from typing import List
 from .utils.dependencies import has_torch, has_transformers
 
@@ -6,16 +7,24 @@ if has_torch() and has_transformers():
     from .unixcoder import UniXcoder
     import torch
 
-    _MODEL = None
-
+    @functools.lru_cache(maxsize=1)
     def get_model():
-        global _MODEL
-        if _MODEL is None:
-            _MODEL = UniXcoder("microsoft/unixcoder-base")
-            _MODEL.eval()
-            if torch.cuda.is_available():
-                _MODEL = _MODEL.cuda()
-        return _MODEL
+        """Get or create UniXcoder model instance with singleton pattern via LRU cache.
+        
+        This approach provides:
+        - Singleton behavior without global variables
+        - Thread-safe lazy initialization
+        - Easy testability with cache_clear() method
+        - Memory efficient with maxsize=1
+        
+        Returns:
+            UniXcoder model instance configured for inference
+        """
+        model = UniXcoder("microsoft/unixcoder-base")
+        model.eval()
+        if torch.cuda.is_available():
+            model = model.cuda()
+        return model
 
     def embed_code(code: str, max_length: int = 512) -> List[float]:
         """Generate code embedding using UniXcoder.
