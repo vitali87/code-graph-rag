@@ -1,5 +1,4 @@
 # codebase_rag/vector_store.py
-from typing import List, Optional, Tuple
 from loguru import logger
 from .utils.dependencies import has_qdrant_client
 
@@ -22,7 +21,7 @@ if has_qdrant_client():
                 )
         return _CLIENT
 
-    def store_embedding(node_id: int, embedding: List[float], qualified_name: str) -> None:
+    def store_embedding(node_id: int, embedding: list[float], qualified_name: str) -> None:
         """Store code embedding in Qdrant vector database.
         
         Args:
@@ -43,7 +42,7 @@ if has_qdrant_client():
         except Exception as e:
             logger.warning(f"Failed to store embedding for {qualified_name}: {e}")
 
-    def search_embeddings(query_embedding: List[float], top_k: int = 5) -> List[Tuple[int, float]]:
+    def search_embeddings(query_embedding: list[float], top_k: int = 5) -> list[tuple[int, float]]:
         """Search for similar code embeddings.
         
         Args:
@@ -66,10 +65,10 @@ if has_qdrant_client():
             return []
 
 else:
-    def store_embedding(node_id: int, embedding: List[float], qualified_name: str) -> None:
+    def store_embedding(node_id: int, embedding: list[float], qualified_name: str) -> None:
         """No-op when Qdrant not available."""
         pass
 
-    def search_embeddings(query_embedding: List[float], top_k: int = 5) -> List[Tuple[int, float]]:
+    def search_embeddings(query_embedding: list[float], top_k: int = 5) -> list[tuple[int, float]]:
         """Return empty list when Qdrant not available."""
         return []

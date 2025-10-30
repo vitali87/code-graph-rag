@@ -1,7 +1,7 @@
 """Shared utilities for extracting source code from files."""
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Optional
 
 from loguru import logger
 
@@ -11,7 +11,7 @@ def extract_source_lines(
     start_line: int, 
     end_line: int, 
     encoding: str = 'utf-8'
-) -> Optional[str]:
+) -> str | None:
     """Extract source code lines from a file.
     
     This utility function provides the common line-based source extraction
@@ -62,10 +62,10 @@ def extract_source_with_fallback(
     file_path: Path,
     start_line: int,
     end_line: int,
-    qualified_name: Optional[str] = None,
-    ast_extractor: Optional[callable] = None,
+    qualified_name: str | None = None,
+    ast_extractor: Callable | None = None,
     encoding: str = 'utf-8'
-) -> Optional[str]:
+) -> str | None:
     """Extract source code with AST-based extraction and line-based fallback.
     
     This function provides a pattern commonly used across the codebase:
@@ -97,10 +97,10 @@ def extract_source_with_fallback(
 
 
 def validate_source_location(
-    file_path: Optional[str], 
-    start_line: Optional[int], 
-    end_line: Optional[int]
-) -> tuple[bool, Optional[Path]]:
+    file_path: str | None, 
+    start_line: int | None, 
+    end_line: int | None
+) -> tuple[bool, Path | None]:
     """Validate source location parameters.
     
     Args:

@@ -1,10 +1,11 @@
 # codebase_rag/tools/semantic_search.py
-from typing import List, Dict, Any
+from typing import Any
+
 from loguru import logger
 from pydantic_ai import Tool
 from ..utils.dependencies import has_semantic_dependencies
 
-def semantic_code_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
     """
     Search for functions/methods by natural language intent using semantic embeddings.
     

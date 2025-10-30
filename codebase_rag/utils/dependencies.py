@@ -1,7 +1,6 @@
 """Centralized dependency checking utilities."""
 
 import importlib.util
-from typing import List
 
 # Cache dependency checks to avoid repeated module lookups
 _dependency_cache: dict[str, bool] = {}
@@ -38,7 +37,7 @@ def has_semantic_dependencies() -> bool:
     return has_qdrant_client() and has_torch() and has_transformers()
 
 
-def check_dependencies(required_modules: List[str]) -> bool:
+def check_dependencies(required_modules: list[str]) -> bool:
     """Check if all required modules are available.
     
     Args:
@@ -50,7 +49,7 @@ def check_dependencies(required_modules: List[str]) -> bool:
     return all(_check_dependency(module) for module in required_modules)
 
 
-def get_missing_dependencies(required_modules: List[str]) -> List[str]:
+def get_missing_dependencies(required_modules: list[str]) -> list[str]:
     """Get list of missing dependencies.
     
     Args:

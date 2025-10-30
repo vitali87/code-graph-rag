@@ -1,6 +1,5 @@
 # codebase_rag/embedder.py
 import functools
-from typing import List
 from .utils.dependencies import has_torch, has_transformers
 
 if has_torch() and has_transformers():
@@ -26,7 +25,7 @@ if has_torch() and has_transformers():
             model = model.cuda()
         return model
 
-    def embed_code(code: str, max_length: int = 512) -> List[float]:
+    def embed_code(code: str, max_length: int = 512) -> list[float]:
         """Generate code embedding using UniXcoder.
         
         Args:
@@ -47,7 +46,7 @@ if has_torch() and has_transformers():
         return embedding[0].tolist()  # (768,) list
 
 else:
-    def embed_code(code: str, max_length: int = 512) -> List[float]:
+    def embed_code(code: str, max_length: int = 512) -> list[float]:
         raise RuntimeError(
             "Semantic search requires 'semantic' extra: uv sync --extra semantic"
         )
