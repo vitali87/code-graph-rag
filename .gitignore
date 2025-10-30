@@ -14,3 +14,4 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 .claude/
+.qdrant_code_embeddings/
