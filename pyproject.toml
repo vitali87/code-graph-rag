@@ -50,8 +50,7 @@ treesitter-full = [
 
 semantic = [
     "qdrant-client>=1.9.0",
-    "torch>=2.0.0; platform_machine != 'arm64'",
-    "torch>=2.0.0,<2.5.0; platform_machine == 'arm64'",
+    "torch>=2.6.0",
     "transformers>=4.0.0",
 ]
 
