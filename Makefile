@@ -1,8 +1,20 @@
-.PHONY: help install dev test clean python
+.PHONY: help all install dev test clean python
 
 help: ## Show this help message
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+all: ## Install everything for full development environment (deps, grammars, hooks, tests)
+	@echo "🚀 Setting up complete development environment..."
+	uv sync --all-extras
+	git submodule update --init --recursive --depth 1
+	uv run pre-commit install
+	uv run pre-commit install --hook-type commit-msg
+	@echo "🧪 Running tests in parallel to verify installation..."
+	uv run pytest -n auto
+	@echo "✅ Full development environment ready!"
+	@echo "📦 Installed: All dependencies, grammars, pre-commit hooks"
+	@echo "✓ Tests passed successfully"
 
 install: ## Install project dependencies with full language support
 	uv sync --extra treesitter-full

@@ -1,6 +1,7 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -12,12 +13,25 @@ if TYPE_CHECKING:
 
 # Core function types
 BASIC_FUNCTIONS = ["function_declaration", "function_definition"]
-LAMBDA_FUNCTIONS = ["lambda_expression", "arrow_function", "anonymous_function", "closure_expression"]
-METHOD_FUNCTIONS = ["method_declaration", "constructor_declaration", "destructor_declaration"]
-TEMPLATE_FUNCTIONS = ["template_declaration", "function_signature_item", "function_signature"]
+LAMBDA_FUNCTIONS = [
+    "lambda_expression",
+    "arrow_function",
+    "anonymous_function",
+    "closure_expression",
+]
+METHOD_FUNCTIONS = [
+    "method_declaration",
+    "constructor_declaration",
+    "destructor_declaration",
+]
+TEMPLATE_FUNCTIONS = [
+    "template_declaration",
+    "function_signature_item",
+    "function_signature",
+]
 GENERATOR_FUNCTIONS = ["generator_function_declaration", "function_expression"]
 
-# Core class types  
+# Core class types
 BASIC_CLASSES = ["class_declaration", "class_definition"]
 STRUCT_TYPES = ["struct_declaration", "struct_specifier", "struct_item"]
 INTERFACE_TYPES = ["interface_declaration", "trait_declaration", "trait_item"]
@@ -42,14 +56,25 @@ INCLUDE_IMPORTS = ["preproc_include"]
 # =============================================================================
 
 # JavaScript/TypeScript family - ES6 modules, CommonJS, modern features
-JS_FAMILY_FUNCTIONS = BASIC_FUNCTIONS + LAMBDA_FUNCTIONS + METHOD_FUNCTIONS + GENERATOR_FUNCTIONS
+JS_FAMILY_FUNCTIONS = (
+    BASIC_FUNCTIONS + LAMBDA_FUNCTIONS + METHOD_FUNCTIONS + GENERATOR_FUNCTIONS
+)
 JS_FAMILY_CLASSES = BASIC_CLASSES + INTERFACE_TYPES + ENUM_TYPES + TYPE_ALIASES
 JS_FAMILY_IMPORTS = STANDARD_IMPORTS + MODULE_IMPORTS
 JS_FAMILY_CALLS = BASIC_CALLS
 
 # Systems languages (C++, Rust) - Templates, operator overloading, advanced features
-SYSTEMS_FUNCTIONS = BASIC_FUNCTIONS + METHOD_FUNCTIONS + TEMPLATE_FUNCTIONS + LAMBDA_FUNCTIONS
-SYSTEMS_CLASSES = BASIC_CLASSES + STRUCT_TYPES + INTERFACE_TYPES + ENUM_TYPES + TYPE_ALIASES + UNION_TYPES
+SYSTEMS_FUNCTIONS = (
+    BASIC_FUNCTIONS + METHOD_FUNCTIONS + TEMPLATE_FUNCTIONS + LAMBDA_FUNCTIONS
+)
+SYSTEMS_CLASSES = (
+    BASIC_CLASSES
+    + STRUCT_TYPES
+    + INTERFACE_TYPES
+    + ENUM_TYPES
+    + TYPE_ALIASES
+    + UNION_TYPES
+)
 SYSTEMS_CALLS = BASIC_CALLS + METHOD_CALLS + OPERATOR_CALLS + SPECIAL_CALLS
 
 # JVM languages (Java) - OOP with interfaces, generics, modern features
@@ -96,6 +121,7 @@ CPP_IMPORTS = [
 @dataclass
 class FQNConfig:
     """Configuration for language-specific FQN resolution."""
+
     # Node types that create a new scope (e.g., class, namespace)
     scope_node_types: set[str]
     # Node types that represent a function/method
@@ -109,7 +135,7 @@ class FQNConfig:
 def _python_get_name(node: "Node") -> str | None:
     """Extract name from Python AST node."""
     name_node = node.child_by_field_name("name")
-    return name_node.text.decode("utf-8") if name_node else None
+    return name_node.text.decode("utf-8") if name_node and name_node.text else None
 
 
 def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
@@ -128,7 +154,7 @@ def _js_get_name(node: "Node") -> str | None:
     """Extract name from JavaScript/TypeScript AST node."""
     if node.type in ("function_declaration", "class_declaration", "method_definition"):
         name_node = node.child_by_field_name("name")
-        return name_node.text.decode("utf-8") if name_node else None
+        return name_node.text.decode("utf-8") if name_node and name_node.text else None
     return None
 
 
@@ -154,14 +180,30 @@ PYTHON_FQN_CONFIG = FQNConfig(
 
 JAVASCRIPT_FQN_CONFIG = FQNConfig(
     scope_node_types={"class_declaration", "program"},
-    function_node_types={"function_declaration", "method_definition", "arrow_function", "function_expression"},
+    function_node_types={
+        "function_declaration",
+        "method_definition",
+        "arrow_function",
+        "function_expression",
+    },
     get_name=_js_get_name,
     file_to_module_parts=_js_file_to_module,
 )
 
 TYPESCRIPT_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_declaration", "interface_declaration", "namespace_definition", "program"},
-    function_node_types={"function_declaration", "method_definition", "arrow_function", "function_expression", "function_signature"},
+    scope_node_types={
+        "class_declaration",
+        "interface_declaration",
+        "namespace_definition",
+        "program",
+    },
+    function_node_types={
+        "function_declaration",
+        "method_definition",
+        "arrow_function",
+        "function_expression",
+        "function_signature",
+    },
     get_name=_js_get_name,
     file_to_module_parts=_js_file_to_module,
 )
@@ -170,15 +212,15 @@ TYPESCRIPT_FQN_CONFIG = FQNConfig(
 def _generic_get_name(node: "Node") -> str | None:
     """Generic name extraction for most languages."""
     name_node = node.child_by_field_name("name")
-    if name_node:
-        return name_node.text.decode("utf-8")
-    
+    if name_node and name_node.text:
+        return cast(str, name_node.text.decode("utf-8"))
+
     # Fallback for languages that use different field names
-    for field in ["identifier", "name", "id"]:
-        name_node = node.child_by_field_name(field)
-        if name_node:
-            return name_node.text.decode("utf-8")
-    
+    for field_name in ["identifier", "name", "id"]:
+        name_node = node.child_by_field_name(field_name)
+        if name_node and name_node.text:
+            return cast(str, name_node.text.decode("utf-8"))
+
     return None
 
 
@@ -197,13 +239,13 @@ def _rust_get_name(node: "Node") -> str | None:
     # Rust uses different field names for different node types
     if node.type in ("struct_item", "enum_item", "trait_item", "type_item"):
         name_node = node.child_by_field_name("name")
-        if name_node and name_node.type == "type_identifier":
-            return name_node.text.decode("utf-8")
+        if name_node and name_node.type == "type_identifier" and name_node.text:
+            return cast(str, name_node.text.decode("utf-8"))
     elif node.type in ("function_item", "mod_item"):
         name_node = node.child_by_field_name("name")
-        if name_node and name_node.type == "identifier":
-            return name_node.text.decode("utf-8")
-    
+        if name_node and name_node.type == "identifier" and name_node.text:
+            return cast(str, name_node.text.decode("utf-8"))
+
     return _generic_get_name(node)
 
 
@@ -223,37 +265,64 @@ def _cpp_get_name(node: "Node") -> str | None:
     # C++ has complex naming with templates, operators, etc.
     if node.type in ("class_specifier", "struct_specifier", "enum_specifier"):
         name_node = node.child_by_field_name("name")
-        if name_node:
-            return name_node.text.decode("utf-8")
+        if name_node and name_node.text:
+            return cast(str, name_node.text.decode("utf-8"))
     elif node.type == "function_definition":
         declarator = node.child_by_field_name("declarator")
         if declarator:
             # Handle function declarators
             if declarator.type == "function_declarator":
                 name_node = declarator.child_by_field_name("declarator")
-                if name_node and name_node.type == "identifier":
-                    return name_node.text.decode("utf-8")
-    
+                if name_node and name_node.type == "identifier" and name_node.text:
+                    return cast(str, name_node.text.decode("utf-8"))
+
     return _generic_get_name(node)
 
 
 RUST_FQN_CONFIG = FQNConfig(
-    scope_node_types={"struct_item", "enum_item", "trait_item", "impl_item", "mod_item", "source_file"},
-    function_node_types={"function_item", "function_signature_item", "closure_expression"},
+    scope_node_types={
+        "struct_item",
+        "enum_item",
+        "trait_item",
+        "impl_item",
+        "mod_item",
+        "source_file",
+    },
+    function_node_types={
+        "function_item",
+        "function_signature_item",
+        "closure_expression",
+    },
     get_name=_rust_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 JAVA_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_declaration", "interface_declaration", "enum_declaration", "program"},
+    scope_node_types={
+        "class_declaration",
+        "interface_declaration",
+        "enum_declaration",
+        "program",
+    },
     function_node_types={"method_declaration", "constructor_declaration"},
     get_name=_generic_get_name,
     file_to_module_parts=_java_file_to_module,
 )
 
 CPP_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_specifier", "struct_specifier", "namespace_definition", "translation_unit"},
-    function_node_types={"function_definition", "declaration", "field_declaration", "template_declaration", "lambda_expression"},
+    scope_node_types={
+        "class_specifier",
+        "struct_specifier",
+        "namespace_definition",
+        "translation_unit",
+    },
+    function_node_types={
+        "function_definition",
+        "declaration",
+        "field_declaration",
+        "template_declaration",
+        "lambda_expression",
+    },
     get_name=_cpp_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
@@ -266,29 +335,60 @@ LUA_FQN_CONFIG = FQNConfig(
 )
 
 GO_FQN_CONFIG = FQNConfig(
-    scope_node_types={"type_declaration", "source_file"},  # Go structs and file-level scope
+    scope_node_types={
+        "type_declaration",
+        "source_file",
+    },  # Go structs and file-level scope
     function_node_types={"function_declaration", "method_declaration"},
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 SCALA_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_definition", "object_definition", "trait_definition", "compilation_unit"},
+    scope_node_types={
+        "class_definition",
+        "object_definition",
+        "trait_definition",
+        "compilation_unit",
+    },
     function_node_types={"function_definition", "function_declaration"},
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 CSHARP_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_declaration", "struct_declaration", "interface_declaration", "compilation_unit"},
-    function_node_types={"destructor_declaration", "local_function_statement", "function_pointer_type", "constructor_declaration", "anonymous_method_expression", "lambda_expression", "method_declaration"},
+    scope_node_types={
+        "class_declaration",
+        "struct_declaration",
+        "interface_declaration",
+        "compilation_unit",
+    },
+    function_node_types={
+        "destructor_declaration",
+        "local_function_statement",
+        "function_pointer_type",
+        "constructor_declaration",
+        "anonymous_method_expression",
+        "lambda_expression",
+        "method_declaration",
+    },
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 PHP_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_declaration", "interface_declaration", "trait_declaration", "program"},
-    function_node_types={"function_definition", "anonymous_function", "arrow_function", "function_static_declaration"},
+    scope_node_types={
+        "class_declaration",
+        "interface_declaration",
+        "trait_declaration",
+        "program",
+    },
+    function_node_types={
+        "function_definition",
+        "anonymous_function",
+        "arrow_function",
+        "function_static_declaration",
+    },
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
@@ -689,7 +789,10 @@ def get_language_config_by_name(language_name: str) -> LanguageConfig | None:
 # LANGUAGE ADDITION HELPER FUNCTIONS
 # =============================================================================
 
-def create_c_family_config(name: str, extensions: list[str], **overrides) -> dict:
+
+def create_c_family_config(
+    name: str, extensions: list[str], **overrides: Any
+) -> dict[str, Any]:
     """Helper to create C-family language configuration."""
     base_config = {
         "file_extensions": extensions,
@@ -703,7 +806,10 @@ def create_c_family_config(name: str, extensions: list[str], **overrides) -> dic
     base_config.update(overrides)
     return {name: create_lang_config(**base_config)}
 
-def create_scripting_config(name: str, extensions: list[str], **overrides) -> dict:
+
+def create_scripting_config(
+    name: str, extensions: list[str], **overrides: Any
+) -> dict[str, Any]:
     """Helper to create scripting language configuration."""
     base_config = {
         "file_extensions": extensions,
@@ -717,7 +823,10 @@ def create_scripting_config(name: str, extensions: list[str], **overrides) -> di
     base_config.update(overrides)
     return {name: create_lang_config(**base_config)}
 
-def create_jvm_config(name: str, extensions: list[str], **overrides) -> dict:
+
+def create_jvm_config(
+    name: str, extensions: list[str], **overrides: Any
+) -> dict[str, Any]:
     """Helper to create JVM language configuration."""
     base_config = {
         "file_extensions": extensions,
@@ -731,15 +840,16 @@ def create_jvm_config(name: str, extensions: list[str], **overrides) -> dict:
     base_config.update(overrides)
     return {name: create_lang_config(**base_config)}
 
+
 # Example usage for adding new languages:
 #
 # # Add Kotlin
-# LANGUAGE_CONFIGS.update(create_jvm_config("kotlin", [".kt", ".kts"], 
+# LANGUAGE_CONFIGS.update(create_jvm_config("kotlin", [".kt", ".kts"],
 #     function_node_types=JVM_FUNCTIONS + LAMBDA_FUNCTIONS,
 #     class_node_types=JVM_CLASSES + ["data_class", "sealed_class"]
 # ))
 #
-# # Add Ruby  
+# # Add Ruby
 # LANGUAGE_CONFIGS.update(create_scripting_config("ruby", [".rb", ".rake"],
 #     function_node_types=SCRIPTING_FUNCTIONS + ["method"],
 #     class_node_types=SCRIPTING_CLASSES + ["module"]
