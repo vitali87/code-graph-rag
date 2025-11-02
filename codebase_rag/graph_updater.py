@@ -8,9 +8,12 @@ from loguru import logger
 from tree_sitter import Node, Parser
 
 from .config import IGNORE_PATTERNS
-from .language_config import get_language_config
+from .language_config import get_language_config, LANGUAGE_FQN_CONFIGS
 from .parsers.factory import ProcessorFactory
 from .services.graph_service import MemgraphIngestor
+from .utils.dependencies import has_semantic_dependencies
+from .utils.fqn_resolver import find_function_source_by_fqn
+from .utils.source_extraction import extract_source_with_fallback
 
 
 class FunctionRegistryTrie:
@@ -340,6 +343,9 @@ class GraphUpdater:
 
         logger.info("\n--- Analysis complete. Flushing all data to database... ---")
         self.ingestor.flush_all()
+        
+        # Generate embeddings for functions and methods if semantic deps available
+        self._generate_semantic_embeddings()
 
     def remove_file_from_state(self, file_path: Path) -> None:
         """Removes all state associated with a file from the updater's memory."""
@@ -435,3 +441,91 @@ class GraphUpdater:
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )
+    
+    def _generate_semantic_embeddings(self) -> None:
+        """Generate and store semantic embeddings for functions and methods."""
+        if not has_semantic_dependencies():
+            logger.info("Semantic search dependencies not available, skipping embedding generation")
+            return
+            
+        try:
+            from .embedder import embed_code
+            from .vector_store import store_embedding
+            
+            logger.info("--- Pass 4: Generating semantic embeddings ---")
+            
+            # Query database for all Function and Method nodes with their source info
+            query = """
+            MATCH (m:Module)-[:DEFINES]->(n)
+            WHERE n:Function OR n:Method
+            RETURN id(n) AS node_id, n.qualified_name AS qualified_name, 
+                   n.start_line AS start_line, n.end_line AS end_line, 
+                   m.path AS path
+            ORDER BY n.qualified_name
+            """
+            
+            results = self.ingestor._execute_query(query)
+            
+            if not results:
+                logger.info("No functions or methods found for embedding generation")
+                return
+                
+            logger.info(f"Generating embeddings for {len(results)} functions/methods")
+            
+            embedded_count = 0
+            for result in results:
+                node_id = result["node_id"]
+                qualified_name = result["qualified_name"]
+                start_line = result.get("start_line")
+                end_line = result.get("end_line")
+                file_path = result.get("path")
+                
+                # Try to extract source code from cached AST or file
+                source_code = self._extract_source_code(
+                    qualified_name, file_path, start_line, end_line
+                )
+                
+                if source_code:
+                    try:
+                        embedding = embed_code(source_code)
+                        store_embedding(node_id, embedding, qualified_name)
+                        embedded_count += 1
+                        
+                        if embedded_count % 10 == 0:
+                            logger.debug(f"Generated {embedded_count}/{len(results)} embeddings")
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to embed {qualified_name}: {e}")
+                else:
+                    logger.debug(f"No source code found for {qualified_name}")
+                    
+            logger.info(f"Successfully generated {embedded_count} semantic embeddings")
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate semantic embeddings: {e}")
+    
+    def _extract_source_code(self, qualified_name: str, file_path: str, start_line: int, end_line: int) -> str | None:
+        """Extract source code for a function/method from cached AST or file."""
+        if not file_path or not start_line or not end_line:
+            return None
+
+        file_path_obj = Path(file_path)
+        
+        # Create AST extractor function if AST is available
+        ast_extractor = None
+        if file_path_obj in self.ast_cache:
+            root_node, language = self.ast_cache[file_path_obj]
+            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
+            
+            if fqn_config:
+                def ast_extractor_func(qname: str, path: Path) -> str | None:
+                    return find_function_source_by_fqn(
+                        root_node, qname, path, self.repo_path, self.project_name, fqn_config
+                    )
+                ast_extractor = ast_extractor_func
+
+        # Use shared utility with AST-based extraction and line-based fallback
+        return extract_source_with_fallback(
+            file_path_obj, start_line, end_line, qualified_name, ast_extractor
+        )
+    
