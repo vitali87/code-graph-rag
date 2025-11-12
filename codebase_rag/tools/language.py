@@ -427,8 +427,12 @@ def add_grammar(
     ),"""
 
         # Find the end of the LANGUAGE_CONFIGS dictionary
-        closing_brace_pos = config_content.rfind("}")
+        language_configs_pos = config_content.find("LANGUAGE_CONFIGS = {")
+        closing_brace_pos = config_content.find("\n}", language_configs_pos)
         if closing_brace_pos != -1:
+            # Move pos to the closing brace
+            closing_brace_pos += 1
+
             # Insert the new config before the closing brace
             new_content = (
                 config_content[:closing_brace_pos]
