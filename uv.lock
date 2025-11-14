@@ -299,7 +299,7 @@ wheels = [
 [[package]]
 name = "graph-code"
 version = "0.0.24"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "diff-match-patch" },

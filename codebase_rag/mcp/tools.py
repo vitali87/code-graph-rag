@@ -53,7 +53,7 @@ class MCPToolsRegistry:
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
 
-        # Create pydantic-ai tools
+        # Create pydantic-ai tools - we'll call the underlying functions directly
         self._query_tool = create_query_tool(
             ingestor=ingestor, cypher_gen=cypher_gen, console=None
         )
@@ -110,13 +110,17 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] query_code_graph: {natural_language_query}")
         try:
-            graph_data = await self._query_tool.function(natural_language_query)
-            return cast(dict[str, Any], graph_data.model_dump())
+            graph_data = await self._query_tool.function(natural_language_query)  # type: ignore[arg-type]
+            result_dict = cast(dict[str, Any], graph_data.model_dump())
+            logger.info(
+                f"[MCP] Query returned {len(result_dict.get('results', []))} results"
+            )
+            return result_dict
         except Exception as e:
-            logger.error(f"[MCP] Error querying code graph: {e}")
+            logger.error(f"[MCP] Error querying code graph: {e}", exc_info=True)
             return {
                 "error": str(e),
-                "cypher_query": None,
+                "query_used": "N/A",
                 "results": [],
                 "summary": f"Error executing query: {str(e)}",
             }
@@ -138,7 +142,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] get_code_snippet: {qualified_name}")
         try:
-            snippet = await self._code_tool.function(qualified_name=qualified_name)
+            snippet = await self._code_tool.function(qualified_name=qualified_name)  # type: ignore[call-arg]
             return cast(dict[str, Any], snippet.model_dump())
         except Exception as e:
             logger.error(f"[MCP] Error retrieving code snippet: {e}")
@@ -166,7 +170,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] surgical_replace_code in {file_path}")
         try:
-            result = await self._file_editor_tool.function(
+            result = await self._file_editor_tool.function(  # type: ignore[call-arg]
                 file_path=file_path,
                 target_code=target_code,
                 replacement_code=replacement_code,
@@ -176,19 +180,44 @@ class MCPToolsRegistry:
             logger.error(f"[MCP] Error replacing code: {e}")
             return f"Error: {str(e)}"
 
-    async def read_file(self, file_path: str) -> str:
-        """Read the contents of a file.
+    async def read_file(
+        self, file_path: str, offset: int | None = None, limit: int | None = None
+    ) -> str:
+        """Read the contents of a file with optional pagination.
 
         Args:
             file_path: Relative path to the file from project root
+            offset: Line number to start reading from (0-based, optional)
+            limit: Maximum number of lines to read (optional)
 
         Returns:
-            File contents or error message
+            File contents (paginated if offset/limit provided) or error message
         """
-        logger.info(f"[MCP] read_file: {file_path}")
+        logger.info(f"[MCP] read_file: {file_path} (offset={offset}, limit={limit})")
         try:
-            result = await self._file_reader_tool.function(file_path=file_path)
-            return cast(str, result)
+            # Read the full file content
+            result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
+            content = cast(str, result)
+
+            # If pagination parameters are provided, slice the content by lines
+            if offset is not None or limit is not None:
+                lines = content.splitlines(keepends=True)
+                total_lines = len(lines)
+
+                # Calculate slice boundaries
+                start = offset if offset is not None else 0
+                end = start + limit if limit is not None else None
+
+                # Slice the lines
+                sliced_lines = lines[start:end]
+                paginated_content = "".join(sliced_lines)
+
+                # Add metadata header
+                header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
+                return header + paginated_content
+            else:
+                return content
+
         except Exception as e:
             logger.error(f"[MCP] Error reading file: {e}")
             return f"Error: {str(e)}"
@@ -205,7 +234,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] write_file: {file_path}")
         try:
-            result = await self._file_writer_tool.function(
+            result = await self._file_writer_tool.function(  # type: ignore[call-arg]
                 file_path=file_path, content=content
             )
             return cast(str, result)
@@ -224,7 +253,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] list_directory: {directory_path}")
         try:
-            result = await self._directory_lister_tool.function(
+            result = await self._directory_lister_tool.function(  # type: ignore[call-arg]
                 directory_path=directory_path
             )
             return cast(str, result)

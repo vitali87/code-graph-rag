@@ -23,6 +23,12 @@ dependencies = [
     "pytest-xdist>=3.8.0",
 ]
 
+[project.scripts]
+graph-code = "codebase_rag.main:app"
+
+[tool.uv]
+package = true
+
 [tool.setuptools]
 packages = ["codebase_rag"]
 

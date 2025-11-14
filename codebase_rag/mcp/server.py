@@ -41,7 +41,7 @@ def get_project_root() -> Path:
     # Try environment variable first, then fallback to settings
     repo_path = os.environ.get("TARGET_REPO_PATH", settings.TARGET_REPO_PATH)
 
-    if not repo_path or repo_path == ".":
+    if not repo_path:
         raise ValueError(
             "TARGET_REPO_PATH environment variable must be set to the target repository path"
         )
@@ -76,11 +76,20 @@ def create_server() -> Server:
     # Initialize services
     logger.info("[GraphCode MCP] Initializing services...")
 
-    ingestor = MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=settings.MEMGRAPH_BATCH_SIZE,
-    )
+    try:
+        ingestor = MemgraphIngestor(
+            host=settings.MEMGRAPH_HOST,
+            port=settings.MEMGRAPH_PORT,
+            batch_size=settings.MEMGRAPH_BATCH_SIZE,
+        )
+        # Manually enter the context to establish connection
+        ingestor.__enter__()
+        logger.info(
+            f"[GraphCode MCP] Connected to Memgraph at {settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
+        )
+    except Exception as e:
+        logger.error(f"[GraphCode MCP] Failed to connect to Memgraph: {e}")
+        raise
 
     # CypherGenerator gets config from settings automatically
     cypher_generator = CypherGenerator()
@@ -167,14 +176,22 @@ def create_server() -> Server:
             ),
             Tool(
                 name="read_file",
-                description="Read the contents of a file from the project.",
+                description="Read the contents of a file from the project. Supports pagination for large files.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "file_path": {
                             "type": "string",
                             "description": "Relative path to the file from project root",
-                        }
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Line number to start reading from (0-based, optional)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of lines to read (optional)",
+                        },
                     },
                     "required": ["file_path"],
                 },
@@ -251,7 +268,11 @@ def create_server() -> Server:
 
             elif name == "read_file":
                 file_path = arguments.get("file_path", "")
-                result_text = await tools.read_file(file_path)
+                offset = arguments.get("offset")
+                limit = arguments.get("limit")
+                result_text = await tools.read_file(
+                    file_path, offset=offset, limit=limit
+                )
                 return [TextContent(type="text", text=result_text)]
 
             elif name == "write_file":
