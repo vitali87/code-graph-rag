@@ -38,8 +38,11 @@ from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.semantic_search import (
+    create_get_function_source_tool,
+    create_semantic_search_tool,
+)
 from .tools.shell_command import ShellCommander, create_shell_command_tool
-from .tools.semantic_search import create_semantic_search_tool, create_get_function_source_tool
 
 # Style constants
 confirm_edits_globally = True
@@ -1035,6 +1038,40 @@ def optimize(
         console.print("\n[bold red]Optimization session terminated by user.[/bold red]")
     except ValueError as e:
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
+
+
+@app.command(name="mcp-server")
+def mcp_server() -> None:
+    """Start the MCP (Model Context Protocol) server.
+
+    This command starts an MCP server that exposes code-graph-rag's capabilities
+    to MCP clients like Claude Code. The server runs on stdio transport and requires
+    the TARGET_REPO_PATH environment variable to be set to the target repository.
+
+    Usage:
+        graph-code mcp-server
+
+    Environment Variables:
+        TARGET_REPO_PATH: Path to the target repository (required)
+
+    For Claude Code integration:
+        claude mcp add --transport stdio graph-code \\
+          --env TARGET_REPO_PATH=/path/to/your/project \\
+          -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
+    """
+    try:
+        from codebase_rag.mcp import main as mcp_main
+
+        asyncio.run(mcp_main())
+    except KeyboardInterrupt:
+        console.print("\n[bold red]MCP server terminated by user.[/bold red]")
+    except ValueError as e:
+        console.print(f"[bold red]Configuration Error: {e}[/bold red]")
+        console.print(
+            "\n[yellow]Hint: Make sure TARGET_REPO_PATH environment variable is set.[/yellow]"
+        )
+    except Exception as e:
+        console.print(f"[bold red]MCP Server Error: {e}[/bold red]")
 
 
 if __name__ == "__main__":
