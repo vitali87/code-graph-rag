@@ -258,7 +258,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] list_directory: {directory_path}")
         try:
-            result = await self._directory_lister_tool.function(  # type: ignore[call-arg]
+            result = self._directory_lister_tool.function(  # type: ignore[call-arg]
                 directory_path=directory_path
             )
             return cast(str, result)
