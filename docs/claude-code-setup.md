@@ -22,7 +22,7 @@ claude mcp add --transport stdio graph-code \
 
 ```bash
 # 1. Install code-graph-rag
-git clone https://github.com/yourusername/code-graph-rag.git
+git clone https://github.com/vitali87/code-graph-rag.git
 cd code-graph-rag
 uv sync
 
