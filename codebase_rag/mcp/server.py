@@ -57,11 +57,11 @@ def get_project_root() -> Path:
     return project_root
 
 
-def create_server() -> Server:
+def create_server() -> tuple[Server, MemgraphIngestor]:
     """Create and configure the MCP server.
 
     Returns:
-        Configured MCP server instance
+        Tuple of (configured MCP server instance, MemgraphIngestor instance)
     """
     setup_logging()
 
@@ -296,15 +296,16 @@ def create_server() -> Server:
             logger.error(f"[GraphCode MCP] {error_msg}")
             return [TextContent(type="text", text=f"Error: {error_msg}")]
 
-    return server
+    return server, ingestor
 
 
 async def main() -> None:
     """Main entry point for the MCP server."""
     logger.info("[GraphCode MCP] Starting MCP server...")
 
+    ingestor = None
     try:
-        server = create_server()
+        server, ingestor = create_server()
         logger.info("[GraphCode MCP] Server created, starting stdio transport...")
 
         async with stdio_server() as (read_stream, write_stream):
@@ -315,6 +316,14 @@ async def main() -> None:
     except Exception as e:
         logger.error(f"[GraphCode MCP] Fatal error: {e}")
         raise
+    finally:
+        # Ensure the Memgraph connection is properly closed
+        if ingestor is not None:
+            try:
+                ingestor.__exit__(None, None, None)
+                logger.info("[GraphCode MCP] Memgraph connection closed")
+            except Exception as e:
+                logger.error(f"[GraphCode MCP] Error closing Memgraph connection: {e}")
 
 
 if __name__ == "__main__":
