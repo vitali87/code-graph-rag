@@ -144,7 +144,14 @@ class MCPToolsRegistry:
         logger.info(f"[MCP] get_code_snippet: {qualified_name}")
         try:
             snippet = await self._code_tool.function(qualified_name=qualified_name)  # type: ignore[call-arg]
-            return cast(dict[str, Any], snippet.model_dump())
+            result = snippet.model_dump() if snippet else None
+            if result is None:
+                return {
+                    "error": "Tool returned None",
+                    "found": False,
+                    "error_message": "Code snippet tool returned an invalid response",
+                }
+            return cast(dict[str, Any], result)
         except Exception as e:
             logger.error(f"[MCP] Error retrieving code snippet: {e}")
             return {
@@ -242,6 +249,12 @@ class MCPToolsRegistry:
             result = await self._file_writer_tool.function(  # type: ignore[call-arg]
                 file_path=file_path, content=content
             )
+            # Handle FileCreationResult object
+            if hasattr(result, "success"):
+                if result.success:  # type: ignore[union-attr]
+                    return f"Successfully wrote file: {file_path}"
+                else:
+                    return f"Error: {result.error_message}"  # type: ignore[union-attr]
             return cast(str, result)
         except Exception as e:
             logger.error(f"[MCP] Error writing file: {e}")
