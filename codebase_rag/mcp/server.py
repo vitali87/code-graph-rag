@@ -7,6 +7,7 @@ capabilities via the Model Context Protocol.
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from mcp.server import Server
@@ -229,62 +230,40 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
         logger.info(f"[GraphCode MCP] Calling tool: {name}")
 
+        # Tool dispatch table: (handler_function, returns_json)
+        tool_handlers: dict[str, tuple[Any, bool]] = {
+            "index_repository": (tools.index_repository, False),
+            "query_code_graph": (tools.query_code_graph, True),
+            "get_code_snippet": (tools.get_code_snippet, True),
+            "surgical_replace_code": (tools.surgical_replace_code, False),
+            "read_file": (tools.read_file, False),
+            "write_file": (tools.write_file, False),
+            "list_directory": (tools.list_directory, False),
+        }
+
         try:
-            if name == "index_repository":
-                result_text = await tools.index_repository()
-                return [TextContent(type="text", text=result_text)]
-
-            elif name == "query_code_graph":
-                natural_language_query = arguments.get("natural_language_query", "")
-                result_dict = await tools.query_code_graph(natural_language_query)
-                return [
-                    TextContent(type="text", text=json.dumps(result_dict, indent=2))
-                ]
-
-            elif name == "get_code_snippet":
-                qualified_name = arguments.get("qualified_name", "")
-                result_dict = await tools.get_code_snippet(qualified_name)
-                return [
-                    TextContent(type="text", text=json.dumps(result_dict, indent=2))
-                ]
-
-            elif name == "surgical_replace_code":
-                file_path = arguments.get("file_path", "")
-                target_code = arguments.get("target_code", "")
-                replacement_code = arguments.get("replacement_code", "")
-                result_text = await tools.surgical_replace_code(
-                    file_path, target_code, replacement_code
-                )
-                return [TextContent(type="text", text=result_text)]
-
-            elif name == "read_file":
-                file_path = arguments.get("file_path", "")
-                offset = arguments.get("offset")
-                limit = arguments.get("limit")
-                result_text = await tools.read_file(
-                    file_path, offset=offset, limit=limit
-                )
-                return [TextContent(type="text", text=result_text)]
-
-            elif name == "write_file":
-                file_path = arguments.get("file_path", "")
-                content = arguments.get("content", "")
-                result_text = await tools.write_file(file_path, content)
-                return [TextContent(type="text", text=result_text)]
-
-            elif name == "list_directory":
-                directory_path = arguments.get("directory_path", ".")
-                result_text = await tools.list_directory(directory_path)
-                return [TextContent(type="text", text=result_text)]
-
-            else:
+            handler_info = tool_handlers.get(name)
+            if not handler_info:
                 error_msg = f"Unknown tool: {name}"
                 logger.error(f"[GraphCode MCP] {error_msg}")
                 return [TextContent(type="text", text=f"Error: {error_msg}")]
 
+            handler, returns_json = handler_info
+
+            # Call handler with unpacked arguments
+            result = await handler(**arguments)
+
+            # Format result based on output type
+            if returns_json:
+                result_text = json.dumps(result, indent=2)
+            else:
+                result_text = str(result)
+
+            return [TextContent(type="text", text=result_text)]
+
         except Exception as e:
             error_msg = f"Error executing tool '{name}': {str(e)}"
-            logger.error(f"[GraphCode MCP] {error_msg}")
+            logger.error(f"[GraphCode MCP] {error_msg}", exc_info=True)
             return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     return server, ingestor
