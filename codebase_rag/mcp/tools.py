@@ -3,6 +3,7 @@
 This module adapts pydantic-ai Tool instances to MCP-compatible functions.
 """
 
+import itertools
 from pathlib import Path
 from typing import Any, cast
 
@@ -195,28 +196,32 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] read_file: {file_path} (offset={offset}, limit={limit})")
         try:
-            # Read the full file content
-            result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
-            content = cast(str, result)
-
-            # If pagination parameters are provided, slice the content by lines
+            # If pagination is requested, use memory-efficient line-by-line reading
             if offset is not None or limit is not None:
-                lines = content.splitlines(keepends=True)
-                total_lines = len(lines)
-
-                # Calculate slice boundaries
+                full_path = Path(self.project_root) / file_path
                 start = offset if offset is not None else 0
-                end = start + limit if limit is not None else None
 
-                # Slice the lines
-                sliced_lines = lines[start:end]
-                paginated_content = "".join(sliced_lines)
+                with open(full_path, encoding="utf-8") as f:
+                    # Count total lines for metadata (efficient single pass)
+                    total_lines = sum(1 for _ in f)
+                    f.seek(0)  # Reset to beginning
 
-                # Add metadata header
-                header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
-                return header + paginated_content
+                    # Skip lines before offset and read limited lines
+                    if limit is not None:
+                        lines_iter = itertools.islice(f, start, start + limit)
+                    else:
+                        lines_iter = itertools.islice(f, start, None)
+
+                    sliced_lines = list(lines_iter)
+                    paginated_content = "".join(sliced_lines)
+
+                    # Add metadata header
+                    header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
+                    return header + paginated_content
             else:
-                return content
+                # No pagination - use the existing file reader tool
+                result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
+                return cast(str, result)
 
         except Exception as e:
             logger.error(f"[MCP] Error reading file: {e}")
