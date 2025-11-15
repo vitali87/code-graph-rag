@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "loguru>=0.7.3",
+    "mcp>=1.21.1",
     "pydantic-ai-slim[google,openai,vertexai]>=0.2.18",
     "pydantic-settings>=2.0.0",
     "pymgclient>=1.4.0",
@@ -21,6 +22,12 @@ dependencies = [
     "click>=8.0.0",
     "pytest-xdist>=3.8.0",
 ]
+
+[project.scripts]
+graph-code = "codebase_rag.main:app"
+
+[tool.uv]
+package = true
 
 [tool.setuptools]
 packages = ["codebase_rag"]

@@ -1,4 +1,3 @@
-version: "3"
 services:
   memgraph:
     image: memgraph/memgraph-mage

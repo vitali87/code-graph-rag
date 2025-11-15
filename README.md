@@ -25,7 +25,10 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
 
+## Latest News 🔥
 
+- **[NEW]** [2025/01] **MCP Server Integration**: Graph-Code now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
+- [2024/12] **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
 
 ## 🛠️ Makefile Updates
 
@@ -476,6 +479,40 @@ The agent will incorporate the guidance from your reference documents when sugge
 - `--repo-path`: Path to repository (defaults to current directory)
 - `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
 - `--reference-document`: Path to reference documentation (optimization only)
+
+## 🔌 MCP Server (Claude Code Integration)
+
+Graph-Code can run as an MCP (Model Context Protocol) server, enabling seamless integration with Claude Code and other MCP clients.
+
+### Quick Setup
+
+```bash
+claude mcp add --transport stdio graph-code \
+  --env TARGET_REPO_PATH=/absolute/path/to/your/project \
+  --env CYPHER_PROVIDER=openai \
+  --env CYPHER_MODEL=gpt-4 \
+  --env CYPHER_API_KEY=your-api-key \
+  -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
+```
+
+### Available Tools
+
+- **index_repository** - Build knowledge graph
+- **query_code_graph** - Natural language queries
+- **get_code_snippet** - Retrieve code by qualified name
+- **surgical_replace_code** - Precise code edits
+- **read_file / write_file** - File operations
+- **list_directory** - Browse project structure
+
+### Example Usage
+
+```
+> Index this repository
+> What functions call UserService.create_user?
+> Update the login function to add rate limiting
+```
+
+For detailed setup, see [Claude Code Setup Guide](docs/claude-code-setup.md).
 
 ## 📊 Graph Schema
 
