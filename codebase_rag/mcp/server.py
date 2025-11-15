@@ -76,20 +76,11 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     # Initialize services
     logger.info("[GraphCode MCP] Initializing services...")
 
-    try:
-        ingestor = MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST,
-            port=settings.MEMGRAPH_PORT,
-            batch_size=settings.MEMGRAPH_BATCH_SIZE,
-        )
-        # Manually enter the context to establish connection
-        ingestor.__enter__()
-        logger.info(
-            f"[GraphCode MCP] Connected to Memgraph at {settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
-        )
-    except Exception as e:
-        logger.error(f"[GraphCode MCP] Failed to connect to Memgraph: {e}")
-        raise
+    ingestor = MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        batch_size=settings.MEMGRAPH_BATCH_SIZE,
+    )
 
     # CypherGenerator gets config from settings automatically
     cypher_generator = CypherGenerator()
@@ -303,27 +294,24 @@ async def main() -> None:
     """Main entry point for the MCP server."""
     logger.info("[GraphCode MCP] Starting MCP server...")
 
-    ingestor = None
-    try:
-        server, ingestor = create_server()
-        logger.info("[GraphCode MCP] Server created, starting stdio transport...")
+    server, ingestor = create_server()
+    logger.info("[GraphCode MCP] Server created, starting stdio transport...")
 
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream, write_stream, server.create_initialization_options()
-            )
-
-    except Exception as e:
-        logger.error(f"[GraphCode MCP] Fatal error: {e}")
-        raise
-    finally:
-        # Ensure the Memgraph connection is properly closed
-        if ingestor is not None:
-            try:
-                ingestor.__exit__(None, None, None)
-                logger.info("[GraphCode MCP] Memgraph connection closed")
-            except Exception as e:
-                logger.error(f"[GraphCode MCP] Error closing Memgraph connection: {e}")
+    # Use context manager to ensure proper cleanup of Memgraph connection
+    with ingestor:
+        logger.info(
+            f"[GraphCode MCP] Connected to Memgraph at {settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
+        )
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                await server.run(
+                    read_stream, write_stream, server.create_initialization_options()
+                )
+        except Exception as e:
+            logger.error(f"[GraphCode MCP] Fatal error: {e}")
+            raise
+        finally:
+            logger.info("[GraphCode MCP] Shutting down server...")
 
 
 if __name__ == "__main__":
