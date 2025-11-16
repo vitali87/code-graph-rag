@@ -223,12 +223,20 @@ class MCPToolsRegistry:
         a comprehensive knowledge graph with functions, classes, dependencies,
         and relationships.
 
+        Note: This clears all existing data in the database before indexing.
+        Only one repository can be indexed at a time.
+
         Returns:
             Success message with indexing statistics
         """
         logger.info(f"[MCP] Indexing repository at: {self.project_root}")
 
         try:
+            # Clear existing data to ensure clean state for the new repository
+            logger.info("[MCP] Clearing existing database to avoid conflicts...")
+            self.ingestor.clean_database()
+            logger.info("[MCP] Database cleared. Starting fresh indexing...")
+
             updater = GraphUpdater(
                 ingestor=self.ingestor,
                 repo_path=Path(self.project_root),
@@ -237,7 +245,7 @@ class MCPToolsRegistry:
             )
             updater.run()
 
-            return f"Successfully indexed repository at {self.project_root}. Knowledge graph has been updated."
+            return f"Successfully indexed repository at {self.project_root}. Knowledge graph has been updated (previous data cleared)."
         except Exception as e:
             logger.error(f"[MCP] Error indexing repository: {e}")
             return f"Error indexing repository: {str(e)}"

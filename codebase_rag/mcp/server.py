@@ -30,21 +30,42 @@ def setup_logging() -> None:
 
 
 def get_project_root() -> Path:
-    """Get the project root from environment or settings.
+    """Get the project root from environment, settings, or parent process working directory.
+
+    Priority order:
+    1. TARGET_REPO_PATH environment variable (explicit configuration)
+    2. TARGET_REPO_PATH from settings
+    3. CLAUDE_PROJECT_ROOT environment variable (set by Claude Code)
+    4. PWD environment variable (inherited from parent process/shell)
+    5. Current working directory (fallback)
 
     Returns:
         Path to the target repository
 
     Raises:
-        ValueError: If TARGET_REPO_PATH is not set or invalid
+        ValueError: If the resolved path is invalid
     """
-    # Try environment variable first, then fallback to settings
-    repo_path = os.environ.get("TARGET_REPO_PATH", settings.TARGET_REPO_PATH)
+    # Try explicit TARGET_REPO_PATH first
+    repo_path: str | None = (
+        os.environ.get("TARGET_REPO_PATH") or settings.TARGET_REPO_PATH
+    )
 
     if not repo_path:
-        raise ValueError(
-            "TARGET_REPO_PATH environment variable must be set to the target repository path"
-        )
+        # Try Claude Code project root env var
+        repo_path = os.environ.get("CLAUDE_PROJECT_ROOT")
+
+        if not repo_path:
+            # Try PWD from parent process (often set by shells and reflects where command was run)
+            repo_path = os.environ.get("PWD")
+
+        if repo_path:
+            logger.info(f"[GraphCode MCP] Using inferred project root: {repo_path}")
+        else:
+            # Last resort: current working directory
+            repo_path = str(Path.cwd())
+            logger.info(
+                f"[GraphCode MCP] No project root configured, using current directory: {repo_path}"
+            )
 
     project_root = Path(repo_path).resolve()
 
@@ -54,6 +75,7 @@ def get_project_root() -> Path:
     if not project_root.is_dir():
         raise ValueError(f"Target repository path is not a directory: {project_root}")
 
+    logger.info(f"[GraphCode MCP] Project root resolved to: {project_root}")
     return project_root
 
 

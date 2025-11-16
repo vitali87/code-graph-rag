@@ -4,19 +4,44 @@ Connect Graph-Code to Claude Code for powerful codebase analysis and editing.
 
 ## Quick Setup
 
+Configure the MCP server from your project directory:
+
+```bash
+# Navigate to your project first
+cd /path/to/your/project
+
+# Add MCP server with project path
+claude mcp add --transport stdio graph-code \
+  --env TARGET_REPO_PATH="$(pwd)" \
+  --env CYPHER_PROVIDER=google \
+  --env CYPHER_MODEL=gemini-2.0-flash \
+  --env CYPHER_API_KEY=your-google-api-key \
+  -- uv run --directory /absolute/path/to/code-graph-rag graph-code mcp-server
+```
+
+**Replace**:
+- `/absolute/path/to/code-graph-rag` - Where you cloned this repo
+- `your-google-api-key` - Your Google AI API key
+
+The `"$(pwd)"` automatically uses your current directory as the target repository.
+
+## Alternative: Explicit Path
+
+Specify the repository path explicitly:
+
 ```bash
 claude mcp add --transport stdio graph-code \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
-  --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4 \
-  --env CYPHER_API_KEY=your-api-key \
+  --env CYPHER_PROVIDER=google \
+  --env CYPHER_MODEL=gemini-2.0-flash \
+  --env CYPHER_API_KEY=your-google-api-key \
   -- uv run --directory /absolute/path/to/code-graph-rag graph-code mcp-server
 ```
 
 **Replace**:
 - `/absolute/path/to/your/project` - Your codebase to analyze
 - `/absolute/path/to/code-graph-rag` - Where you cloned this repo
-- `your-api-key` - Your OpenAI API key
+- `your-google-api-key` - Your Google AI API key
 
 ## Prerequisites
 
@@ -39,9 +64,11 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 > Update the login function to add rate limiting
 ```
 
+**Important**: Only one repository can be indexed at a time. When you index a new repository, the previous repository's data is automatically cleared from the database. If you need to switch between multiple projects, you'll need to re-index when switching.
+
 ## Available Tools
 
-- **index_repository** - Build knowledge graph
+- **index_repository** - Build knowledge graph (clears previous repository data)
 - **query_code_graph** - Natural language queries
 - **get_code_snippet** - Retrieve code by name
 - **surgical_replace_code** - Precise code edits
@@ -72,15 +99,21 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 
 ## Multi-Repository Setup
 
-Add separate instances for different projects:
+Add separate named instances for different projects:
 
 ```bash
 claude mcp add --transport stdio graph-code-backend \
   --env TARGET_REPO_PATH=/path/to/backend \
+  --env CYPHER_PROVIDER=openai \
+  --env CYPHER_MODEL=gpt-4 \
+  --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
 
 claude mcp add --transport stdio graph-code-frontend \
   --env TARGET_REPO_PATH=/path/to/frontend \
+  --env CYPHER_PROVIDER=openai \
+  --env CYPHER_MODEL=gpt-4 \
+  --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
 ```
 
@@ -88,7 +121,9 @@ claude mcp add --transport stdio graph-code-frontend \
 
 **Can't find uv/graph-code**: Use absolute paths from `which uv`
 
-**TARGET_REPO_PATH error**: Use absolute paths, not relative
+**Wrong repository analyzed**:
+- Without `TARGET_REPO_PATH`: MCP uses the directory where Claude Code is opened
+- With `TARGET_REPO_PATH`: MCP always uses that specific path (must be absolute)
 
 **Memgraph connection failed**: Ensure `docker ps` shows Memgraph running
 

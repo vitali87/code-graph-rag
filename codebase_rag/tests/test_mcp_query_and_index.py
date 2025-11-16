@@ -297,6 +297,85 @@ class TestIndexRepository:
             # Should have been called twice
             assert mock_updater.run.call_count == 2
 
+    async def test_index_repository_clears_database_first(
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
+    ) -> None:
+        """Test that database is cleared before indexing."""
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.run.return_value = None
+            mock_updater_class.return_value = mock_updater
+
+            # Index repository
+            result = await mcp_registry.index_repository()
+
+            # Verify clean_database was called
+            mcp_registry.ingestor.clean_database.assert_called_once()  # type: ignore[attr-defined]
+            assert "Error:" not in result
+            # Verify message indicates data was cleared
+            assert "cleared" in result.lower() or "previous data" in result.lower()
+
+    async def test_index_repository_clears_before_updater_runs(
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
+    ) -> None:
+        """Test that database clearing happens before GraphUpdater runs."""
+        call_order: list[str] = []
+
+        def mock_clean() -> None:
+            call_order.append("clean")
+
+        def mock_run() -> None:
+            call_order.append("run")
+
+        mcp_registry.ingestor.clean_database = MagicMock(side_effect=mock_clean)  # type: ignore[method-assign]
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.run = MagicMock(side_effect=mock_run)
+            mock_updater_class.return_value = mock_updater
+
+            await mcp_registry.index_repository()
+
+            # Verify clean was called before run
+            assert call_order == ["clean", "run"]
+
+    async def test_sequential_index_clears_previous_repo_data(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that indexing a second repository clears the first repository's data."""
+        # Create two mock registries for different projects
+        mock_ingestor = MagicMock()
+        mock_cypher = MagicMock()
+
+        project1 = tmp_path / "project1"
+        project1.mkdir()
+        registry1 = MCPToolsRegistry(
+            project_root=str(project1),
+            ingestor=mock_ingestor,
+            cypher_gen=mock_cypher,
+        )
+
+        project2 = tmp_path / "project2"
+        project2.mkdir()
+        registry2 = MCPToolsRegistry(
+            project_root=str(project2),
+            ingestor=mock_ingestor,
+            cypher_gen=mock_cypher,
+        )
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.run.return_value = None
+            mock_updater_class.return_value = mock_updater
+
+            # Index first repository
+            await registry1.index_repository()
+            assert mock_ingestor.clean_database.call_count == 1
+
+            # Index second repository - should clear database again
+            await registry2.index_repository()
+            assert mock_ingestor.clean_database.call_count == 2
+
 
 class TestQueryAndIndexIntegration:
     """Test integration between querying and indexing."""
