@@ -4,6 +4,7 @@ This module provides the main MCP server that exposes code-graph-rag's
 capabilities via the Model Context Protocol.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -143,8 +144,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         Tool handlers are dynamically resolved from the MCPToolsRegistry,
         ensuring consistency with tool definitions.
         """
-        import json
-
         logger.info(f"[GraphCode MCP] Calling tool: {name}")
 
         try:
