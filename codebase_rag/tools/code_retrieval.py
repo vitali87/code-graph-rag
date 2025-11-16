@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 
 from ..graph_updater import MemgraphIngestor
 from ..schemas import CodeSnippet
@@ -88,7 +88,7 @@ class CodeRetriever:
 def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
     """Factory function to create the code snippet retrieval tool."""
 
-    async def get_code_snippet(ctx: RunContext, qualified_name: str) -> CodeSnippet:
+    async def get_code_snippet(qualified_name: str) -> CodeSnippet:
         """Retrieves the source code for a given qualified name."""
         logger.info(f"[Tool:GetCode] Retrieving code for: {qualified_name}")
         return await code_retriever.find_code_snippet(qualified_name)
