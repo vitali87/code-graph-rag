@@ -367,18 +367,22 @@ class MCPToolsRegistry:
                 start = offset if offset is not None else 0
 
                 with open(full_path, encoding="utf-8") as f:
-                    # Count total lines for metadata (efficient single pass)
-                    total_lines = sum(1 for _ in f)
-                    f.seek(0)  # Reset to beginning
+                    # Skip lines before the offset and count how many we actually skipped
+                    skipped_count = sum(1 for _ in itertools.islice(f, start))
 
-                    # Skip lines before offset and read limited lines
+                    # Read the desired slice of lines
                     if limit is not None:
-                        lines_iter = itertools.islice(f, start, start + limit)
+                        sliced_lines = [line for _, line in zip(range(limit), f)]
                     else:
-                        lines_iter = itertools.islice(f, start, None)
+                        sliced_lines = list(f)
 
-                    sliced_lines = list(lines_iter)
                     paginated_content = "".join(sliced_lines)
+
+                    # Count the remaining lines to get the total without a full second pass
+                    remaining_lines_count = sum(1 for _ in f)
+                    total_lines = (
+                        skipped_count + len(sliced_lines) + remaining_lines_count
+                    )
 
                     # Add metadata header
                     header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
