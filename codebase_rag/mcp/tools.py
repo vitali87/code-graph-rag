@@ -143,7 +143,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] get_code_snippet: {qualified_name}")
         try:
-            snippet = await self._code_tool.function(qualified_name=qualified_name)  # type: ignore[call-arg]
+            snippet = await self._code_tool.function(qualified_name=qualified_name)
             result = snippet.model_dump() if snippet else None
             if result is None:
                 return {
