@@ -7,7 +7,6 @@ capabilities via the Model Context Protocol.
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from mcp.server import Server
@@ -100,149 +99,35 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        """List all available MCP tools."""
+        """List all available MCP tools.
+
+        Tool schemas are dynamically generated from the MCPToolsRegistry,
+        ensuring consistency between tool definitions and handlers.
+        """
+        schemas = tools.get_tool_schemas()
         return [
             Tool(
-                name="index_repository",
-                description="Parse and ingest the repository into the Memgraph knowledge graph. "
-                "This builds a comprehensive graph of functions, classes, dependencies, and relationships.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-            ),
-            Tool(
-                name="query_code_graph",
-                description="Query the codebase knowledge graph using natural language. "
-                "Ask questions like 'What functions call UserService.create_user?' or "
-                "'Show me all classes that implement the Repository interface'.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "natural_language_query": {
-                            "type": "string",
-                            "description": "Your question in plain English about the codebase",
-                        }
-                    },
-                    "required": ["natural_language_query"],
-                },
-            ),
-            Tool(
-                name="get_code_snippet",
-                description="Retrieve source code for a function, class, or method by its qualified name. "
-                "Returns the source code, file path, line numbers, and docstring.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "qualified_name": {
-                            "type": "string",
-                            "description": "Fully qualified name (e.g., 'app.services.UserService.create_user')",
-                        }
-                    },
-                    "required": ["qualified_name"],
-                },
-            ),
-            Tool(
-                name="surgical_replace_code",
-                description="Surgically replace an exact code block in a file using diff-match-patch. "
-                "Only modifies the exact target block, leaving the rest unchanged.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
-                        },
-                        "target_code": {
-                            "type": "string",
-                            "description": "Exact code block to replace",
-                        },
-                        "replacement_code": {
-                            "type": "string",
-                            "description": "New code to insert",
-                        },
-                    },
-                    "required": ["file_path", "target_code", "replacement_code"],
-                },
-            ),
-            Tool(
-                name="read_file",
-                description="Read the contents of a file from the project. Supports pagination for large files.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
-                        },
-                        "offset": {
-                            "type": "integer",
-                            "description": "Line number to start reading from (0-based, optional)",
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of lines to read (optional)",
-                        },
-                    },
-                    "required": ["file_path"],
-                },
-            ),
-            Tool(
-                name="write_file",
-                description="Write content to a file, creating it if it doesn't exist.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Content to write to the file",
-                        },
-                    },
-                    "required": ["file_path", "content"],
-                },
-            ),
-            Tool(
-                name="list_directory",
-                description="List contents of a directory in the project.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "directory_path": {
-                            "type": "string",
-                            "description": "Relative path to directory from project root (default: '.')",
-                            "default": ".",
-                        }
-                    },
-                    "required": [],
-                },
-            ),
+                name=schema["name"],
+                description=schema["description"],
+                inputSchema=schema["inputSchema"],
+            )
+            for schema in schemas
         ]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-        """Handle tool execution requests."""
+        """Handle tool execution requests.
+
+        Tool handlers are dynamically resolved from the MCPToolsRegistry,
+        ensuring consistency with tool definitions.
+        """
         import json
 
         logger.info(f"[GraphCode MCP] Calling tool: {name}")
 
-        # Tool dispatch table: (handler_function, returns_json)
-        tool_handlers: dict[str, tuple[Any, bool]] = {
-            "index_repository": (tools.index_repository, False),
-            "query_code_graph": (tools.query_code_graph, True),
-            "get_code_snippet": (tools.get_code_snippet, True),
-            "surgical_replace_code": (tools.surgical_replace_code, False),
-            "read_file": (tools.read_file, False),
-            "write_file": (tools.write_file, False),
-            "list_directory": (tools.list_directory, False),
-        }
-
         try:
-            handler_info = tool_handlers.get(name)
+            # Resolve handler from registry
+            handler_info = tools.get_tool_handler(name)
             if not handler_info:
                 error_msg = f"Unknown tool: {name}"
                 logger.error(f"[GraphCode MCP] {error_msg}")

@@ -4,6 +4,8 @@ This module adapts pydantic-ai Tool instances to MCP-compatible functions.
 """
 
 import itertools
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -22,6 +24,17 @@ from codebase_rag.tools.directory_lister import (
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+
+
+@dataclass
+class ToolMetadata:
+    """Metadata for an MCP tool including schema and handler information."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    handler: Callable[..., Any]
+    returns_json: bool
 
 
 class MCPToolsRegistry:
@@ -65,6 +78,143 @@ class MCPToolsRegistry:
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
+
+        # Build tool registry - single source of truth for all tool metadata
+        self._tools: dict[str, ToolMetadata] = {
+            "index_repository": ToolMetadata(
+                name="index_repository",
+                description="Parse and ingest the repository into the Memgraph knowledge graph. "
+                "This builds a comprehensive graph of functions, classes, dependencies, and relationships.",
+                input_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                handler=self.index_repository,
+                returns_json=False,
+            ),
+            "query_code_graph": ToolMetadata(
+                name="query_code_graph",
+                description="Query the codebase knowledge graph using natural language. "
+                "Ask questions like 'What functions call UserService.create_user?' or "
+                "'Show me all classes that implement the Repository interface'.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "natural_language_query": {
+                            "type": "string",
+                            "description": "Your question in plain English about the codebase",
+                        }
+                    },
+                    "required": ["natural_language_query"],
+                },
+                handler=self.query_code_graph,
+                returns_json=True,
+            ),
+            "get_code_snippet": ToolMetadata(
+                name="get_code_snippet",
+                description="Retrieve source code for a function, class, or method by its qualified name. "
+                "Returns the source code, file path, line numbers, and docstring.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "qualified_name": {
+                            "type": "string",
+                            "description": "Fully qualified name (e.g., 'app.services.UserService.create_user')",
+                        }
+                    },
+                    "required": ["qualified_name"],
+                },
+                handler=self.get_code_snippet,
+                returns_json=True,
+            ),
+            "surgical_replace_code": ToolMetadata(
+                name="surgical_replace_code",
+                description="Surgically replace an exact code block in a file using diff-match-patch. "
+                "Only modifies the exact target block, leaving the rest unchanged.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative path to the file from project root",
+                        },
+                        "target_code": {
+                            "type": "string",
+                            "description": "Exact code block to replace",
+                        },
+                        "replacement_code": {
+                            "type": "string",
+                            "description": "New code to insert",
+                        },
+                    },
+                    "required": ["file_path", "target_code", "replacement_code"],
+                },
+                handler=self.surgical_replace_code,
+                returns_json=False,
+            ),
+            "read_file": ToolMetadata(
+                name="read_file",
+                description="Read the contents of a file from the project. Supports pagination for large files.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative path to the file from project root",
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Line number to start reading from (0-based, optional)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of lines to read (optional)",
+                        },
+                    },
+                    "required": ["file_path"],
+                },
+                handler=self.read_file,
+                returns_json=False,
+            ),
+            "write_file": ToolMetadata(
+                name="write_file",
+                description="Write content to a file, creating it if it doesn't exist.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative path to the file from project root",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Content to write to the file",
+                        },
+                    },
+                    "required": ["file_path", "content"],
+                },
+                handler=self.write_file,
+                returns_json=False,
+            ),
+            "list_directory": ToolMetadata(
+                name="list_directory",
+                description="List contents of a directory in the project.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "directory_path": {
+                            "type": "string",
+                            "description": "Relative path to directory from project root (default: '.')",
+                            "default": ".",
+                        }
+                    },
+                    "required": [],
+                },
+                handler=self.list_directory,
+                returns_json=False,
+            ),
+        }
 
     async def index_repository(self) -> str:
         """Parse and ingest the repository into the Memgraph knowledge graph.
@@ -278,6 +428,43 @@ class MCPToolsRegistry:
         except Exception as e:
             logger.error(f"[MCP] Error listing directory: {e}")
             return f"Error: {str(e)}"
+
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        """Get MCP tool schemas for all registered tools.
+
+        Returns:
+            List of tool schema dictionaries suitable for MCP's list_tools()
+        """
+        return [
+            {
+                "name": metadata.name,
+                "description": metadata.description,
+                "inputSchema": metadata.input_schema,
+            }
+            for metadata in self._tools.values()
+        ]
+
+    def get_tool_handler(self, name: str) -> tuple[Callable[..., Any], bool] | None:
+        """Get the handler function and return type info for a tool.
+
+        Args:
+            name: Tool name to look up
+
+        Returns:
+            Tuple of (handler_function, returns_json) or None if tool not found
+        """
+        metadata = self._tools.get(name)
+        if metadata is None:
+            return None
+        return (metadata.handler, metadata.returns_json)
+
+    def list_tool_names(self) -> list[str]:
+        """Get a list of all registered tool names.
+
+        Returns:
+            List of tool names
+        """
+        return list(self._tools.keys())
 
 
 def create_mcp_tools_registry(
