@@ -303,6 +303,12 @@ class MCPToolsRegistry:
         try:
             snippet = await self._code_tool.function(qualified_name=qualified_name)
             result = snippet.model_dump()
+            if result is None:
+                return {
+                    "error": "Tool returned None",
+                    "found": False,
+                    "error_message": "Code snippet tool returned an invalid response",
+                }
             return cast(dict[str, Any], result)
         except Exception as e:
             logger.error(f"[MCP] Error retrieving code snippet: {e}")
