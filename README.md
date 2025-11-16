@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/vitali87-code-graph-rag-badge.png)](https://mseep.ai/app/vitali87-code-graph-rag)
+
 <div align="center">
   <picture>
     <source srcset="assets/logo-dark-any.png" media="(prefers-color-scheme: dark)">
