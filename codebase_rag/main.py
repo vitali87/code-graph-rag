@@ -785,6 +785,8 @@ async def main_async(repo_path: str, batch_size: int) -> None:
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
         batch_size=batch_size,
+        username=settings.MEMGRAPH_USERNAME,
+        password=settings.MEMGRAPH_PASSWORD,
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
         console.print(
@@ -870,6 +872,8 @@ def start(
             host=settings.MEMGRAPH_HOST,
             port=settings.MEMGRAPH_PORT,
             batch_size=effective_batch_size,
+            username=settings.MEMGRAPH_USERNAME,
+            password=settings.MEMGRAPH_PASSWORD,
         ) as ingestor:
             if clean:
                 console.print("[bold yellow]Cleaning database...[/bold yellow]")
@@ -930,6 +934,8 @@ def export(
             host=settings.MEMGRAPH_HOST,
             port=settings.MEMGRAPH_PORT,
             batch_size=effective_batch_size,
+            username=settings.MEMGRAPH_USERNAME,
+            password=settings.MEMGRAPH_PASSWORD,
         ) as ingestor:
             console.print("[bold cyan]Exporting graph data...[/bold cyan]")
             if not _export_graph_to_file(ingestor, output):
@@ -970,6 +976,8 @@ async def main_optimize_async(
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
         batch_size=effective_batch_size,
+        username=settings.MEMGRAPH_USERNAME,
+        password=settings.MEMGRAPH_PASSWORD,
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
 

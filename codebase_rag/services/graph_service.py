@@ -9,9 +9,18 @@ from loguru import logger
 class MemgraphIngestor:
     """Handles all communication and query execution with the Memgraph database."""
 
-    def __init__(self, host: str, port: int, batch_size: int = 1000):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        batch_size: int = 1000,
+        username: str | None = None,
+        password: str | None = None,
+    ):
         self._host = host
         self._port = port
+        self._username = username
+        self._password = password
         if batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
         self.batch_size = batch_size
@@ -32,7 +41,12 @@ class MemgraphIngestor:
 
     def __enter__(self) -> "MemgraphIngestor":
         logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
-        self.conn = mgclient.connect(host=self._host, port=self._port)
+        self.conn = mgclient.connect(
+            host=self._host,
+            port=self._port,
+            username=self._username,
+            password=self._password,
+        )
         self.conn.autocommit = True
         logger.info("Successfully connected to Memgraph.")
         return self
