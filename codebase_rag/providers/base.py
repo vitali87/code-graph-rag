@@ -159,12 +159,24 @@ class OllamaProvider(ModelProvider):
         return OpenAIModel(model_id, provider=provider, **kwargs)  # type: ignore
 
 
+# Import LiteLLM provider
+try:
+    from .litellm import LiteLLMProvider
+
+    _litellm_available = True
+except ImportError:
+    _litellm_available = False
+
 # Provider registry
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "google": GoogleProvider,
     "openai": OpenAIProvider,
     "ollama": OllamaProvider,
 }
+
+# Add LiteLLM if available
+if _litellm_available:
+    PROVIDER_REGISTRY["litellm_proxy"] = LiteLLMProvider
 
 
 def get_provider(provider_name: str, **config: Any) -> ModelProvider:
@@ -194,6 +206,19 @@ def check_ollama_running(endpoint: str = "http://localhost:11434") -> bool:
     """Check if Ollama is running and accessible."""
     try:
         health_url = urljoin(endpoint, "/api/tags")
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(health_url)
+            return bool(response.status_code == 200)
+    except (httpx.RequestError, httpx.TimeoutException):
+        return False
+
+
+def check_litellm_proxy_running(endpoint: str = "http://localhost:4000") -> bool:
+    """Check if LiteLLM proxy is running and accessible."""
+    try:
+        # LiteLLM proxy health endpoint
+        base_url = endpoint.rstrip("/v1").rstrip("/")
+        health_url = urljoin(base_url, "/health")
         with httpx.Client(timeout=5.0) as client:
             response = client.get(health_url)
             return bool(response.status_code == 200)
