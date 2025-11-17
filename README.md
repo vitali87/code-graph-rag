@@ -255,10 +255,21 @@ The system automatically detects and processes files for all supported languages
 
 ### Step 2: Query the Codebase
 
+**Interactive mode:**
+
 Start the interactive RAG CLI:
 
 ```bash
 python -m codebase_rag.main start --repo-path /path/to/your/repo
+```
+
+**Non-interactive mode (single query):**
+
+Run a single query and exit, with output sent to stdout (useful for scripting):
+
+```bash
+python -m codebase_rag.main start --repo-path /path/to/your/repo \
+  --question "What functions call UserService.create_user?"
 ```
 
 ### Step 2.5: Real-Time Graph Updates (Optional)
