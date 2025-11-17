@@ -211,14 +211,42 @@ def check_ollama_running(endpoint: str = "http://localhost:11434") -> bool:
         return False
 
 
-def check_litellm_proxy_running(endpoint: str = "http://localhost:4000") -> bool:
-    """Check if LiteLLM proxy is running and accessible."""
+def check_litellm_proxy_running(
+    endpoint: str = "http://localhost:4000", api_key: str | None = None
+) -> bool:
+    """Check if LiteLLM proxy is running and accessible.
+
+    Args:
+        endpoint: Base URL of the LiteLLM proxy server
+        api_key: Optional API key for authenticated proxies
+
+    Returns:
+        True if the proxy is accessible, False otherwise
+    """
     try:
-        # LiteLLM proxy health endpoint
         base_url = endpoint.rstrip("/v1").rstrip("/")
+
+        # Try health endpoint first (works for unauthenticated proxies)
         health_url = urljoin(base_url, "/health")
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
         with httpx.Client(timeout=5.0) as client:
-            response = client.get(health_url)
-            return bool(response.status_code == 200)
+            response = client.get(health_url, headers=headers)
+
+            # If health endpoint works, we're good
+            if response.status_code == 200:
+                return True
+
+            # If health endpoint fails (401, 404, 405, 500, etc.),
+            # try the models endpoint as a fallback when we have an API key
+            if api_key:
+                models_url = urljoin(base_url, "/v1/models")
+                response = client.get(models_url, headers=headers)
+                # Accept 200 (success) - server is up and API key works
+                return bool(response.status_code == 200)
+
+            return False
     except (httpx.RequestError, httpx.TimeoutException):
         return False

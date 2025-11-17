@@ -36,10 +36,10 @@ class LiteLLMProvider(ModelProvider):
         from .base import check_litellm_proxy_running
 
         base_url = self.endpoint.rstrip("/v1").rstrip("/")
-        if not check_litellm_proxy_running(base_url):
+        if not check_litellm_proxy_running(base_url, api_key=self.api_key):
             raise ValueError(
                 f"LiteLLM proxy server not responding at {base_url}. "
-                f"Make sure LiteLLM proxy is running."
+                f"Make sure LiteLLM proxy is running and API key is valid."
             )
 
     def create_model(self, model_id: str, **kwargs: Any) -> OpenAIChatModel:
