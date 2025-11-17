@@ -45,12 +45,19 @@ class MemgraphIngestor:
 
     def __enter__(self) -> "MemgraphIngestor":
         logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
-        self.conn = mgclient.connect(
-            host=self._host,
-            port=self._port,
-            username=self._username,
-            password=self._password,
-        )
+        # Build connection parameters - only include username/password if provided
+        connect_params = {
+            "host": self._host,
+            "port": self._port,
+        }
+
+        # Only add authentication parameters if username is provided
+        # This allows connection to Memgraph instances without authentication
+        if self._username:
+            connect_params["username"] = self._username
+            connect_params["password"] = self._password if self._password else ""
+
+        self.conn = mgclient.connect(**connect_params)
         self.conn.autocommit = True
         logger.info("Successfully connected to Memgraph.")
         return self
