@@ -21,6 +21,8 @@ class MemgraphIngestor:
         self._port = port
         self._username = username
         self._password = password
+        if self._password is not None and self._user is None:
+            raise ValueError("A password was provided for Memgraph, but no user. Both are required for authentication.")
         if batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
         self.batch_size = batch_size
