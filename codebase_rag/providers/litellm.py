@@ -6,7 +6,7 @@ from loguru import logger
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider as PydanticLiteLLMProvider
 
-from .base import ModelProvider, check_litellm_proxy_running
+from .base import ModelProvider
 
 
 class LiteLLMProvider(ModelProvider):
@@ -32,6 +32,9 @@ class LiteLLMProvider(ModelProvider):
             )
 
         # Check if LiteLLM proxy is running
+        # Import locally to avoid circular import
+        from .base import check_litellm_proxy_running
+
         base_url = self.endpoint.rstrip("/v1").rstrip("/")
         if not check_litellm_proxy_running(base_url):
             raise ValueError(

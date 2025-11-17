@@ -159,14 +159,6 @@ class OllamaProvider(ModelProvider):
         return OpenAIModel(model_id, provider=provider, **kwargs)  # type: ignore
 
 
-# Import LiteLLM provider
-try:
-    from .litellm import LiteLLMProvider
-
-    _litellm_available = True
-except ImportError:
-    _litellm_available = False
-
 # Provider registry
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "google": GoogleProvider,
@@ -174,9 +166,15 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "ollama": OllamaProvider,
 }
 
-# Add LiteLLM if available
-if _litellm_available:
+# Import LiteLLM provider after base classes are defined to avoid circular import
+try:
+    from .litellm import LiteLLMProvider
+
     PROVIDER_REGISTRY["litellm_proxy"] = LiteLLMProvider
+    _litellm_available = True
+except ImportError as e:
+    logger.debug(f"LiteLLM provider not available: {e}")
+    _litellm_available = False
 
 
 def get_provider(provider_name: str, **config: Any) -> ModelProvider:
