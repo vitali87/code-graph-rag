@@ -873,10 +873,10 @@ def start(
         min=1,
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
-    question: str | None = typer.Option(
+    ask_agent: str | None = typer.Option(
         None,
-        "-q",
-        "--question",
+        "-a",
+        "--ask-agent",
         help="Run a single query and exit (non-interactive mode). Output is sent to stdout.",
     ),
 ) -> None:
@@ -931,11 +931,11 @@ def start(
         return
 
     try:
-        if question:
+        if ask_agent:
             # Non-interactive mode: run single query and exit
             asyncio.run(
                 main_async_single_query(
-                    target_repo_path, effective_batch_size, question
+                    target_repo_path, effective_batch_size, ask_agent
                 )
             )
         else:
