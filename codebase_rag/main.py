@@ -490,15 +490,15 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     """Get multiline input from user with Ctrl+J to submit."""
     bindings = KeyBindings()
 
-    @bindings.add("c-j")
+    @bindings.add("enter")
     def submit(event: Any) -> None:
         """Submit the current input."""
         event.app.exit(result=event.app.current_buffer.text)
 
-    @bindings.add("enter")
-    def new_line(event: Any) -> None:
-        """Insert a new line instead of submitting."""
-        event.current_buffer.insert_text("\n")
+    # @bindings.add("enter")
+    # def new_line(event: Any) -> None:
+    #     """Insert a new line instead of submitting."""
+    #     event.current_buffer.insert_text("\n")
 
     @bindings.add("c-c")
     def keyboard_interrupt(event: Any) -> None:

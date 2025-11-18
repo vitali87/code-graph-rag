@@ -11,6 +11,8 @@ from pydantic_ai.models.openai import OpenAIModel, OpenAIResponsesModel
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider as PydanticGroqProvider
 
 
 class ModelProvider(ABC):
@@ -125,6 +127,26 @@ class OpenAIProvider(ModelProvider):
         return OpenAIResponsesModel(model_id, provider=provider, **kwargs)
 
 
+class GroqProvider(ModelProvider):
+    """Groq provider – uses Groq’s ultra‑fast inference API."""
+    def __init__(self, api_key: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.api_key = api_key
+
+    @property
+    def provider_name(self) -> str:
+        return "groq"
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError("Groq provider requires api_key.")
+
+    def create_model(self, model_id: str, **kwargs: Any) -> GroqModel:
+        self.validate_config()
+        provider = PydanticGroqProvider(api_key=self.api_key)
+        return GroqModel(model_id, provider=provider, **kwargs)
+
+
 class OllamaProvider(ModelProvider):
     """Ollama local provider."""
 
@@ -163,6 +185,7 @@ class OllamaProvider(ModelProvider):
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "google": GoogleProvider,
     "openai": OpenAIProvider,
+    "groq": GroqProvider,
     "ollama": OllamaProvider,
 }
 
