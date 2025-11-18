@@ -237,21 +237,28 @@ class MCPToolsRegistry:
                 handler=self.list_directory,
                 returns_json=False,
             ),
-            "ask_code_graph": ToolMetadata(
-                name="ask_code_graph",
-                description="Ask Code Graph a single question about the codebase and get an answer. "
-                "This tool executes the question using the RAG agent and returns the response.",
+            "ask_agent": ToolMetadata(
+                name="ask_agent",
+                description="Ask the Code Graph RAG agent a question about the codebase. "
+                "This tool uses a retrieval-augmented generation (RAG) agent to answer questions about the code. "
+                "The agent can analyze code structure, relationships, and content to provide comprehensive answers. "
+                "Use this tool for general questions about the codebase, architecture, functionality, and code relationships. "
+                "Examples: 'What functions call UserService.create_user?', 'How is the authentication implemented?', "
+                "'What are the main components of the system?', 'Where is the database connection configured?'",
                 input_schema={
                     "type": "object",
                     "properties": {
                         "question": {
                             "type": "string",
-                            "description": "The question to ask about the codebase",
+                            "description": "A natural language question about the codebase. "
+                            "Be specific and clear about what you want to know. "
+                            "Examples: 'What functions call UserService.create_user?', "
+                            "'How is error handling implemented?', 'What are the main entry points?'",
                         }
                     },
                     "required": ["question"],
                 },
-                handler=self.ask_code_graph,
+                handler=self.ask_agent,
                 returns_json=True,
             ),
         }
@@ -507,7 +514,7 @@ class MCPToolsRegistry:
             logger.error(f"[MCP] Error listing directory: {e}")
             return f"Error: {str(e)}"
 
-    async def ask_code_graph(self, question: str) -> dict[str, Any]:
+    async def ask_agent(self, question: str) -> dict[str, Any]:
         """Ask a single question about the codebase and get an answer.
 
         This tool executes the question using the RAG agent and returns the response
@@ -519,7 +526,7 @@ class MCPToolsRegistry:
         Returns:
             Dictionary with 'output' key containing the answer
         """
-        logger.info(f"[MCP] ask_code_graph: {question}")
+        logger.info(f"[MCP] ask_agent: {question}")
         try:
             # Handle images in the question (copy to temp directory)
             question_with_context = self._handle_question_images(question)

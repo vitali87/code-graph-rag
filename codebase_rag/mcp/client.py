@@ -1,17 +1,18 @@
 """MCP client for querying the code graph via the MCP server.
 
 This module provides a simple CLI client that connects to the MCP server
-and executes the ask_code_graph tool with a provided question.
+and executes the ask_agent tool with a provided question.
 """
 
 import asyncio
 import json
+import os
 import sys
 from typing import Any
 
 import typer
 from mcp import ClientSession
-from mcp.client.stdio import stdio_client
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 app = typer.Typer()
 
@@ -25,38 +26,46 @@ async def query_mcp_server(question: str) -> dict[str, Any]:
     Returns:
         Dictionary with the response from the server
     """
-    async with stdio_client() as (read, write):
-        async with ClientSession(read, write) as session:
-            # Initialize the session
-            await session.initialize()
+    # Start the MCP server as a subprocess with stderr redirected to /dev/null
+    # This suppresses all server logs while keeping stdout/stdin for MCP communication
+    with open(os.devnull, "w") as devnull:
+        server_params = StdioServerParameters(
+            command="python",
+            args=["-m", "codebase_rag.main", "mcp-server"],
+        )
 
-            # Call the ask_code_graph tool
-            result = await session.call_tool("ask_code_graph", {"question": question})
+        async with stdio_client(server=server_params, errlog=devnull) as (read, write):
+            async with ClientSession(read, write) as session:
+                # Initialize the session
+                await session.initialize()
 
-            # Extract the response text
-            if result.content:
-                response_text = result.content[0].text
-                # Parse JSON response
-                try:
-                    parsed = json.loads(response_text)
-                    if isinstance(parsed, dict):
-                        return parsed
-                    return {"output": str(parsed)}
-                except json.JSONDecodeError:
-                    return {"output": response_text}
-            return {"output": "No response from server"}
+                # Call the ask_agent tool
+                result = await session.call_tool("ask_agent", {"question": question})
+
+                # Extract the response text
+                if result.content:
+                    response_text = result.content[0].text
+                    # Parse JSON response
+                    try:
+                        parsed = json.loads(response_text)
+                        if isinstance(parsed, dict):
+                            return parsed
+                        return {"output": str(parsed)}
+                    except json.JSONDecodeError:
+                        return {"output": response_text}
+                return {"output": "No response from server"}
 
 
 @app.command()
 def main(
     question: str = typer.Option(
-        ..., "--question", "-q", help="Question to ask about the codebase"
+        ..., "--ask-agent", "-a", help="Question to ask about the codebase"
     ),
 ) -> None:
     """Query the code graph via MCP server.
 
     Example:
-        python -m codebase_rag.mcp.client --question "What functions call UserService.create_user?"
+        python -m codebase_rag.mcp.client --ask-agent "What functions call UserService.create_user?"
     """
     try:
         # Run the async query
