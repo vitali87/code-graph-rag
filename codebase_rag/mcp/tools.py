@@ -240,18 +240,15 @@ class MCPToolsRegistry:
             "ask_agent": ToolMetadata(
                 name="ask_agent",
                 description="Ask the Code Graph RAG agent a question about the codebase. "
-                "This tool uses a retrieval-augmented generation (RAG) agent to answer questions about the code. "
-                "The agent can analyze code structure, relationships, and content to provide comprehensive answers. "
                 "Use this tool for general questions about the codebase, architecture, functionality, and code relationships. "
-                "Examples: 'What functions call UserService.create_user?', 'How is the authentication implemented?', "
+                "Examples: 'How is the authentication implemented?', "
                 "'What are the main components of the system?', 'Where is the database connection configured?'",
                 input_schema={
                     "type": "object",
                     "properties": {
                         "question": {
                             "type": "string",
-                            "description": "A natural language question about the codebase. "
-                            "Be specific and clear about what you want to know. "
+                            "description": "A question about the codebase, architecture, functionality, and code relationships. "
                             "Examples: 'What functions call UserService.create_user?', "
                             "'How is error handling implemented?', 'What are the main entry points?'",
                         }
