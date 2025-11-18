@@ -159,11 +159,21 @@ def is_edit_operation_response(response_text: str) -> bool:
     return tool_usage or content_indicators or pattern_match
 
 
-def _setup_common_initialization(repo_path: str) -> Path:
-    """Common setup logic for both main and optimize functions."""
+def _setup_common_initialization(repo_path: str, question_mode: bool = False) -> Path:
+    """Common setup logic for both main and optimize functions.
+
+    Args:
+        repo_path: Path to the repository
+        question_mode: If True, suppress INFO/DEBUG/WARNING logs (only show errors and direct output)
+    """
     # Logger initialization
     logger.remove()
-    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    if question_mode:
+        # In question mode, only show ERROR level logs
+        logger.add(sys.stderr, level="ERROR", format="{message}")
+    else:
+        # In interactive mode, show all logs
+        logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
     # Temporary directory cleanup
     project_root = Path(repo_path).resolve()
@@ -778,7 +788,7 @@ async def main_async_single_query(
     repo_path: str, batch_size: int, question: str
 ) -> None:
     """Initializes services and runs a single query in non-interactive mode."""
-    project_root = _setup_common_initialization(repo_path)
+    project_root = _setup_common_initialization(repo_path, question_mode=True)
 
     with MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
