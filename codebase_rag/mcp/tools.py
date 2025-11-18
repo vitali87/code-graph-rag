@@ -4,7 +4,6 @@ This module adapts pydantic-ai Tool instances to MCP-compatible functions.
 """
 
 import itertools
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -525,96 +524,13 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] ask_agent: {question}")
         try:
-            # Handle images in the question (copy to temp directory)
-            question_with_context = self._handle_question_images(question)
-
             # Run the query using the RAG agent
-            response = await self.rag_agent.run(
-                question_with_context, message_history=[]
-            )
+            response = await self.rag_agent.run(question, message_history=[])
 
             return {"output": response.output}
         except Exception as e:
             logger.error(f"[MCP] Error asking code graph: {e}", exc_info=True)
             return {"output": f"Error: {str(e)}", "error": True}
-
-    def _handle_question_images(self, question: str) -> str:
-        """Handle image file paths in the question by copying them to temp directory.
-
-        Args:
-            question: The question potentially containing image paths
-
-        Returns:
-            Question with image paths replaced with temp directory paths
-        """
-        import shlex
-        import shutil
-
-        # Use shlex to properly parse the question and handle escaped spaces
-        try:
-            tokens = shlex.split(question)
-        except ValueError:
-            # Fallback to simple split if shlex fails
-            tokens = question.split()
-
-        # Find image files in tokens
-        image_extensions = (".png", ".jpg", ".jpeg", ".gif")
-        image_files = [
-            token
-            for token in tokens
-            if token.startswith("/") and token.lower().endswith(image_extensions)
-        ]
-
-        if not image_files:
-            return question
-
-        updated_question = question
-        project_root = Path(self.project_root)
-        tmp_dir = project_root / ".tmp"
-        tmp_dir.mkdir(exist_ok=True)
-
-        for original_path_str in image_files:
-            original_path = Path(original_path_str)
-
-            if not original_path.exists() or not original_path.is_file():
-                logger.warning(
-                    f"Image path found, but does not exist: {original_path_str}"
-                )
-                continue
-
-            try:
-                new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
-                shutil.copy(original_path, new_path)
-                new_relative_path = new_path.relative_to(project_root)
-
-                # Find and replace all possible quoted/escaped versions of this path
-                path_variants = [
-                    original_path_str.replace(" ", r"\ "),
-                    f"'{original_path_str}'",
-                    f'"{original_path_str}"',
-                    original_path_str,
-                ]
-
-                # Try each variant and replace if found
-                replaced = False
-                for variant in path_variants:
-                    if variant in updated_question:
-                        updated_question = updated_question.replace(
-                            variant, str(new_relative_path)
-                        )
-                        replaced = True
-                        break
-
-                if not replaced:
-                    logger.warning(
-                        f"Could not find original path in question for replacement: {original_path_str}"
-                    )
-
-                logger.info(f"Copied image to temporary path: {new_relative_path}")
-            except Exception as e:
-                logger.error(f"Failed to copy image to temporary directory: {e}")
-
-        return updated_question
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get MCP tool schemas for all registered tools.
