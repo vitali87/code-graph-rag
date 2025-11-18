@@ -21,12 +21,17 @@ from codebase_rag.services.llm import CypherGenerator
 
 
 def setup_logging() -> None:
-    """Configure logging to stderr for MCP stdio transport."""
+    """Configure logging to stderr for MCP stdio transport.
+
+    Uses plain text format without ANSI colors or box drawing characters
+    to avoid interfering with JSONRPC protocol on stdout.
+    """
     logger.remove()  # Remove default handler
     logger.add(
         sys.stderr,
         level="INFO",
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+        colorize=False,  # Disable ANSI color codes
     )
 
 

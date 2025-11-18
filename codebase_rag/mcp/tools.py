@@ -4,12 +4,14 @@ This module adapts pydantic-ai Tool instances to MCP-compatible functions.
 """
 
 import itertools
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from loguru import logger
+from rich.console import Console
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -79,8 +81,10 @@ class MCPToolsRegistry:
         self.document_analyzer = DocumentAnalyzer(project_root=project_root)
 
         # Create pydantic-ai tools - we'll call the underlying functions directly
+        # Use a Console that outputs to stderr to avoid corrupting JSONRPC on stdout
+        stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
         self._query_tool = create_query_tool(
-            ingestor=ingestor, cypher_gen=cypher_gen, console=None
+            ingestor=ingestor, cypher_gen=cypher_gen, console=stderr_console
         )
         self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
         self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
