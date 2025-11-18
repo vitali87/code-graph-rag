@@ -4,6 +4,7 @@ This module adapts pydantic-ai Tool instances to MCP-compatible functions.
 """
 
 import itertools
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,16 +15,25 @@ from loguru import logger
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
 from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
 )
+from codebase_rag.tools.document_analyzer import (
+    DocumentAnalyzer,
+    create_document_analyzer_tool,
+)
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+from codebase_rag.tools.semantic_search import (
+    create_get_function_source_tool,
+    create_semantic_search_tool,
+)
+from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
 
 
 @dataclass
@@ -66,6 +76,8 @@ class MCPToolsRegistry:
         self.file_reader = FileReader(project_root=project_root)
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
+        self.shell_commander = ShellCommander(project_root=project_root)
+        self.document_analyzer = DocumentAnalyzer(project_root=project_root)
 
         # Create pydantic-ai tools - we'll call the underlying functions directly
         self._query_tool = create_query_tool(
@@ -78,6 +90,17 @@ class MCPToolsRegistry:
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
+        self._shell_command_tool = create_shell_command_tool(
+            shell_commander=self.shell_commander
+        )
+        self._document_analyzer_tool = create_document_analyzer_tool(
+            self.document_analyzer
+        )
+        self._semantic_search_tool = create_semantic_search_tool()
+        self._function_source_tool = create_get_function_source_tool()
+
+        # Create RAG orchestrator agent (lazy initialization for testing)
+        self._rag_agent: Any = None
 
         # Build tool registry - single source of truth for all tool metadata
         self._tools: dict[str, ToolMetadata] = {
@@ -214,7 +237,52 @@ class MCPToolsRegistry:
                 handler=self.list_directory,
                 returns_json=False,
             ),
+            "ask_code_graph": ToolMetadata(
+                name="ask_code_graph",
+                description="Ask Code Graph a single question about the codebase and get an answer. "
+                "This tool executes the question using the RAG agent and returns the response.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question to ask about the codebase",
+                        }
+                    },
+                    "required": ["question"],
+                },
+                handler=self.ask_code_graph,
+                returns_json=True,
+            ),
         }
+
+    @property
+    def rag_agent(self) -> Any:
+        """Lazy-initialize the RAG orchestrator agent on first access.
+
+        This allows tests to mock the agent without triggering LLM initialization.
+        """
+        if self._rag_agent is None:
+            self._rag_agent = create_rag_orchestrator(
+                tools=[
+                    self._query_tool,
+                    self._code_tool,
+                    self._file_reader_tool,
+                    self._file_writer_tool,
+                    self._file_editor_tool,
+                    self._shell_command_tool,
+                    self._directory_lister_tool,
+                    self._document_analyzer_tool,
+                    self._semantic_search_tool,
+                    self._function_source_tool,
+                ]
+            )
+        return self._rag_agent
+
+    @rag_agent.setter
+    def rag_agent(self, value: Any) -> None:
+        """Allow setting the RAG agent (useful for testing)."""
+        self._rag_agent = value
 
     async def index_repository(self) -> str:
         """Parse and ingest the repository into the Memgraph knowledge graph.
@@ -438,6 +506,111 @@ class MCPToolsRegistry:
         except Exception as e:
             logger.error(f"[MCP] Error listing directory: {e}")
             return f"Error: {str(e)}"
+
+    async def ask_code_graph(self, question: str) -> dict[str, Any]:
+        """Ask a single question about the codebase and get an answer.
+
+        This tool executes the question using the RAG agent and returns the response
+        in a structured format suitable for MCP clients.
+
+        Args:
+            question: The question to ask about the codebase
+
+        Returns:
+            Dictionary with 'output' key containing the answer
+        """
+        logger.info(f"[MCP] ask_code_graph: {question}")
+        try:
+            # Handle images in the question (copy to temp directory)
+            question_with_context = self._handle_question_images(question)
+
+            # Run the query using the RAG agent
+            response = await self.rag_agent.run(
+                question_with_context, message_history=[]
+            )
+
+            return {"output": response.output}
+        except Exception as e:
+            logger.error(f"[MCP] Error asking code graph: {e}", exc_info=True)
+            return {"output": f"Error: {str(e)}", "error": True}
+
+    def _handle_question_images(self, question: str) -> str:
+        """Handle image file paths in the question by copying them to temp directory.
+
+        Args:
+            question: The question potentially containing image paths
+
+        Returns:
+            Question with image paths replaced with temp directory paths
+        """
+        import shlex
+        import shutil
+
+        # Use shlex to properly parse the question and handle escaped spaces
+        try:
+            tokens = shlex.split(question)
+        except ValueError:
+            # Fallback to simple split if shlex fails
+            tokens = question.split()
+
+        # Find image files in tokens
+        image_extensions = (".png", ".jpg", ".jpeg", ".gif")
+        image_files = [
+            token
+            for token in tokens
+            if token.startswith("/") and token.lower().endswith(image_extensions)
+        ]
+
+        if not image_files:
+            return question
+
+        updated_question = question
+        project_root = Path(self.project_root)
+        tmp_dir = project_root / ".tmp"
+        tmp_dir.mkdir(exist_ok=True)
+
+        for original_path_str in image_files:
+            original_path = Path(original_path_str)
+
+            if not original_path.exists() or not original_path.is_file():
+                logger.warning(
+                    f"Image path found, but does not exist: {original_path_str}"
+                )
+                continue
+
+            try:
+                new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
+                shutil.copy(original_path, new_path)
+                new_relative_path = new_path.relative_to(project_root)
+
+                # Find and replace all possible quoted/escaped versions of this path
+                path_variants = [
+                    original_path_str.replace(" ", r"\ "),
+                    f"'{original_path_str}'",
+                    f'"{original_path_str}"',
+                    original_path_str,
+                ]
+
+                # Try each variant and replace if found
+                replaced = False
+                for variant in path_variants:
+                    if variant in updated_question:
+                        updated_question = updated_question.replace(
+                            variant, str(new_relative_path)
+                        )
+                        replaced = True
+                        break
+
+                if not replaced:
+                    logger.warning(
+                        f"Could not find original path in question for replacement: {original_path_str}"
+                    )
+
+                logger.info(f"Copied image to temporary path: {new_relative_path}")
+            except Exception as e:
+                logger.error(f"Failed to copy image to temporary directory: {e}")
+
+        return updated_question
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get MCP tool schemas for all registered tools.
