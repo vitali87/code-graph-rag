@@ -520,21 +520,36 @@ class MCPToolsRegistry:
         This tool executes the question using the RAG agent and returns the response
         in a structured format suitable for MCP clients.
 
+        Logging is suppressed during execution to prevent token waste in LLM context.
+
         Args:
             question: The question to ask about the codebase
 
         Returns:
             Dictionary with 'output' key containing the answer
         """
-        logger.info(f"[MCP] ask_agent: {question}")
-        try:
-            # Run the query using the RAG agent
-            response = await self.rag_agent.run(question, message_history=[])
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
 
-            return {"output": response.output}
-        except Exception as e:
-            logger.error(f"[MCP] Error asking code graph: {e}", exc_info=True)
-            return {"output": f"Error: {str(e)}", "error": True}
+        # Suppress all logging output during agent execution
+        try:
+            # Temporarily redirect stdout and stderr to suppress all output
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                # Temporarily disable loguru logging
+                logger.disable("codebase_rag")
+                try:
+                    # Run the query using the RAG agent
+                    response = await self.rag_agent.run(question, message_history=[])
+                    return {"output": response.output}
+                finally:
+                    # Re-enable logging
+                    logger.enable("codebase_rag")
+        except Exception:
+            # Fail silently without logging or printing error details
+            return {
+                "output": "There was an error processing your question",
+                "error": True,
+            }
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get MCP tool schemas for all registered tools.
