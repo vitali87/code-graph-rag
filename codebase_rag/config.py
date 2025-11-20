@@ -24,6 +24,7 @@ class ModelConfig:
     provider_type: str | None = None
     thinking_budget: int | None = None
     service_account_file: str | None = None
+    api_version: str | None = None
 
 
 class AppConfig(BaseSettings):
@@ -67,6 +68,11 @@ class AppConfig(BaseSettings):
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
+    # OpenAI API Version for Azure
+    AZURE_OPEN_AI_API_VERSION: str | None = (
+        None  # For models compatible with the OpenAI API, as specified in: https://ai.pydantic.dev/models/overview/#openai-compatible-providers
+    )
+
     # Fallback endpoint for ollama
     LOCAL_MODEL_ENDPOINT: AnyHttpUrl = AnyHttpUrl("http://localhost:11434/v1")
 
@@ -100,6 +106,7 @@ class AppConfig(BaseSettings):
                 service_account_file=getattr(
                     self, f"{role_upper}_SERVICE_ACCOUNT_FILE", None
                 ),
+                api_version=getattr(self, "AZURE_OPEN_AI_API_VERSION", None),
             )
 
         # Default to Ollama
