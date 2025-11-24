@@ -133,7 +133,7 @@ class AzureOpenAIProvider(ModelProvider):
                 "Set AZURE_OPEN_AI_API_VERSION in .env file."
             )
 
-    def create_model(self, model_id: str, **kwargs: Any) -> OpenAIResponsesModel:
+    def create_model(self, model_id: str, **kwargs: Any) -> OpenAIModel:
         self.validate_config()
 
         provider = AzureProvider(
@@ -142,7 +142,7 @@ class AzureOpenAIProvider(ModelProvider):
             api_key=self.api_key,
         )
 
-        return OpenAIResponsesModel(model_id, provider=provider, **kwargs)
+        return OpenAIModel(model_id, provider=provider, **kwargs)
 
 
 class OpenAIProvider(ModelProvider):
