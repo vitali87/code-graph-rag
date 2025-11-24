@@ -117,14 +117,14 @@ class AzureOpenAIProvider(ModelProvider):
     def validate_config(self) -> None:
         if not self.api_key:
             raise ValueError(
-                "Azure OpenAI provider requires api key. "
-                "Set AZURE_OPENAI_API_KEY in .env file."
+                "Azure OpenAI provider requires an API key. "
+                "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in your .env file."
             )
 
         if not self.endpoint:
             raise ValueError(
-                "Azure OpenAI provider requires endpoint. "
-                "Set AZURE_OPENAI_ENDPOINT in .env file."
+                "Azure OpenAI provider requires an endpoint. "
+                "Set ORCHESTRATOR_ENDPOINT or CYPHER_ENDPOINT in your .env file."
             )
 
         if not self.api_version:
