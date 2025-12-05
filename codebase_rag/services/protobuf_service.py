@@ -21,7 +21,7 @@ class ProtobufFileIngestor:
         "Package": "package",
         "Folder": "folder",
         "Module": "module",
-        "Class": "class",
+        "Class": "class_node",
         "Function": "function",
         "Method": "method",
         "File": "file",
@@ -103,20 +103,20 @@ class ProtobufFileIngestor:
         rel = pb.Relationship()
 
         try:
-            rel.type = pb.Relationship.RelationshipType.Value(rel_type)
+            rel.type = pb.Relationship.RelationshipType.Value(rel_type)  # type: ignore[misc,assignment]
         except ValueError:
             logger.warning(
                 f"Unknown relationship type '{rel_type}'. Setting to UNSPECIFIED."
             )
-            rel.type = pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
+            rel.type = pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED  # type: ignore[misc]
 
         from_label, _, from_val = from_spec
         to_label, _, to_val = to_spec
 
-        rel.source_id = str(from_val)
-        rel.source_label = str(from_label)
-        rel.target_id = str(to_val)
-        rel.target_label = str(to_label)
+        rel.source_id = str(from_val)  # type: ignore[misc]
+        rel.source_label = str(from_label)  # type: ignore[misc]
+        rel.target_id = str(to_val)  # type: ignore[misc]
+        rel.target_label = str(to_label)  # type: ignore[misc]
 
         if rel.source_id.strip() == "" or rel.target_id.strip() == "":
             logger.warning(

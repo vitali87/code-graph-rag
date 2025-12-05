@@ -907,11 +907,11 @@ def index(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help="Path to the target repository to index."
     ),
-    output_proto: str = typer.Option(
+    output_proto_dir: str = typer.Option(
         ...,  # Make it a required option
         "-o",
-        "--output-proto",
-        help="Required. Path to write the binary protobuf index file.",
+        "--output-proto-dir",
+        help="Required. Path to the output directory for the protobuf index file(s).",
     ),
     split_index: bool = typer.Option(
         False,
@@ -924,12 +924,14 @@ def index(
     repo_to_index = Path(target_repo_path)
 
     console.print(f"[bold green]Indexing codebase at: {repo_to_index}[/bold green]")
-    console.print(f"[bold cyan]Output will be written to: {output_proto}[/bold cyan]")
+    console.print(
+        f"[bold cyan]Output will be written to: {output_proto_dir}[/bold cyan]"
+    )
 
     try:
         # This command ONLY ever uses the ProtobufFileIngestor.
         ingestor = ProtobufFileIngestor(
-            output_path=output_proto, split_index=split_index
+            output_path=output_proto_dir, split_index=split_index
         )
         parsers, queries = load_parsers()
         updater = GraphUpdater(ingestor, repo_to_index, parsers, queries)

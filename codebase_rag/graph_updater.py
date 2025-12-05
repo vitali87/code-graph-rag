@@ -10,7 +10,7 @@ from tree_sitter import Node, Parser
 from .config import IGNORE_PATTERNS
 from .language_config import LANGUAGE_FQN_CONFIGS, get_language_config
 from .parsers.factory import ProcessorFactory
-from .services import IngestorProtocol
+from .services import IngestorProtocol, QueryProtocol
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.source_extraction import extract_source_with_fallback
@@ -451,7 +451,7 @@ class GraphUpdater:
             return
 
         # Semantic embeddings require query capability (only available with Memgraph)
-        if not hasattr(self.ingestor, "fetch_all"):
+        if not isinstance(self.ingestor, QueryProtocol):
             logger.info(
                 "Ingestor does not support querying, skipping embedding generation"
             )

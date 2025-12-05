@@ -95,7 +95,7 @@ message GraphCodeIndex {
       Package package = 2;
       Folder folder = 3;
       Module module = 4;
-      Class class = 5;
+      Class class_node = 5;
       Function function = 6;
       Method method = 7;
       File file = 8;
