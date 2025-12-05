@@ -31,7 +31,7 @@ graph-code = "codebase_rag.main:app"
 package = true
 
 [tool.setuptools]
-packages = ["codebase_rag"]
+packages = ["codebase_rag", "codec"]
 
 [project.optional-dependencies]
 test = [
