@@ -142,8 +142,9 @@ class LuaTypeInferenceEngine:
 
         # For Lua, classes might not be registered as entities, but their methods are
         # Check if any method of this class exists (e.g., Application:new)
+        # Use trie's find_with_prefix for O(k) lookup, then check for Lua method separator
         method_prefix = f"{local_class_qn}:"
-        for qn in self.function_registry.keys():
+        for qn, _ in self.function_registry.find_with_prefix(local_class_qn):
             if qn.startswith(method_prefix):
                 # Found a method, so the class exists
                 return local_class_qn

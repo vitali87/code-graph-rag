@@ -108,6 +108,7 @@ class CallProcessor:
         self, file_path: Path, root_node: Node, language: str, queries: dict[str, Any]
     ) -> None:
         """Process function calls in a specific file using its cached AST."""
+        import time
         relative_path = file_path.relative_to(self.repo_path)
         logger.debug(f"Processing calls in cached AST for: {relative_path}")
 
@@ -121,9 +122,21 @@ class CallProcessor:
                     [self.project_name] + list(relative_path.parent.parts)
                 )
 
+            t1 = time.time()
             self._process_calls_in_functions(root_node, module_qn, language, queries)
+            t2 = time.time()
+            if t2 - t1 > 1.0:
+                logger.warning(f"  _process_calls_in_functions: {t2-t1:.2f}s for {relative_path}")
+
             self._process_calls_in_classes(root_node, module_qn, language, queries)
+            t3 = time.time()
+            if t3 - t2 > 1.0:
+                logger.warning(f"  _process_calls_in_classes: {t3-t2:.2f}s for {relative_path}")
+
             self._process_module_level_calls(root_node, module_qn, language, queries)
+            t4 = time.time()
+            if t4 - t3 > 1.0:
+                logger.warning(f"  _process_module_level_calls: {t4-t3:.2f}s for {relative_path}")
 
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
@@ -375,15 +388,11 @@ class CallProcessor:
             if not isinstance(call_node, Node):
                 continue
 
-            # Process nested calls first (inner to outer)
-            self._process_nested_calls_in_node(
-                call_node,
-                caller_qn,
-                caller_type,
-                module_qn,
-                local_var_types,
-                class_context,
-            )
+            # NOTE: We removed _process_nested_calls_in_node here because the tree-sitter
+            # query already finds ALL call nodes including nested ones. The recursive
+            # nested call processing was causing O(N*M) complexity where N = number of calls
+            # and M = average subtree size, leading to extreme slowdowns on files with
+            # many nested calls.
 
             call_name = self._get_call_target_name(call_node)
             if not call_name:

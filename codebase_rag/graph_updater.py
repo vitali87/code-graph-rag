@@ -19,9 +19,11 @@ from .utils.source_extraction import extract_source_with_fallback
 class FunctionRegistryTrie:
     """Trie data structure optimized for function qualified name lookups."""
 
-    def __init__(self) -> None:
+    def __init__(self, simple_name_lookup: dict[str, set[str]] | None = None) -> None:
         self.root: dict[str, Any] = {}
         self._entries: dict[str, str] = {}
+        # Reference to simple_name_lookup for O(1) suffix lookups
+        self._simple_name_lookup = simple_name_lookup
 
     def insert(self, qualified_name: str, func_type: str) -> None:
         """Insert a function into the trie."""
@@ -143,7 +145,14 @@ class FunctionRegistryTrie:
         return results
 
     def find_ending_with(self, suffix: str) -> list[str]:
-        """Find all qualified names ending with the given suffix."""
+        """Find all qualified names ending with the given suffix.
+
+        Uses simple_name_lookup for O(1) lookup if available, falls back to O(n) scan.
+        """
+        if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
+            # O(1) lookup using the simple_name_lookup index
+            return list(self._simple_name_lookup[suffix])
+        # Fallback to linear scan if no index available
         return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
     def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
@@ -269,8 +278,8 @@ class GraphUpdater:
         self.parsers = parsers
         self.queries = self._prepare_queries_with_parsers(queries, parsers)
         self.project_name = repo_path.name
-        self.function_registry = FunctionRegistryTrie()
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
+        self.function_registry = FunctionRegistryTrie(simple_name_lookup=self.simple_name_lookup)
         self.ast_cache = BoundedASTCache(max_entries=1000, max_memory_mb=500)
         self.ignore_dirs = IGNORE_PATTERNS
 
@@ -435,12 +444,19 @@ class GraphUpdater:
 
     def _process_function_calls(self) -> None:
         """Third pass: Process function calls using the cached ASTs."""
+        import time
         # Create a copy of items to prevent "OrderedDict mutated during iteration" errors
         ast_cache_items = list(self.ast_cache.items())
-        for file_path, (root_node, language) in ast_cache_items:
+        total_files = len(ast_cache_items)
+        for i, (file_path, (root_node, language)) in enumerate(ast_cache_items):
+            logger.info(f"[{i+1}/{total_files}] Starting: {file_path}")
+            start_time = time.time()
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )
+            elapsed = time.time() - start_time
+            if elapsed > 1.0:  # Log files taking more than 1 second
+                logger.warning(f"[{i+1}/{total_files}] SLOW: {file_path} took {elapsed:.2f}s")
 
     def _generate_semantic_embeddings(self) -> None:
         """Generate and store semantic embeddings for functions and methods."""

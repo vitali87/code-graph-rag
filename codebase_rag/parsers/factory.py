@@ -125,6 +125,7 @@ class ProcessorFactory:
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.definition_processor.class_inheritance,
+                simple_name_lookup=self.simple_name_lookup,
             )
         return self._type_inference
 

@@ -33,6 +33,7 @@ class TypeInferenceEngine:
         queries: dict[str, Any],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
+        simple_name_lookup: dict[str, set[str]],
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -42,11 +43,17 @@ class TypeInferenceEngine:
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance = class_inheritance
+        self.simple_name_lookup = simple_name_lookup
 
         # Language-specific type inference engines (lazy-loaded)
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._lua_type_inference: LuaTypeInferenceEngine | None = None
         self._js_type_inference: JsTypeInferenceEngine | None = None
+
+        # Memoization caches to prevent repeated work during recursive type inference
+        self._method_return_type_cache: dict[str, str | None] = {}
+        # Recursion guard to prevent infinite loops in recursive type inference
+        self._type_inference_in_progress: set[str] = set()
 
     @property
     def java_type_inference(self) -> JavaTypeInferenceEngine:
@@ -61,6 +68,7 @@ class TypeInferenceEngine:
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.class_inheritance,
+                simple_name_lookup=self.simple_name_lookup,
             )
         return self._java_type_inference
 
@@ -122,21 +130,13 @@ class TypeInferenceEngine:
             # First, try to infer types from function parameters
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
 
-            # Pass 1: Handle direct assignments and constructors (no method calls)
-            self._traverse_for_assignments_simple(
-                caller_node, local_var_types, module_qn
-            )
-
-            # Pass 2: Handle method call assignments using types from pass 1
-            self._traverse_for_assignments_complex(
-                caller_node, local_var_types, module_qn
-            )
-
-            # Handle loop variables in comprehensions and for loops
-            self._infer_loop_variable_types(caller_node, local_var_types, module_qn)
-
-            # Handle instance variables like self.repo
-            self._infer_instance_variable_types(caller_node, local_var_types, module_qn)
+            # Single-pass traversal for all type inference:
+            # - Simple assignments (constructors, literals)
+            # - Complex assignments (method calls)
+            # - Loop variables (comprehensions, for loops)
+            # - Instance variables (self.attr)
+            # This avoids the previous O(5*N) multiple traversals
+            self._traverse_single_pass(caller_node, local_var_types, module_qn)
 
         except Exception as e:
             logger.debug(f"Failed to build local variable type map: {e}")
@@ -193,9 +193,9 @@ class TypeInferenceEngine:
         )
         available_class_names = []
 
-        # 1. Get classes defined in the current module
-        for qn, node_type in self.function_registry.items():
-            if node_type == "Class" and qn.startswith(module_qn + "."):
+        # 1. Get classes defined in the current module (using trie for O(k) lookup)
+        for qn, node_type in self.function_registry.find_with_prefix(module_qn):
+            if node_type == "Class":
                 # Check if it's directly in this module, not a submodule
                 if ".".join(qn.split(".")[:-1]) == module_qn:
                     available_class_names.append(qn.split(".")[-1])
@@ -366,12 +366,42 @@ class TypeInferenceEngine:
     def _infer_instance_variable_types(
         self, caller_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Infer types for instance variables by analyzing assignments."""
+        """Infer types for instance variables by analyzing assignments.
+
+        NOTE: This does a full traversal. For better performance, use
+        _infer_instance_variable_types_from_assignments with pre-collected assignments.
+        """
         # Look for assignments like self.repo = Repository() in the current method
         self._analyze_self_assignments(caller_node, local_var_types, module_qn)
 
         # Also look for instance variable assignments in the class's __init__ method
         self._analyze_class_init_assignments(caller_node, local_var_types, module_qn)
+
+    def _infer_instance_variable_types_from_assignments(
+        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Infer types for instance variables from pre-collected assignments.
+
+        This is more efficient than _infer_instance_variable_types as it reuses
+        assignments already collected during single-pass traversal.
+        """
+        for assignment in assignments:
+            left_node = assignment.child_by_field_name("left")
+            right_node = assignment.child_by_field_name("right")
+
+            if left_node and right_node and left_node.type == "attribute":
+                left_text = left_node.text
+                if left_text and left_text.decode("utf8").startswith("self."):
+                    attr_name = left_text.decode("utf8")
+                    assigned_type = self._infer_type_from_expression(
+                        right_node, module_qn
+                    )
+                    if assigned_type:
+                        local_var_types[attr_name] = assigned_type
+                        logger.debug(
+                            f"Inferred instance variable: "
+                            f"{attr_name} -> {assigned_type}"
+                        )
 
     def _analyze_class_init_assignments(
         self, caller_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -519,10 +549,70 @@ class TypeInferenceEngine:
 
         return None
 
+    def _traverse_single_pass(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """
+        Single-pass AST traversal for all type inference operations.
+
+        This combines what was previously 5 separate traversals into one:
+        - Simple assignments (constructors, literals)
+        - Complex assignments (method calls) - done in second phase after first pass
+        - Comprehension loop variables
+        - For loop variables
+        - Instance variables (self.attr)
+
+        Performance: O(N) instead of O(5*N) where N = AST size.
+        """
+        # Collect assignments during first pass for two-phase processing
+        assignments: list[Node] = []
+        comprehensions: list[Node] = []
+        for_statements: list[Node] = []
+
+        # Single traversal to collect all relevant nodes
+        stack: list[Node] = [node]
+        while stack:
+            current = stack.pop()
+            node_type = current.type
+
+            if node_type == "assignment":
+                assignments.append(current)
+            elif node_type == "list_comprehension":
+                comprehensions.append(current)
+            elif node_type == "for_statement":
+                for_statements.append(current)
+
+            stack.extend(reversed(current.children))
+
+        # Phase 1: Process simple assignments first (constructors, literals)
+        for assignment in assignments:
+            self._process_assignment_simple(assignment, local_var_types, module_qn)
+
+        # Phase 2: Process complex assignments using types from phase 1
+        for assignment in assignments:
+            self._process_assignment_complex(assignment, local_var_types, module_qn)
+
+        # Phase 3: Process comprehensions
+        for comp in comprehensions:
+            self._analyze_comprehension(comp, local_var_types, module_qn)
+
+        # Phase 4: Process for loops
+        for for_stmt in for_statements:
+            self._analyze_for_loop(for_stmt, local_var_types, module_qn)
+
+        # Phase 5: Instance variables (self.attr) - reuses the assignments collected
+        self._infer_instance_variable_types_from_assignments(
+            assignments, local_var_types, module_qn
+        )
+
     def _traverse_for_assignments_simple(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Traverse AST for simple assignments (constructors, literals) only."""
+        """Traverse AST for simple assignments (constructors, literals) only.
+
+        NOTE: This is kept for backwards compatibility but _traverse_single_pass
+        should be preferred for better performance.
+        """
         stack: list[Node] = [node]
 
         while stack:
@@ -535,7 +625,11 @@ class TypeInferenceEngine:
     def _traverse_for_assignments_complex(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Traverse AST for complex assignments (method calls) using existing variable types."""
+        """Traverse AST for complex assignments (method calls) using existing variable types.
+
+        NOTE: This is kept for backwards compatibility but _traverse_single_pass
+        should be preferred for better performance.
+        """
         stack: list[Node] = [node]
 
         while stack:
@@ -717,14 +811,26 @@ class TypeInferenceEngine:
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         """Infer return type of a method call via static analysis."""
-        # Handle chained method calls first
-        if "." in method_call and self._is_method_chain(method_call):
-            return self._infer_chained_call_return_type_fixed(
-                method_call, module_qn, local_var_types
-            )
+        # Create a cache key for this specific method call + context
+        cache_key = f"{module_qn}:{method_call}"
 
-        # Try proper AST analysis for non-chained calls
-        return self._infer_method_return_type(method_call, module_qn, local_var_types)
+        # Recursion guard: if we're already inferring this call's type, return None
+        if cache_key in self._type_inference_in_progress:
+            logger.debug(f"Recursion guard (method call): skipping {method_call}")
+            return None
+
+        self._type_inference_in_progress.add(cache_key)
+        try:
+            # Handle chained method calls first
+            if "." in method_call and self._is_method_chain(method_call):
+                return self._infer_chained_call_return_type_fixed(
+                    method_call, module_qn, local_var_types
+                )
+
+            # Try proper AST analysis for non-chained calls
+            return self._infer_method_return_type(method_call, module_qn, local_var_types)
+        finally:
+            self._type_inference_in_progress.discard(cache_key)
 
     def _is_method_chain(self, call_name: str) -> bool:
         """Check if this appears to be a method chain with parentheses."""
@@ -832,13 +938,33 @@ class TypeInferenceEngine:
 
     def _get_method_return_type_from_ast(self, method_qn: str) -> str | None:
         """Get method return type by analyzing its AST implementation."""
-        # Find the method's AST node from our cache
-        method_node = self._find_method_ast_node(method_qn)
-        if not method_node:
+        # Check memoization cache first
+        if method_qn in self._method_return_type_cache:
+            return self._method_return_type_cache[method_qn]
+
+        # Recursion guard: if we're already inferring this method's type, return None
+        # This prevents infinite loops in recursive type inference chains
+        if method_qn in self._type_inference_in_progress:
+            logger.debug(f"Recursion guard: skipping {method_qn}")
             return None
 
-        # Analyze return statements in the method
-        return self._analyze_method_return_statements(method_node, method_qn)
+        # Mark as in-progress
+        self._type_inference_in_progress.add(method_qn)
+        try:
+            # Find the method's AST node from our cache
+            method_node = self._find_method_ast_node(method_qn)
+            if not method_node:
+                result = None
+            else:
+                # Analyze return statements in the method
+                result = self._analyze_method_return_statements(method_node, method_qn)
+
+            # Cache the result
+            self._method_return_type_cache[method_qn] = result
+            return result
+        finally:
+            # Remove from in-progress set
+            self._type_inference_in_progress.discard(method_qn)
 
     def _extract_object_type_from_call(
         self,
@@ -972,16 +1098,17 @@ class TypeInferenceEngine:
                     ):
                         return method_qn
 
-        # Search through all known classes with matching names
-        for qn, node_type in self.function_registry.items():
-            if node_type == "Class" and qn.split(".")[-1] == class_name:
-                method_qn = f"{qn}.{method_name}"
-                if (
-                    method_qn in self.function_registry
-                    and self.function_registry[method_qn] == "Method"
-                ):
-                    logger.debug(f"Resolved {class_name}.{method_name} to {method_qn}")
-                    return method_qn
+        # Search through all known classes with matching names (using simple_name_lookup for O(1))
+        if class_name in self.simple_name_lookup:
+            for qn in self.simple_name_lookup[class_name]:
+                if self.function_registry.get(qn) == "Class":
+                    method_qn = f"{qn}.{method_name}"
+                    if (
+                        method_qn in self.function_registry
+                        and self.function_registry[method_qn] == "Method"
+                    ):
+                        logger.debug(f"Resolved {class_name}.{method_name} to {method_qn}")
+                        return method_qn
 
         return None
 
@@ -993,33 +1120,21 @@ class TypeInferenceEngine:
         # Let's try to find it by analyzing the available AST nodes
 
         try:
-            # Look for the class definition that might contain this method call
-            for file_path, (root_node, language) in self.ast_cache.items():
-                if language != "python":
-                    continue
+            # Use module_qn_to_file_path for O(1) lookup instead of iterating all files
+            if module_qn in self.module_qn_to_file_path:
+                file_path = self.module_qn_to_file_path[module_qn]
+                if file_path in self.ast_cache:
+                    root_node, language = self.ast_cache[file_path]
+                    if language == "python":
+                        # Look for all classes in this module and analyze their instance variables
+                        instance_vars: dict[str, str] = {}
+                        self._analyze_self_assignments(root_node, instance_vars, module_qn)
 
-                # Check if this file matches our module
-                relative_path = file_path.relative_to(self.repo_path)
-                file_module_qn = ".".join(
-                    [self.project_name] + list(relative_path.with_suffix("").parts)
-                )
-                if file_path.name == "__init__.py":
-                    file_module_qn = ".".join(
-                        [self.project_name] + list(relative_path.parent.parts)
-                    )
-
-                if file_module_qn != module_qn:
-                    continue
-
-                # Look for all classes in this module and analyze their instance variables
-                instance_vars: dict[str, str] = {}
-                self._analyze_self_assignments(root_node, instance_vars, module_qn)
-
-                # Check if our attribute was found
-                full_attr_name = f"self.{attribute_name}"
-                if full_attr_name in instance_vars:
-                    attr_type: str = instance_vars[full_attr_name]
-                    return attr_type
+                        # Check if our attribute was found
+                        full_attr_name = f"self.{attribute_name}"
+                        if full_attr_name in instance_vars:
+                            attr_type: str = instance_vars[full_attr_name]
+                            return attr_type
 
         except Exception as e:
             logger.debug(
@@ -1059,10 +1174,11 @@ class TypeInferenceEngine:
                 ):
                     return class_name
 
-        # Look for classes with matching simple names across the project
-        for qn, node_type in self.function_registry.items():
-            if node_type == "Class" and qn.split(".")[-1] == class_name:
-                return class_name
+        # Look for classes with matching simple names across the project (using simple_name_lookup for O(1))
+        if class_name in self.simple_name_lookup:
+            for qn in self.simple_name_lookup[class_name]:
+                if self.function_registry.get(qn) == "Class":
+                    return class_name
 
         return None
 
@@ -1078,21 +1194,12 @@ class TypeInferenceEngine:
         class_name = qn_parts[-2]
         method_name = qn_parts[-1]
 
-        # Find the module in our AST cache
-        for file_path, (root_node, language) in self.ast_cache.items():
-            # Check if this file could contain our method
-            relative_path = file_path.relative_to(self.repo_path)
-            file_module_qn = ".".join(
-                [project_name] + list(relative_path.with_suffix("").parts)
-            )
-            if file_path.name == "__init__.py":
-                file_module_qn = ".".join(
-                    [project_name] + list(relative_path.parent.parts)
-                )
-
-            # Check if the method's module matches this file
-            expected_module = ".".join(qn_parts[:-2])  # Remove class and method name
-            if file_module_qn == expected_module:
+        # Use module_qn_to_file_path for O(1) lookup instead of iterating all files
+        expected_module = ".".join(qn_parts[:-2])  # Remove class and method name
+        if expected_module in self.module_qn_to_file_path:
+            file_path = self.module_qn_to_file_path[expected_module]
+            if file_path in self.ast_cache:
+                root_node, language = self.ast_cache[file_path]
                 return self._find_method_in_ast(
                     root_node, class_name, method_name, language
                 )
