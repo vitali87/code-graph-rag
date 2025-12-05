@@ -97,19 +97,20 @@ from http.server import HTTPServer
 
     # Verify specific imports exist
     imported_modules = [call.args[2][2] for call in stdlib_imports]
+    # IMPORTS relationships point to modules only, not classes/functions
     expected_modules = [
         "os",
         "sys",
         "json",
         "re",
-        "pathlib.Path",
-        "collections.defaultdict",
-        "datetime.datetime",
-        "typing.List",
+        "pathlib",  # from pathlib import Path -> pathlib module
+        "collections",  # from collections import defaultdict -> collections module
+        "datetime",  # from datetime import datetime -> datetime module
+        "typing",  # from typing import List -> typing module
         "sqlite3",
         "urllib.parse",
-        "email.mime.text.MIMEText",
-        "xml.etree.ElementTree.Element",
+        "email.mime.text",  # from email.mime.text import MIMEText -> email.mime.text module
+        "xml.etree.ElementTree",  # from xml.etree.ElementTree import Element -> xml.etree.ElementTree module
     ]
 
     for expected in expected_modules:
@@ -482,20 +483,18 @@ from yaml import load as yaml_load
 
     imported_modules = [call.args[2][2] for call in alias_imports]
 
-    # Test that original module names are preserved in relationships
+    # IMPORTS relationships point to modules only, not classes/functions
     expected_original_modules = [
         "numpy",
         "pandas",
         "matplotlib.pyplot",
         "tensorflow",
-        "collections.defaultdict",
-        "pathlib.Path",
-        "datetime.datetime",
-        "os.path",
-        "os.environ",
-        "os.getcwd",
-        "json.loads",
-        "pickle.loads",
+        "collections",  # from collections import defaultdict -> collections module
+        "pathlib",  # from pathlib import Path -> pathlib module
+        "datetime",  # from datetime import datetime -> datetime module
+        "os",  # from os import path -> os module (covers all os.* imports)
+        "json",  # from json import loads -> json module
+        "pickle",  # from pickle import loads -> pickle module
     ]
 
     for expected in expected_original_modules:
@@ -564,7 +563,8 @@ import sys, json  # trailing comma handled gracefully
     )
 
     imported_modules = [call.args[2][2] for call in error_file_imports]
-    expected_valid = ["os", "pathlib.Path", "json", "datetime.datetime"]
+    # IMPORTS relationships point to modules only
+    expected_valid = ["os", "pathlib", "json", "datetime"]
 
     for expected in expected_valid:
         assert any(expected in module for module in imported_modules), (

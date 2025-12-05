@@ -115,7 +115,8 @@ class CallProcessor:
             module_qn = ".".join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
-            if file_path.name == "__init__.py":
+            if file_path.name in ("__init__.py", "mod.rs"):
+                # In Python, __init__.py and in Rust, mod.rs represent the parent module directory
                 module_qn = ".".join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
@@ -183,14 +184,31 @@ class CallProcessor:
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
-            name_node = class_node.child_by_field_name("name")
-            if not name_node:
-                continue
-            text = name_node.text
-            if text is None:
-                continue
-            class_name = text.decode("utf8")
-            class_qn = f"{module_qn}.{class_name}"
+
+            # Rust impl blocks don't have a "name" field, they have a "type" field
+            if language == "rust" and class_node.type == "impl_item":
+                # For Rust impl blocks, get the type being implemented
+                type_node = class_node.child_by_field_name("type")
+                if not type_node:
+                    # Might be a type_identifier child directly
+                    for child in class_node.children:
+                        if child.type == "type_identifier" and child.is_named:
+                            type_node = child
+                            break
+                if not type_node or not type_node.text:
+                    continue
+                class_name = type_node.text.decode("utf8")
+                class_qn = f"{module_qn}.{class_name}"
+            else:
+                # Standard class handling for other languages
+                name_node = class_node.child_by_field_name("name")
+                if not name_node:
+                    continue
+                text = name_node.text
+                if text is None:
+                    continue
+                class_name = text.decode("utf8")
+                class_qn = f"{module_qn}.{class_name}"
 
             body_node = class_node.child_by_field_name("body")
             if not body_node:
@@ -260,6 +278,12 @@ class CallProcessor:
             # C++: namespace::func() or Class::method() -> qualified_identifier
             elif func_child.type == "qualified_identifier":
                 # Return the full qualified name (e.g., "std::cout")
+                text = func_child.text
+                if text is not None:
+                    return str(text.decode("utf8"))
+            # Rust: Type::method() or module::func() -> scoped_identifier
+            elif func_child.type == "scoped_identifier":
+                # Return the full scoped name (e.g., "Storage::get_instance")
                 text = func_child.text
                 if text is not None:
                     return str(text.decode("utf8"))
@@ -394,6 +418,10 @@ class CallProcessor:
                 f"(resolved as {callee_type}:{callee_qn})"
             )
 
+            # NOTE: We don't call ensure_node_batch here because all Function/Method/Class
+            # nodes are already created in Pass 2 (definition processing) before we reach
+            # Pass 3 (call processing). Re-creating nodes here would overwrite their
+            # properties (decorators, line numbers, docstrings, etc.) with minimal data.
             self.ingestor.ensure_relationship_batch(
                 (caller_type, "qualified_name", caller_qn),
                 "CALLS",
@@ -456,6 +484,7 @@ class CallProcessor:
                         f"      Found nested call from {caller_qn} to {call_name} "
                         f"(resolved as {callee_type}:{callee_qn})"
                     )
+                    # NOTE: We don't call ensure_node_batch here - nodes already exist from Pass 2
                     self.ingestor.ensure_relationship_batch(
                         (caller_type, "qualified_name", caller_qn),
                         "CALLS",
@@ -510,9 +539,16 @@ class CallProcessor:
                     )
                     return self.function_registry[imported_qn], imported_qn
 
-            # 1a.2. Handle qualified calls like "Class.method" and "self.attr.method"
-            if "." in call_name:
-                parts = call_name.split(".")
+            # 1a.2. Handle qualified calls like "Class.method", "self.attr.method", C++ "Class::method", and Lua "object:method"
+            if "." in call_name or "::" in call_name or ":" in call_name:
+                # Split by '::' for C++, ':' for Lua, or '.' for other languages
+                if "::" in call_name:
+                    separator = "::"
+                elif ":" in call_name:
+                    separator = ":"
+                else:
+                    separator = "."
+                parts = call_name.split(separator)
 
                 # Handle JavaScript object method calls like "calculator.add"
                 if len(parts) == 2:
@@ -522,8 +558,11 @@ class CallProcessor:
                     if local_var_types and object_name in local_var_types:
                         var_type = local_var_types[object_name]
 
+                        # Check if var_type is already fully qualified (contains dots)
+                        if "." in var_type:
+                            class_qn = var_type
                         # Resolve var_type to full qualified name
-                        if var_type in import_map:
+                        elif var_type in import_map:
                             class_qn = import_map[var_type]
                         else:
                             class_qn_or_none = self._resolve_class_name(
@@ -532,7 +571,8 @@ class CallProcessor:
                             class_qn = class_qn_or_none if class_qn_or_none else ""
 
                         if class_qn:
-                            method_qn = f"{class_qn}.{method_name}"
+                            # Use the same separator that was used in the call (: for Lua, . for others)
+                            method_qn = f"{class_qn}{separator}{method_name}"
                             if method_qn in self.function_registry:
                                 logger.debug(
                                     f"Type-inferred object method resolved: "
@@ -561,7 +601,49 @@ class CallProcessor:
                                 f"builtin.{var_type}.prototype.{method_name}",
                             )
 
-                    # Fallback: Try to find the method in the same module
+                    # Fallback 1: Try treating object_name as a class name (for static methods like Storage::getInstance or Storage:getInstance)
+                    if object_name in import_map:
+                        class_qn = import_map[object_name]
+
+                        # For Rust, imports use :: separators (e.g., "controllers::SceneController")
+                        # Convert to project-qualified names (e.g., "rust_proj.src.controllers.SceneController")
+                        if "::" in class_qn:
+                            # Extract last component as class name
+                            rust_parts = class_qn.split("::")
+                            class_name = rust_parts[-1]
+
+                            # Scan registry entries that end with this class name (linear helper)
+                            matching_qns = self.function_registry.find_ending_with(
+                                class_name
+                            )
+                            # Find the first Class entry
+                            for qn in matching_qns:
+                                if self.function_registry.get(qn) == "Class":
+                                    class_qn = qn
+                                    break
+
+                        # For languages like JavaScript/Lua, imports may point to modules
+                        # but the class/table has the same name inside: e.g., storage.Storage -> storage.Storage.Storage
+                        # Check if methods exist with this extended class path
+                        potential_class_qn = f"{class_qn}.{object_name}"
+                        test_method_qn = f"{potential_class_qn}{separator}{method_name}"
+                        if test_method_qn in self.function_registry:
+                            # The extended path works, use it
+                            class_qn = potential_class_qn
+
+                        # Construct method QN using the appropriate separator
+                        # For Lua, use : for both instance and class methods (Lua tables)
+                        # For Rust/C++, use . for registry lookup (even though call uses ::)
+                        # For others, use . for static/class methods
+                        registry_separator = separator if separator == ":" else "."
+                        method_qn = f"{class_qn}{registry_separator}{method_name}"
+                        if method_qn in self.function_registry:
+                            logger.debug(
+                                f"Import-resolved static call: {call_name} -> {method_qn}"
+                            )
+                            return self.function_registry[method_qn], method_qn
+
+                    # Fallback 2: Try to find the method in the same module
                     method_qn = f"{module_qn}.{method_name}"
                     if method_qn in self.function_registry:
                         logger.debug(
@@ -578,8 +660,11 @@ class CallProcessor:
                     if local_var_types and attribute_ref in local_var_types:
                         var_type = local_var_types[attribute_ref]
 
+                        # Check if var_type is already fully qualified (contains dots)
+                        if "." in var_type:
+                            class_qn = var_type
                         # Resolve var_type to full qualified name
-                        if var_type in import_map:
+                        elif var_type in import_map:
                             class_qn = import_map[var_type]
                         else:
                             class_qn_or_none = self._resolve_class_name(
@@ -588,6 +673,7 @@ class CallProcessor:
                             class_qn = class_qn_or_none if class_qn_or_none else ""
 
                         if class_qn:
+                            # For self.attribute.method, the method separator is always . (not : or ::)
                             method_qn = f"{class_qn}.{method_name}"
                             if method_qn in self.function_registry:
                                 logger.debug(
@@ -628,8 +714,11 @@ class CallProcessor:
                     if local_var_types and class_name in local_var_types:
                         var_type = local_var_types[class_name]
 
+                        # Check if var_type is already fully qualified (contains dots)
+                        if "." in var_type:
+                            class_qn = var_type
                         # The var_type might be a simple class name, resolve to full qn
-                        if var_type in import_map:
+                        elif var_type in import_map:
                             class_qn = import_map[var_type]
                         else:
                             # Try to find the class in the same module or resolve it
@@ -697,7 +786,10 @@ class CallProcessor:
 
         # 2b. Use the Trie to find any matching symbol
         # This is a fallback and can be imprecise, but better than nothing.
-        possible_matches = self.function_registry.find_ending_with(call_name)
+        # For qualified calls like "Class.method", "Class::method", or "object:method", extract just the method name
+        search_name = re.split(r"[.:]|::", call_name)[-1]
+
+        possible_matches = self.function_registry.find_ending_with(search_name)
         if possible_matches:
             # Sort candidates by likelihood (prioritize closer modules)
             possible_matches.sort(

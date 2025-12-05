@@ -90,13 +90,6 @@ If you have questions about contributing, feel free to:
 
 We appreciate your contributions!
 
-If you have questions about contributing, feel free to:
-- Open a discussion on GitHub
-- Comment on the relevant issue
-- Reach out to the maintainers
-
-We appreciate your contributions!
-
 ## Makefile Commands
 
 This project uses a Makefile for streamlined development workflow:
@@ -107,6 +100,9 @@ make dev
 
 # Run all tests
 make test
+
+# Run tests in parallel for faster execution
+make test-parallel
 
 # Clean up build artifacts and cache
 make clean

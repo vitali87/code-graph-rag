@@ -1,22 +1,13 @@
-from typing import cast
-
 from loguru import logger
 from pydantic_ai import Agent, Tool
-from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
-from pydantic_ai.models.openai import (
-    OpenAIModel,
-    OpenAIResponsesModel,
-)
-from pydantic_ai.providers.google_gla import GoogleGLAProvider
-from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
-from pydantic_ai.providers.openai import OpenAIProvider
 
-from ..config import detect_provider_from_model, settings
+from ..config import settings
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
     RAG_ORCHESTRATOR_SYSTEM_PROMPT,
 )
+from ..providers.base import get_provider
 
 
 class LLMGenerationError(Exception):
@@ -40,57 +31,34 @@ class CypherGenerator:
 
     def __init__(self) -> None:
         try:
-            model_settings = None
+            # Get active cypher model configuration
+            config = settings.active_cypher_config
 
-            # Get active cypher model and detect its provider
-            cypher_model_id = settings.active_cypher_model
-            cypher_provider = detect_provider_from_model(cypher_model_id)
+            # Create provider instance
+            provider = get_provider(
+                config.provider,
+                api_key=config.api_key,
+                endpoint=config.endpoint,
+                project_id=config.project_id,
+                region=config.region,
+                provider_type=config.provider_type,
+                thinking_budget=config.thinking_budget,
+            )
 
-            # Configure model based on detected provider
-            if cypher_provider == "gemini":
-                if settings.GEMINI_PROVIDER == "vertex":
-                    provider = GoogleVertexProvider(
-                        project_id=settings.GCP_PROJECT_ID,
-                        region=cast(VertexAiRegion, settings.GCP_REGION),
-                        service_account_file=settings.GCP_SERVICE_ACCOUNT_FILE,
-                    )
-                else:
-                    provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)  # type: ignore
+            # Create model using provider
+            llm = provider.create_model(config.model_id)
 
-                if settings.GEMINI_THINKING_BUDGET is not None:
-                    model_settings = GeminiModelSettings(
-                        gemini_thinking_config={
-                            "thinking_budget": int(settings.GEMINI_THINKING_BUDGET)
-                        }
-                    )
+            # Select system prompt based on provider
+            system_prompt = (
+                LOCAL_CYPHER_SYSTEM_PROMPT
+                if config.provider == "ollama"
+                else CYPHER_SYSTEM_PROMPT
+            )
 
-                llm = GeminiModel(
-                    cypher_model_id,
-                    provider=provider,
-                )
-                system_prompt = CYPHER_SYSTEM_PROMPT
-            elif cypher_provider == "openai":
-                llm = OpenAIResponsesModel(
-                    cypher_model_id,
-                    provider=OpenAIProvider(
-                        api_key=settings.OPENAI_API_KEY,
-                    ),
-                )
-                system_prompt = CYPHER_SYSTEM_PROMPT
-            else:  # local
-                llm = OpenAIModel(  # type: ignore
-                    cypher_model_id,
-                    provider=OpenAIProvider(
-                        api_key=settings.LOCAL_MODEL_API_KEY,
-                        base_url=str(settings.LOCAL_MODEL_ENDPOINT),
-                    ),
-                )
-                system_prompt = LOCAL_CYPHER_SYSTEM_PROMPT
             self.agent = Agent(
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
-                model_settings=model_settings,
             )
         except Exception as e:
             raise LLMGenerationError(
@@ -122,54 +90,27 @@ class CypherGenerator:
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
-        model_settings = None
+        # Get active orchestrator model configuration
+        config = settings.active_orchestrator_config
 
-        # Get active orchestrator model and detect its provider
-        orchestrator_model_id = settings.active_orchestrator_model
-        orchestrator_provider = detect_provider_from_model(orchestrator_model_id)
+        # Create provider instance
+        provider = get_provider(
+            config.provider,
+            api_key=config.api_key,
+            endpoint=config.endpoint,
+            project_id=config.project_id,
+            region=config.region,
+            provider_type=config.provider_type,
+            thinking_budget=config.thinking_budget,
+        )
 
-        if orchestrator_provider == "gemini":
-            if settings.GEMINI_PROVIDER == "vertex":
-                provider = GoogleVertexProvider(
-                    project_id=settings.GCP_PROJECT_ID,
-                    region=cast(VertexAiRegion, settings.GCP_REGION),
-                    service_account_file=settings.GCP_SERVICE_ACCOUNT_FILE,
-                )
-            else:
-                provider = GoogleGLAProvider(api_key=settings.GEMINI_API_KEY)  # type: ignore
-
-            if settings.GEMINI_THINKING_BUDGET is not None:
-                model_settings = GeminiModelSettings(
-                    gemini_thinking_config={
-                        "thinking_budget": int(settings.GEMINI_THINKING_BUDGET)
-                    }
-                )
-
-            llm = GeminiModel(
-                orchestrator_model_id,
-                provider=provider,
-            )
-        elif orchestrator_provider == "local":
-            llm = OpenAIModel(  # type: ignore
-                orchestrator_model_id,
-                provider=OpenAIProvider(
-                    api_key=settings.LOCAL_MODEL_API_KEY,
-                    base_url=str(settings.LOCAL_MODEL_ENDPOINT),
-                ),
-            )
-        else:  # openai provider
-            llm = OpenAIResponsesModel(
-                orchestrator_model_id,
-                provider=OpenAIProvider(
-                    api_key=settings.OPENAI_API_KEY,
-                ),
-            )
+        # Create model using provider
+        llm = provider.create_model(config.model_id)
 
         return Agent(
             model=llm,
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
-            model_settings=model_settings,
-        )  # type: ignore
+        )
     except Exception as e:
         raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e

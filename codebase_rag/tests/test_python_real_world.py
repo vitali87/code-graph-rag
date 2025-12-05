@@ -957,16 +957,18 @@ def test_flask_controller_imports(
         if c.args[1] == "IMPORTS"
     ]
 
-    # Test AuthController imports
+    # Test AuthController imports - after fix, imports point to modules not classes/functions
     auth_controller_imports = [
         call
         for call in import_calls
         if "auth_controller" in call.args[0][2]
-        and ("UserModel" in call.args[2][2] or "check_password" in call.args[2][2])
+        and (
+            "models" in call.args[2][2] or "utils" in call.args[2][2]
+        )  # Look for module names
     ]
 
     assert len(auth_controller_imports) >= 2, (
-        f"Expected AuthController to import UserModel and utils, found: "
+        f"Expected AuthController to import models and utils modules, found: "
         f"{[(c.args[0][2], c.args[2][2]) for c in auth_controller_imports]}"
     )
 

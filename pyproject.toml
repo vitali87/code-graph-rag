@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "loguru>=0.7.3",
+    "mcp>=1.21.1",
     "pydantic-ai-slim[google,openai,vertexai]>=0.2.18",
     "pydantic-settings>=2.0.0",
     "pymgclient>=1.4.0",
@@ -22,6 +23,12 @@ dependencies = [
     "pytest-xdist>=3.8.0",
     "protobuf>=5.27.0"
 ]
+
+[project.scripts]
+graph-code = "codebase_rag.main:app"
+
+[tool.uv]
+package = true
 
 [tool.setuptools]
 packages = ["codebase_rag"]
@@ -50,6 +57,12 @@ treesitter-full = [
     "tree-sitter-lua>=0.0.19",
 ]
 
+semantic = [
+    "qdrant-client>=1.9.0",
+    "torch>=2.6.0",
+    "transformers>=4.0.0",
+]
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"
@@ -69,6 +82,13 @@ ignore_missing_imports = true
 disallow_untyped_defs = true
 explicit_package_bases = true
 mypy_path = "."
+
+[tool.pytest.ini_options]
+testpaths = ["codebase_rag/tests"]
+norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 
 [dependency-groups]
 dev = [

@@ -11,6 +11,9 @@ from tree_sitter import Language, Parser, Query
 
 from .language_config import LANGUAGE_CONFIGS
 
+logger.remove()
+logger.add(sys.stderr, level="INFO")
+
 # Define a type for the language library loaders
 LanguageLoader = Callable[[], object] | None
 
