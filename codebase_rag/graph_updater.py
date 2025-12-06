@@ -522,7 +522,7 @@ class GraphUpdater:
         if not file_path or not start_line or not end_line:
             return None
 
-        file_path_obj = Path(file_path)
+        file_path_obj = self.repo_path / file_path
 
         # Create AST extractor function if AST is available
         ast_extractor = None
