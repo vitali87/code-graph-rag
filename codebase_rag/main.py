@@ -1124,6 +1124,31 @@ def mcp_server() -> None:
         console.print(f"[bold red]MCP Server Error: {e}[/bold red]")
 
 
+@app.command(name="graph-loader")
+def graph_loader_command(
+    graph_file: str = typer.Argument(..., help="Path to the exported graph JSON file"),
+) -> None:
+    """Load and display summary of an exported graph file."""
+    from .graph_loader import load_graph
+
+    try:
+        graph = load_graph(graph_file)
+        summary = graph.summary()
+
+        console.print("[bold green]Graph Summary:[/bold green]")
+        console.print(f"  Total nodes: {summary['total_nodes']}")
+        console.print(f"  Total relationships: {summary['total_relationships']}")
+        console.print(f"  Node types: {list(summary['node_labels'].keys())}")
+        console.print(
+            f"  Relationship types: {list(summary['relationship_types'].keys())}"
+        )
+        console.print(f"  Exported at: {summary['metadata']['exported_at']}")
+
+    except Exception as e:
+        console.print(f"[bold red]Failed to load graph: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
 @app.command(
     name="language",
     context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
