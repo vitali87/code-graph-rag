@@ -466,7 +466,7 @@ def add_grammar(
             click.echo("   • Check call_node_types covers all function call patterns")
             click.echo()
             click.echo(
-                "💡 You can run 'python -m codebase_rag.tools.language list-languages' to see the current config."
+                "💡 You can run 'cgr language list-languages' to see the current config."
             )
         else:
             raise ValueError("Could not find LANGUAGE_CONFIGS dictionary end")

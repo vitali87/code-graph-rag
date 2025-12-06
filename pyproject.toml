@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 graph-code = "codebase_rag.main:app"
+cgr = "codebase_rag.main:app"
 
 [tool.uv]
 package = true
