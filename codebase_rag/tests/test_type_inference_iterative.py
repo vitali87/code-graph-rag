@@ -67,6 +67,7 @@ def _make_engine() -> TypeInferenceEngine:
     return TypeInferenceEngine(
         import_processor=MagicMock(),
         function_registry={},
+        simple_name_lookup={},
         repo_path=Path("."),
         project_name="proj",
         ast_cache={},

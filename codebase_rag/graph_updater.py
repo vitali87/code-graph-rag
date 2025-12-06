@@ -444,19 +444,12 @@ class GraphUpdater:
 
     def _process_function_calls(self) -> None:
         """Third pass: Process function calls using the cached ASTs."""
-        import time
         # Create a copy of items to prevent "OrderedDict mutated during iteration" errors
         ast_cache_items = list(self.ast_cache.items())
-        total_files = len(ast_cache_items)
-        for i, (file_path, (root_node, language)) in enumerate(ast_cache_items):
-            logger.info(f"[{i+1}/{total_files}] Starting: {file_path}")
-            start_time = time.time()
+        for file_path, (root_node, language) in ast_cache_items:
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )
-            elapsed = time.time() - start_time
-            if elapsed > 1.0:  # Log files taking more than 1 second
-                logger.warning(f"[{i+1}/{total_files}] SLOW: {file_path} took {elapsed:.2f}s")
 
     def _generate_semantic_embeddings(self) -> None:
         """Generate and store semantic embeddings for functions and methods."""

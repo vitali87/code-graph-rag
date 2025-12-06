@@ -108,7 +108,6 @@ class CallProcessor:
         self, file_path: Path, root_node: Node, language: str, queries: dict[str, Any]
     ) -> None:
         """Process function calls in a specific file using its cached AST."""
-        import time
         relative_path = file_path.relative_to(self.repo_path)
         logger.debug(f"Processing calls in cached AST for: {relative_path}")
 
@@ -122,21 +121,9 @@ class CallProcessor:
                     [self.project_name] + list(relative_path.parent.parts)
                 )
 
-            t1 = time.time()
             self._process_calls_in_functions(root_node, module_qn, language, queries)
-            t2 = time.time()
-            if t2 - t1 > 1.0:
-                logger.warning(f"  _process_calls_in_functions: {t2-t1:.2f}s for {relative_path}")
-
             self._process_calls_in_classes(root_node, module_qn, language, queries)
-            t3 = time.time()
-            if t3 - t2 > 1.0:
-                logger.warning(f"  _process_calls_in_classes: {t3-t2:.2f}s for {relative_path}")
-
             self._process_module_level_calls(root_node, module_qn, language, queries)
-            t4 = time.time()
-            if t4 - t3 > 1.0:
-                logger.warning(f"  _process_module_level_calls: {t4-t3:.2f}s for {relative_path}")
 
         except Exception as e:
             logger.error(f"Failed to process calls in {file_path}: {e}")
