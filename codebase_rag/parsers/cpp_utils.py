@@ -1,11 +1,3 @@
-"""
-C++ parsing utilities shared between different processors.
-
-This module contains C++ specific helper functions that were previously
-duplicated across different processor classes. By centralizing these
-utilities, we improve modularity and reduce coupling between processors.
-"""
-
 from tree_sitter import Node
 
 # Centralized C++ operator symbol to name mapping

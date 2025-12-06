@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ move semantics testing.
-Tests rvalue references, move constructors, move assignments, perfect forwarding,
-std::move, std::forward, and various move optimization patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

@@ -1,10 +1,3 @@
-"""
-Test imported class method call resolution.
-This test ensures that method calls on instantiated objects from imported classes
-are properly detected across files, which is crucial for understanding object-oriented
-code relationships in the codebase.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

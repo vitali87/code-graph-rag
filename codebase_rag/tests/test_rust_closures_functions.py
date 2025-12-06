@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust closure and function pointer testing.
-Tests closure types, captures, function pointers, higher-order functions,
-and advanced functional programming patterns for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

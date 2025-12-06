@@ -1,9 +1,3 @@
-"""
-Java edge cases parsing and relationship testing.
-Tests Java-specific edge cases like empty classes/interfaces, single-line vs multi-line constructs,
-Unicode identifiers, long qualified names, deeply nested generics, and parsing edge cases specific to Java syntax.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

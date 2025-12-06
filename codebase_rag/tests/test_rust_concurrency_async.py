@@ -1,8 +1,3 @@
-"""
-Comprehensive Rust concurrency and async programming testing.
-Tests threads, channels, async/await, futures, and parallel processing.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,10 +1,3 @@
-"""
-Test import distance calculation for function call resolution.
-
-This test specifically validates the fix for the sibling module bias where methods
-were incorrectly penalized compared to functions during candidate selection.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

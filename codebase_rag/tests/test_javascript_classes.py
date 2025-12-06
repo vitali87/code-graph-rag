@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript class parsing and relationship testing.
-Tests all possible JavaScript class patterns and verifies class definitions, inheritance, and method relationships.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

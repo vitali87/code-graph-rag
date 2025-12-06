@@ -1,9 +1,3 @@
-"""
-Java name collision resolution testing.
-Tests that when multiple classes have the same simple name in different packages,
-the type inference engine uses import distance to select the most appropriate one.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

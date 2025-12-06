@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ error handling testing.
-Tests exception handling (try/catch/throw), RAII patterns, custom exceptions,
-and error handling strategies for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

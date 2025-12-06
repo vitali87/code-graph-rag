@@ -1,8 +1,3 @@
-"""
-Comprehensive C++ include parsing and relationship testing.
-Tests all possible C++ #include patterns and verifies IMPORTS relationships.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

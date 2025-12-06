@@ -1,9 +1,3 @@
-"""
-Comprehensive C++20 designated initializers and consteval testing.
-Tests designated initializers, consteval immediate functions, lambda init captures,
-and their integration for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

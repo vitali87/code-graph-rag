@@ -1,9 +1,3 @@
-"""
-Comprehensive C++20 ranges and views testing.
-Tests std::ranges algorithms, view adaptors, range concepts, and
-range-based transformations for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

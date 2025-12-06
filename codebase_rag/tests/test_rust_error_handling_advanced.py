@@ -1,8 +1,3 @@
-"""
-Advanced Rust error handling testing.
-Tests Result, Option, custom error types, error propagation, and error handling patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

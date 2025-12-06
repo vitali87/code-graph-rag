@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ lambda expressions and functional programming testing.
-Tests lambda expressions, captures, std::function, functional algorithms,
-and functional programming patterns for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

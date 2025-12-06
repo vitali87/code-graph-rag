@@ -1,9 +1,3 @@
-"""
-Java complex relationship testing for advanced scenarios.
-Tests builder patterns, observer patterns, factory patterns, and other complex
-relationship scenarios to ensure the graph correctly captures all interactions.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

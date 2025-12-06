@@ -1,9 +1,3 @@
-"""
-Java nested structures parsing testing.
-Tests complex nested classes, anonymous classes, local classes, lambda edge cases,
-method-local classes, and deeply nested structures.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

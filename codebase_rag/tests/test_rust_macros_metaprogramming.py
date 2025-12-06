@@ -1,8 +1,3 @@
-"""
-Comprehensive Rust macros and metaprogramming testing.
-Tests declarative macros, procedural macros, derive macros, and code generation.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

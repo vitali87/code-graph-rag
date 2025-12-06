@@ -1,11 +1,3 @@
-"""
-Test wildcard import resolution functionality.
-
-This test validates that function calls from wildcard imports (e.g., import java.util.*,
-use std::collections::*) are correctly resolved using the import mapping rather than
-falling back to less accurate heuristics.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ casting operators testing.
-Tests static_cast, dynamic_cast, const_cast, reinterpret_cast, and C-style casts
-with various scenarios for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

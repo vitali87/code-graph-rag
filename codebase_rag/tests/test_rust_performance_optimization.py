@@ -1,8 +1,3 @@
-"""
-Comprehensive Rust performance optimization testing.
-Tests benchmarking, profiling, SIMD, unsafe optimizations, and performance patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

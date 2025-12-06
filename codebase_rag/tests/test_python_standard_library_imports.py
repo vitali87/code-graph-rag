@@ -1,10 +1,3 @@
-"""
-Test standard library and third-party import handling.
-
-This test validates that standard library and third-party imports are not
-incorrectly prefixed with the project name, while local modules are.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

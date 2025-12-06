@@ -1,10 +1,3 @@
-"""
-Advanced Java OOP feature parsing and relationship testing.
-Tests multiple inheritance via interfaces, complex generics with wildcards and bounds,
-abstract classes with partial implementations, method overloading and overriding edge cases,
-covariant return types, and diamond problem resolution.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

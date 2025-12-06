@@ -1,8 +1,3 @@
-"""
-Integration tests that simulate the specific GitHub issue scenarios.
-These tests ensure that the real-world problems reported by users are actually fixed.
-"""
-
 import os
 from unittest.mock import patch
 

@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust advanced lifetime annotations and borrowing testing.
-Tests complex lifetime scenarios, borrowing edge cases, lifetime elision,
-and advanced lifetime patterns for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

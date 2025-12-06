@@ -1,9 +1,3 @@
-"""
-Real-world Java patterns and enterprise application testing.
-Tests Spring Framework annotations, design patterns, DAO patterns,
-configuration classes, and enterprise application patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

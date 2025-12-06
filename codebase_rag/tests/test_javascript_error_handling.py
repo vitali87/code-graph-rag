@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript error handling patterns parsing and testing.
-Tests try/catch/finally, custom errors, async error handling, and error patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

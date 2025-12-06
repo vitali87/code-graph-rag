@@ -1,14 +1,3 @@
-"""
-Test advanced cross-file call patterns in Python.
-
-This test suite ensures that complex cross-file scenarios similar to those
-found in Java (like the TheNews app) work correctly in Python, including:
-- Singleton pattern with @classmethod across files
-- Static method calls across files
-- Deep package hierarchies
-- Chained cross-file calls (A -> B -> C across different files)
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

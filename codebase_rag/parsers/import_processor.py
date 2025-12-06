@@ -1,26 +1,3 @@
-"""Import processor for parsing and resolving import statements.
-
-This module provides dynamic standard library introspection capabilities that can
-accurately resolve entity imports (like collections.defaultdict) to their containing
-modules (like collections) using language-native reflection mechanisms.
-
-External Dependencies (Optional - Enhanced Accuracy):
-    For enhanced standard library introspection accuracy, the following external
-    tools can be installed. If unavailable, the system gracefully falls back to
-    heuristic-based approaches:
-
-    - Node.js: For JavaScript/TypeScript stdlib introspection
-    - Go compiler: For Go package analysis
-    - Java compiler: For Java reflection-based introspection
-    - Lua interpreter: For Lua module introspection
-    - C++ compiler (g++): For C++ standard library analysis
-
-Performance Optimizations:
-    - Results are cached in memory and persistently to disk (~/.cache/codebase_rag/)
-    - External tool availability is cached to avoid repeated PATH checks
-    - Fallback heuristics ensure functionality without external dependencies
-"""
-
 import json
 import time
 from pathlib import Path

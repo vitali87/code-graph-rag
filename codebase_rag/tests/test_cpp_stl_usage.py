@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ STL usage testing.
-Tests STL containers (vector, map, set, deque, etc.), algorithms, iterators,
-function objects, and advanced STL patterns for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

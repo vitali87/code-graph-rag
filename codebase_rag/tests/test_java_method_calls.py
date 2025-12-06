@@ -1,9 +1,3 @@
-"""
-Java method call parsing and inheritance testing.
-Tests method invocations, inheritance patterns, polymorphism,
-and method overriding.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

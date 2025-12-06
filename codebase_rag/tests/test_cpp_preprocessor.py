@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ preprocessor testing.
-Tests preprocessor directives including #define macros, conditional compilation,
-#pragma directives, macro expansion, and include guards.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

@@ -1,9 +1,3 @@
-"""
-Java Virtual Threads and Project Loom testing (Java 19+).
-Tests virtual threads, structured concurrency, and modern concurrency patterns
-that are important for code graph construction and analysis.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript closure and scoping parsing and relationship testing.
-Tests all possible JavaScript closure patterns, scoping rules, and hoisting behavior.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

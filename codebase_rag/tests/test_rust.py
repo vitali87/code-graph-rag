@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust language parsing and relationship testing.
-Tests all Rust constructs including functions, structs, enums, traits, impl blocks,
-modules, generics, lifetimes, pattern matching, closures, macros, and imports.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

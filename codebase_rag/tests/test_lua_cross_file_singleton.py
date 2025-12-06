@@ -1,9 +1,3 @@
-"""
-Test Lua singleton pattern across files.
-Verifies that instance method calls on objects returned from
-factory/singleton methods are detected cross-file.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

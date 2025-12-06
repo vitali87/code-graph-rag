@@ -1,11 +1,3 @@
-"""
-Test call resolution fallback logic to ensure it chooses the best candidate when multiple
-functions have the same ending name.
-
-This test validates the fix for ambiguous call resolution where the fallback logic
-previously picked the first match arbitrarily instead of using import distance heuristics.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

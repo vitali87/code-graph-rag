@@ -1,9 +1,3 @@
-"""
-Java Collections Framework and collection usage testing.
-Tests collection implementations, custom collections, iterator patterns,
-map operations, set operations, generic collections, and collection utilities.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

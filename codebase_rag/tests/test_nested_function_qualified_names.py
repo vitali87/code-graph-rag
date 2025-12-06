@@ -1,8 +1,3 @@
-"""
-Test nested function qualified names - ensuring functions defined inside other functions
-have correct qualified names that reflect their lexical scope.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

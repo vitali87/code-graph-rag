@@ -1,8 +1,3 @@
-"""
-Comprehensive TypeScript class features parsing and relationship testing.
-Tests access modifiers, abstract classes, parameter properties, decorators, and advanced class patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

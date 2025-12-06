@@ -1,8 +1,3 @@
-"""
-Comprehensive TypeScript advanced types parsing and testing.
-Tests generics, utility types, conditional types, mapped types, template literal types, and advanced type patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

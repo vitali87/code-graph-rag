@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ concurrency testing.
-Tests threads, mutexes, atomics, condition variables, futures, async operations,
-and various synchronization primitives.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

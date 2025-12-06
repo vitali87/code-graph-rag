@@ -1,9 +1,3 @@
-"""
-Comprehensive C++20 modules testing.
-Tests module interfaces, module implementations, module imports/exports,
-and module partitions for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

@@ -1,7 +1,3 @@
-"""
-Test C++14/17/20 lambda init captures and generalized capture patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

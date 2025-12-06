@@ -1,9 +1,3 @@
-"""
-Java import parsing and resolution testing.
-Tests various Java import patterns including static imports, wildcard imports,
-and package declarations.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

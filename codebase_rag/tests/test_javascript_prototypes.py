@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript prototype-based inheritance parsing and relationship testing.
-Tests constructor functions, prototypes, prototype chains, and Object.create patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

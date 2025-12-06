@@ -1,9 +1,3 @@
-"""
-Java Stream API and functional programming parsing testing.
-Tests Stream operations, functional interfaces, method references, Optional,
-lambda expressions, and functional programming patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

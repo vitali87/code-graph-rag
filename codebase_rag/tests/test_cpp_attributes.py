@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ attributes testing.
-Tests C++11/14/17/20/23 attributes including [[nodiscard]], [[maybe_unused]], [[deprecated]],
-[[fallthrough]], [[likely]], [[unlikely]], and compiler-specific attributes.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

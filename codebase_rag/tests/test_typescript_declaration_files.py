@@ -1,8 +1,3 @@
-"""
-Comprehensive TypeScript declaration files (.d.ts) parsing and testing.
-Tests ambient declarations, module declarations, global augmentations, and declaration file patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

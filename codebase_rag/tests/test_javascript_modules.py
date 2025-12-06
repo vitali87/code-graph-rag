@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript module system parsing and relationship testing.
-Tests CommonJS and ES6 module patterns, exports, and module resolution.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

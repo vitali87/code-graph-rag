@@ -1,8 +1,3 @@
-"""
-Comprehensive Rust collections and iterators testing.
-Tests Vec, HashMap, HashSet, BTreeMap, iterators, and collection operations.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

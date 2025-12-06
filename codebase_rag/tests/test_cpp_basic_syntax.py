@@ -1,8 +1,3 @@
-"""
-Comprehensive C++ basic syntax parsing and relationship testing.
-Tests basic C++ class definitions, function declarations, namespaces, and method relationships.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

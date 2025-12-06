@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ template metaprogramming and SFINAE testing.
-Tests advanced template techniques, SFINAE, enable_if, concepts, type traits,
-and metaprogramming patterns for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

@@ -1,9 +1,3 @@
-"""
-Java concurrency and threading parsing testing.
-Tests synchronized, volatile, locks, concurrent collections, CompletableFuture,
-thread-safe constructs, and parallel processing patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
