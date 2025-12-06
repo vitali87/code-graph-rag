@@ -1,5 +1,14 @@
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
+CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
+
+CYPHER_DELETE_PROJECT = """
+MATCH (n)
+WHERE n.qualified_name STARTS WITH $prefix
+   OR (n:Project AND n.name = $project_name)
+DETACH DELETE n
+"""
+
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = """MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
 RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type"""

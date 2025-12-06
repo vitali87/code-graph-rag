@@ -15,6 +15,9 @@ from ..constants import (
     ERR_SUBSTR_CONSTRAINT,
     KEY_CREATED,
     KEY_FROM_VAL,
+    KEY_NAME,
+    KEY_PREFIX,
+    KEY_PROJECT_NAME,
     KEY_PROPS,
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
@@ -22,8 +25,10 @@ from ..constants import (
 )
 from ..cypher_queries import (
     CYPHER_DELETE_ALL,
+    CYPHER_DELETE_PROJECT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_RELATIONSHIPS,
+    CYPHER_LIST_PROJECTS,
     build_constraint_query,
     build_merge_node_query,
     build_merge_relationship_query,
@@ -163,6 +168,18 @@ class MemgraphIngestor:
         logger.info(ls.MG_CLEANING_DB)
         self._execute_query(CYPHER_DELETE_ALL)
         logger.info(ls.MG_DB_CLEANED)
+
+    def list_projects(self) -> list[str]:
+        result = self.fetch_all(CYPHER_LIST_PROJECTS)
+        return [str(r[KEY_NAME]) for r in result]
+
+    def delete_project(self, project_name: str) -> None:
+        logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
+        self._execute_query(
+            CYPHER_DELETE_PROJECT,
+            {KEY_PREFIX: f"{project_name}.", KEY_PROJECT_NAME: project_name},
+        )
+        logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
