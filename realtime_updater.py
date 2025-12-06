@@ -2,7 +2,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from loguru import logger
 from watchdog.events import FileSystemEventHandler
@@ -12,6 +12,7 @@ from codebase_rag.config import IGNORE_PATTERNS, IGNORE_SUFFIXES, settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_config import get_language_config
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
@@ -37,6 +38,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         if event.is_directory or not self._is_relevant(event.src_path):
             return
 
+        ingestor = self.updater.ingestor
+        if not isinstance(ingestor, QueryProtocol):
+            logger.warning(
+                "Ingestor does not support querying, skipping real-time update."
+            )
+            return
+
         path = Path(event.src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
@@ -47,7 +55,6 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # --- Step 1: Delete all old data from the graph for this file ---
         # This provides a clean slate for the updated information.
         delete_query = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
-        ingestor = cast(MemgraphIngestor, self.updater.ingestor)
         ingestor.execute_write(delete_query, {"path": relative_path_str})
         logger.debug(f"Ran deletion query for path: {relative_path_str}")
 
@@ -74,7 +81,6 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # This is the key to fixing the "island" problem. It ensures that changes
         # in one file are correctly reflected in relationships from all other files.
         logger.info("Recalculating all function call relationships for consistency...")
-        ingestor = cast(MemgraphIngestor, self.updater.ingestor)
         ingestor.execute_write("MATCH ()-[r:CALLS]->() DELETE r")
         self.updater._process_function_calls()
 

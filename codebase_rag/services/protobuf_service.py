@@ -5,6 +5,9 @@ from loguru import logger
 
 import codec.schema_pb2 as pb
 
+NodePropertyValue = str | int | bool | list[str] | None
+NodeProperties = dict[str, NodePropertyValue]
+
 
 class ProtobufFileIngestor:
     """
@@ -41,7 +44,7 @@ class ProtobufFileIngestor:
         self.split_index = split_index
         logger.info(f"ProtobufFileIngestor initialized to write to: {self.output_dir}")
 
-    def _get_node_id(self, label: str, properties: dict) -> str:
+    def _get_node_id(self, label: str, properties: NodeProperties) -> str:
         """Determines the primary/node key for a node."""
         if label in ["Folder", "File"]:
             return str(properties.get("path", ""))
