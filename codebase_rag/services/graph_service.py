@@ -124,9 +124,59 @@ class MemgraphIngestor:
                 cursor.close()
 
     def clean_database(self) -> None:
+        """Wipe the entire database. Use with caution."""
         logger.info("--- Cleaning database... ---")
         self._execute_query("MATCH (n) DETACH DELETE n;")
         logger.info("--- Database cleaned. ---")
+
+    def list_projects(self) -> list[str]:
+        """List all indexed projects in the database.
+
+        Returns:
+            List of project names
+        """
+        result = self.fetch_all("MATCH (p:Project) RETURN p.name AS name ORDER BY p.name")
+        return [r["name"] for r in result]
+
+    def delete_project(self, project_name: str) -> int:
+        """Delete all nodes associated with a specific project.
+
+        This removes the Project node and all nodes whose qualified_name
+        starts with the project name prefix, preserving other projects.
+
+        Args:
+            project_name: Name of the project to delete
+
+        Returns:
+            Number of nodes deleted
+        """
+        logger.info(f"--- Deleting project: {project_name} ---")
+
+        # First, count nodes to be deleted
+        count_result = self.fetch_all(
+            """
+            MATCH (n)
+            WHERE n.qualified_name STARTS WITH $prefix
+               OR (n:Project AND n.name = $project_name)
+            RETURN count(n) AS count
+            """,
+            {"prefix": f"{project_name}.", "project_name": project_name},
+        )
+        node_count = count_result[0]["count"] if count_result else 0
+
+        # Delete all nodes with qualified_name starting with project name
+        self._execute_query(
+            """
+            MATCH (n)
+            WHERE n.qualified_name STARTS WITH $prefix
+               OR (n:Project AND n.name = $project_name)
+            DETACH DELETE n
+            """,
+            {"prefix": f"{project_name}.", "project_name": project_name},
+        )
+
+        logger.info(f"--- Project {project_name} deleted. {node_count} nodes removed. ---")
+        return node_count
 
     def ensure_constraints(self) -> None:
         logger.info("Ensuring constraints...")

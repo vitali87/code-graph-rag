@@ -81,10 +81,58 @@ class MCPToolsRegistry:
 
         # Build tool registry - single source of truth for all tool metadata
         self._tools: dict[str, ToolMetadata] = {
+            "list_projects": ToolMetadata(
+                name="list_projects",
+                description="List all indexed projects in the knowledge graph database. "
+                "Returns a list of project names that have been indexed.",
+                input_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                handler=self.list_projects,
+                returns_json=True,
+            ),
+            "delete_project": ToolMetadata(
+                name="delete_project",
+                description="Delete a specific project from the knowledge graph database. "
+                "This removes all nodes associated with the project while preserving other projects. "
+                "Use list_projects first to see available projects.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "project_name": {
+                            "type": "string",
+                            "description": "Name of the project to delete (e.g., 'my-project')",
+                        }
+                    },
+                    "required": ["project_name"],
+                },
+                handler=self.delete_project,
+                returns_json=True,
+            ),
+            "wipe_database": ToolMetadata(
+                name="wipe_database",
+                description="WARNING: Completely wipe the entire database, removing ALL indexed projects. "
+                "This cannot be undone. Use delete_project for removing individual projects.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "confirm": {
+                            "type": "boolean",
+                            "description": "Must be true to confirm the wipe operation",
+                        }
+                    },
+                    "required": ["confirm"],
+                },
+                handler=self.wipe_database,
+                returns_json=False,
+            ),
             "index_repository": ToolMetadata(
                 name="index_repository",
                 description="Parse and ingest the repository into the Memgraph knowledge graph. "
-                "This builds a comprehensive graph of functions, classes, dependencies, and relationships.",
+                "This builds a comprehensive graph of functions, classes, dependencies, and relationships. "
+                "Note: This now preserves other projects - only the current project is re-indexed.",
                 input_schema={
                     "type": "object",
                     "properties": {},
@@ -216,6 +264,74 @@ class MCPToolsRegistry:
             ),
         }
 
+    async def list_projects(self) -> dict[str, Any]:
+        """List all indexed projects in the knowledge graph database.
+
+        Returns:
+            Dictionary with list of project names
+        """
+        logger.info("[MCP] Listing all projects...")
+        try:
+            projects = self.ingestor.list_projects()
+            return {
+                "projects": projects,
+                "count": len(projects),
+            }
+        except Exception as e:
+            logger.error(f"[MCP] Error listing projects: {e}")
+            return {"error": str(e), "projects": [], "count": 0}
+
+    async def delete_project(self, project_name: str) -> dict[str, Any]:
+        """Delete a specific project from the knowledge graph database.
+
+        Args:
+            project_name: Name of the project to delete
+
+        Returns:
+            Dictionary with deletion status and count of deleted nodes
+        """
+        logger.info(f"[MCP] Deleting project: {project_name}")
+        try:
+            # Verify project exists
+            projects = self.ingestor.list_projects()
+            if project_name not in projects:
+                return {
+                    "success": False,
+                    "error": f"Project '{project_name}' not found. Available projects: {projects}",
+                    "deleted_nodes": 0,
+                }
+
+            deleted_count = self.ingestor.delete_project(project_name)
+            return {
+                "success": True,
+                "project": project_name,
+                "deleted_nodes": deleted_count,
+                "message": f"Successfully deleted project '{project_name}' ({deleted_count} nodes removed).",
+            }
+        except Exception as e:
+            logger.error(f"[MCP] Error deleting project: {e}")
+            return {"success": False, "error": str(e), "deleted_nodes": 0}
+
+    async def wipe_database(self, confirm: bool) -> str:
+        """Completely wipe the entire database.
+
+        Args:
+            confirm: Must be True to proceed with the wipe
+
+        Returns:
+            Status message
+        """
+        if not confirm:
+            return "Database wipe cancelled. Set confirm=true to proceed."
+
+        logger.warning("[MCP] Wiping entire database!")
+        try:
+            self.ingestor.clean_database()
+            return "Database completely wiped. All projects have been removed."
+        except Exception as e:
+            logger.error(f"[MCP] Error wiping database: {e}")
+            return f"Error wiping database: {str(e)}"
+
     async def index_repository(self) -> str:
         """Parse and ingest the repository into the Memgraph knowledge graph.
 
@@ -223,19 +339,20 @@ class MCPToolsRegistry:
         a comprehensive knowledge graph with functions, classes, dependencies,
         and relationships.
 
-        Note: This clears all existing data in the database before indexing.
-        Only one repository can be indexed at a time.
+        Note: This now only clears data for the current project, preserving other projects.
 
         Returns:
             Success message with indexing statistics
         """
         logger.info(f"[MCP] Indexing repository at: {self.project_root}")
+        project_name = Path(self.project_root).name
 
         try:
-            # Clear existing data to ensure clean state for the new repository
-            logger.info("[MCP] Clearing existing database to avoid conflicts...")
-            self.ingestor.clean_database()
-            logger.info("[MCP] Database cleared. Starting fresh indexing...")
+            # Delete only the current project's data (preserves other projects)
+            logger.info(f"[MCP] Clearing existing data for project '{project_name}'...")
+            deleted_count = self.ingestor.delete_project(project_name)
+            if deleted_count > 0:
+                logger.info(f"[MCP] Removed {deleted_count} existing nodes for '{project_name}'.")
 
             updater = GraphUpdater(
                 ingestor=self.ingestor,
@@ -245,7 +362,7 @@ class MCPToolsRegistry:
             )
             updater.run()
 
-            return f"Successfully indexed repository at {self.project_root}. Knowledge graph has been updated (previous data cleared)."
+            return f"Successfully indexed repository at {self.project_root}. Project '{project_name}' has been updated."
         except Exception as e:
             logger.error(f"[MCP] Error indexing repository: {e}")
             return f"Error indexing repository: {str(e)}"
