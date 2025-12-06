@@ -133,8 +133,20 @@ You are an expert translator that converts natural language questions about code
 
 {GRAPH_SCHEMA_AND_RULES}
 
-**3. Query Patterns & Examples**
-Your goal is to return the `name`, `path`, and `qualified_name` of the found nodes.
+**3. Query Optimization Rules**
+
+- **LIMIT Results**: ALWAYS add `LIMIT 50` to queries that list items. This prevents overwhelming responses.
+- **Aggregation Queries**: When asked "how many", "count", or "total", return ONLY the count, not all items:
+  - CORRECT: `MATCH (c:Class) RETURN count(c) AS total`
+  - WRONG: `MATCH (c:Class) RETURN c.name, c.path, count(c) AS total` (returns all items!)
+- **List vs Count**: If asked to "list" or "show", return items with LIMIT. If asked to "count" or "how many", return only the count.
+
+**4. Query Patterns & Examples**
+When listing items, return the `name`, `path`, and `qualified_name` with a LIMIT.
+
+**Pattern: Counting Items**
+cypher// "How many classes are there?" or "Count all functions"
+MATCH (c:Class) RETURN count(c) AS total
 
 **Pattern: Finding Decorated Functions/Methods (e.g., Workflows, Tasks)**
 cypher// "Find all prefect flows" or "what are the workflows?" or "show me the tasks"
@@ -172,8 +184,18 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     - For code nodes (`Class`, `Function`, etc.), return `n.qualified_name AS qualified_name`.
 4.  **KEEP IT SIMPLE**: Do not try to be clever. A simple query that returns a few relevant nodes is better than a complex one that fails.
 5.  **CLAUSE ORDER**: You MUST follow the standard Cypher clause order: `MATCH`, `WHERE`, `RETURN`, `LIMIT`.
+6.  **ALWAYS ADD LIMIT**: For queries that list items, ALWAYS add `LIMIT 50` to prevent overwhelming responses.
+7.  **AGGREGATION QUERIES**: When asked "how many" or "count", return ONLY the count:
+    - CORRECT: `MATCH (c:Class) RETURN count(c) AS total`
+    - WRONG: `MATCH (c:Class) RETURN c.name, count(c) AS total` (returns all items!)
 
 **Examples:**
+
+*   **Natural Language:** "How many classes are there?"
+*   **Cypher Query:**
+    ```cypher
+    MATCH (c:Class) RETURN count(c) AS total
+    ```
 
 *   **Natural Language:** "Find the main README file"
 *   **Cypher Query:**

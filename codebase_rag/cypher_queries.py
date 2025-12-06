@@ -11,26 +11,29 @@ DETACH DELETE n
 
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = """MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type"""
+RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+LIMIT 50"""
 
 CYPHER_EXAMPLE_CONTENT_BY_PATH = """MATCH (n)
 WHERE n.path IS NOT NULL AND n.path STARTS WITH 'workflows'
-RETURN n.name AS name, n.path AS path, labels(n) AS type"""
+RETURN n.name AS name, n.path AS path, labels(n) AS type
+LIMIT 50"""
 
 CYPHER_EXAMPLE_KEYWORD_SEARCH = """MATCH (n)
 WHERE toLower(n.name) CONTAINS 'database' OR (n.qualified_name IS NOT NULL AND toLower(n.qualified_name) CONTAINS 'database')
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type"""
+RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+LIMIT 50"""
 
 CYPHER_EXAMPLE_FIND_FILE = """MATCH (f:File) WHERE toLower(f.name) = 'readme.md' AND f.path = 'README.md'
 RETURN f.path as path, f.name as name, labels(f) as type"""
 
-CYPHER_EXAMPLE_README = """MATCH (f:File) WHERE toLower(f.name) CONTAINS 'readme' RETURN f.path AS path, f.name AS name, labels(f) AS type"""
+CYPHER_EXAMPLE_README = """MATCH (f:File) WHERE toLower(f.name) CONTAINS 'readme' RETURN f.path AS path, f.name AS name, labels(f) AS type LIMIT 50"""
 
-CYPHER_EXAMPLE_PYTHON_FILES = """MATCH (f:File) WHERE f.extension = '.py' RETURN f.path AS path, f.name AS name, labels(f) AS type"""
+CYPHER_EXAMPLE_PYTHON_FILES = """MATCH (f:File) WHERE f.extension = '.py' RETURN f.path AS path, f.name AS name, labels(f) AS type LIMIT 50"""
 
-CYPHER_EXAMPLE_TASKS = """MATCH (n:Function|Method) WHERE 'task' IN n.decorators RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type"""
+CYPHER_EXAMPLE_TASKS = """MATCH (n:Function|Method) WHERE 'task' IN n.decorators RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type LIMIT 50"""
 
-CYPHER_EXAMPLE_FILES_IN_FOLDER = """MATCH (f:File) WHERE f.path STARTS WITH 'services' RETURN f.path AS path, f.name AS name, labels(f) AS type"""
+CYPHER_EXAMPLE_FILES_IN_FOLDER = """MATCH (f:File) WHERE f.path STARTS WITH 'services' RETURN f.path AS path, f.name AS name, labels(f) AS type LIMIT 50"""
 
 CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
 
