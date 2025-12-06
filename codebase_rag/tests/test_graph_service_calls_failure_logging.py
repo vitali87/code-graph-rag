@@ -1,5 +1,3 @@
-"""Test CALLS relationship failure logging in MemgraphIngestor."""
-
 from __future__ import annotations
 
 from collections.abc import Generator

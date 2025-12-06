@@ -1,5 +1,3 @@
-"""Utilities for processing Rust code with tree-sitter."""
-
 from tree_sitter import Node
 
 from .utils import safe_decode_text

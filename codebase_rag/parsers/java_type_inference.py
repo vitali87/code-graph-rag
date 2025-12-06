@@ -1,5 +1,3 @@
-"""Java-specific type inference engine using tree-sitter for precise semantic analysis."""
-
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any

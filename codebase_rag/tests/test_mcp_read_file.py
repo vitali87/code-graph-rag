@@ -1,5 +1,3 @@
-"""Tests for MCP tools read_file method with pagination."""
-
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 

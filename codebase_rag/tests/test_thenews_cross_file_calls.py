@@ -1,5 +1,3 @@
-"""Test cross-file method calls with TheNews-like package structure."""
-
 from __future__ import annotations
 
 import tempfile

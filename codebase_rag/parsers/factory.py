@@ -1,5 +1,3 @@
-"""Factory for creating processor instances with proper dependencies."""
-
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol

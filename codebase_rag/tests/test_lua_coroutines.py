@@ -1,5 +1,3 @@
-"""Tests for Lua coroutines and threading patterns."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

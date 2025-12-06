@@ -1,5 +1,3 @@
-"""Tests for Lua closures and upvalues."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

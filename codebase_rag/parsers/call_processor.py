@@ -1,5 +1,3 @@
-"""Call processor for finding and resolving function/method calls."""
-
 import re
 from pathlib import Path
 from typing import Any

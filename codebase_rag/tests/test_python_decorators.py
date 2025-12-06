@@ -1,5 +1,3 @@
-"""Test decorator parsing and extraction for Python functions, methods, and classes."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

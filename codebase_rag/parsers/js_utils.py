@@ -1,5 +1,3 @@
-"""Utilities for processing JavaScript/TypeScript code with tree-sitter."""
-
 from tree_sitter import Node
 
 

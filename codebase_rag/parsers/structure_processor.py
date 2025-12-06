@@ -1,5 +1,3 @@
-"""Structure processor for identifying packages and folders."""
-
 from pathlib import Path
 from typing import Any
 

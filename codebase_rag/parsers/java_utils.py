@@ -1,5 +1,3 @@
-"""Utilities for processing Java code with tree-sitter."""
-
 from typing import TypedDict
 
 from tree_sitter import Node

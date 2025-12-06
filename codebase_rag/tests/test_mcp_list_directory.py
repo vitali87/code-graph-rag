@@ -1,5 +1,3 @@
-"""Tests for MCP tools list_directory method."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

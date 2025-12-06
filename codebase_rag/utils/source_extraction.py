@@ -1,5 +1,3 @@
-"""Shared utilities for extracting source code from files."""
-
 from collections.abc import Callable
 from pathlib import Path
 

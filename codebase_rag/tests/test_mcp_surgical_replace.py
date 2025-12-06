@@ -1,5 +1,3 @@
-"""Tests for MCP tools surgical_replace_code method."""
-
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 

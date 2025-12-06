@@ -1,5 +1,3 @@
-"""Utilities for processing Lua code with tree-sitter."""
-
 from tree_sitter import Node
 
 from .utils import contains_node, safe_decode_text
