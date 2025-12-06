@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-Example script demonstrating how to export and load graph data programmatically.
-
-This script shows:
-1. How to export a graph during repo analysis
-2. How to load and work with exported graph data
-3. How to perform basic queries on the exported data
-"""
 
 import argparse
 import sys
