@@ -261,6 +261,25 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
     for child in func_node.children:
         if child.type in ["identifier", "field_identifier"] and child.text:
             return child.text.decode("utf8") if child.text else None
+        elif child.type == "qualified_identifier":
+            # (H) Handle out-of-class method definitions like Calculator::add
+            # (H) or deeply nested like Outer::Inner::MyClass::method
+            def find_rightmost_name(node: Node) -> str | None:
+                last_name = None
+                for qchild in node.children:
+                    if qchild.type in ["identifier", "field_identifier"]:
+                        last_name = qchild.text.decode("utf8") if qchild.text else None
+                    elif qchild.type == "operator_name":
+                        last_name = extract_operator_name(qchild)
+                    elif qchild.type == "destructor_name":
+                        last_name = extract_destructor_name(qchild)
+                    elif qchild.type == "qualified_identifier":
+                        nested = find_rightmost_name(qchild)
+                        if nested:
+                            last_name = nested
+                return last_name
+
+            return find_rightmost_name(child)
         elif child.type == "operator_name":
             # Handle operator overloading
             return extract_operator_name(child)
