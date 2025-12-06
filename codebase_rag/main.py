@@ -41,6 +41,7 @@ from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.language import cli as language_cli
 from .tools.semantic_search import (
     create_get_function_source_tool,
     create_semantic_search_tool,
@@ -71,6 +72,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
 console = Console(width=None, force_terminal=True)
 
 # Session logging
@@ -1120,6 +1122,22 @@ def mcp_server() -> None:
         )
     except Exception as e:
         console.print(f"[bold red]MCP Server Error: {e}[/bold red]")
+
+
+@app.command(
+    name="language",
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+)
+def language_command(ctx: typer.Context) -> None:
+    """Manage language grammars (add, remove, list).
+
+    Examples:
+        cgr language add-grammar python
+        cgr language list-languages
+        cgr language remove-language python
+    """
+    # Delegate to the click-based language CLI
+    language_cli(ctx.args, standalone_mode=False)
 
 
 if __name__ == "__main__":

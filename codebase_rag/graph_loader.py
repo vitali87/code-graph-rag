@@ -194,7 +194,7 @@ def load_graph(file_path: str) -> GraphLoader:
 # Example usage
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python -m codebase_rag.graph_loader <graph_file.json>")
+        print("Usage: cgr graph-loader <graph_file.json>")
         sys.exit(1)
 
     graph_file = sys.argv[1]

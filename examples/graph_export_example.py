@@ -80,9 +80,9 @@ def main() -> None:
         description="Analyze an exported codebase graph.",
         epilog="""
 To create an exported graph file, run:
-  python -m codebase_rag.main start --repo-path /path/to/repo --update-graph -o graph.json
+  cgr start --repo-path /path/to/repo --update-graph -o graph.json
 Or to export an existing graph:
-  python -m codebase_rag.main export -o graph.json
+  cgr export -o graph.json
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
