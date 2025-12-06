@@ -4,8 +4,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from ..graph_updater import MemgraphIngestor
 from ..schemas import GraphData
+from ..services import QueryProtocol
 from ..services.llm import CypherGenerator, LLMGenerationError
 
 
@@ -16,7 +16,7 @@ class GraphQueryError(Exception):
 
 
 def create_query_tool(
-    ingestor: MemgraphIngestor,
+    ingestor: QueryProtocol,
     cypher_gen: CypherGenerator,
     console: Console | None = None,
 ) -> Tool:

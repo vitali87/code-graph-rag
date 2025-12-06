@@ -8,7 +8,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
-from ..services.graph_service import MemgraphIngestor
+from ..services import IngestorProtocol
 
 # No longer need constants import - using Tree-sitter directly
 from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
@@ -88,7 +88,7 @@ class CallProcessor:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
         function_registry: Any,

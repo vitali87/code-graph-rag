@@ -10,7 +10,7 @@ from tree_sitter import Node, Parser
 from .config import IGNORE_PATTERNS
 from .language_config import LANGUAGE_FQN_CONFIGS, get_language_config
 from .parsers.factory import ProcessorFactory
-from .services.graph_service import MemgraphIngestor
+from .services import IngestorProtocol, QueryProtocol
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.source_extraction import extract_source_with_fallback
@@ -259,7 +259,7 @@ class GraphUpdater:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path: Path,
         parsers: dict[str, Parser],
         queries: dict[str, Any],
@@ -450,6 +450,13 @@ class GraphUpdater:
             )
             return
 
+        # Semantic embeddings require query capability (only available with Memgraph)
+        if not isinstance(self.ingestor, QueryProtocol):
+            logger.info(
+                "Ingestor does not support querying, skipping embedding generation"
+            )
+            return
+
         try:
             from .embedder import embed_code
             from .vector_store import store_embedding
@@ -466,7 +473,7 @@ class GraphUpdater:
             ORDER BY n.qualified_name
             """
 
-            results = self.ingestor._execute_query(query)
+            results = self.ingestor.fetch_all(query)
 
             if not results:
                 logger.info("No functions or methods found for embedding generation")

@@ -7,7 +7,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 if TYPE_CHECKING:
-    from ..services.graph_service import MemgraphIngestor
+    from ..services import IngestorProtocol
 
 
 @lru_cache(maxsize=10000)
@@ -86,7 +86,7 @@ def ingest_method(
     method_node: Node,
     container_qn: str,
     container_type: str,
-    ingestor: "MemgraphIngestor",
+    ingestor: "IngestorProtocol",
     function_registry: dict[str, str],
     simple_name_lookup: dict[str, set[str]],
     get_docstring_func: Any,
@@ -165,7 +165,7 @@ def ingest_exported_function(
     function_name: str,
     module_qn: str,
     export_type: str,
-    ingestor: "MemgraphIngestor",
+    ingestor: "IngestorProtocol",
     function_registry: dict[str, str],
     simple_name_lookup: dict[str, set[str]],
     get_docstring_func: Any,
