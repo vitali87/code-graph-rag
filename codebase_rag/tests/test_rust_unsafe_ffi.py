@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust unsafe code and FFI testing.
-Tests unsafe blocks, raw pointers, extern functions, C interop,
-and memory safety edge cases for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ operator overloading testing.
-Tests all types of operator overloading including arithmetic, comparison, assignment,
-increment/decrement, stream, function call, subscript, member access, and conversion operators.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

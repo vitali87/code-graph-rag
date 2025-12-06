@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust advanced type system testing.
-Tests advanced generics, associated types, phantom types, higher-ranked trait bounds,
-type projections, and complex type relationships for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

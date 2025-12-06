@@ -1,9 +1,3 @@
-"""MCP server implementation for code-graph-rag.
-
-This module provides the main MCP server that exposes code-graph-rag's
-capabilities via the Model Context Protocol.
-"""
-
 import json
 import os
 import sys

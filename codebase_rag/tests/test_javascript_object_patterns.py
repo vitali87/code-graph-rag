@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript object creation patterns and testing.
-Tests object literals, factory functions, constructors, object creation patterns, and object composition.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

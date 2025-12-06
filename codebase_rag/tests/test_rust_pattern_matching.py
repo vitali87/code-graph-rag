@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust pattern matching and exhaustiveness testing.
-Tests advanced match patterns, guards, exhaustiveness checking,
-destructuring, and pattern syntax for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

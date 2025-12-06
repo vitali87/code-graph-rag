@@ -1,5 +1,3 @@
-"""Tests for MCP tools get_code_snippet method."""
-
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 

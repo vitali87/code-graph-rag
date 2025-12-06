@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust struct and enum parsing and relationship testing.
-Tests struct definitions, tuple structs, unit structs, enum variants, pattern matching,
-and destructuring patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,5 +1,3 @@
-"""Lua-specific type inference engine using tree-sitter for precise semantic analysis."""
-
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger

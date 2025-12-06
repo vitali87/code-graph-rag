@@ -1,8 +1,3 @@
-"""
-Comprehensive C++ template parsing and relationship testing.
-Tests template classes, functions, specializations, and template metaprogramming patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

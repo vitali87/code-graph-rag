@@ -1,9 +1,3 @@
-"""
-Comprehensive Java language parsing and relationship testing.
-Tests all Java constructs including classes, interfaces, enums, annotations,
-methods, constructors, fields, imports, packages, generics, inheritance, and modern features.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

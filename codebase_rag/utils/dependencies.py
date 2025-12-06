@@ -1,5 +1,3 @@
-"""Centralized dependency checking utilities."""
-
 import importlib.util
 
 # Cache dependency checks to avoid repeated module lookups

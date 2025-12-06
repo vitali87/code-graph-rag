@@ -1,5 +1,3 @@
-"""Smoke tests for main CLI functionality."""
-
 import subprocess
 import sys
 from pathlib import Path

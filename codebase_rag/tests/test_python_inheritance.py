@@ -1,5 +1,3 @@
-"""Test class inheritance parsing for Python code."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

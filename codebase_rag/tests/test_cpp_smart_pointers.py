@@ -1,8 +1,3 @@
-"""
-Comprehensive C++ smart pointers testing.
-Tests unique_ptr, shared_ptr, weak_ptr, custom deleters, and various memory management patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

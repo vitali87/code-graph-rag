@@ -1,10 +1,3 @@
-"""
-Test relative import resolution functionality.
-
-This test validates that Python relative imports (from . import, from .. import, etc.)
-are correctly resolved to their target modules based on the number of leading dots.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

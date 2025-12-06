@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust trait objects and dynamic dispatch testing.
-Tests trait objects, object safety, dynamic dispatch, virtual function calls,
-and advanced trait object patterns for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

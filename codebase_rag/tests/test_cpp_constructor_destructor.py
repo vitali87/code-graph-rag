@@ -1,8 +1,3 @@
-"""
-Comprehensive C++ constructor and destructor testing.
-Tests all constructor types, destructor patterns, RAII, move semantics, and object lifetime management.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

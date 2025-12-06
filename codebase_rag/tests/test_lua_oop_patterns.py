@@ -1,5 +1,3 @@
-"""Tests for Lua OOP patterns using tables and metatables."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

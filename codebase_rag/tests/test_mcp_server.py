@@ -1,5 +1,3 @@
-"""Tests for MCP server initialization and configuration."""
-
 import os
 from pathlib import Path
 from typing import Any

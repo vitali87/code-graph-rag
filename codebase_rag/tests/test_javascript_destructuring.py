@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript destructuring parsing and relationship testing.
-Tests all possible JavaScript destructuring patterns and verifies proper parsing.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

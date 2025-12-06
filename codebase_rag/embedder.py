@@ -1,4 +1,3 @@
-# codebase_rag/embedder.py
 import functools
 
 from .utils.dependencies import has_torch, has_transformers

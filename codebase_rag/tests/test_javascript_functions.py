@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript function parsing and relationship testing.
-Tests all possible JavaScript function patterns and verifies function definitions and calls.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

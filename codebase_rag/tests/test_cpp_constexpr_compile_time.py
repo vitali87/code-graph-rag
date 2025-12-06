@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ constexpr and compile-time programming testing.
-Tests constexpr functions, variables, if constexpr, consteval, template metaprogramming,
-and compile-time computation patterns for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

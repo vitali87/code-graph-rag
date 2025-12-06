@@ -1,5 +1,3 @@
-"""Tests for MCP tools query_code_graph and index_repository methods."""
-
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 

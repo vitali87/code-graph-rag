@@ -1,5 +1,3 @@
-"""Language-agnostic FQN (Fully Qualified Name) resolution utilities."""
-
 from pathlib import Path
 from typing import TYPE_CHECKING
 

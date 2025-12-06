@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust smart pointers and advanced memory management testing.
-Tests Box, Rc, Arc, RefCell, Weak references, custom smart pointers,
-and complex ownership patterns for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

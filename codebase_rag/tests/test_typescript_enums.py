@@ -1,8 +1,3 @@
-"""
-Comprehensive TypeScript enum parsing and relationship testing.
-Tests numeric enums, string enums, const enums, computed enums, and enum usage patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

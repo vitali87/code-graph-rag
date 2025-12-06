@@ -1,5 +1,3 @@
-"""Tests for Lua 5.4 edge cases and advanced syntax features."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

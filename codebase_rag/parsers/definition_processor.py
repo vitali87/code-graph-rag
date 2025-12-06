@@ -1,5 +1,3 @@
-"""Definition processor for extracting functions, classes and methods."""
-
 import json
 import re
 import textwrap

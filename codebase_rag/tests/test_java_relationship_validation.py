@@ -1,9 +1,3 @@
-"""
-Java relationship validation testing for complex scenarios.
-Tests that Java code relationships are correctly captured in the graph,
-including inheritance, composition, dependency injection, and cross-class method calls.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,9 +1,3 @@
-"""
-Test complex cross-file function call resolution.
-This test creates a more comprehensive scenario with multiple packages and modules
-to ensure cross-file function calls are properly detected across the codebase.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

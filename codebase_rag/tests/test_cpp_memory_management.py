@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ memory management testing.
-Tests smart pointers (unique_ptr, shared_ptr, weak_ptr), RAII patterns, move semantics,
-custom allocators, and memory safety patterns for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

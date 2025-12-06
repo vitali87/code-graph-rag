@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ friend functions testing.
-Tests friend functions, friend classes, friend operators, and friend templates
-for understanding access relationships in graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

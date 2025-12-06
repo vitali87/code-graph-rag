@@ -1,9 +1,3 @@
-"""
-Java reflection API and annotations parsing testing.
-Tests reflection patterns, custom annotations, meta-annotations, annotation processing,
-and runtime reflection capabilities.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

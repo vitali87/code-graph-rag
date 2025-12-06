@@ -1,9 +1,3 @@
-"""
-Test real-world Flask+ReactJS todo app relationships.
-This test creates a comprehensive todo application with both Python backend
-and TypeScript frontend to validate cross-language relationship detection.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

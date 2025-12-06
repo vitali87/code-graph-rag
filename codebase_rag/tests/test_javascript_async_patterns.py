@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript async patterns parsing and relationship testing.
-Tests all possible async JavaScript patterns including Promises, async/await, callbacks, and generators.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

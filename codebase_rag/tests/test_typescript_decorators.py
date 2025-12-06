@@ -1,8 +1,3 @@
-"""
-Comprehensive TypeScript decorators parsing and testing.
-Tests class decorators, method decorators, property decorators, parameter decorators, and decorator patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

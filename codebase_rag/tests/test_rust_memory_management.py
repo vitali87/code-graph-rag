@@ -1,8 +1,3 @@
-"""
-Comprehensive Rust memory management and ownership testing.
-Tests borrowing, ownership, lifetimes, and memory safety features.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

@@ -1,8 +1,3 @@
-"""
-Comprehensive C++20 concepts testing.
-Tests concept definitions, constraints, requires clauses, and concept-constrained templates.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

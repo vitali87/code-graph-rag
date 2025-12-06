@@ -1,9 +1,3 @@
-"""Integration tests for MCP tools without mocks.
-
-These tests verify that MCP tools actually work when called through
-MCPToolsRegistry, catching runtime errors that mocked tests miss.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

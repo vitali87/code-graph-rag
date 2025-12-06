@@ -1,8 +1,3 @@
-"""
-Comprehensive C++ class inheritance and polymorphism testing.
-Tests complex inheritance hierarchies, virtual functions, multiple inheritance, and polymorphic relationships.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

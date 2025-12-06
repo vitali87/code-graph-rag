@@ -1,8 +1,3 @@
-"""
-Comprehensive TypeScript namespaces and modules parsing and testing.
-Tests namespace declarations, module patterns, namespace merging, and module interop.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

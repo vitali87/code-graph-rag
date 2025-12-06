@@ -1,9 +1,3 @@
-"""
-COMPREHENSIVE standard library introspection testing for ALL supported languages.
-Tests that IMPORTS relationships correctly resolve to modules, not entities within modules.
-Covers: Python, JavaScript, TypeScript, Go, Rust, C++, Java, Lua
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

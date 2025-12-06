@@ -1,9 +1,3 @@
-"""
-Java modern features parsing testing (Java 8+).
-Tests records, sealed classes, pattern matching, switch expressions, text blocks,
-var keyword, and other modern Java language features.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

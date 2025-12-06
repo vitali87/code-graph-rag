@@ -1,9 +1,3 @@
-"""
-Java module system (Jigsaw) parsing testing.
-Tests module declarations, exports, requires, provides/uses,
-module-info.java files, and modular application structure.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

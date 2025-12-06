@@ -1,9 +1,3 @@
-"""
-Comprehensive C++ modern features testing.
-Tests modern C++ features including auto keyword, lambdas, smart pointers, move semantics,
-variadic templates, constexpr functions, range-based for loops, structured bindings, concepts, and coroutines.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

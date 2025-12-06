@@ -1,5 +1,3 @@
-"""Test structural relationships: CONTAINS_PACKAGE, CONTAINS_FOLDER, CONTAINS_FILE, DEPENDS_ON_EXTERNAL."""
-
 import json
 from pathlib import Path
 from unittest.mock import MagicMock

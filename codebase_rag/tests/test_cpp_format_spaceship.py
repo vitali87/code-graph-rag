@@ -1,7 +1,3 @@
-"""
-Test C++20 std::format library and spaceship operator functionality.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

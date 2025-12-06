@@ -1,10 +1,3 @@
-"""
-Test the provider-explicit configuration system.
-This tests the fixes for GitHub issues related to:
-- Environment variables being ignored when explicit providers are configured
-- Custom model names with colons not being parsed correctly
-"""
-
 import os
 from unittest.mock import patch
 

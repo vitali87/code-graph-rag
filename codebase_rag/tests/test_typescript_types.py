@@ -1,8 +1,3 @@
-"""
-Comprehensive TypeScript type system parsing and relationship testing.
-Tests all possible TypeScript type patterns and verifies type definitions and relationships.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

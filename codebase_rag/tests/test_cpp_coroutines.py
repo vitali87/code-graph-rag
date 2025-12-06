@@ -1,9 +1,3 @@
-"""
-Comprehensive C++20 coroutines testing.
-Tests coroutine keywords (co_await, co_yield, co_return), generator patterns,
-async/await patterns, and custom coroutine types for graph building applications.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

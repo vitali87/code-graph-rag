@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Build script for creating Graph-Code binaries using PyInstaller.
-This handles the complex dependencies and package metadata issues.
-"""
 
 import os
 import platform

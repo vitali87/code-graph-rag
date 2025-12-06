@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust traits and generics parsing and relationship testing.
-Tests trait definitions, implementations, generic parameters, associated types,
-lifetime parameters, and complex generic constraints.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

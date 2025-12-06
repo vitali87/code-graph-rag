@@ -1,5 +1,3 @@
-"""Tests for 'with' context manager parsing and relationship creation."""
-
 import os
 from pathlib import Path
 from unittest.mock import MagicMock

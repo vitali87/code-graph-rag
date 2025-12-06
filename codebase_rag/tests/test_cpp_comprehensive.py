@@ -1,8 +1,3 @@
-"""
-Comprehensive C++ test combining all language features.
-Tests integration of classes, inheritance, templates, namespaces, includes, and modern C++ features.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript spread and rest operators parsing and testing.
-Tests spread in arrays/objects/calls, rest parameters, destructuring with spread/rest.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

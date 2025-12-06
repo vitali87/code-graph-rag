@@ -1,8 +1,3 @@
-"""
-Comprehensive JavaScript 'this' binding and context parsing and testing.
-Tests this in different contexts, bind/call/apply, arrow functions, and binding patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock

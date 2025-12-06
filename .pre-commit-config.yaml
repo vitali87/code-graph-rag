@@ -24,6 +24,14 @@ repos:
             types-toml,
             "types-protobuf>=5.0.0",
             ]
+-   repo: local
+    hooks:
+    -   id: no-module-docstrings
+        name: no module-level docstrings
+        entry: bash -c 'for f in "$@"; do head -1 "$f" | grep -q "^\"\"\"" && echo "$f starts with module docstring" && exit 1; done; exit 0' --
+        language: system
+        types: [python]
+        exclude: ^codec/schema_pb2\.py$
 -   repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.2.0
     hooks:

@@ -1,5 +1,3 @@
-"""JavaScript/TypeScript-specific type inference engine using tree-sitter."""
-
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger

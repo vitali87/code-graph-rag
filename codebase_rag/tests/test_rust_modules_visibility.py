@@ -1,9 +1,3 @@
-"""
-Comprehensive Rust module system and visibility testing.
-Tests module declarations, path resolution, visibility modifiers,
-use statements, and complex module hierarchies for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

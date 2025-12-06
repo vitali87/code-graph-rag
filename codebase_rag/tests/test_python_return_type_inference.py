@@ -1,5 +1,3 @@
-"""Test return type inference for method calls."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 

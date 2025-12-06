@@ -1,8 +1,3 @@
-"""MCP tool wrappers for code-graph-rag.
-
-This module adapts pydantic-ai Tool instances to MCP-compatible functions.
-"""
-
 import itertools
 from collections.abc import Callable
 from dataclasses import dataclass
