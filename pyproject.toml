@@ -84,6 +84,9 @@ norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (may download models or require external services)",
+]
 
 [dependency-groups]
 dev = [
