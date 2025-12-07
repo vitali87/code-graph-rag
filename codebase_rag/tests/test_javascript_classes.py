@@ -17,12 +17,10 @@ def javascript_classes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_classes_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
     (project_path / "models").mkdir()
 
-    # Create base files
     (project_path / "src" / "base.js").write_text("export class BaseClass {}")
     (project_path / "utils" / "helpers.js").write_text(
         "export function validateId(id) { return id > 0; }"
@@ -173,7 +171,6 @@ const result = processor.processData([
         f"{project_name}.basic_classes.DataProcessor",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify all expected classes were created
@@ -195,7 +192,6 @@ const result = processor.processData([
         f"{project_name}.basic_classes.DataProcessor.validate",
     ]
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
     # Verify at least some expected methods were created
@@ -381,7 +377,6 @@ const eagleHunt = eagle.hunt(); // Eagle specific
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -569,7 +564,6 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
         f"{project_name}.static_features.PowerUser.createWithPermissions",
     ]
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
     # Verify at least some static methods were created
@@ -766,7 +760,6 @@ const instanceCount = Counter.getInstanceCount();
         f"{project_name}.private_features.SavingsAccount",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify classes with private features were created
@@ -785,10 +778,8 @@ const instanceCount = Counter.getInstanceCount();
         f"{project_name}.private_features.SavingsAccount.addInterest",
     ]
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
-    # Verify at least some methods were created
     found_methods = [method for method in expected_methods if method in created_methods]
     assert len(found_methods) >= 4, (
         f"Expected at least 4 methods in classes with private features, found {len(found_methods)}"
@@ -951,7 +942,6 @@ const userInfo = user.toString();
 
     run_updater(javascript_classes_project, mock_ingestor)
 
-    # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
     # Should capture class expressions as classes
@@ -1106,7 +1096,6 @@ const testResult = testClasses();
         f"Expected at least 1 inheritance relationship, found {len(class_inheritance)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1114,7 +1103,6 @@ const testResult = testClasses();
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_classes" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )

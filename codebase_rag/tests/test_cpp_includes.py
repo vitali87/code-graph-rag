@@ -851,7 +851,6 @@ void demonstrateAllIncludes() {
         f"Expected at least 10 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_imports:
         assert len(relationship.args) == 3, "Import relationship should have 3 args"
         assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
@@ -859,7 +858,6 @@ void demonstrateAllIncludes() {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_includes" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )

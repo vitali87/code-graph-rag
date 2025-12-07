@@ -12,7 +12,6 @@ def rust_memory_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_memory_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_memory_test"
@@ -20,7 +19,6 @@ version = "0.1.0"
 edition = "2021"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Memory management test crate")
 

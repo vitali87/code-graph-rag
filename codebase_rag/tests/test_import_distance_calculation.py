@@ -22,7 +22,6 @@ class TestImportDistanceCalculation:
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that functions in sibling modules receive the proximity bonus."""
-        # Set up function registry
         function_qn = "proj.pkg.sibling_mod.some_func"
         mock_updater.function_registry[function_qn] = "Function"
 
@@ -41,7 +40,6 @@ class TestImportDistanceCalculation:
 
     def test_sibling_module_bonus_for_methods(self, mock_updater: GraphUpdater) -> None:
         """Test that methods in sibling modules receive the proximity bonus."""
-        # Set up function registry
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
         mock_updater.function_registry[method_qn] = "Method"
 
@@ -62,7 +60,6 @@ class TestImportDistanceCalculation:
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that the distance difference between functions and methods is predictable."""
-        # Set up function registry
         function_qn = "proj.pkg.sibling_mod.some_func"
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
         mock_updater.function_registry[function_qn] = "Function"
@@ -89,7 +86,6 @@ class TestImportDistanceCalculation:
 
     def test_non_sibling_modules_no_bonus(self, mock_updater: GraphUpdater) -> None:
         """Test that non-sibling modules don't receive the proximity bonus."""
-        # Set up function registry
         function_qn = "proj.other_pkg.other_mod.some_func"
         method_qn = "proj.other_pkg.other_mod.SomeClass.some_method"
         mock_updater.function_registry[function_qn] = "Function"
@@ -117,7 +113,6 @@ class TestImportDistanceCalculation:
 
     def test_same_module_candidates(self, mock_updater: GraphUpdater) -> None:
         """Test distance calculation for candidates in the same module as caller."""
-        # Set up function registry
         function_qn = "proj.pkg.caller_mod.local_func"
         method_qn = "proj.pkg.caller_mod.LocalClass.local_method"
         mock_updater.function_registry[function_qn] = "Function"

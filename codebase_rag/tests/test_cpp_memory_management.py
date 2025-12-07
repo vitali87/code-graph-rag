@@ -12,7 +12,6 @@ def cpp_memory_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_memory_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -478,16 +477,13 @@ void demonstrateSmartPointers() {
         f"{project_name}.smart_pointers.demonstrateSmartPointers",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -845,10 +841,8 @@ void demonstrateMoveSemantics() {
         f"{project_name}.move_semantics.ResourceFactory",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"

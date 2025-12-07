@@ -12,7 +12,6 @@ def java_concurrency_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_concurrency_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -145,7 +144,6 @@ public class SynchronizedExample {
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected
     project_name = java_concurrency_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -305,7 +303,6 @@ public class VolatileExample {
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected
     project_name = java_concurrency_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -754,7 +751,6 @@ public class ExecutorExample {
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected
     project_name = java_concurrency_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -994,7 +990,6 @@ public class CompletableFutureExample {
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected
     project_name = java_concurrency_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -1233,7 +1228,6 @@ public class LocksExample {
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected
     project_name = java_concurrency_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 

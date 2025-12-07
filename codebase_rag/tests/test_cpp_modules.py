@@ -286,16 +286,13 @@ namespace math {
         f"{project_name}.math_module.factorial",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 module class, found {len(found_classes)}: {found_classes}"
     )
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -609,10 +606,8 @@ export namespace ds::algorithms {
         f"{project_name}.containers.LinkedList",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert found_classes, (
         f"Expected at least 1 partition class, found {len(found_classes)}: {found_classes}"

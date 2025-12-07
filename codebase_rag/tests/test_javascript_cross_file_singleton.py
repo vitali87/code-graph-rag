@@ -119,10 +119,8 @@ def test_js_singleton_pattern_cross_file_calls(
 
     project_name = js_singleton_project.name
 
-    # Get all CALLS relationships
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Convert to comparable format
     found_calls = set()
     for call in actual_calls:
         caller_qn = call.args[0][2]

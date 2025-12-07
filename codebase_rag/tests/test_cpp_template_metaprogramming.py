@@ -12,7 +12,6 @@ def cpp_metaprogramming_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_metaprogramming_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -339,16 +338,13 @@ void demonstrateBasicMetaprogramming() {
         f"{project_name}.basic_metaprogramming.demonstrateBasicMetaprogramming",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 metaprogramming class, found {len(found_classes)}: {found_classes}"
     )
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -703,10 +699,8 @@ void demonstrateAdvancedMetaprogramming() {
         f"{project_name}.advanced_metaprogramming.AdvancedMetaprogrammingDemo",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"

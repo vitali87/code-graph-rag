@@ -19,11 +19,9 @@ def javascript_this_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_this_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "utils" / "helpers.js").write_text(
         """
 export function helperFunction() {
@@ -436,7 +434,6 @@ console.log(result2); // [15, 20]
         f"Expected at least 5 bind/call/apply calls, found {len(bind_call_apply_calls)}"
     )
 
-    # Check function definitions
     created_functions = get_node_names(mock_ingestor, "Function")
     project_name = javascript_this_project.name
 
@@ -676,7 +673,6 @@ regularFunction(10, 20, 30);
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
     # Check for arrow functions
@@ -1138,7 +1134,6 @@ outer.call({ context: 'custom' });
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

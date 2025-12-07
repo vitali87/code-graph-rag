@@ -20,7 +20,6 @@ def rust_modules_project(temp_repo: Path) -> Path:
     (project_path / "src" / "network").mkdir()
     (project_path / "src" / "network" / "mod.rs").write_text("// Network module")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_modules_test"
 version = "0.1.0"

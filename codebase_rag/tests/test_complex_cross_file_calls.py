@@ -12,15 +12,12 @@ def complex_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "test_complex"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "__init__.py").touch()
 
-    # Create utils package
     utils_dir = project_path / "utils"
     utils_dir.mkdir()
     (utils_dir / "__init__.py").touch()
 
-    # utils/helpers.py
     with open(utils_dir / "helpers.py", "w") as f:
         f.write("""
 def format_data(data):
@@ -37,7 +34,6 @@ class DataProcessor:
         return format_data(data)
 """)
 
-    # utils/math_ops.py
     with open(utils_dir / "math_ops.py", "w") as f:
         f.write("""
 def calculate(x, y):
@@ -54,7 +50,6 @@ def compute_complex():
     services_dir.mkdir()
     (services_dir / "__init__.py").touch()
 
-    # services/processor.py
     with open(services_dir / "processor.py", "w") as f:
         f.write("""
 from utils.helpers import format_data, short, DataProcessor
@@ -126,7 +121,6 @@ def test_complex_cross_file_function_calls(
         ("utils.helpers.DataProcessor.process", "utils.helpers.format_data"),
     ]
 
-    # Get all CALLS relationships
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Convert to a set of (caller, callee) tuples for easier comparison

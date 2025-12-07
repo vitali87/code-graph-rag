@@ -13,12 +13,10 @@ def typescript_advanced_types_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_advanced_types_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "types").mkdir()
     (project_path / "utils").mkdir()
     (project_path / "examples").mkdir()
 
-    # Create base files
     (project_path / "types" / "base.ts").write_text(
         """
 // Base types for advanced type examples
@@ -1765,7 +1763,6 @@ console.log('All advanced type patterns working correctly');
 
     run_updater(typescript_advanced_types_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

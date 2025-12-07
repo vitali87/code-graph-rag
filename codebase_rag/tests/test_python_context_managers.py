@@ -247,7 +247,6 @@ def test_context_manager_function_definitions(
         f"{project_name}.context_managers.context_manager_with_calls",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
@@ -377,11 +376,9 @@ def test_custom_context_manager_class(
         f"{project_name}.context_managers.CustomContextManager.process",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
     assert expected_class in created_classes, f"Missing class: {expected_class}"
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
     # Verify all expected methods were created
@@ -408,7 +405,6 @@ def test_context_manager_in_control_structures(
     # Function with context managers in control structures
     function_qn = f"{project_name}.context_managers.context_in_loops_and_conditions"
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
     assert function_qn in created_functions, f"Missing function: {function_qn}"
 
@@ -452,7 +448,6 @@ def test_async_context_manager_parsing(
         f"{project_name}.context_managers.async_context_managers.async_function",  # Properly nested!
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify async functions were created
@@ -481,7 +476,6 @@ def test_decorated_context_manager_function(
     # Expected decorated function
     expected_function = f"{project_name}.context_managers.custom_context_decorator"
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
     created_functions = get_qualified_names(function_calls)
     assert expected_function in created_functions, (

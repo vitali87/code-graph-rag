@@ -99,13 +99,10 @@ app:start()
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have web framework function definitions
@@ -227,13 +224,10 @@ db:close()
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have database ORM function definitions
@@ -360,10 +354,8 @@ Game:init()
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have game engine function definitions
@@ -530,13 +522,10 @@ local api_key = config_mgr:get("api", "key")
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have configuration manager function definitions
@@ -707,13 +696,10 @@ pipeline:export_results(csv_data)
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have data pipeline function definitions
@@ -898,13 +884,10 @@ local user_data = mesh:call_service("user-service", "/users/123", "GET")
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have service mesh function definitions

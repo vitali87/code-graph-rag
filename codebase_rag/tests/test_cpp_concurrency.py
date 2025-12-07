@@ -12,7 +12,6 @@ def cpp_concurrency_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_concurrency_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -592,10 +591,8 @@ void demonstrateMutexPatterns() {
         f"{project_name}.mutex_locks.RecursiveResource",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 mutex-related classes, found {len(found_classes)}: {found_classes}"
@@ -938,10 +935,8 @@ void compareAtomicVsMutex() {
         f"{project_name}.atomics.MemoryOrderingDemo",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 atomic-related classes, found {len(found_classes)}: {found_classes}"
@@ -1348,10 +1343,8 @@ void demonstrateAsyncPipeline() {
         f"{project_name}.condition_futures.PromiseChannel",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 4, (
         f"Expected at least 4 condition/future classes, found {len(found_classes)}: {found_classes}"

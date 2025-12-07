@@ -12,7 +12,6 @@ def rust_macros_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_macros_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_macros_test"
@@ -29,7 +28,6 @@ proc-macro2 = "1.0"
 proc-macro = true
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Macros test crate")
 

@@ -13,11 +13,9 @@ def javascript_prototypes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_prototypes_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "models").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "models" / "base.js").write_text(
         """
 function BaseModel(id) {
@@ -409,7 +407,6 @@ myTask.outputTaskDetails();
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check factory functions
@@ -626,7 +623,6 @@ square.scale(2);
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check constructor hierarchy
@@ -931,7 +927,6 @@ console.log(entity.validate());
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check mixin functions
@@ -1197,7 +1192,6 @@ for (const value of generator) {
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check edge case constructors
@@ -1326,7 +1320,6 @@ console.log(dog.eat('bone')); // Works due to prototype chain
 
     run_updater(javascript_prototypes_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

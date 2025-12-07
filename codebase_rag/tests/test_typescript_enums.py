@@ -13,11 +13,9 @@ def typescript_enums_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_enums_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "types").mkdir()
     (project_path / "constants").mkdir()
 
-    # Create base files
     (project_path / "types" / "status.ts").write_text(
         """
 export enum Status {
@@ -937,7 +935,6 @@ console.log(demo.getColor());
 
     run_updater(typescript_enums_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

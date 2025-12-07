@@ -125,7 +125,6 @@ def deep_hierarchy_project(temp_repo: Path) -> Path:
     (project_path / "__init__.py").touch()
 
     # Create deeply nested package structure
-    # app/services/data/processors/validator.py
     validators_pkg = project_path / "app" / "services" / "data" / "processors"
     validators_pkg.mkdir(parents=True)
 
@@ -151,7 +150,6 @@ class DataValidator:
         return validate_input(data) and isinstance(data, (str, int, dict))
 """)
 
-    # app/services/processor.py
     processor_pkg = project_path / "app" / "services"
     with open(processor_pkg / "processor.py", "w") as f:
         f.write("""
@@ -166,7 +164,6 @@ def process_data(data):
     return False
 """)
 
-    # app/controller.py
     controller_pkg = project_path / "app"
     with open(controller_pkg / "controller.py", "w") as f:
         f.write("""
@@ -211,10 +208,8 @@ def test_singleton_pattern_cross_file_calls(
 
     project_name = singleton_project.name
 
-    # Get all CALLS relationships
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Convert to comparable format
     found_calls = set()
     for call in actual_calls:
         caller_qn = call.args[0][2]
@@ -311,10 +306,8 @@ def test_deep_package_hierarchy_cross_file_calls(
 
     project_name = deep_hierarchy_project.name
 
-    # Get all CALLS relationships
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Convert to comparable format
     found_calls = set()
     for call in actual_calls:
         caller_qn = call.args[0][2]

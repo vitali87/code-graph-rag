@@ -12,10 +12,8 @@ def class_method_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "test_class_methods"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "__init__.py").touch()
 
-    # models/user.py
     models_dir = project_path / "models"
     models_dir.mkdir()
     (models_dir / "__init__.py").touch()
@@ -51,7 +49,6 @@ class UserManager:
         return None
 """)
 
-    # services/user_service.py
     services_dir = project_path / "services"
     services_dir.mkdir()
     (services_dir / "__init__.py").touch()
@@ -86,7 +83,6 @@ class UserService:
         return [user.get_name() for user in users]  # List comprehension method calls
 """)
 
-    # main.py
     with open(project_path / "main.py", "w") as f:
         f.write("""
 from services.user_service import UserService
@@ -124,7 +120,6 @@ def test_imported_class_method_calls_are_detected(
 
     project_name = class_method_project.name
 
-    # Get all CALLS relationships
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Filter for method calls only
@@ -203,7 +198,6 @@ def test_cross_file_object_method_chaining(
 
     project_name = class_method_project.name
 
-    # Get all CALLS relationships
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Look for calls from UserService.batch_process to User.get_name

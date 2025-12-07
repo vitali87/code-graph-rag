@@ -18,11 +18,9 @@ def javascript_object_patterns_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_object_patterns_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "patterns").mkdir()
     (project_path / "factories").mkdir()
 
-    # Create base files
     (project_path / "patterns" / "basic.js").write_text(
         """
 export function createUser(name, email) {
@@ -334,7 +332,6 @@ console.log(secureObject[Symbol.for('public')]); // shared
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for functions from object literals
@@ -761,7 +758,6 @@ console.log(users.map(u => u.getProfile()));
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for factory functions
@@ -1567,7 +1563,6 @@ console.log('Cloned:', cloned.toJSON());
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for composition factory functions
@@ -1695,7 +1690,6 @@ console.log(advanced.process());
 
     run_updater(javascript_object_patterns_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

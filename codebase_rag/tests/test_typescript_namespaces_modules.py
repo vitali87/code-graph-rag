@@ -13,12 +13,10 @@ def typescript_namespaces_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_namespaces_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "namespaces").mkdir()
     (project_path / "modules").mkdir()
     (project_path / "types").mkdir()
 
-    # Create base files
     (project_path / "types" / "common.ts").write_text(
         """
 export namespace Common {
@@ -1351,7 +1349,6 @@ Conditional.log('Debug message');
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

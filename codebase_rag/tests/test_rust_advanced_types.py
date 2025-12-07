@@ -12,11 +12,9 @@ def rust_advanced_types_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_advanced_types_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Advanced types test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_advanced_types_test"
 version = "0.1.0"

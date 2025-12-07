@@ -13,7 +13,6 @@ def typescript_declarations_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_declarations_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "types").mkdir()
     (project_path / "lib").mkdir()
     (project_path / "external").mkdir()
@@ -1352,7 +1351,6 @@ export {};
 
     run_updater(typescript_declarations_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

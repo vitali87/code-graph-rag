@@ -120,7 +120,6 @@ def test_nested_function_definitions_are_created(
         f"{project_name}.nested_functions.decorator_factory.decorator.wrapper",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected nested functions were created
@@ -356,7 +355,6 @@ def test_function_in_class_method(
     # In current implementation, nested_in_method is treated as a method, not a nested function
     expected_method_qn = f"{project_name}.nested_functions.OuterClass.nested_in_method"
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
     assert expected_method_qn in created_methods, (

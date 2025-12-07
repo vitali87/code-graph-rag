@@ -17,7 +17,6 @@ def java_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -114,10 +113,8 @@ public abstract class Shape {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify classes were detected
     project_name = java_project.name
 
-    # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
     # Get all Interface node creation calls (Java interfaces are processed separately)
@@ -149,7 +146,6 @@ public abstract class Shape {
         f"Missing expected interfaces: {sorted(list(missing_interfaces))}"
     )
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
     # Expected method qualified names (constructors and methods with parameter signatures)
@@ -465,7 +461,6 @@ public abstract class AbstractService {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Expected class qualified names
@@ -561,7 +556,6 @@ public class OuterClass {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Expected class qualified names
@@ -809,7 +803,6 @@ public class ExceptionHandler {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Expected class qualified names

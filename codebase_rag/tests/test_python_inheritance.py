@@ -24,7 +24,6 @@ def inheritance_project(tmp_path: Path) -> Path:
 from abc import ABC, abstractmethod
 from typing import Protocol
 
-
 # Base classes
 class Animal:
     """Base animal class."""
@@ -39,7 +38,6 @@ class Animal:
     def eat(self) -> str:
         """Common method."""
         return f"{self.name} is eating"
-
 
 class Mammal(Animal):
     """Mammal inherits from Animal."""
@@ -56,14 +54,12 @@ class Mammal(Animal):
         """Mammal-specific method."""
         return f"{self.name} gives birth"
 
-
 class Flyable(Protocol):
     """Protocol for flying capability."""
 
     def fly(self) -> str:
         """Flying method."""
         ...
-
 
 class Bird(Animal):
     """Bird inherits from Animal."""
@@ -79,7 +75,6 @@ class Bird(Animal):
     def fly(self) -> str:
         """Bird-specific method."""
         return f"{self.name} flies with {self.wingspan}m wingspan"
-
 
 # Multiple inheritance
 class Bat(Mammal, Flyable):
@@ -101,7 +96,6 @@ class Bat(Mammal, Flyable):
         """Bat-specific method."""
         return f"{self.name} uses echolocation"
 
-
 # Deep inheritance chain
 class Dog(Mammal):
     """Dog inherits from Mammal."""
@@ -113,7 +107,6 @@ class Dog(Mammal):
     def fetch(self) -> str:
         """Dog-specific method."""
         return f"{self.name} fetches the ball"
-
 
 class Poodle(Dog):
     """Poodle inherits from Dog (3-level inheritance)."""
@@ -129,7 +122,6 @@ class Poodle(Dog):
     def get_groomed(self) -> str:
         """Poodle-specific method."""
         return f"{self.name} gets a {self.cut_style} cut"
-
 
 # Abstract base class
 class Vehicle(ABC):
@@ -147,7 +139,6 @@ class Vehicle(ABC):
         """Concrete method."""
         return f"{self.brand} vehicle honks"
 
-
 class Car(Vehicle):
     """Car inherits from abstract Vehicle."""
 
@@ -158,7 +149,6 @@ class Car(Vehicle):
     def drive(self) -> str:
         """Car-specific method."""
         return f"Driving the {self.brand} car"
-
 
 # Method chaining and super calls
 class SmartCar(Car):
@@ -176,7 +166,6 @@ class SmartCar(Car):
     def autonomous_drive(self) -> str:
         """Smart car specific method."""
         return f"{self.brand} drives itself (AI level {self.ai_level})"
-
 
 def use_inheritance() -> None:
     """Function that demonstrates inheritance usage."""
@@ -255,7 +244,6 @@ def test_inheritance_relationships_are_created(
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -319,7 +307,6 @@ def test_super_calls_are_tracked(
         ),
     ]
 
-    # Get all CALLS relationships
     call_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -553,7 +540,6 @@ def mro_diamond_project(tmp_path: Path) -> Path:
     diamond_file.write_text(
         '''"""Diamond inheritance patterns for MRO testing."""
 
-
 # Classic Diamond Inheritance Pattern
 class A:
     """Base class."""
@@ -574,7 +560,6 @@ class A:
         """Base asymmetric method."""
         return "A.asym_method"
 
-
 class B(A):
     """Left branch of diamond."""
 
@@ -585,7 +570,6 @@ class B(A):
     def left_only(self) -> str:
         """Method only in left branch."""
         return "B.left_only"
-
 
 class C(A):
     """Right branch of diamond."""
@@ -598,14 +582,12 @@ class C(A):
         """Method only in right branch."""
         return "C.right_only"
 
-
 class D(B, C):
     """Diamond point - inherits from both B and C."""
 
     def diamond_method(self) -> str:
         """Method unique to diamond point."""
         return "D.diamond_method"
-
 
 # Complex Diamond with Override at Bottom
 class E(B, C):
@@ -614,7 +596,6 @@ class E(B, C):
     def method(self) -> str:
         """Override the conflicted method at diamond point."""
         return "E.method"
-
 
 # Multiple Diamonds Pattern
 class F:
@@ -628,14 +609,12 @@ class F:
         """Method that will be overridden."""
         return "F.shared_method"
 
-
 class G(A, F):
     """Mix of two hierarchies."""
 
     def shared_method(self) -> str:
         """Override shared method."""
         return "G.shared_method"
-
 
 class H(B, F):
     """Another mix."""
@@ -644,14 +623,12 @@ class H(B, F):
         """Override shared method."""
         return "H.shared_method"
 
-
 class I(G, H):
     """Complex multiple inheritance from mixed hierarchies."""
 
     def complex_method(self) -> str:
         """Method unique to complex class."""
         return "I.complex_method"
-
 
 # Deep Diamond Chain
 class J(A):
@@ -661,14 +638,12 @@ class J(A):
         """Method for deep testing."""
         return "J.deep_method"
 
-
 class K(J):
     """Another intermediate class."""
 
     def deep_method(self) -> str:
         """Override deep method."""
         return "K.deep_method"
-
 
 class L(A):
     """Parallel branch."""
@@ -677,14 +652,12 @@ class L(A):
         """Override deep method in parallel branch."""
         return "L.deep_method"
 
-
 class M(K, L):
     """Deep diamond point."""
 
     def final_method(self) -> str:
         """Final method."""
         return "M.final_method"
-
 
 # Asymmetric Diamond (different depth branches)
 class N(A):
@@ -694,14 +667,12 @@ class N(A):
         """Asymmetric method."""
         return "N.asym_method"
 
-
 class O(B):
     """Deeper branch (A -> B -> O)."""
 
     def asym_method(self) -> str:
         """Override in deeper branch."""
         return "O.asym_method"
-
 
 class P(N, O):
     """Asymmetric diamond - left is 1 level deep, right is 2 levels deep."""

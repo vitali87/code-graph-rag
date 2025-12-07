@@ -12,7 +12,6 @@ def cpp_error_handling_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_error_handling_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -406,16 +405,13 @@ void demonstrateBasicExceptionHandling() {
         f"{project_name}.basic_exceptions.demonstrateBasicExceptionHandling",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -810,10 +806,8 @@ void demonstrateRAIIPatterns() {
         f"{project_name}.raii_patterns.ResourceManager",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"

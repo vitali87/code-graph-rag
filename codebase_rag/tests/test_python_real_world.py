@@ -465,7 +465,6 @@ class PlainTaskSchema(Schema):
     frontend_dir = project_path / "frontend"
     frontend_dir.mkdir()
 
-    # Package.json
     with open(frontend_dir / "package.json", "w") as f:
         f.write(
             """{

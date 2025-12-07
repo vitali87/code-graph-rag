@@ -24,7 +24,6 @@ def return_type_project(tmp_path: Path) -> Path:
     with open(models_dir / "base.py", "w") as f:
         f.write('''"""Base models with various return type patterns."""
 
-
 class User:
     def __init__(self, name: str, email: str):
         self.name = name
@@ -51,7 +50,6 @@ class User:
         """Return validation status."""
         return len(self.name) > 0 and "@" in self.email
 
-
 class Profile:
     def __init__(self, name: str, email: str):
         self.name = name
@@ -64,7 +62,6 @@ class Profile:
     def to_user(self):
         """Convert profile back to user."""
         return User(self.name, self.email)
-
 
 class UserFactory:
     @staticmethod
@@ -81,7 +78,6 @@ class UserFactory:
         """Build user from dictionary."""
         return User(data["name"], data["email"])
 
-
 class AdminUser(User):
     def __init__(self, name: str, email: str, role: str):
         super().__init__(name, email)
@@ -94,7 +90,6 @@ class AdminUser(User):
     def create_regular_user(self, name: str, email: str):
         """Admin can create regular users."""
         return User(name, email)
-
 
 class UserRepository:
     def __init__(self):
@@ -116,7 +111,6 @@ class UserRepository:
         user = User(name, email)
         self.users.append(user)
         return user
-
 
 class UserService:
     def __init__(self):
@@ -168,7 +162,6 @@ class UserService:
 
 from models.base import UserService, UserFactory, AdminUser
 
-
 class UserProcessor:
     def __init__(self):
         self.service = UserService()
@@ -204,7 +197,6 @@ class UserProcessor:
         final_name = converted_user.get_name()
 
         return final_name
-
 
 class BatchProcessor:
     def __init__(self):
@@ -248,7 +240,6 @@ def test_basic_return_type_inference(
 
     project_name = return_type_project.name
 
-    # Get all CALLS relationships
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list

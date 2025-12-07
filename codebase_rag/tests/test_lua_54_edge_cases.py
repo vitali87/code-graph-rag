@@ -217,7 +217,6 @@ print("State machine:", table.concat(machine_results, " -> "))
     try:
         pass  # Tests follow
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -431,7 +430,6 @@ print("Decomposed length:", norm_results.decomposed_len)
     try:
         pass  # Tests follow
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -687,7 +685,6 @@ end
     try:
         pass  # Tests follow
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list

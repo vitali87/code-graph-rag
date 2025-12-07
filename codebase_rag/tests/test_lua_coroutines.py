@@ -62,10 +62,8 @@ end
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships (Module defines functions)
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships (Functions call other functions)
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have module defining functions
@@ -193,13 +191,10 @@ sched:run()
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships (main imports scheduler, tasks)
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have multiple modules defining functions
@@ -329,10 +324,8 @@ end
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have async module defining functions
@@ -445,10 +438,8 @@ print("First 10 squares of even numbers:", table.concat(results, ", "))
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have generator module defining functions
@@ -570,13 +561,10 @@ end
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have multiple modules defining functions

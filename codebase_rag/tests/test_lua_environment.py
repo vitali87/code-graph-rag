@@ -74,10 +74,8 @@ return env_manager
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions
@@ -173,10 +171,8 @@ return env_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions
@@ -262,10 +258,8 @@ return M
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have module function definitions (M.* and env_helpers.*)
@@ -352,10 +346,8 @@ return code_executor
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions
@@ -453,10 +445,8 @@ return global_manager
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions

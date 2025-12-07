@@ -18,11 +18,9 @@ def javascript_closures_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_closures_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create helper files
     (project_path / "src" / "counter.js").write_text("export let globalCounter = 0;")
     (project_path / "utils" / "logger.js").write_text(
         "export function log(message) { console.log(message); }"
@@ -218,7 +216,6 @@ const varResults = varFunctions.map(fn => fn());
         f"{project_name}.basic_closures.createFunctionArrayVar",
     ]
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
     created_functions = get_qualified_names(function_calls)
 
@@ -241,7 +238,6 @@ const varResults = varFunctions.map(fn => fn());
         f"Expected at least 5 nested functions from closures, found {len(nested_functions)}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     closure_calls = [
@@ -1357,7 +1353,6 @@ const scopeResult = accessScopes();
         f"Expected at least 8 comprehensive closure calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1365,12 +1360,10 @@ const scopeResult = accessScopes();
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_closures" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )

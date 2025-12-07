@@ -12,7 +12,6 @@ def cpp_namespaces_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_namespaces_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -202,7 +201,6 @@ void demonstrateBasicNamespaces() {
         f"{project_name}.basic_namespaces.math.Calculator",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify at least some namespaced classes were created
@@ -220,7 +218,6 @@ void demonstrateBasicNamespaces() {
         f"{project_name}.basic_namespaces.math.multiply",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify namespaced functions were created
@@ -419,7 +416,6 @@ void demonstrateTemplateUsing() {
         f"{project_name}.using_directives.Container",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify nested namespace classes
@@ -609,7 +605,6 @@ void compareLinkageStyles() {
         "InternalTemplate",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify anonymous namespace classes were created (they might have special naming)
@@ -633,7 +628,6 @@ void compareLinkageStyles() {
         "modern_internal_function",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify internal functions were created

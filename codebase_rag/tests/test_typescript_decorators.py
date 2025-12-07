@@ -13,11 +13,9 @@ def typescript_decorators_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_decorators_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "decorators").mkdir()
     (project_path / "examples").mkdir()
 
-    # Create base files
     (project_path / "decorators" / "common.ts").write_text(
         """
 // Common decorators
@@ -1674,7 +1672,6 @@ console.log((example as any).tableName); // 'comprehensive_items'
 
     run_updater(typescript_decorators_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

@@ -51,13 +51,10 @@ bob:greet()
     person_qn = f"{project.name}.person"
     main_qn = f"{project.name}.main"
 
-    # Verify DEFINES relationships (Module defines functions)
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships (Functions call other functions)
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have module defining functions

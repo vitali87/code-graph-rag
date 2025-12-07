@@ -18,11 +18,9 @@ def javascript_functions_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_functions_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create helper files
     (project_path / "src" / "helpers.js").write_text("export const log = console.log;")
     (project_path / "utils" / "common.js").write_text(
         "export function isString(value) { return typeof value === 'string'; }"
@@ -116,14 +114,12 @@ const total = sum(1, 2, 3, 4, 5);
         f"{project_name}.function_declarations.calculator",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
     for expected_qn in expected_functions:
         assert expected_qn in created_functions, f"Missing function: {expected_qn}"
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Should have calls between functions
@@ -212,7 +208,6 @@ const quadrupled = doubler(8);
 
     project_name = javascript_functions_project.name
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     # Arrow functions should be captured
@@ -363,7 +358,6 @@ async function orchestrate() {
         f"{project_name}.async_functions.orchestrate",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify async functions were created
@@ -489,7 +483,6 @@ const configValue = Config.get('apiUrl');
 
     run_updater(javascript_functions_project, mock_ingestor)
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     # IIFEs should be captured as functions
@@ -649,7 +642,6 @@ const memoizedAdd = memoize(add5);
         f"{project_name}.higher_order_functions.memoize",
     ]
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
     created_functions = get_qualified_names(function_calls)
 
@@ -955,7 +947,6 @@ const orchestrated = orchestrator();
         f"Expected at least 8 comprehensive function calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -963,12 +954,10 @@ const orchestrated = orchestrator();
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_functions" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )

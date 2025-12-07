@@ -12,7 +12,6 @@ def rust_concurrency_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_concurrency_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_concurrency_test"
@@ -24,7 +23,6 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Concurrency test crate")
 

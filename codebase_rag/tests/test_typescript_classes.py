@@ -18,12 +18,10 @@ def typescript_classes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_classes_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "models").mkdir()
     (project_path / "services").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "models" / "base.ts").write_text(
         """
 export abstract class BaseModel {
@@ -280,7 +278,6 @@ console.log(newRepo.name); // OK
 
     project_name = typescript_classes_project.name
 
-    # Get all Class nodes
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Check for classes with access modifiers
@@ -623,7 +620,6 @@ console.log(car.start());
 
     project_name = typescript_classes_project.name
 
-    # Get all Class nodes
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Check for abstract classes and their implementations
@@ -918,7 +914,6 @@ service.process();
 
     project_name = typescript_classes_project.name
 
-    # Get all Class nodes
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Check for classes with parameter properties
@@ -1119,7 +1114,6 @@ console.log(userRepo.name); // users
 
     run_updater(typescript_classes_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

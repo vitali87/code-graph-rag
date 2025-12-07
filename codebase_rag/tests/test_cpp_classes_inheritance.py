@@ -12,11 +12,9 @@ def cpp_inheritance_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_inheritance_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    # Create base files
     (project_path / "include" / "shapes.h").write_text("#pragma once\nclass Shape {};")
 
     return project_path
@@ -290,7 +288,6 @@ void demonstrateSingleInheritance() {
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -670,7 +667,6 @@ void testAnimalAbilities() {
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1055,7 +1051,6 @@ void testAbstractDestructors() {
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1370,7 +1365,6 @@ void testTemplateInheritance() {
         f"Expected at least 15 comprehensive virtual calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_inherits:
         assert len(relationship.args) == 3, (
             "Inheritance relationship should have 3 args"
@@ -1380,7 +1374,6 @@ void testTemplateInheritance() {
         source_class = relationship.args[0][2]
         target_class = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_inheritance" in source_class, (
             f"Source class should contain test file name: {source_class}"
         )

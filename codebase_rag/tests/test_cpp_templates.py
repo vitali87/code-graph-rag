@@ -12,7 +12,6 @@ def cpp_templates_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_templates_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -241,7 +240,6 @@ void demonstrateTemplateMetaprogramming() {
         f"{project_name}.function_templates.demonstrateFunctionTemplates",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some template functions were created
@@ -257,7 +255,6 @@ void demonstrateTemplateMetaprogramming() {
         f"{project_name}.function_templates.TypeInfo",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify template classes were created
@@ -652,7 +649,6 @@ void demonstrateTemplateTemplateParameters() {
         f"{project_name}.class_templates.ContainerWrapper",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify template classes were created
@@ -1005,7 +1001,6 @@ void demonstrateConcepts() {
         f"{project_name}.template_metaprogramming.AnotherClass",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify metaprogramming classes were created

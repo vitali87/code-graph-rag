@@ -12,7 +12,6 @@ def cpp_friend_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_friend_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -390,16 +389,13 @@ void demonstrateFriendFunctions() {
         f"{project_name}.friend_functions.demonstrateFriendFunctions",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -738,7 +734,6 @@ void demonstrateTemplateFriends() {
         f"{project_name}.friend_templates.demonstrateTemplateFriends",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created

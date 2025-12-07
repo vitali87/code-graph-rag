@@ -12,7 +12,6 @@ def rust_singleton_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_singleton_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_singleton_test"
@@ -150,10 +149,8 @@ def test_rust_singleton_pattern_cross_file_calls(
 
     project_name = rust_singleton_project.name
 
-    # Get all CALLS relationships
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Convert to comparable format
     found_calls = set()
     for call in actual_calls:
         caller_qn = call.args[0][2]

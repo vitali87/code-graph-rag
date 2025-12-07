@@ -18,10 +18,8 @@ def javascript_spread_rest_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_spread_rest_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "utils" / "arrays.js").write_text(
         """
 export function mergeArrays(arr1, arr2) {
@@ -166,7 +164,6 @@ console.log(max);           // 10
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for functions using array spread
@@ -390,7 +387,6 @@ console.log(apiConfig);    // Environment-specific config
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for functions using object spread
@@ -629,7 +625,6 @@ for (const value of combined) {
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for functions using rest parameters
@@ -910,7 +905,6 @@ console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50]
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for functions using destructuring with spread/rest
@@ -1059,7 +1053,6 @@ console.log(complex);
 
     run_updater(javascript_spread_rest_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

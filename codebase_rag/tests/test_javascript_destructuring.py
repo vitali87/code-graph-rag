@@ -12,11 +12,9 @@ def javascript_destructuring_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_destructuring_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create helper files
     (project_path / "src" / "data.js").write_text(
         "export const sampleData = { users: [], posts: [] };"
     )
@@ -168,7 +166,6 @@ try {
         f"{project_name}.object_destructuring.getCoordinates",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify functions with destructuring parameters were created
@@ -177,7 +174,6 @@ try {
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     destructuring_calls = [
@@ -332,7 +328,6 @@ const result = processArray([10, 20, 30, 40]);
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     array_destructuring_calls = [
@@ -679,7 +674,6 @@ const response = processApiResponse({
         f"Expected at least 5 destructuring imports, found {len(destructuring_imports)}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     destructuring_calls = [
@@ -789,7 +783,6 @@ const formatted = formatData({
         f"Expected at least 3 comprehensive destructuring calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -797,12 +790,10 @@ const formatted = formatData({
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_destructuring" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )

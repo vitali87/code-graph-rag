@@ -12,12 +12,10 @@ def javascript_async_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_async_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
     (project_path / "api").mkdir()
 
-    # Create helper files
     (project_path / "src" / "helpers.js").write_text(
         "export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));"
     )
@@ -1361,7 +1359,6 @@ consumeAsyncGenerator();
         f"Expected at least 8 generator functions, found {len(found_generator_functions)}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     generator_calls = [
@@ -1543,7 +1540,6 @@ function delay(ms) {
         f"Expected at least 5 comprehensive async calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1551,12 +1547,10 @@ function delay(ms) {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_async" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )

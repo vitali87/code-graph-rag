@@ -18,11 +18,9 @@ def javascript_error_handling_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_error_handling_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "utils").mkdir()
     (project_path / "errors").mkdir()
 
-    # Create base files
     (project_path / "errors" / "custom.js").write_text(
         """
 export class CustomError extends Error {
@@ -375,7 +373,6 @@ function cleanup() {
 
     run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Get all Function nodes
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for error handling functions
@@ -783,7 +780,6 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
 
     run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Get all Class nodes
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Check for custom error classes
@@ -1268,7 +1264,6 @@ testGracefulDegradation();
 
     run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
     # Check for async error handling functions
@@ -1436,7 +1431,6 @@ async function performAsyncOperation(data) {
 
     run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list

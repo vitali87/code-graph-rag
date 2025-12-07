@@ -12,7 +12,6 @@ def rust_performance_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_performance_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_performance_test"
@@ -24,7 +23,6 @@ criterion = "0.5"
 rayon = "1.7"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Performance test crate")
 

@@ -12,7 +12,6 @@ def rust_error_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_error_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_error_test"
@@ -25,7 +24,6 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Error handling test crate")
 

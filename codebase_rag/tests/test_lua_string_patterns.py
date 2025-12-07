@@ -90,10 +90,8 @@ return pattern_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined pattern functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 9, (
@@ -213,10 +211,8 @@ return string_manip
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined string functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 13, (
@@ -320,10 +316,8 @@ return complex_patterns
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined complex pattern functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 9, (
@@ -408,13 +402,10 @@ return unicode_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined unicode functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships (for utf8 module)
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     assert len(defines_rels) >= 7, (

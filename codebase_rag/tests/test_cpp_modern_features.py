@@ -12,11 +12,9 @@ def cpp_modern_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_modern_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    # Create base files
     (project_path / "src" / "main.cpp").write_text("int main() { return 0; }")
 
     return project_path
@@ -193,7 +191,6 @@ void demonstrateAutoFeatures() {
         f"{project_name}.auto_features.demonstrateAutoFeatures",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -455,7 +452,6 @@ void demonstrateLambdaFeatures() {
         f"{project_name}.lambda_features.demonstrateLambdaFeatures",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -767,16 +763,13 @@ void demonstrateSmartPointersAndMove() {
         f"{project_name}.smart_pointers_move.demonstrateSmartPointersAndMove",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 smart pointer class, found {len(found_classes)}: {found_classes}"
     )
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -1033,7 +1026,6 @@ void demonstrateVariadicConstexpr() {
         f"{project_name}.variadic_constexpr.demonstrateVariadicConstexpr",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -1310,7 +1302,6 @@ void demonstrateStructuredBindingsAndRanges() {
         f"{project_name}.structured_bindings_ranges.demonstrateStructuredBindingsAndRanges",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created

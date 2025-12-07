@@ -12,7 +12,6 @@ def rust_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Library root")
     (project_path / "src" / "main.rs").write_text("fn main() {}")
@@ -131,7 +130,6 @@ fn demonstrate_functions() {
         f"{project_name}.basic_functions.demonstrate_functions",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
@@ -140,7 +138,6 @@ fn demonstrate_functions() {
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_call_relationships = [
@@ -333,10 +330,8 @@ fn demonstrate_types() {
         f"{project_name}.types.Direction.opposite",
     ]
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
-    # Verify expected methods were created
     missing_methods = set(expected_methods) - created_methods
     assert not missing_methods, (
         f"Missing expected methods: {sorted(list(missing_methods))}"
@@ -504,7 +499,6 @@ fn demonstrate_traits() {
         f"{project_name}.traits.Circle",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify all expected traits and structs were created
@@ -525,7 +519,6 @@ fn demonstrate_traits() {
         f"{project_name}.traits.Drawable.draw",
     ]
 
-    # Get all Method node creation calls
     created_methods = get_node_names(mock_ingestor, "Method")
 
     # Verify some expected trait methods were created
@@ -677,7 +670,6 @@ pub fn multiply(a: i32, b: i32) -> i32 {
         f"{project_name}.utils.math.multiply",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify some expected functions were created
@@ -693,7 +685,6 @@ pub fn multiply(a: i32, b: i32) -> i32 {
         f"{project_name}.file_module.FileModuleStruct",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify some expected structs were created
@@ -871,7 +862,6 @@ fn demonstrate_generics() {
         f"{project_name}.generics.Result",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify generic structs were created
@@ -890,7 +880,6 @@ fn demonstrate_generics() {
         f"{project_name}.generics.demonstrate_generics",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify generic functions were created
@@ -1083,7 +1072,6 @@ fn demonstrate_patterns() {
         f"{project_name}.pattern_matching.Point",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify types were created
@@ -1105,7 +1093,6 @@ fn demonstrate_patterns() {
         f"{project_name}.pattern_matching.demonstrate_patterns",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify pattern matching functions were created
@@ -1114,7 +1101,6 @@ fn demonstrate_patterns() {
         f"Expected at least 6 pattern matching functions, found: {sorted(list(found_functions))}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     pattern_call_relationships = [
@@ -1321,7 +1307,6 @@ fn demonstrate_function_usage() {
         f"{project_name}.closures.demonstrate_function_usage",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify closure-related functions were created
@@ -1554,7 +1539,6 @@ mod tests {
         f"{project_name}.macros.release_only_function",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify some macro-related functions were created
@@ -1571,7 +1555,6 @@ mod tests {
         f"{project_name}.macros.MacroEnum",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify macro-generated structs were created
@@ -1823,7 +1806,6 @@ impl Debug for CustomStruct {
         f"{project_name}.imports.utils.another_helper",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify some import-using functions were created
@@ -2077,7 +2059,6 @@ fn demonstrate_error_handling() {
         f"{project_name}.error_handling.demonstrate_error_handling",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify error handling functions were created
@@ -2100,7 +2081,6 @@ fn demonstrate_error_handling() {
         f"Expected at least 1 custom error enum, found: {sorted(list(found_enums))}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     error_call_relationships = [
@@ -2429,7 +2409,6 @@ fn demonstrate_comprehensive_rust() {
         f"Expected at least 3 imports, found {len(comprehensive_imports)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -2437,12 +2416,10 @@ fn demonstrate_comprehensive_rust() {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
@@ -2460,7 +2437,6 @@ fn demonstrate_comprehensive_rust() {
         f"{project_name}.comprehensive.Repository",  # trait
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify comprehensive types were created
@@ -3197,7 +3173,6 @@ async fn test_async_features() -> Result<String, ComplexError> {
         f"{project_name}.advanced_edge_cases.test_async_features",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify advanced edge case functions were created

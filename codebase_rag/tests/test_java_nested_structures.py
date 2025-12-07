@@ -12,7 +12,6 @@ def java_nested_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_nested_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()

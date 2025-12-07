@@ -53,11 +53,8 @@ io.write("Processing complete\n")
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    # Should have function definitions
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
@@ -120,11 +117,8 @@ end
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
@@ -194,11 +188,8 @@ temp:close()
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
@@ -295,13 +286,10 @@ local person = deserialize_from_file("person.lua")
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have function definitions
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
@@ -374,11 +362,8 @@ write_binary_file("copy.png", binary_data.data)
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    # Should have function definitions
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )

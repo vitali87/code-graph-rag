@@ -78,7 +78,6 @@ class ServiceFactory {
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # These should be correctly nested object methods
@@ -193,7 +192,6 @@ function DatabaseService(connectionString) {
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # These should be the CORRECT qualified names for arrow functions in constructors
@@ -305,7 +303,6 @@ class ServiceFactory {
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify that ES6 export functions are correctly nested (not at module level)
@@ -397,7 +394,6 @@ class ModuleFactory {
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # These should be the CORRECT qualified names for nested CommonJS export functions

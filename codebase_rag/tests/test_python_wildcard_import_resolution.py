@@ -22,13 +22,11 @@ class TestWildcardImportResolution:
         """Test that Java wildcard imports (import java.util.*;) work correctly."""
         module_qn = "com.example.service"
 
-        # Setup wildcard import as stored by parsing logic
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*java.util"
         ] = "java.util"
 
-        # Setup function registry
         mock_updater.function_registry["java.util.List"] = "Class"
         mock_updater.function_registry["java.util.ArrayList"] = "Class"
         mock_updater.function_registry["java.util.HashMap"] = "Class"
@@ -58,13 +56,11 @@ class TestWildcardImportResolution:
         """Test that Rust wildcard imports (use std::collections::*;) work correctly."""
         module_qn = "my_project::service"
 
-        # Setup wildcard import as stored by parsing logic
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*std::collections"
         ] = "std::collections"
 
-        # Setup function registry
         mock_updater.function_registry["std::collections::HashMap"] = "Function"
         mock_updater.function_registry["std::collections::BTreeMap"] = "Function"
         mock_updater.function_registry["std::collections::VecDeque"] = "Function"
@@ -97,7 +93,6 @@ class TestWildcardImportResolution:
             "src.utils"
         )
 
-        # Setup function registry for the namespace itself
         mock_updater.function_registry["src.utils"] = "Module"
 
         # Test exact import resolution (not wildcard)
@@ -121,7 +116,6 @@ class TestWildcardImportResolution:
             "*myproject.utils"
         ] = "myproject.utils"
 
-        # Setup function registry
         mock_updater.function_registry["myproject.utils.helper_function"] = "Function"
         mock_updater.function_registry["myproject.utils.UtilityClass"] = "Class"
 
@@ -151,7 +145,6 @@ class TestWildcardImportResolution:
             "*boost::algorithm"
         ] = "boost::algorithm"
 
-        # Setup function registry
         mock_updater.function_registry["std::vector"] = "Class"
         mock_updater.function_registry["std::string"] = "Class"
         mock_updater.function_registry["boost::algorithm::trim"] = "Function"
@@ -189,7 +182,6 @@ class TestWildcardImportResolution:
             "*scala.util"
         ] = "scala.util"
 
-        # Setup function registry
         mock_updater.function_registry["scala.collection.List"] = "Class"
         mock_updater.function_registry["scala.collection.Map"] = "Class"
         mock_updater.function_registry["scala.util.Try"] = "Class"
@@ -225,7 +217,6 @@ class TestWildcardImportResolution:
             "strings"
         )
 
-        # Setup function registry for the packages themselves
         mock_updater.function_registry["fmt"] = "Package"
         mock_updater.function_registry["strings"] = "Package"
 
@@ -243,7 +234,6 @@ class TestWildcardImportResolution:
         """Test that exact imports take priority over wildcard imports."""
         module_qn = "com.example.service"
 
-        # Setup both exact and wildcard imports
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn]["List"] = (
             "my.custom.List"  # Exact import
@@ -252,7 +242,6 @@ class TestWildcardImportResolution:
             "*java.util"
         ] = "java.util"  # Wildcard import
 
-        # Setup function registry for both
         mock_updater.function_registry["my.custom.List"] = "Class"
         mock_updater.function_registry["java.util.List"] = "Class"
 
@@ -268,7 +257,6 @@ class TestWildcardImportResolution:
         """Test handling multiple wildcard imports in the same module."""
         module_qn = "com.example.service"
 
-        # Setup multiple wildcard imports
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*java.util"
@@ -280,7 +268,6 @@ class TestWildcardImportResolution:
             "*std::collections"
         ] = "std::collections"
 
-        # Setup function registry
         mock_updater.function_registry["java.util.List"] = "Class"
         mock_updater.function_registry["java.io.File"] = "Class"
         mock_updater.function_registry["std::collections::HashMap"] = "Function"
@@ -310,13 +297,11 @@ class TestWildcardImportResolution:
         """Test that wildcard imports don't match non-existent functions."""
         module_qn = "com.example.service"
 
-        # Setup wildcard import
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*java.util"
         ] = "java.util"
 
-        # Setup function registry (but not the function we'll search for)
         mock_updater.function_registry["java.util.List"] = "Class"
 
         # Should not resolve non-existent function
@@ -331,13 +316,11 @@ class TestWildcardImportResolution:
         """Test that Phase 2/3 fallback still works when wildcard doesn't match."""
         module_qn = "com.example.service"
 
-        # Setup wildcard import that won't match our test
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*java.util"
         ] = "java.util"
 
-        # Setup function registry for fallback resolution
         mock_updater.function_registry["com.example.service.LocalService"] = "Class"
         mock_updater.simple_name_lookup["LocalService"].add(
             "com.example.service.LocalService"

@@ -12,11 +12,9 @@ def rust_trait_objects_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_trait_objects_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Trait objects test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_trait_objects_test"
 version = "0.1.0"

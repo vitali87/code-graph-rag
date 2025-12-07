@@ -18,12 +18,10 @@ def cpp_basic_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_basic_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
     (project_path / "lib").mkdir()
 
-    # Create base files
     (project_path / "src" / "main.cpp").write_text("int main() { return 0; }")
     (project_path / "include" / "base.h").write_text("#pragma once\nclass Base {};")
 
@@ -156,7 +154,6 @@ void demonstrateClasses() {
         f"{project_name}.basic_classes.Rectangle",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify all expected classes were created
@@ -180,10 +177,8 @@ void demonstrateClasses() {
         f"{project_name}.basic_classes.demonstrateClasses",
     ]
 
-    # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     created_methods = get_qualified_names(method_calls)
@@ -310,7 +305,6 @@ void demonstrateFunctions() {
         f"{project_name}.basic_functions.demonstrateFunctions",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -319,7 +313,6 @@ void demonstrateFunctions() {
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_calls_relationships = [
@@ -465,7 +458,6 @@ void demonstrateUsingDirectives() {
         f"{project_name}.basic_namespaces.graphics.Circle",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify at least some expected namespaced classes were created
@@ -487,22 +479,18 @@ void demonstrateUsingDirectives() {
         f"{project_name}.basic_namespaces.demonstrateNamespaces",
     ]
 
-    # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     created_methods = get_qualified_names(method_calls)
     created_functions = get_qualified_names(function_calls)
 
-    # Verify expected methods were created
     missing_methods = set(expected_methods) - created_methods
     assert not missing_methods, (
         f"Missing expected methods: {sorted(list(missing_methods))}"
     )
 
-    # Verify expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -635,10 +623,8 @@ void bankingDemo() {
         f"{project_name}.member_functions.SavingsAccount",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
@@ -856,7 +842,6 @@ void globalUtility() {
         f"Expected at least 1 inheritance relationship, found {len(basic_inheritance)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -864,12 +849,10 @@ void globalUtility() {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_basic" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )

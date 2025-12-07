@@ -63,7 +63,6 @@ class TestImportParsing:
         """Test that import mapping works correctly."""
         module_qn = "test.services.user_service"
 
-        # Set up import mapping
         graph_updater.factory.import_processor.import_mapping[module_qn] = {
             "User": "test.models.user.User",
             "Logger": "test.utils.logger.Logger",
@@ -81,7 +80,6 @@ class TestImportParsing:
 
     def test_function_registry_integration(self, graph_updater: GraphUpdater) -> None:
         """Test integration between import parsing and function registry."""
-        # Set up function registry
         graph_updater.function_registry["test.models.user.User"] = "CLASS"
         graph_updater.function_registry["test.models.user.User.get_name"] = "FUNCTION"
         graph_updater.function_registry["test.utils.logger.Logger.info"] = "FUNCTION"
@@ -153,7 +151,6 @@ class TestImportParsing:
 
     def test_python_alias_import_parsing(self, graph_updater: GraphUpdater) -> None:
         """Test Python aliased import parsing functionality."""
-        # Set up tree-sitter for Python
         PY_LANGUAGE = Language(tsp.language())
         parser = Parser(PY_LANGUAGE)
 

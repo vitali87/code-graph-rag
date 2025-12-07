@@ -37,7 +37,6 @@ class TestTrieOptimization:
         """Test the optimized prefix+suffix search functionality."""
         trie = FunctionRegistryTrie()
 
-        # Set up test data
         functions = [
             "project.services.user.UserService.create_user",
             "project.services.user.UserService.delete_user",

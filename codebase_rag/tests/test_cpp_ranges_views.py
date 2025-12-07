@@ -12,7 +12,6 @@ def cpp_ranges_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_ranges_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -308,7 +307,6 @@ void demonstrateBasicRanges() {
         f"{project_name}.basic_ranges.NumberSequence",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -317,10 +315,8 @@ void demonstrateBasicRanges() {
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 ranges class, found {len(found_classes)}: {found_classes}"
@@ -664,7 +660,6 @@ void demonstrateViewsAndAdaptors() {
         f"{project_name}.views_adaptors.demonstrateViewsAndAdaptors",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created

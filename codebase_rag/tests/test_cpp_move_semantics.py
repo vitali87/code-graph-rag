@@ -12,7 +12,6 @@ def cpp_move_semantics_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_move_semantics_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -602,10 +601,8 @@ void testReferenceCollapsing() {
         f"{project_name}.perfect_forwarding.SFINAEWrapper",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 perfect forwarding classes, found {len(found_classes)}: {found_classes}"
@@ -1006,10 +1003,8 @@ void demonstrateAlgorithmOptimizations() {
         f"{project_name}.move_optimization.ConditionalNoexcept",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 move optimization classes, found {len(found_classes)}: {found_classes}"

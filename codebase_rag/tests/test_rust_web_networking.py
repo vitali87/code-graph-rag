@@ -12,7 +12,6 @@ def rust_web_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_web_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_web_test"
@@ -27,7 +26,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Web test crate")
 

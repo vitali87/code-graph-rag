@@ -13,11 +13,9 @@ def cpp_concepts_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_concepts_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    # Create base files
     (project_path / "include" / "concepts.h").write_text(
         "#pragma once\n// Concepts header"
     )

@@ -12,7 +12,6 @@ def cpp_operators_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_operators_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -290,10 +289,8 @@ void demonstrateArithmeticOperators() {
         f"{project_name}.arithmetic_operators.Vector3D",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 2, (
         f"Expected at least 2 arithmetic operator classes, found {len(found_classes)}: {found_classes}"
@@ -581,10 +578,8 @@ void demonstrateComparisonOperators() {
         f"{project_name}.comparison_operators.Money",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 2, (
         f"Expected at least 2 comparison operator classes, found {len(found_classes)}: {found_classes}"
@@ -850,10 +845,8 @@ void demonstrateStreamAndFunctionOperators() {
         f"{project_name}.stream_function_operators.Calculator",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 stream/function operator classes, found {len(found_classes)}: {found_classes}"
@@ -1254,10 +1247,8 @@ void demonstrateSubscriptAndIncrementOperators() {
         f"{project_name}.subscript_increment_operators.SimpleString",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 2, (
         f"Expected at least 2 subscript/increment operator classes, found {len(found_classes)}: {found_classes}"

@@ -52,10 +52,8 @@ return math_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined math functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 5, (
@@ -122,10 +120,8 @@ return string_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined string functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 6, (
@@ -195,10 +191,8 @@ return table_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined table functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 7, (
@@ -279,10 +273,8 @@ return os_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined OS functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 8, (
@@ -374,10 +366,8 @@ return io_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined IO functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 10, (
@@ -464,10 +454,8 @@ return debug_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined debug functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 9, (
@@ -564,10 +552,8 @@ return package_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined package functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 10, (
@@ -718,10 +704,8 @@ return builtin_utils
 
     run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined builtin wrapper functions
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 14, (

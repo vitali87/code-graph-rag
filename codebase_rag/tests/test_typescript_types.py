@@ -13,12 +13,10 @@ def typescript_types_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_types_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "types").mkdir()
     (project_path / "models").mkdir()
 
-    # Create base files
     (project_path / "src" / "base.ts").write_text("export interface BaseInterface {}")
     (project_path / "types" / "common.ts").write_text(
         "export type ID = string | number;"
@@ -124,7 +122,6 @@ const total = sum(1, 2, 3, 4, 5);
         f"{project_name}.basic_types.sum",
     ]
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
@@ -133,7 +130,6 @@ const total = sum(1, 2, 3, 4, 5);
             f"Missing typed function: {expected_qn}"
         )
 
-    # Verify function calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_calls_found = [
@@ -993,7 +989,6 @@ addEventListener('click', (event) => {
 
     run_updater(typescript_types_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
@@ -1028,12 +1023,10 @@ addEventListener('click', (event) => {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_types" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )

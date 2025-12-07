@@ -22,7 +22,6 @@ class TestCallResolutionFallback:
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that fallback logic chooses the candidate with lowest import distance."""
-        # Set up multiple functions with same ending name but different distances
         # Function in distant package (should be least preferred)
         mock_updater.function_registry[
             "proj.distant_package.far_module.process_data"
@@ -92,7 +91,6 @@ class TestCallResolutionFallback:
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test fallback logic with mix of functions and methods."""
-        # Set up functions and methods with same ending name
         mock_updater.function_registry["proj.distant.far_mod.SomeClass.helper"] = (
             "Method"
         )
@@ -138,7 +136,6 @@ class TestCallResolutionFallback:
 
     def test_fallback_with_single_candidate(self, mock_updater: GraphUpdater) -> None:
         """Test fallback logic with only one candidate."""
-        # Set up single function
         mock_updater.function_registry["proj.some_package.some_module.unique_func"] = (
             "Function"
         )
@@ -174,7 +171,6 @@ class TestCallResolutionFallback:
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that same-module resolution works and bypasses fallback."""
-        # Set up function in same module as caller
         same_module_qn = "proj.main.caller_mod.local_func"
         mock_updater.function_registry[same_module_qn] = "Function"
 

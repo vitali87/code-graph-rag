@@ -12,7 +12,6 @@ def java_modern_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_modern_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -831,7 +830,6 @@ public class InstanceofPatterns {
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected
     project_name = java_modern_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 

@@ -102,7 +102,6 @@ public class Main {
 
         updater.run()
 
-        # Get all CALLS relationships
         call_relationships = get_relationships(mock_ingestor, "CALLS")
 
         print(f"\n### Total CALLS relationships: {len(call_relationships)}")

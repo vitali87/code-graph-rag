@@ -12,7 +12,6 @@ def python_imports_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "python_imports_test"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "package").mkdir()
     (project_path / "package" / "__init__.py").write_text("")
     (project_path / "package" / "subpackage").mkdir()
@@ -554,7 +553,6 @@ if True:
         f"Expected at least 15 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_imports:
         # Each relationship should have proper structure
         assert len(relationship.args) == 3, "Import relationship should have 3 args"
@@ -563,7 +561,6 @@ if True:
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_imports" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )

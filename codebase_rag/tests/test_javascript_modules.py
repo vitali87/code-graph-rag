@@ -17,7 +17,6 @@ def javascript_modules_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_modules_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "src").mkdir()
     (project_path / "lib").mkdir()
     (project_path / "utils").mkdir()

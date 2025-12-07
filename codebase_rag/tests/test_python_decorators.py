@@ -189,7 +189,6 @@ def test_simple_function_decorators(
         ],
     }
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     # Verify decorators are extracted for functions
@@ -234,7 +233,6 @@ def test_class_decorators(decorator_project: Path, mock_ingestor: MagicMock) -> 
         ],
     }
 
-    # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
     # Verify decorators are extracted for classes
@@ -302,7 +300,6 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
         ],
     }
 
-    # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
     # Verify decorators are extracted for methods
@@ -359,7 +356,6 @@ def test_nested_function_decorators(
     expected_qn = f"{project_name}.decorators.outer_with_decorators.nested_decorated"
     expected_decorators = ["timing_decorator"]
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     # Find the nested decorated function
@@ -409,7 +405,6 @@ def test_decorator_with_complex_arguments(
         },
     ]
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     for test_case in test_cases:
@@ -453,7 +448,6 @@ def test_empty_decorators_for_undecorated_functions(
         f"{project_name}.decorators.outer_with_decorators",
     ]
 
-    # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     for expected_qn in undecorated_functions:

@@ -382,7 +382,6 @@ print("Index results:", table.concat(index_results, ", "))
     try:
         pass  # Tests follow
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -599,7 +598,6 @@ end
     try:
         pass  # Tests follow
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -791,7 +789,6 @@ print("Control flow: break =", #control_results.break_test, "continue =", #contr
     try:
         pass  # Tests follow
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list

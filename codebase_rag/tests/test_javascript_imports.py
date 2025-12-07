@@ -12,7 +12,6 @@ def javascript_imports_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_imports_test"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "src").mkdir()
     (project_path / "src" / "components").mkdir()
     (project_path / "src" / "utils").mkdir()
@@ -647,7 +646,6 @@ def test_aliased_re_export_import_mapping(
 ) -> None:
     """Test that aliased re-exports create correct import mappings (regression test for bug fix)."""
 
-    # Create source files
     (javascript_imports_project / "math_utils.js").write_text(
         """
 export function add(a, b) { return a + b; }
@@ -801,7 +799,6 @@ const url = API_URL;
         f"Expected at least 10 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_imports:
         assert len(relationship.args) == 3, "Import relationship should have 3 args"
         assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
@@ -809,7 +806,6 @@ const url = API_URL;
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_imports" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )

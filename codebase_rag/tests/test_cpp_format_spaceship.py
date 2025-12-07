@@ -56,7 +56,6 @@ void testNumberFormatting() {
     # Run graph updater
     run_updater(cpp_format_spaceship_project, mock_ingestor)
 
-    # Verify functions were detected
     function_calls = get_nodes(mock_ingestor, "Function")
 
     assert len(function_calls) >= 2, (

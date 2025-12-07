@@ -12,7 +12,6 @@ def cpp_stl_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_stl_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -393,16 +392,13 @@ void demonstrateSTLContainers() {
         f"{project_name}.stl_containers.demonstrateSTLContainers",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Get all Function node creation calls
     created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
@@ -728,10 +724,8 @@ void demonstrateSTLAlgorithms() {
         f"{project_name}.stl_algorithms.STLAlgorithmsDemo",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 STL algorithms class, found {len(found_classes)}: {found_classes}"
@@ -1089,10 +1083,8 @@ void demonstrateSTLIteratorsAndFunctors() {
         f"{project_name}.stl_iterators_functors.STLIteratorsFunctorsDemo",
     ]
 
-    # Get all Class node creation calls
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 STL iterator/functor class, found {len(found_classes)}: {found_classes}"
