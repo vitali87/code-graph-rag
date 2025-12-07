@@ -596,7 +596,7 @@ def _update_single_model_setting(role: str, model_string: str) -> None:
     if role == "orchestrator":
         current_config = settings.active_orchestrator_config
         set_method = settings.set_orchestrator
-    else:  # cypher
+    else:
         current_config = settings.active_cypher_config
         set_method = settings.set_cypher
 
@@ -853,7 +853,7 @@ def index(
         None, "--repo-path", help="Path to the target repository to index."
     ),
     output_proto_dir: str = typer.Option(
-        ...,  # Make it a required option
+        ...,
         "-o",
         "--output-proto-dir",
         help="Required. Path to the output directory for the protobuf index file(s).",

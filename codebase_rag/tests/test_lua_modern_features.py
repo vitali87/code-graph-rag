@@ -172,7 +172,7 @@ print("Sum:", sum)
     run_updater(project, mock_ingestor)
 
     try:
-        pass  # Tests follow
+        pass
 
         created_functions = [
             c
@@ -375,7 +375,7 @@ print("Index results:", table.concat(index_results, ", "))
     run_updater(project, mock_ingestor)
 
     try:
-        pass  # Tests follow
+        pass
 
         created_functions = [
             c
@@ -589,7 +589,7 @@ end
     run_updater(project, mock_ingestor)
 
     try:
-        pass  # Tests follow
+        pass
 
         created_functions = [
             c
@@ -777,7 +777,7 @@ print("Control flow: break =", #control_results.break_test, "continue =", #contr
     run_updater(project, mock_ingestor)
 
     try:
-        pass  # Tests follow
+        pass
 
         created_functions = [
             c

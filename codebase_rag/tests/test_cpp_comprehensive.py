@@ -912,4 +912,4 @@ def test_cpp_comprehensive_complete() -> None:
     print("   - Modern C++ features integration")
     print("   - Real-world multi-file scenarios")
     print("   - Cross-namespace and cross-file relationships")
-    assert True  # Always passes to indicate completion
+    assert True

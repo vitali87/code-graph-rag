@@ -80,7 +80,7 @@ class TestGoogleProvider:
         assert provider.api_key == "test-key"
         assert provider.provider_type == "gla"
 
-        provider.validate_config()  # Should not raise
+        provider.validate_config()
 
     def test_google_vertex_configuration(self) -> None:
         """Test Google Vertex AI provider configuration."""
@@ -94,18 +94,18 @@ class TestGoogleProvider:
         assert provider.provider_type == "vertex"
         assert provider.project_id == "test-project"
 
-        provider.validate_config()  # Should not raise
+        provider.validate_config()
 
     def test_google_gla_validation_error(self) -> None:
         """Test that GLA provider validation fails without API key."""
-        provider = GoogleProvider(provider_type="gla")  # No API key
+        provider = GoogleProvider(provider_type="gla")
 
         with pytest.raises(ValueError, match="Gemini GLA provider requires api_key"):
             provider.validate_config()
 
     def test_google_vertex_validation_error(self) -> None:
         """Test that Vertex provider validation fails without project_id."""
-        provider = GoogleProvider(provider_type="vertex")  # No project_id
+        provider = GoogleProvider(provider_type="vertex")
 
         with pytest.raises(
             ValueError, match="Gemini Vertex provider requires project_id"
@@ -132,11 +132,11 @@ class TestOpenAIProvider:
         assert provider.api_key == "sk-test-key"
         assert provider.endpoint == "https://api.openai.com/v1"
 
-        provider.validate_config()  # Should not raise
+        provider.validate_config()
 
     def test_openai_validation_error(self) -> None:
         """Test that OpenAI provider validation fails without API key."""
-        provider = OpenAIProvider()  # No API key
+        provider = OpenAIProvider()
 
         with pytest.raises(ValueError, match="OpenAI provider requires api_key"):
             provider.validate_config()
@@ -177,7 +177,7 @@ class TestOllamaProvider:
         mock_client.return_value.__enter__.return_value.get.return_value = mock_response
 
         provider = OllamaProvider()
-        provider.validate_config()  # Should not raise
+        provider.validate_config()
 
     @patch("httpx.Client")
     def test_ollama_validation_server_not_running(self, mock_client: Any) -> None:
@@ -280,7 +280,7 @@ class TestModelCreation:
         self, mock_openai_chat_model: Any, mock_openai_provider: Any
     ) -> None:
         """Test Ollama model creation (uses OpenAI interface)."""
-        with patch.object(OllamaProvider, "validate_config"):  # Skip validation
+        with patch.object(OllamaProvider, "validate_config"):
             provider = OllamaProvider()
 
             mock_model = MagicMock()

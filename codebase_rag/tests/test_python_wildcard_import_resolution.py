@@ -126,7 +126,7 @@ class TestWildcardImportResolution:
 
     def test_cpp_using_namespace_resolution(self, mock_updater: GraphUpdater) -> None:
         """Test C++ using namespace directives when properly stored."""
-        module_qn = "myproject.service"  # Module QNs are normalized to use dots
+        module_qn = "myproject.service"
 
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn]["*std"] = "std"
@@ -220,11 +220,11 @@ class TestWildcardImportResolution:
 
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn]["List"] = (
-            "my.custom.List"  # Exact import
+            "my.custom.List"
         )
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*java.util"
-        ] = "java.util"  # Wildcard import
+        ] = "java.util"
 
         mock_updater.function_registry["my.custom.List"] = "Class"
         mock_updater.function_registry["java.util.List"] = "Class"

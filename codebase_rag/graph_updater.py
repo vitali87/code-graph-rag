@@ -85,7 +85,7 @@ class FunctionRegistryTrie:
 
         part = parts[0]
         if part not in node:
-            return False  # Path doesn't exist
+            return False
 
         child_empty = self._cleanup_trie_path(parts[1:], node[part])
 
@@ -116,7 +116,7 @@ class FunctionRegistryTrie:
         current = self.root
         for part in prefix_parts:
             if part not in current:
-                return []  # Prefix doesn't exist
+                return []
             current = current[part]
 
         def dfs(node: dict[str, Any]) -> None:
@@ -126,7 +126,7 @@ class FunctionRegistryTrie:
                     results.append(qn)
 
             for key, child in node.items():
-                if not key.startswith("__"):  # Skip metadata keys
+                if not key.startswith("__"):
                     dfs(child)
 
         dfs(current)
@@ -151,7 +151,7 @@ class FunctionRegistryTrie:
         current = self.root
         for part in prefix_parts:
             if part not in current:
-                return []  # Prefix doesn't exist
+                return []
             current = current[part]
 
         def dfs(node: dict[str, Any]) -> None:
@@ -161,7 +161,7 @@ class FunctionRegistryTrie:
                 results.append((qn, func_type))
 
             for key, child in node.items():
-                if not key.startswith("__"):  # Skip metadata keys
+                if not key.startswith("__"):
                     dfs(child)
 
         dfs(current)
@@ -217,10 +217,10 @@ class BoundedASTCache:
     def _enforce_limits(self) -> None:
         """Enforce cache size and memory limits by evicting old entries."""
         while len(self.cache) > self.max_entries:
-            self.cache.popitem(last=False)  # Remove least recently used
+            self.cache.popitem(last=False)  # (H) Remove least recently used
 
         if self._should_evict_for_memory():
-            entries_to_remove = max(1, len(self.cache) // 10)  # Remove 10% of entries
+            entries_to_remove = max(1, len(self.cache) // 10)
             for _ in range(entries_to_remove):
                 if self.cache:
                     self.cache.popitem(last=False)

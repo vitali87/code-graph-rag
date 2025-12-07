@@ -222,19 +222,19 @@ def test_singleton_pattern_cross_file_calls(
         (
             "scene_controller.scene_handler.SceneHandler.load_menu_scene",
             "storage.storage.Storage.get_instance",
-        ),  # Singleton static method
+        ),
         (
             "scene_controller.scene_handler.SceneHandler.load_menu_scene",
             "storage.storage.Storage.clear_all",
-        ),  # Instance method
+        ),
         (
             "scene_controller.scene_handler.SceneHandler.load_menu_scene",
             "storage.storage.Storage.save",
-        ),  # Instance method
+        ),
         (
             "scene_controller.scene_handler.SceneHandler.load_menu_scene",
             "storage.storage.Storage.load",
-        ),  # Instance method
+        ),
         (
             "scene_controller.scene_handler.SceneHandler.load_game_scene",
             "storage.storage.Storage.get_instance",

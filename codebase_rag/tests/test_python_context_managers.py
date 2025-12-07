@@ -426,7 +426,7 @@ def test_async_context_manager_parsing(
 
     expected_functions = [
         f"{project_name}.context_managers.async_context_managers",
-        f"{project_name}.context_managers.async_context_managers.async_function",  # Properly nested!
+        f"{project_name}.context_managers.async_context_managers.async_function",
     ]
 
     created_functions = get_node_names(mock_ingestor, "Function")

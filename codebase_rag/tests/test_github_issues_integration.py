@@ -87,7 +87,7 @@ class TestGitHubIssuesIntegration:
 
             cypher = config.active_cypher_config
             assert cypher.provider == "ollama"
-            assert cypher.model_id == "llama3.2:8b"  # Model name with colon should work
+            assert cypher.model_id == "llama3.2:8b"
             assert cypher.endpoint == "http://localhost:11434/v1"
 
     def test_cli_override_real_scenario(self) -> None:
@@ -126,26 +126,20 @@ class TestGitHubIssuesIntegration:
         Test that users can use OpenAI-compatible endpoints like Together AI, etc.
         """
         env_content = {
-            "ORCHESTRATOR_PROVIDER": "openai",  # Use OpenAI provider for compatibility
-            "ORCHESTRATOR_MODEL": "meta-llama/Llama-2-70b-chat-hf",  # Together AI model
+            "ORCHESTRATOR_PROVIDER": "openai",
+            "ORCHESTRATOR_MODEL": "meta-llama/Llama-2-70b-chat-hf",
             "ORCHESTRATOR_API_KEY": "together-api-key",
-            "ORCHESTRATOR_ENDPOINT": "https://api.together.xyz/v1",  # Together AI endpoint
+            "ORCHESTRATOR_ENDPOINT": "https://api.together.xyz/v1",
         }
 
         with patch.dict(os.environ, env_content):
             config = AppConfig()
 
             orchestrator = config.active_orchestrator_config
-            assert (
-                orchestrator.provider == "openai"
-            )  # Uses OpenAI provider for compatibility
-            assert (
-                orchestrator.model_id == "meta-llama/Llama-2-70b-chat-hf"
-            )  # Custom model name
+            assert orchestrator.provider == "openai"
+            assert orchestrator.model_id == "meta-llama/Llama-2-70b-chat-hf"
             assert orchestrator.api_key == "together-api-key"
-            assert (
-                orchestrator.endpoint == "https://api.together.xyz/v1"
-            )  # Custom endpoint
+            assert orchestrator.endpoint == "https://api.together.xyz/v1"
 
     def test_vertex_ai_enterprise_scenario(self) -> None:
         """

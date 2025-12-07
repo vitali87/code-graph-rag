@@ -390,8 +390,7 @@ console.log(merged.size()); // 2
     function_calls = [
         call
         for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0]
-        in ["Function", "Method"]  # Namespace functions are detected as methods
+        if call[0][0] in ["Function", "Method"]
     ]
 
     namespace_functions = [

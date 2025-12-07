@@ -257,7 +257,7 @@ class DefinitionProcessor:
             if child.type == "class_specifier":
                 return "Class"
             elif child.type == "struct_specifier":
-                return "Class"  # In C++, structs are essentially classes
+                return "Class"
             elif child.type == "union_specifier":
                 return "Union"
             elif child.type == "enum_specifier":
@@ -391,11 +391,11 @@ class DefinitionProcessor:
                         if func_node.type == "lambda_expression":
                             func_name = f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
                         else:
-                            continue  # Skip other unnamed C++ function-like nodes
+                            continue
                     func_qn = build_cpp_qualified_name(func_node, module_qn, func_name)
                     is_exported = is_cpp_exported(func_node)
                 else:
-                    is_exported = False  # Default for non-C++ languages
+                    is_exported = False
                     func_name = self._extract_function_name(func_node)
 
                     if (
@@ -422,7 +422,7 @@ class DefinitionProcessor:
                                 func_node, module_qn, func_name, lang_config
                             )
                             or f"{module_qn}.{func_name}"
-                        )  # Fallback to simple name
+                        )
 
             decorators = self._extract_decorators(func_node)
             func_props: dict[str, Any] = {
@@ -798,7 +798,7 @@ class DefinitionProcessor:
                 if language == "cpp":
                     if class_node.type == "function_definition":
                         class_name = extract_cpp_exported_class_name(class_node)
-                        is_exported = True  # We know it's exported because we found it in the exported classes search
+                        is_exported = True
                     else:
                         class_name = self._extract_cpp_class_name(class_node)
                         is_exported = is_cpp_exported(class_node)
@@ -809,7 +809,7 @@ class DefinitionProcessor:
                         class_node, module_qn, class_name
                     )
                 else:
-                    is_exported = False  # Default for non-C++ languages
+                    is_exported = False
                     class_name = self._extract_class_name(class_node)
                     if not class_name:
                         continue
@@ -842,7 +842,7 @@ class DefinitionProcessor:
                 node_type = "Type"
                 logger.info(f"  Found Type: {class_name} (qn: {class_qn})")
             elif class_node.type == "struct_specifier":
-                node_type = "Class"  # In C++, structs are essentially classes
+                node_type = "Class"
                 logger.info(f"  Found Struct: {class_name} (qn: {class_qn})")
             elif class_node.type == "union_specifier":
                 node_type = "Union"
@@ -858,22 +858,22 @@ class DefinitionProcessor:
                     safe_decode_with_fallback(class_node) if class_node.text else ""
                 )
                 if "export struct " in node_text:
-                    node_type = "Class"  # In C++, structs are essentially classes
+                    node_type = "Class"
                     logger.info(
                         f"  Found Exported Struct: {class_name} (qn: {class_qn})"
                     )
                 elif "export union " in node_text:
-                    node_type = "Class"  # In C++, unions are also class-like
+                    node_type = "Class"
                     logger.info(
                         f"  Found Exported Union: {class_name} (qn: {class_qn})"
                     )
                 elif "export template" in node_text:
-                    node_type = "Class"  # Template class
+                    node_type = "Class"
                     logger.info(
                         f"  Found Exported Template Class: {class_name} (qn: {class_qn})"
                     )
                 else:
-                    node_type = "Class"  # Default to Class for exported classes
+                    node_type = "Class"
                     logger.info(
                         f"  Found Exported Class: {class_name} (qn: {class_qn})"
                     )
@@ -1003,7 +1003,7 @@ class DefinitionProcessor:
             return
 
         queue = deque([class_qn])
-        visited = {class_qn}  # Don't revisit classes (handle diamond inheritance)
+        visited = {class_qn}
 
         while queue:
             current_class = queue.popleft()
@@ -1020,7 +1020,7 @@ class DefinitionProcessor:
                     logger.debug(
                         f"Method override: {method_qn} OVERRIDES {parent_method_qn}"
                     )
-                    return  # Found the nearest override, stop searching
+                    return
 
             if current_class in self.class_inheritance:
                 for parent_class_qn in self.class_inheritance[current_class]:
@@ -1799,7 +1799,7 @@ class DefinitionProcessor:
                                     self._is_export_inside_function,
                                 )
 
-                    if not export_names:  # Only function declarations
+                    if not export_names:
                         for export_function in export_functions:
                             if export_function:
                                 if name_node := export_function.child_by_field_name(
@@ -1912,9 +1912,7 @@ class DefinitionProcessor:
                         if member_expr.text and arrow_function:
                             member_text = safe_decode_with_fallback(member_expr)
                             if "." in member_text:
-                                function_name = member_text.split(".")[
-                                    -1
-                                ]  # Get the property name
+                                function_name = member_text.split(".")[-1]
 
                                 lang_config = queries[language].get("config")
                                 if lang_config:
@@ -1951,9 +1949,7 @@ class DefinitionProcessor:
                         if member_expr.text and function_expr:
                             member_text = safe_decode_with_fallback(member_expr)
                             if "." in member_text:
-                                function_name = member_text.split(".")[
-                                    -1
-                                ]  # Get the property name
+                                function_name = member_text.split(".")[-1]
 
                                 lang_config = queries[language].get("config")
                                 if lang_config:
@@ -2138,9 +2134,9 @@ class DefinitionProcessor:
         """
         path_parts = []
 
-        current = member_expr.parent  # assignment_expression
+        current = member_expr.parent
         if current and current.type == "assignment_expression":
-            current = current.parent  # expression_statement or other container
+            current = current.parent
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in ["expression_statement", "statement_block"]:

@@ -280,15 +280,15 @@ def main():
         (
             f"{project_name}.function_calls.parent_function",
             f"{project_name}.function_calls.parent_function.child_function",
-        ),  # Local nested function call
+        ),
         (
             f"{project_name}.function_calls.parent_function",
             f"{project_name}.function_calls.helper_function",
-        ),  # Cross-function call
+        ),
         (
             f"{project_name}.function_calls.main",
             f"{project_name}.function_calls.parent_function",
-        ),  # Function call
+        ),
     ]
 
     calls_relationships = [

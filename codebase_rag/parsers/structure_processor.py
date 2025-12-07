@@ -31,7 +31,7 @@ class StructureProcessor:
             """Check if directory should be skipped based on ignore patterns."""
             return any(part in self.ignore_dirs for part in path.parts)
 
-        directories = {self.repo_path}  # Start with root
+        directories = {self.repo_path}
         for path in self.repo_path.rglob("*"):
             if path.is_dir() and not should_skip_dir(path.relative_to(self.repo_path)):
                 directories.add(path)
@@ -81,7 +81,7 @@ class StructureProcessor:
                     ("Package", "qualified_name", package_qn),
                 )
             elif root != self.repo_path:
-                self.structural_elements[relative_root] = None  # Mark as folder
+                self.structural_elements[relative_root] = None
                 logger.info(f"  Identified Folder: '{relative_root}'")
                 self.ingestor.ensure_node_batch(
                     "Folder", {"path": str(relative_root), "name": root.name}

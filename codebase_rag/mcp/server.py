@@ -16,7 +16,7 @@ from codebase_rag.services.llm import CypherGenerator
 
 def setup_logging() -> None:
     """Configure logging to stderr for MCP stdio transport."""
-    logger.remove()  # Remove default handler
+    logger.remove()
     logger.add(
         sys.stderr,
         level="INFO",

@@ -126,7 +126,7 @@ class TestRelativeImportResolution:
         mock_import_prefix.type = "import_prefix"
         mock_import_prefix.text = b".."
 
-        mock_relative_node.children = [mock_import_prefix]  # No dotted_name
+        mock_relative_node.children = [mock_import_prefix]
 
         result = mock_updater.factory.import_processor._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]

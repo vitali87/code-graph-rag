@@ -561,8 +561,8 @@ class CallProcessor:
                         return self.function_registry[method_qn], method_qn
 
                 if len(parts) >= 3 and parts[0] == "self":
-                    attribute_ref = ".".join(parts[:-1])  # "self.repo"
-                    method_name = parts[-1]  # "find_by_id"
+                    attribute_ref = ".".join(parts[:-1])
+                    method_name = parts[-1]
 
                     if local_var_types and attribute_ref in local_var_types:
                         var_type = local_var_types[attribute_ref]
@@ -712,7 +712,7 @@ class CallProcessor:
         if ".prototype." in call_name and (
             call_name.endswith(".call") or call_name.endswith(".apply")
         ):
-            base_call = call_name.rsplit(".", 1)[0]  # Remove .call or .apply
+            base_call = call_name.rsplit(".", 1)[0]
             return ("Function", base_call)
 
         return None
@@ -842,9 +842,9 @@ class CallProcessor:
         if call_name == "super":
             method_name = "constructor"
         elif call_name.startswith("super."):
-            method_name = call_name.split(".", 1)[1]  # Get part after "super."
+            method_name = call_name.split(".", 1)[1]
         elif "." in call_name:
-            method_name = call_name.split(".", 1)[1]  # Get part after "super()."
+            method_name = call_name.split(".", 1)[1]
         else:
             return None
 
@@ -956,7 +956,7 @@ class CallProcessor:
                     if text is not None:
                         path_parts.append(text.decode("utf8"))
             elif current.type in lang_config.class_node_types:
-                return None  # This is a method
+                return None
 
             current = current.parent
 

@@ -95,7 +95,7 @@ CPP_IMPORTS = [
     "preproc_include",
     "template_function",
     "declaration",
-]  # #include, import <>, module declarations
+]
 
 
 @dataclass
@@ -105,7 +105,7 @@ class FQNConfig:
     scope_node_types: set[str]
     function_node_types: set[str]
     get_name: Callable[["Node"], str | None]
-    file_to_module_parts: Callable[[Path, Path], list[str]]  # (file_path, repo_root)
+    file_to_module_parts: Callable[[Path, Path], list[str]]
 
 
 def _python_get_name(node: "Node") -> str | None:
@@ -321,7 +321,9 @@ CPP_FQN_CONFIG = FQNConfig(
 )
 
 LUA_FQN_CONFIG = FQNConfig(
-    scope_node_types={"chunk"},  # Lua uses tables/modules but chunk is the main scope
+    scope_node_types={
+        "chunk"
+    },  # (H) Lua uses tables/modules but chunk is the main scope
     function_node_types={"function_declaration", "function_definition"},
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
@@ -331,7 +333,7 @@ GO_FQN_CONFIG = FQNConfig(
     scope_node_types={
         "type_declaration",
         "source_file",
-    },  # Go structs and file-level scope
+    },
     function_node_types={"function_declaration", "method_declaration"},
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
@@ -424,9 +426,7 @@ class LanguageConfig:
     name_field: str = "name"
     body_field: str = "body"
 
-    package_indicators: list[str] = field(
-        default_factory=list
-    )  # e.g., ["__init__.py"] for Python
+    package_indicators: list[str] = field(default_factory=list)
 
     function_query: str | None = None
     class_query: str | None = None
@@ -451,12 +451,11 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         call_node_types=["call_expression"],
         import_node_types=COMMON_JS_TS_IMPORTS,
-        import_from_node_types=COMMON_JS_TS_IMPORTS,  # Include CommonJS require and re-exports
+        import_from_node_types=COMMON_JS_TS_IMPORTS,
     ),
     "typescript": create_lang_config(
         file_extensions=[".ts", ".tsx"],
-        function_node_types=COMMON_JS_TS_FUNCTIONS
-        + ["function_signature"],  # For ambient declarations: declare function
+        function_node_types=COMMON_JS_TS_FUNCTIONS + ["function_signature"],
         class_node_types=COMMON_JS_TS_CLASSES
         + [
             "abstract_class_declaration",
@@ -468,34 +467,34 @@ LANGUAGE_CONFIGS = {
         module_node_types=["program"],
         call_node_types=["call_expression"],
         import_node_types=COMMON_JS_TS_IMPORTS,
-        import_from_node_types=COMMON_JS_TS_IMPORTS,  # Include CommonJS require and re-exports
+        import_from_node_types=COMMON_JS_TS_IMPORTS,
     ),
     "rust": create_lang_config(
         file_extensions=[".rs"],
         function_node_types=[
-            "function_item",  # Regular functions: fn name() {}
-            "function_signature_item",  # Function signatures in traits
-            "closure_expression",  # Closures/lambdas: |x| x + 1
+            "function_item",
+            "function_signature_item",
+            "closure_expression",
         ],
         class_node_types=[
-            "struct_item",  # Struct definitions
-            "enum_item",  # Enum definitions
-            "union_item",  # Union definitions
-            "trait_item",  # Trait definitions
-            "impl_item",  # Implementation blocks
-            "type_item",  # Type aliases: type Name = Type;
+            "struct_item",
+            "enum_item",
+            "union_item",
+            "trait_item",
+            "impl_item",
+            "type_item",
         ],
         module_node_types=[
-            "source_file",  # Root module file
-            "mod_item",  # Module declarations: mod name {}
+            "source_file",
+            "mod_item",
         ],
         call_node_types=[
-            "call_expression",  # Function and method calls
-            "macro_invocation",  # Macro calls: println!()
+            "call_expression",
+            "macro_invocation",
         ],
         import_node_types=["use_declaration", "extern_crate_declaration"],
-        import_from_node_types=["use_declaration"],  # Rust uses 'use' for all imports
-        package_indicators=["Cargo.toml"],  # Rust's package manifest
+        import_from_node_types=["use_declaration"],
+        package_indicators=["Cargo.toml"],
         function_query="""
         (function_item
             name: (identifier) @name) @function
@@ -535,11 +534,11 @@ LANGUAGE_CONFIGS = {
     "go": create_lang_config(
         file_extensions=[".go"],
         function_node_types=["function_declaration", "method_declaration"],
-        class_node_types=["type_declaration"],  # Go structs
+        class_node_types=["type_declaration"],
         module_node_types=["source_file"],
         call_node_types=["call_expression"],
         import_node_types=["import_declaration"],
-        import_from_node_types=["import_declaration"],  # Go uses same node for imports
+        import_from_node_types=["import_declaration"],
     ),
     "scala": create_lang_config(
         file_extensions=[".scala", ".sc"],
@@ -560,8 +559,8 @@ LANGUAGE_CONFIGS = {
             "infix_expression",
         ],
         import_node_types=COMMON_DECLARATION_IMPORT,
-        import_from_node_types=COMMON_DECLARATION_IMPORT,  # Scala uses same node for imports
-        package_indicators=[],  # Scala uses package declarations
+        import_from_node_types=COMMON_DECLARATION_IMPORT,
+        package_indicators=[],
     ),
     "java": create_lang_config(
         file_extensions=[".java"],
@@ -577,10 +576,10 @@ LANGUAGE_CONFIGS = {
             "record_declaration",
         ],
         module_node_types=["program"],
-        package_indicators=[],  # Java uses package declarations
+        package_indicators=[],
         call_node_types=["method_invocation"],
         import_node_types=COMMON_DECLARATION_IMPORT,
-        import_from_node_types=COMMON_DECLARATION_IMPORT,  # Java uses same node for imports
+        import_from_node_types=COMMON_DECLARATION_IMPORT,
         function_query="""
         (method_declaration
             name: (identifier) @name) @function
@@ -620,11 +619,11 @@ LANGUAGE_CONFIGS = {
             ".ccm",
         ],
         function_node_types=[
-            "function_definition",  # Includes aliased constructor/destructor/operator definitions
-            "declaration",  # Includes aliased constructor/destructor/operator declarations
-            "field_declaration",  # For method declarations in classes
-            "template_declaration",  # For template functions
-            "lambda_expression",  # For lambda functions
+            "function_definition",
+            "declaration",
+            "field_declaration",
+            "template_declaration",
+            "lambda_expression",
         ],
         class_node_types=[
             "class_specifier",
@@ -635,18 +634,18 @@ LANGUAGE_CONFIGS = {
         module_node_types=[
             "translation_unit",
             "namespace_definition",
-            "linkage_specification",  # extern "C" blocks
-            "declaration",  # For module declarations like "module math_operations;"
+            "linkage_specification",
+            "declaration",
         ],
         call_node_types=[
             "call_expression",
-            "field_expression",  # For method calls like obj.method()
-            "subscript_expression",  # For operator[] calls
-            "new_expression",  # For new operator
-            "delete_expression",  # For delete operator
-            "binary_expression",  # For operator overloads like obj1 + obj2
-            "unary_expression",  # For unary operators like ++obj
-            "update_expression",  # For prefix/postfix increment/decrement
+            "field_expression",
+            "subscript_expression",
+            "new_expression",
+            "delete_expression",
+            "binary_expression",
+            "unary_expression",
+            "update_expression",
         ],
         import_node_types=CPP_IMPORTS,
         import_from_node_types=CPP_IMPORTS,
@@ -699,7 +698,7 @@ LANGUAGE_CONFIGS = {
         module_node_types=["compilation_unit"],
         call_node_types=["invocation_expression"],
         import_node_types=COMMON_USING_DIRECTIVE,
-        import_from_node_types=COMMON_USING_DIRECTIVE,  # C# uses using directives
+        import_from_node_types=COMMON_USING_DIRECTIVE,
     ),
     "php": create_lang_config(
         file_extensions=[".php"],
@@ -727,7 +726,7 @@ LANGUAGE_CONFIGS = {
         file_extensions=[".lua"],
         function_node_types=[
             "function_declaration",
-            "function_definition",  # For assignment patterns: Calculator.divide = function() end
+            "function_definition",
         ],
         class_node_types=[],
         module_node_types=["chunk"],
@@ -740,7 +739,7 @@ LANGUAGE_CONFIGS = {
 def _initialize_config_names() -> None:
     """Initialize config names based on dict keys."""
     for lang_name, config in LANGUAGE_CONFIGS.items():
-        if not config.name:  # Only set if empty (from create_lang_config)
+        if not config.name:
             config.name = lang_name
 
 
@@ -787,7 +786,7 @@ def create_scripting_config(
         "class_node_types": SCRIPTING_CLASSES,
         "module_node_types": ["program"],
         "call_node_types": SCRIPTING_CALLS,
-        "import_node_types": ["function_call"],  # require() style
+        "import_node_types": ["function_call"],
         "import_from_node_types": ["function_call"],
     }
     base_config.update(overrides)

@@ -243,11 +243,7 @@ def test_basic_return_type_inference(
         if len(c[0]) >= 3 and c[0][1] == "CALLS"
     ]
 
-    method_calls = [
-        call
-        for call in actual_calls
-        if call[0][2][0] == "Method"  # callee label is "Method"
-    ]
+    method_calls = [call for call in actual_calls if call[0][2][0] == "Method"]
 
     found_method_calls = set()
     for call in method_calls:
@@ -276,7 +272,7 @@ def test_basic_return_type_inference(
         pytest.fail(
             f"Missing {len(missing_calls)} expected basic return type calls:\n"
             f"Missing: {missing_calls}\n"
-            f"Found: {found_calls_list[:10]}..."  # Show first 10 to avoid spam
+            f"Found: {found_calls_list[:10]}..."
         )
 
 

@@ -70,7 +70,7 @@ class JavaTypeInferenceEngine:
 
             if package_start_idx:
                 simple_class_name = ".".join(parts[package_start_idx:])
-                if simple_class_name:  # Skip empty names
+                if simple_class_name:
                     _add_mapping(simple_class_name, module_qn)
 
                     class_parts = simple_class_name.split(".")
@@ -240,7 +240,7 @@ class JavaTypeInferenceEngine:
                     if subchild.type == "type_identifier":
                         decoded_text = safe_decode_text(subchild)
                         if decoded_text:
-                            param_type = decoded_text + "[]"  # Treat varargs as array
+                            param_type = decoded_text + "[]"
                     elif subchild.type == "variable_declarator":
                         name_node = subchild.child_by_field_name("name")
                         if name_node:
@@ -642,7 +642,7 @@ class JavaTypeInferenceEngine:
             return self._lookup_cache[cache_key]
 
         if cache_key in self._lookup_in_progress:
-            return None  # Cycle detected, return None to break recursion
+            return None
 
         self._lookup_in_progress.add(cache_key)
 
@@ -677,7 +677,7 @@ class JavaTypeInferenceEngine:
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
         """Resolve a Java type name to its fully qualified name."""
         if not type_name:
-            return "Object"  # Default fallback
+            return "Object"
 
         if "." in type_name:
             return type_name
@@ -962,7 +962,7 @@ class JavaTypeInferenceEngine:
     def _get_implemented_interfaces(self, class_qn: str) -> list[str]:
         """Get all interfaces implemented by a class using tree-sitter AST analysis."""
         parts = class_qn.split(".")
-        if len(parts) < 2:  # Need at least project.class
+        if len(parts) < 2:
             return []
 
         module_qn = ".".join(parts[:-1])
@@ -1021,7 +1021,7 @@ class JavaTypeInferenceEngine:
     def _get_current_class_name(self, module_qn: str) -> str | None:
         """Extract current class name from AST context using precise tree-sitter traversal."""
         module_parts = module_qn.split(".")
-        if len(module_parts) < 2:  # Need at least project.filename
+        if len(module_parts) < 2:
             return None
 
         file_path = self.module_qn_to_file_path.get(module_qn)
@@ -1059,7 +1059,7 @@ class JavaTypeInferenceEngine:
     def _get_superclass_name(self, class_qn: str) -> str | None:
         """Get the superclass name using precise tree-sitter AST analysis."""
         parts = class_qn.split(".")
-        if len(parts) < 2:  # Need at least project.class
+        if len(parts) < 2:
             return None
 
         module_qn = ".".join(parts[:-1])

@@ -65,7 +65,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
             results_map = {res["node_id"]: res for res in results}
 
             formatted_results = []
-            for node_id, score in search_results:  # Preserve order from vector search
+            for node_id, score in search_results:
                 if node_id in results_map:
                     result = results_map[node_id]
                     formatted_results.append(
@@ -74,9 +74,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
                             "qualified_name": result["qualified_name"],
                             "name": result["name"],
                             "type": result["type"][0] if result["type"] else "Unknown",
-                            "score": round(
-                                score, 3
-                            ),  # Use real similarity score from Qdrant
+                            "score": round(score, 3),
                         }
                     )
 

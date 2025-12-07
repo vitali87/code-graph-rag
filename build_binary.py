@@ -10,7 +10,6 @@ from pathlib import Path
 def build_binary() -> bool:
     """Build the Graph-Code binary using PyInstaller."""
 
-    # Get platform info for naming
     system = platform.system().lower()
     machine = platform.machine().lower()
     if machine == "x86_64":
@@ -20,7 +19,6 @@ def build_binary() -> bool:
 
     binary_name = f"graph-code-{system}-{machine}"
 
-    # PyInstaller command with all necessary options
     cmd = [
         "pyinstaller",
         "--name",
@@ -28,7 +26,6 @@ def build_binary() -> bool:
         "--onefile",
         "--noconfirm",
         "--clean",
-        # Include all tree-sitter languages
         "--collect-all",
         "tree_sitter_python",
         "--collect-all",
@@ -45,14 +42,12 @@ def build_binary() -> bool:
         "tree_sitter_java",
         "--collect-all",
         "tree_sitter_cpp",
-        # Include pydantic-ai and dependencies
         "--collect-all",
         "pydantic_ai",
         "--collect-data",
         "pydantic_ai",
         "--hidden-import",
         "pydantic_ai_slim",
-        # Include other critical dependencies
         "--collect-all",
         "rich",
         "--collect-all",
@@ -63,7 +58,6 @@ def build_binary() -> bool:
         "toml",
         "--collect-all",
         "protobuf",
-        # Entry point
         "main.py",
     ]
 
@@ -74,14 +68,12 @@ def build_binary() -> bool:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         print("Binary built successfully!")
 
-        # Show binary info
         binary_path = Path("dist") / binary_name
         if binary_path.exists():
             size_mb = binary_path.stat().st_size / (1024 * 1024)
             print(f"Binary: {binary_path}")
             print(f"Size: {size_mb:.1f} MB")
 
-            # Make sure it's executable
             os.chmod(binary_path, 0o755)
             print("Binary is ready for distribution!")
 

@@ -118,7 +118,7 @@ def test_complex_cross_file_function_calls(
 
     found_calls = set()
     for call in actual_calls:
-        caller_qn = call.args[0][2]  # qualified_name from (label, key, qualified_name)
+        caller_qn = call.args[0][2]
         callee_qn = call.args[2][2]
 
         if caller_qn.startswith(f"{project_name}."):
@@ -164,11 +164,7 @@ def test_cross_file_calls_with_short_names(
 
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    short_calls = [
-        call
-        for call in actual_calls
-        if call.args[2][2].endswith(".short")  # callee ends with '.short'
-    ]
+    short_calls = [call for call in actual_calls if call.args[2][2].endswith(".short")]
 
     assert len(short_calls) >= 1, (
         f"Expected at least 1 call to 'short' function, but found {len(short_calls)}. "

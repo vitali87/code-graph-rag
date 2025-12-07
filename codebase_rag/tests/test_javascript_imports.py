@@ -883,13 +883,13 @@ const area = multiply(PI, 2);
     imported_modules = [call.args[2][2] for call in regression_imports]
 
     expected_patterns = [
-        "helpers",  # from './src/utils/helpers'
-        "services",  # from './src/services'
-        "core",  # from './src/core'
-        "math",  # from './src/utils/math'
-        "fs",  # from 'fs'
-        "path",  # from 'path'
-        "json",  # from 'json'
+        "helpers",
+        "services",
+        "core",
+        "math",
+        "fs",
+        "path",
+        "json",
     ]
 
     found_patterns = []

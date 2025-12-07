@@ -39,7 +39,7 @@ class DocumentAnalyzer:
                     project=orchestrator_config.project_id,
                     location=orchestrator_config.region,
                 )
-            else:  # gla provider (default)
+            else:
                 self.client = genai.Client(api_key=orchestrator_config.api_key)
         else:
             self.client = _NotSupportedClient()
@@ -85,9 +85,7 @@ class DocumentAnalyzer:
 
             mime_type, _ = mimetypes.guess_type(full_path)
             if not mime_type:
-                mime_type = (
-                    "application/octet-stream"  # Default if type can't be guessed
-                )
+                mime_type = "application/octet-stream"
 
             file_bytes = full_path.read_bytes()
 

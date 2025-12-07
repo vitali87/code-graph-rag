@@ -86,7 +86,7 @@ public class Test {
 
         parsers, queries = load_parsers()
         if "java" not in parsers:
-            return  # Skip if Java parser not available
+            return
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -139,7 +139,7 @@ fn main() {
 
         parsers, queries = load_parsers()
         if "rust" not in parsers:
-            return  # Skip if Rust parser not available
+            return
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -206,7 +206,7 @@ fn main() {
 
         parsers, queries = load_parsers()
         if "rust" not in parsers:
-            return  # Skip if Rust parser not available
+            return
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -238,7 +238,7 @@ fn main() {
             "submod2": "crate::module2::submod2",
             "local_module": "self::local_module",
             "parent_module": "super::parent_module",
-            "self": "super",  # Last self import: use super::{self, parent_module};
+            "self": "super",
         }
 
         for name, path in expected.items():
@@ -271,7 +271,7 @@ func main() {
 
         parsers, queries = load_parsers()
         if "go" not in parsers:
-            return  # Skip if Go parser not available
+            return
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(

@@ -90,7 +90,7 @@ def timing_decorator(
         start_time = time.perf_counter()
         result = await func(*args, **kwargs)
         end_time = time.perf_counter()
-        execution_time = (end_time - start_time) * 1000  # Convert to milliseconds
+        execution_time = (end_time - start_time) * 1000
         func_name = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
         logger.info(f"'{func_name}' executed in {execution_time:.2f}ms")
         return result

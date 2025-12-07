@@ -80,14 +80,14 @@ from http.server import HTTPServer
         "sys",
         "json",
         "re",
-        "pathlib",  # from pathlib import Path -> pathlib module
-        "collections",  # from collections import defaultdict -> collections module
-        "datetime",  # from datetime import datetime -> datetime module
-        "typing",  # from typing import List -> typing module
+        "pathlib",
+        "collections",
+        "datetime",
+        "typing",
         "sqlite3",
         "urllib.parse",
-        "email.mime.text",  # from email.mime.text import MIMEText -> email.mime.text module
-        "xml.etree.ElementTree",  # from xml.etree.ElementTree import Element -> xml.etree.ElementTree module
+        "email.mime.text",
+        "xml.etree.ElementTree",
     ]
 
     for expected in expected_modules:
@@ -410,12 +410,12 @@ from yaml import load as yaml_load
         "pandas",
         "matplotlib.pyplot",
         "tensorflow",
-        "collections",  # from collections import defaultdict -> collections module
-        "pathlib",  # from pathlib import Path -> pathlib module
-        "datetime",  # from datetime import datetime -> datetime module
-        "os",  # from os import path -> os module (covers all os.* imports)
-        "json",  # from json import loads -> json module
-        "pickle",  # from pickle import loads -> pickle module
+        "collections",
+        "pathlib",
+        "datetime",
+        "os",
+        "json",
+        "pickle",
     ]
 
     for expected in expected_original_modules:

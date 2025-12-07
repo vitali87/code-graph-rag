@@ -711,7 +711,7 @@ def test_diamond_inheritance_mro_basic(
         (
             f"{project_name}.diamond_mro.E.method",
             f"{project_name}.diamond_mro.B.method",
-        ),  # E should override nearest B
+        ),
     ]
 
     for child_method, parent_method in expected_overrides:

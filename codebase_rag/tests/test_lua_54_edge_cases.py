@@ -215,7 +215,7 @@ print("State machine:", table.concat(machine_results, " -> "))
     run_updater(project, mock_ingestor)
 
     try:
-        pass  # Tests follow
+        pass
 
         created_functions = [
             c
@@ -427,7 +427,7 @@ print("Decomposed length:", norm_results.decomposed_len)
     run_updater(project, mock_ingestor)
 
     try:
-        pass  # Tests follow
+        pass
 
         created_functions = [
             c
@@ -679,7 +679,7 @@ end
     run_updater(project, mock_ingestor)
 
     try:
-        pass  # Tests follow
+        pass
 
         created_functions = [
             c

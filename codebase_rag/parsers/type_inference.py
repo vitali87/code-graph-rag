@@ -203,7 +203,7 @@ class TypeInferenceEngine:
             score = 0
 
             if param_lower == class_lower:
-                score = 100  # Exact match
+                score = 100
             elif class_lower.endswith(param_lower) or param_lower.endswith(class_lower):
                 score = 90
             elif class_lower in param_lower:
@@ -377,7 +377,7 @@ class TypeInferenceEngine:
                 return current
             current = current.parent
             level += 1
-            if level > 10:  # Prevent infinite loops
+            if level > 10:
                 break
         logger.debug("No class_definition found in parent hierarchy")
         return None
@@ -472,13 +472,13 @@ class TypeInferenceEngine:
         """Analyze Repository class to determine what type of items it stores."""
         repo_qn_patterns = [
             f"{module_qn.split('.')[0]}.models.base.Repository",
-            "Repository",  # fallback
+            "Repository",
         ]
 
         for repo_qn in repo_qn_patterns:
             create_method = f"{repo_qn}.create"
             if create_method in self.function_registry:
-                return "BaseModel"  # Items in Repository inherit from BaseModel
+                return "BaseModel"
 
         return None
 
@@ -589,9 +589,7 @@ class TypeInferenceEngine:
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = safe_decode_text(func_node)
-                    if (
-                        class_name and len(class_name) > 0 and class_name[0].isupper()
-                    ):  # Simple heuristic
+                    if class_name and len(class_name) > 0 and class_name[0].isupper():
                         return class_name
 
             elif func_node and func_node.type == "attribute":
@@ -618,9 +616,7 @@ class TypeInferenceEngine:
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = safe_decode_text(func_node)
-                    if (
-                        class_name and len(class_name) > 0 and class_name[0].isupper()
-                    ):  # Simple heuristic
+                    if class_name and len(class_name) > 0 and class_name[0].isupper():
                         return class_name
 
         elif node.type == "list_comprehension":
@@ -834,7 +830,7 @@ class TypeInferenceEngine:
 
         if parts[0] == "self" and len(parts) >= 3:
             attribute_name = parts[1]
-            method_name = parts[-1]  # Last part is the method name
+            method_name = parts[-1]
 
             attribute_type = self._infer_attribute_type(attribute_name, module_qn)
             if attribute_type:
@@ -979,7 +975,7 @@ class TypeInferenceEngine:
                     [project_name] + list(relative_path.parent.parts)
                 )
 
-            expected_module = ".".join(qn_parts[:-2])  # Remove class and method name
+            expected_module = ".".join(qn_parts[:-2])
             if file_module_qn == expected_module:
                 return self._find_method_in_ast(
                     root_node, class_name, method_name, language
@@ -1094,15 +1090,13 @@ class TypeInferenceEngine:
                         if class_name == "cls":
                             qn_parts = method_qn.split(".")
                             if len(qn_parts) >= 2:
-                                return qn_parts[-2]  # Class name is second to last
+                                return qn_parts[-2]
                         elif (
                             class_name
                             and len(class_name) > 0
                             and class_name[0].isupper()
-                        ):  # Class names start with uppercase
-                            module_qn = ".".join(
-                                method_qn.split(".")[:-2]
-                            )  # Remove class.method to get module
+                        ):
+                            module_qn = ".".join(method_qn.split(".")[:-2])
                             resolved_class = self._find_class_in_scope(
                                 class_name, module_qn
                             )
@@ -1111,9 +1105,7 @@ class TypeInferenceEngine:
             elif func_node and func_node.type == "attribute":
                 method_call_text = self._extract_full_method_call(func_node)
                 if method_call_text:
-                    module_qn = ".".join(
-                        method_qn.split(".")[:-2]
-                    )  # Remove class.method
+                    module_qn = ".".join(method_qn.split(".")[:-2])
                     return self._infer_method_call_return_type(
                         method_call_text, module_qn
                     )
@@ -1125,11 +1117,9 @@ class TypeInferenceEngine:
                 if identifier == "self" or identifier == "cls":
                     qn_parts = method_qn.split(".")
                     if len(qn_parts) >= 2:
-                        return qn_parts[-2]  # Class name is second to last
+                        return qn_parts[-2]
                 else:
-                    module_qn = ".".join(
-                        method_qn.split(".")[:-2]
-                    )  # Remove class.method
+                    module_qn = ".".join(method_qn.split(".")[:-2])
 
                     method_node = self._find_method_ast_node(method_qn)
                     if method_node:
@@ -1156,7 +1146,7 @@ class TypeInferenceEngine:
                     if object_name == "cls" or object_name == "self":
                         qn_parts = method_qn.split(".")
                         if len(qn_parts) >= 2:
-                            return qn_parts[-2]  # Class name is second to last
+                            return qn_parts[-2]
 
         return None
 

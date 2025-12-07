@@ -908,9 +908,7 @@ def test_flask_controller_imports(
         call
         for call in import_calls
         if "auth_controller" in call.args[0][2]
-        and (
-            "models" in call.args[2][2] or "utils" in call.args[2][2]
-        )  # Look for module names
+        and ("models" in call.args[2][2] or "utils" in call.args[2][2])
     ]
 
     assert len(auth_controller_imports) >= 2, (
@@ -985,7 +983,7 @@ def test_typescript_hook_usage(
     ]
 
     print(f"TypeScript function calls found: {len(ts_function_calls)}")
-    for call in ts_function_calls[:10]:  # Show first 10
+    for call in ts_function_calls[:10]:
         print(f"  {call.args[0][2]} -> {call.args[2][2]}")
 
     hook_calls = [
@@ -1022,7 +1020,7 @@ def test_api_service_calls(
     ]
 
     print(f"API-related function calls found: {len(api_related_calls)}")
-    for call in api_related_calls[:10]:  # Show first 10
+    for call in api_related_calls[:10]:
         print(f"  {call.args[0][2]} -> {call.args[2][2]}")
 
     api_service_calls = [

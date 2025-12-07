@@ -13,9 +13,7 @@ if has_qdrant_client():
         """Get or create Qdrant client instance."""
         global _CLIENT
         if _CLIENT is None:
-            _CLIENT = QdrantClient(
-                path="./.qdrant_code_embeddings"
-            )  # disk storage path="./.qdrant_code_embeddings"
+            _CLIENT = QdrantClient(path="./.qdrant_code_embeddings")
             if not _CLIENT.collection_exists(_COLLECTION):
                 _CLIENT.create_collection(
                     collection_name=_COLLECTION,

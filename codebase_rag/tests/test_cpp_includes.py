@@ -268,10 +268,10 @@ void useLocalHeaders();
 
     imported_headers = [call.args[2][2] for call in local_imports]
     expected_patterns = [
-        "base",  # base.h -> qualified name contains "base"
-        "types",  # types.h -> qualified name contains "types"
-        "math",  # math.h -> qualified name contains "math"
-        "third_party",  # third_party.h -> qualified name contains "third_party"
+        "base",
+        "types",
+        "math",
+        "third_party",
     ]
 
     for pattern in expected_patterns:

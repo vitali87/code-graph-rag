@@ -283,7 +283,7 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
     property_methods = {
         f"{project_name}.decorators.PropertyDecoratorExample.value": [
             ["property"],
-            ["value.setter"],  # Either @property or @value.setter
+            ["value.setter"],
         ],
         f"{project_name}.decorators.ComplexDecoratedClass.computed_value": [
             ["property", "timing_decorator"],
@@ -381,7 +381,7 @@ def test_decorator_with_complex_arguments(
     test_cases = [
         {
             "qn": f"{project_name}.decorators.parameterized_decorated_function",
-            "expected": ["retry"],  # Should extract decorator name, not full call
+            "expected": ["retry"],
         },
         {
             "qn": f"{project_name}.decorators.complex_decorated_function",

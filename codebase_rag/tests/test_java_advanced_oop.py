@@ -474,9 +474,9 @@ public class MethodOverloading {
     calculate_methods = [qn for qn in created_methods if ".calculate" in qn]
     constructor_methods = [qn for qn in created_methods if ".MethodOverloading" in qn]
 
-    assert len(process_methods) >= 3  # Should have multiple overloaded process methods
-    assert len(calculate_methods) >= 1  # Should have calculate methods
-    assert len(constructor_methods) >= 3  # Should have multiple constructors
+    assert len(process_methods) >= 3
+    assert len(calculate_methods) >= 1
+    assert len(constructor_methods) >= 3
 
 
 def test_covariant_return_types(

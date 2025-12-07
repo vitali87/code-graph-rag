@@ -357,7 +357,7 @@ export function enhancedFetch(url, options) {
         f"{project_name}.es6_exports.fetchData",
         f"{project_name}.es6_exports.fetchDataAsync",
         f"{project_name}.es6_exports.arrowFunction",
-        f"{project_name}.es6_exports.processData",  # default export
+        f"{project_name}.es6_exports.processData",
         f"{project_name}.es6_exports.generatorFunction",
         f"{project_name}.es6_exports.asyncArrow",
         f"{project_name}.reexports.enhancedFetch",
