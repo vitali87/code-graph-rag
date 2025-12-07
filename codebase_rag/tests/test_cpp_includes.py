@@ -838,13 +838,11 @@ void demonstrateAllIncludes() {
     run_updater(cpp_includes_project, mock_ingestor)
 
     # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     # Should have comprehensive include coverage
     comprehensive_imports = [

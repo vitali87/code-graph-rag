@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -299,12 +299,10 @@ void testTemplateAttributes() {
     run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify function definitions with attributes are tracked
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Functions with attributes should be defined
     attributed_functions = [
@@ -685,7 +683,7 @@ void testAttributeInheritance() {
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     [c for c in all_relationships if c.args[1] == "CALLS"]
 
     # Functions with compiler-specific attributes should be defined
@@ -1035,12 +1033,10 @@ void testUltimateAttributes() {
     run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify complex attributed constructs are tracked
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Edge case functions should be defined
     edge_case_functions = [
@@ -1225,13 +1221,11 @@ void testAttributePolymorphism() {
     run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify comprehensive relationship creation
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     # Should have comprehensive coverage
     comprehensive_calls = [

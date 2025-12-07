@@ -542,12 +542,10 @@ if True:
     run_updater(python_imports_project, mock_ingestor)
 
     # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     # Should have comprehensive import coverage
     comprehensive_imports = [

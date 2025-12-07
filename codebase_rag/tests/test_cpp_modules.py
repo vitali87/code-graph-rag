@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_node_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -800,12 +800,10 @@ void showcaseModuleFeatures() {
     run_updater(cpp_modules_project, mock_ingestor)
 
     # Verify comprehensive module usage coverage
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    imports_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have module import relationships
     [

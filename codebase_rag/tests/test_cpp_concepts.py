@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -127,11 +127,9 @@ void demonstrateBasicConcepts() {
     run_updater(cpp_concepts_project, mock_ingestor)
 
     # Verify concept definitions are detected
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     # Look for concept-related definitions
     concept_definitions = [
@@ -276,11 +274,9 @@ void demonstrateAdvancedConcepts() {
     run_updater(cpp_concepts_project, mock_ingestor)
 
     # Verify advanced concept usage
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Look for concept-constrained template usage
     advanced_calls = [
@@ -392,7 +388,7 @@ void demonstrateConceptComposition() {
     )
 
     # Verify template specializations
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     composition_definitions = [
         call

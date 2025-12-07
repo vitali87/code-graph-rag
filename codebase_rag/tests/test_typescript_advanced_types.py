@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -1770,7 +1770,7 @@ console.log('All advanced type patterns working correctly');
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive advanced type calls

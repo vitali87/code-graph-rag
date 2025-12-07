@@ -1224,13 +1224,11 @@ export function useImports() {
     run_updater(javascript_modules_project, mock_ingestor)
 
     # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Should have comprehensive module imports
     comprehensive_imports = [

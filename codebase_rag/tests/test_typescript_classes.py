@@ -1124,9 +1124,9 @@ console.log(userRepo.name); // users
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
     implements_relationships = [
         c for c in all_relationships if c.args[1] == "IMPLEMENTS"
     ]

@@ -1441,7 +1441,7 @@ async function performAsyncOperation(data) {
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
     # Should have comprehensive error handling

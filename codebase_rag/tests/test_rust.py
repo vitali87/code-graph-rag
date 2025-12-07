@@ -2409,13 +2409,11 @@ fn demonstrate_comprehensive_rust() {
     run_updater(rust_project, mock_ingestor)
 
     # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have comprehensive Rust coverage
     comprehensive_calls = [
