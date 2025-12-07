@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
     from ..language_config import FQNConfig
+    from ..parsers.utils import safe_decode_text
 
 
 def resolve_fqn_from_ast(
@@ -84,7 +85,7 @@ def find_function_source_by_fqn(
                     node, file_path, repo_root, project_name, fqn_config
                 )
                 if actual_fqn == target_fqn:
-                    return node.text.decode("utf-8") if node.text else None
+                    return safe_decode_text(node)
 
             for child in node.children:
                 result = walk(child)

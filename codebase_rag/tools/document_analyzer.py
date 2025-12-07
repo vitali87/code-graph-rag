@@ -54,6 +54,9 @@ class DocumentAnalyzer:
         logger.info(
             f"[DocumentAnalyzer] Analyzing '{file_path}' with question: '{question}'"
         )
+        if isinstance(self.client, _NotSupportedClient):
+            return "Error: Document analysis is not supported for the current LLM provider."
+
         try:
             if Path(file_path).is_absolute():
                 source_path = Path(file_path)

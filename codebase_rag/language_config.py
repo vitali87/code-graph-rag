@@ -147,14 +147,21 @@ def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 PYTHON_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_definition", "module"},
+    scope_node_types={"class_definition", "module", "function_definition"},
     function_node_types={"function_definition"},
     get_name=_python_get_name,
     file_to_module_parts=_python_file_to_module,
 )
 
 JAVASCRIPT_FQN_CONFIG = FQNConfig(
-    scope_node_types={"class_declaration", "program"},
+    scope_node_types={
+        "class_declaration",
+        "program",
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition",
+    },
     function_node_types={
         "function_declaration",
         "method_definition",
@@ -171,6 +178,10 @@ TYPESCRIPT_FQN_CONFIG = FQNConfig(
         "interface_declaration",
         "namespace_definition",
         "program",
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition",
     },
     function_node_types={
         "function_declaration",
@@ -232,6 +243,18 @@ def _java_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
+def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    """Convert Rust file path to module parts, handling mod.rs."""
+    try:
+        rel = file_path.relative_to(repo_root)
+        parts = list(rel.with_suffix("").parts)
+        if parts and parts[-1] == "mod":
+            parts = parts[:-1]
+        return parts
+    except Exception:
+        return []
+
+
 def _cpp_get_name(node: "Node") -> str | None:
     """Extract name from C++ AST node."""
     if node.type in ("class_specifier", "struct_specifier", "enum_specifier"):
@@ -264,7 +287,7 @@ RUST_FQN_CONFIG = FQNConfig(
         "closure_expression",
     },
     get_name=_rust_get_name,
-    file_to_module_parts=_generic_file_to_module,
+    file_to_module_parts=_rust_file_to_module,
 )
 
 JAVA_FQN_CONFIG = FQNConfig(

@@ -1,5 +1,7 @@
 from tree_sitter import Node
 
+from .utils import safe_decode_text
+
 
 def extract_js_method_call(member_expr_node: Node) -> str | None:
     """Extract method call text from JavaScript member expression like Storage.getInstance.
@@ -19,8 +21,8 @@ def extract_js_method_call(member_expr_node: Node) -> str | None:
             property_text = property_node.text
 
             if object_text and property_text:
-                object_name = object_text.decode("utf8")
-                property_name = property_text.decode("utf8")
+                object_name = safe_decode_text(object_node)
+                property_name = safe_decode_text(property_node)
                 return f"{object_name}.{property_name}"
     except Exception:
         return None
@@ -44,7 +46,7 @@ def find_js_method_in_class_body(
         if child.type == "method_definition":
             name_node = child.child_by_field_name("name")
             if name_node and name_node.text:
-                found_name = name_node.text.decode("utf8")
+                found_name = safe_decode_text(name_node)
                 if found_name == method_name:
                     return child
 
@@ -72,7 +74,7 @@ def find_js_method_in_ast(
         if current.type == "class_declaration":
             name_node = current.child_by_field_name("name")
             if name_node and name_node.text:
-                found_class_name = name_node.text.decode("utf8")
+                found_class_name = safe_decode_text(name_node)
                 if found_class_name == class_name:
                     body_node = current.child_by_field_name("body")
                     if body_node:
@@ -120,7 +122,7 @@ def extract_js_constructor_name(new_expr_node: Node) -> str | None:
     if constructor_node and constructor_node.type == "identifier":
         constructor_text = constructor_node.text
         if constructor_text:
-            return str(constructor_text.decode("utf8"))
+            return safe_decode_text(constructor_node)
 
     return None
 
@@ -164,7 +166,7 @@ def analyze_js_return_expression(expr_node: Node, method_qn: str) -> str | None:
             elif object_node.type == "identifier":
                 object_text = object_node.text
                 if object_text:
-                    object_name = object_text.decode("utf8")
+                    object_name = safe_decode_text(object_node)
                     qn_parts = method_qn.split(".")
                     if len(qn_parts) >= 2 and object_name == qn_parts[-2]:
                         return ".".join(qn_parts[:-1])
