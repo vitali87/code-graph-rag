@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag.providers.base import (
+    AzureOpenAIProvider,
     GoogleProvider,
     ModelProvider,
     OllamaProvider,
@@ -36,6 +37,15 @@ class TestProviderRegistry:
         assert isinstance(ollama_provider, OllamaProvider)
         assert ollama_provider.provider_name == "ollama"
 
+        azure_openai_provider = get_provider(
+            "azure_openai",
+            api_key="test-key",
+            endpoint="https://example.com",
+            api_version="2024-05-01-preview",
+        )
+        assert isinstance(azure_openai_provider, AzureOpenAIProvider)
+        assert azure_openai_provider.provider_name == "azure_openai"
+
     def test_get_invalid_provider(self) -> None:
         """Test that invalid provider names raise ValueError."""
         with pytest.raises(ValueError, match="Unknown provider 'invalid_provider'"):
@@ -47,7 +57,8 @@ class TestProviderRegistry:
         assert "google" in providers
         assert "openai" in providers
         assert "ollama" in providers
-        assert len(providers) >= 3
+        assert "azure_openai" in providers
+        assert len(providers) >= 4
 
     def test_register_custom_provider(self) -> None:
         """Test registering a custom provider."""

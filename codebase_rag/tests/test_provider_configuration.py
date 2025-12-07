@@ -246,3 +246,36 @@ class TestProviderConfiguration:
             assert orch_config.model_id == "gpt-4o"
             assert orch_config.api_key == "sk-test-key"
             assert orch_config.endpoint == "https://api.custom-openai.com/v1"
+
+    def test_azure_openai_endpoint_configuration(self) -> None:
+        """Test Azure OpenAI endpoint configuration with API version."""
+        with patch.dict(
+            os.environ,
+            {
+                "ORCHESTRATOR_PROVIDER": "azure_openai",
+                "ORCHESTRATOR_MODEL": "DeepSeek-V3.1",
+                "ORCHESTRATOR_API_KEY": "test-azure-key",
+                "ORCHESTRATOR_ENDPOINT": "https://resource.openai.azure.com/",
+                "AZURE_OPEN_AI_API_VERSION": "2024-02-15-preview",
+                "CYPHER_PROVIDER": "azure_openai",
+                "CYPHER_MODEL": "DeepSeek-V3.1",
+                "CYPHER_API_KEY": "test-azure-key",
+                "CYPHER_ENDPOINT": "https://resource.openai.azure.com/",
+            },
+        ):
+            config = AppConfig()
+
+            # Test orchestrator Azure OpenAI config
+            orch_config = config.active_orchestrator_config
+            assert orch_config.provider == "azure_openai"
+            assert orch_config.model_id == "DeepSeek-V3.1"
+            assert orch_config.api_key == "test-azure-key"
+            assert orch_config.endpoint == "https://resource.openai.azure.com/"
+            assert orch_config.api_version == "2024-02-15-preview"
+
+            # Test cypher Azure OpenAI config
+            cypher_config = config.active_cypher_config
+            assert cypher_config.provider == "azure_openai"
+            assert cypher_config.model_id == "DeepSeek-V3.1"
+            assert cypher_config.api_key == "test-azure-key"
+            assert cypher_config.endpoint == "https://resource.openai.azure.com/"

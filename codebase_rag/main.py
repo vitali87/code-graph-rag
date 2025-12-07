@@ -731,6 +731,7 @@ def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> A
                 provider_type=config.provider_type,
                 thinking_budget=config.thinking_budget,
                 service_account_file=config.service_account_file,
+                api_version=config.api_version,
             )
             provider.validate_config()
         except Exception as e:

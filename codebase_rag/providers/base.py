@@ -6,6 +6,7 @@ import httpx
 from loguru import logger
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.models.openai import OpenAIModel, OpenAIResponsesModel
+from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
@@ -92,6 +93,56 @@ class GoogleProvider(ModelProvider):
         )
 
 
+class AzureOpenAIProvider(ModelProvider):
+    """Azure OpenAI provider."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        api_version: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = api_key
+        self.endpoint = endpoint
+        self.api_version = api_version
+
+    @property
+    def provider_name(self) -> str:
+        return "azure_openai"
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(
+                "Azure OpenAI provider requires an API key. "
+                "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in your .env file."
+            )
+
+        if not self.endpoint:
+            raise ValueError(
+                "Azure OpenAI provider requires an endpoint. "
+                "Set ORCHESTRATOR_ENDPOINT or CYPHER_ENDPOINT in your .env file."
+            )
+
+        if not self.api_version:
+            raise ValueError(
+                "Azure OpenAI provider requires api version. "
+                "Set AZURE_OPEN_AI_API_VERSION in .env file."
+            )
+
+    def create_model(self, model_id: str, **kwargs: Any) -> OpenAIModel:
+        self.validate_config()
+
+        provider = AzureProvider(
+            azure_endpoint=self.endpoint,
+            api_version=self.api_version,
+            api_key=self.api_key,
+        )
+
+        return OpenAIModel(model_id, provider=provider, **kwargs)
+
+
 class OpenAIProvider(ModelProvider):
     """OpenAI provider."""
 
@@ -162,6 +213,7 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "google": GoogleProvider,
     "openai": OpenAIProvider,
     "ollama": OllamaProvider,
+    "azure_openai": AzureOpenAIProvider,
 }
 
 

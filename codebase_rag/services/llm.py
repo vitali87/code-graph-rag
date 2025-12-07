@@ -43,6 +43,7 @@ class CypherGenerator:
                 region=config.region,
                 provider_type=config.provider_type,
                 thinking_budget=config.thinking_budget,
+                api_version=config.api_version,
             )
 
             # Create model using provider
@@ -102,6 +103,7 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             region=config.region,
             provider_type=config.provider_type,
             thinking_budget=config.thinking_budget,
+            api_version=config.api_version,
         )
 
         # Create model using provider
