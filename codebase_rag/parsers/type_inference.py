@@ -577,7 +577,7 @@ class TypeInferenceEngine:
             if text is not None:
                 decoded = safe_decode_text(node)
                 if decoded:
-                    result: str = str(decoded)
+                    result: str = decoded
                     return result
         return None
 
@@ -646,7 +646,7 @@ class TypeInferenceEngine:
         if attr_node.text:
             decoded = safe_decode_text(attr_node)
             if decoded:
-                result: str = str(decoded)
+                result: str = decoded
                 return result
         return None
 
