@@ -55,7 +55,7 @@ class CypherGenerator:
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
-                retries=3,
+                retries=settings.AGENT_RETRIES,
             )
         except Exception as e:
             raise LLMGenerationError(
@@ -105,7 +105,7 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             model=llm,
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
-            retries=3,
+            retries=settings.AGENT_RETRIES,
         )
     except Exception as e:
         raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e
