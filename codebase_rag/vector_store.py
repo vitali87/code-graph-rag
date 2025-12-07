@@ -1,4 +1,3 @@
-# codebase_rag/vector_store.py
 from loguru import logger
 
 from .utils.dependencies import has_qdrant_client
