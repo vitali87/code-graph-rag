@@ -32,15 +32,6 @@ def _get_method_names(mock_ingestor: MagicMock, class_name: str) -> set[str]:
     return method_names
 
 
-def _get_all_method_qns(mock_ingestor: MagicMock) -> set[str]:
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
-    return {call[0][1].get("qualified_name", "") for call in method_calls}
-
-
 def test_simple_out_of_class_method_definitions(
     cpp_out_of_class_project: Path,
     mock_ingestor: MagicMock,

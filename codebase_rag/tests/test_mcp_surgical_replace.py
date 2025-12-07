@@ -52,8 +52,8 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
         cypher_gen=mock_cypher_gen,
     )
 
-    registry._file_editor_tool = MagicMock()  # ty: ignore[attr-defined]
-    registry._file_editor_tool.function = AsyncMock()  # ty: ignore[attr-defined]
+    registry._file_editor_tool = MagicMock()
+    registry._file_editor_tool.function = AsyncMock()
 
     return registry
 
