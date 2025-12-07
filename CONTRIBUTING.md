@@ -19,16 +19,24 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
    uv sync --extra treesitter-full --extra test --extra dev
    ```
 
-2. **Make Your Changes**:
+2. **Install Pre-commit Hooks** (mandatory):
+   ```bash
+   pre-commit install
+   ```
+   All commits must pass pre-commit checks. Do not skip hooks with `--no-verify`.
+
+3. **Make Your Changes**:
    - Follow the existing code style and patterns
    - Add tests for new functionality
    - Update documentation if needed
+   - Do not add inline comments (see Comment Policy below)
 
-3. **Test Your Changes**:
+4. **Test Your Changes**:
    - Run the existing tests to ensure nothing is broken
    - Test your new functionality thoroughly
+   - Run `uv run ruff check` and `uv run ruff format --check` before committing
 
-4. **Submit a Pull Request**:
+5. **Submit a Pull Request**:
    - Push your branch to your fork
    - Create a pull request against the main repository
    - Reference the issue number in your PR description
@@ -80,6 +88,23 @@ Now, `pre-commit` will run automatically on `git commit`.
 - Write clear, self-documenting code
 - Add docstrings for public functions and classes
 - Use Pydantic models for data structures and validation
+
+### Comment Policy
+
+**No inline comments are allowed** unless they meet one of these criteria:
+
+1. **Top-of-file comments**: Comments that appear before any code (including imports) are allowed
+2. **`(H)` marker**: Comments containing `(H)` are allowed - this stands for "Human" and indicates an intentional, human-written comment
+3. **Type annotations**: Comments containing `type:`, `noqa`, `pyright`, or `ty:` are allowed
+
+**Why this rule exists**: AI tools (like code assistants and LLMs) tend to generate redundant, obvious comments that clutter the codebase. Comments like `# Loop through items` or `# Return the result` add no value. This policy prevents AI-generated comment slop from polluting the code.
+
+If you need to add a comment, prefix it with `(H)`:
+```python
+# (H) This algorithm uses memoization because the recursive solution times out on large inputs
+```
+
+The pre-commit hook `no-inline-comments` enforces this rule automatically.
 
 ## Questions?
 
