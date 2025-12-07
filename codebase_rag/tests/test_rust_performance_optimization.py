@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -307,15 +306,7 @@ fn memory_usage_tracking() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify benchmarking functions are detected
@@ -582,15 +573,7 @@ mod fastrand {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify SIMD functions are detected
@@ -900,15 +883,7 @@ mod fastrand {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify parallel processing functions are detected
@@ -1238,15 +1213,7 @@ fn memory_mapped_files() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify memory optimization functions are detected
@@ -1659,15 +1626,7 @@ fn hotspot_detection() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify profiling functions are detected

@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -144,18 +143,7 @@ public class SynchronizedExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the class was detected
     project_name = java_concurrency_project.name
@@ -321,18 +309,7 @@ public class VolatileExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the class was detected
     project_name = java_concurrency_project.name
@@ -550,18 +527,7 @@ class Task {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the classes were detected
     project_name = java_concurrency_project.name
@@ -804,18 +770,7 @@ public class ExecutorExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the class was detected
     project_name = java_concurrency_project.name
@@ -1061,18 +1016,7 @@ public class CompletableFutureExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the class was detected
     project_name = java_concurrency_project.name
@@ -1317,18 +1261,7 @@ public class LocksExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the class was detected
     project_name = java_concurrency_project.name

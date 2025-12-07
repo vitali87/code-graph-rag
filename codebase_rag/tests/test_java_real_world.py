@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -151,18 +150,7 @@ public class DatabaseConnection {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_real_world_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     # Verify Spring components were detected
     class_calls = [
@@ -355,18 +343,7 @@ class WindowsTextField implements TextField {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_real_world_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -593,18 +570,7 @@ class PaymentContext {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_real_world_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -862,18 +828,7 @@ class CustomerRepository {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_real_world_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -1071,18 +1026,7 @@ class SmtpEmailService implements EmailService {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_real_world_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -1373,18 +1317,7 @@ public final class MathUtils {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_real_world_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     class_calls = [
         call

@@ -48,7 +48,10 @@ bob:greet()
 
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
     )
     updater.run()
 
@@ -163,7 +166,10 @@ local breed = myDog:getBreed()  -- Should call Dog's getBreed
 
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
     )
     updater.run()
 
@@ -258,7 +264,10 @@ local quotient = calc.divide(20, 5)
 
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
     )
     updater.run()
 
@@ -353,7 +362,10 @@ local circle2 = shapes.createCircle(0, 0, 10)
 
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
     )
     updater.run()
 
@@ -488,7 +500,10 @@ local name = user:getName()  -- From User itself
 
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
     )
     updater.run()
 
@@ -596,7 +611,10 @@ config2:reset()
 
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
     )
     updater.run()
 

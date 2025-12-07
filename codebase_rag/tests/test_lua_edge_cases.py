@@ -27,7 +27,10 @@ def test_lua_require_edge_cases(
 
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
     )
     updater.run()
 

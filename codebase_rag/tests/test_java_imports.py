@@ -67,15 +67,13 @@ public class BasicImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check import mapping was created
@@ -151,15 +149,13 @@ public class StaticImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check static import mapping
@@ -243,15 +239,13 @@ public class WildcardImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check wildcard import mapping
@@ -377,15 +371,13 @@ public class LocalImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check import mapping for local imports
@@ -462,15 +454,13 @@ public class QualifiedNames {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # For this test, we mainly verify that parsing doesn't fail

@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_file_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -52,11 +51,7 @@ local line = io.read("*line")
 io.write("Processing complete\n")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -133,11 +128,7 @@ for line in io.lines("config.txt") do
 end
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -221,11 +212,7 @@ local temp_content = temp:read("*all")
 temp:close()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -336,11 +323,7 @@ serialize_to_file({name = "John", age = 30}, "person.lua")
 local person = deserialize_from_file("person.lua")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -427,11 +410,7 @@ local binary_data = read_binary_file("image.png")
 write_binary_file("copy.png", binary_data.data)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [

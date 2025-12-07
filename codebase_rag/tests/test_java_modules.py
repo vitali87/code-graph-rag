@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -176,18 +175,7 @@ module com.example.service {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
     # Verify module-info files were processed (they should be detected as regular files)
     # Since module-info.java files are special, they might not be parsed as regular classes
@@ -487,18 +475,7 @@ public class ConsoleLoggingProvider implements LoggingProvider {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
     # Verify service interfaces and implementations were detected
     project_name = java_modules_project.name
@@ -789,18 +766,7 @@ public class ModuleConfiguration {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the classes were detected
     project_name = java_modules_project.name
@@ -1358,18 +1324,7 @@ class UserEntity {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
     # Verify classes across modules were detected
     all_calls = mock_ingestor.ensure_node_batch.call_args_list

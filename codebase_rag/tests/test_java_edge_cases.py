@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -99,18 +98,7 @@ public abstract class AbstractOnlyClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify all empty types were detected
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -230,18 +218,7 @@ public class ArrayFormats {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify both single-line and multi-line formats are parsed correctly
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -365,18 +342,7 @@ public class UnicodeConstants {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify Unicode identifiers are handled (may depend on parser capabilities)
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -486,18 +452,7 @@ enum EnumWithVeryLongNameThatTestsEnumNameLengthLimitationsAndParsingCapabilitie
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify long qualified names are parsed correctly
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -645,18 +600,7 @@ public class DeeplyNestedGenerics {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify deeply nested generics are parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -861,18 +805,7 @@ class ComplexInheritance
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify syntax edge cases are parsed correctly
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -998,18 +931,7 @@ class WeirdGenerics<T,U,V> {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify malformed but valid syntax is parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1159,18 +1081,7 @@ public class BoundaryValues {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify boundary values are parsed correctly
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1304,18 +1215,7 @@ public class CommentEdgeCases {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify comments don't break parsing
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1392,18 +1292,7 @@ def test_whitespace_edge_cases(
         + "}\n"
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify whitespace variations don't break parsing
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1561,18 +1450,7 @@ class AnotherClassInSameFile {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify package and import edge cases are handled
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1815,18 +1693,7 @@ public class NestedClassModifiers {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify complex modifier combinations are parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -2047,18 +1914,7 @@ public class GenericVarianceEdgeCases {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify generic variance edge cases are parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -2306,18 +2162,7 @@ class ImplementingClass implements AnnotatedInterface {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify annotation edge cases are parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -2580,18 +2425,7 @@ public class OperatorEdgeCases {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_edge_cases_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
     # Verify complex operators and expressions are parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list

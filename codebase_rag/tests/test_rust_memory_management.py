@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -67,15 +66,7 @@ fn main() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify functions are detected
@@ -134,15 +125,7 @@ impl<'a> ImportantExcerpt<'a> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify lifetime functions and structs are detected
@@ -203,15 +186,7 @@ fn create_list() -> List {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify smart pointer functions are detected
@@ -270,15 +245,7 @@ fn create_tree_with_cycles() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify reference counting functions are detected
@@ -329,15 +296,7 @@ fn early_drop() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify Drop trait implementation is detected
@@ -411,15 +370,7 @@ unsafe impl Foo for Bar {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify unsafe functions and traits are detected
@@ -492,15 +443,7 @@ fn union_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify memory layout functions are detected

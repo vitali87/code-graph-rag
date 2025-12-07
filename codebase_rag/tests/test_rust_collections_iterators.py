@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -156,15 +155,7 @@ fn vector_binary_search() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify vector functions are detected
@@ -338,15 +329,7 @@ fn hashmap_iteration_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify HashMap functions are detected
@@ -557,15 +540,7 @@ fn custom_iterator() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify iterator functions are detected
@@ -771,15 +746,7 @@ fn collection_performance_characteristics() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify other collections functions are detected
@@ -999,15 +966,7 @@ fn monad_like_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify functional programming functions are detected

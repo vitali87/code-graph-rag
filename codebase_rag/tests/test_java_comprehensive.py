@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -108,18 +107,7 @@ public abstract class Shape {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Verify classes were detected
     project_name = java_project.name
@@ -264,18 +252,7 @@ public class AnnotatedClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all node creation calls by type (Java has distinct node types)
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -391,18 +368,7 @@ public class WildcardExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all node creation calls by type
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -506,18 +472,7 @@ public abstract class AbstractService {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
     class_calls = [
@@ -619,18 +574,7 @@ public class OuterClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
     class_calls = [
@@ -748,18 +692,7 @@ public class LambdaExamples {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all node creation calls by type
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -895,18 +828,7 @@ public class ExceptionHandler {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
     class_calls = [

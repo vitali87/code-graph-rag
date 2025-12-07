@@ -2,8 +2,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_function_and_method_calls(
@@ -47,11 +46,7 @@ local r = pipeline(10)
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Should have CALLS relationships at least from pipeline
     calls = [

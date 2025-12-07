@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -302,14 +301,7 @@ void demonstrateDesignatedInitializers() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_designated_consteval_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_designated_consteval_project, mock_ingestor)
 
     project_name = cpp_designated_consteval_project.name
 
@@ -677,14 +669,7 @@ void demonstrateConsteval() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_designated_consteval_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_designated_consteval_project, mock_ingestor)
 
     project_name = cpp_designated_consteval_project.name
 
@@ -1024,14 +1009,7 @@ void demonstrateLambdaInitCaptures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_designated_consteval_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_designated_consteval_project, mock_ingestor)
 
     # Verify comprehensive coverage
     all_relationships = cast(

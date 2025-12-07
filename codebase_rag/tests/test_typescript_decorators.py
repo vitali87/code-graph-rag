@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -319,14 +318,7 @@ console.log((user as any).getValidationErrors()); // []
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for decorator functions
     function_calls = [
@@ -736,14 +728,7 @@ processor.saveToDatabase({ important: 'data' })
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for method decorator functions
     function_calls = [
@@ -1198,14 +1183,7 @@ console.log(product.timestamps); // Should initialize on first access
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for property decorator functions
     function_calls = [
@@ -1589,14 +1567,7 @@ try {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for parameter decorator functions
     function_calls = [
@@ -1745,14 +1716,7 @@ console.log((example as any).tableName); // 'comprehensive_items'
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

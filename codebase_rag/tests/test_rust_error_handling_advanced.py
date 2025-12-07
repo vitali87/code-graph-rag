@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -115,15 +114,7 @@ fn result_combinators() -> Result<String, Box<dyn std::error::Error>> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify Result/Option functions are detected
@@ -275,15 +266,7 @@ fn make_api_request(endpoint: &str) -> Result<String, ApiError> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify custom error types are detected
@@ -440,15 +423,7 @@ fn recoverable_errors() -> Result<Vec<i32>, AppError> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify error propagation functions are detected
@@ -577,15 +552,7 @@ fn graceful_shutdown() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify panic handling functions are detected
@@ -842,15 +809,7 @@ fn cached_data_source() -> Result<String> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify error pattern functions are detected

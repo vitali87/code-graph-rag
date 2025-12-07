@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -175,14 +174,7 @@ exports.ExportedClass = class ExportedClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     project_name = javascript_modules_project.name
 
@@ -361,14 +353,7 @@ export function enhancedFetch(url, options) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     project_name = javascript_modules_project.name
 
@@ -558,14 +543,7 @@ export function hybridFunction() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     # Check that mixed module imports are captured
     import_relationships = [
@@ -781,14 +759,7 @@ export function useA() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     # Check that circular imports are captured
     import_relationships = [
@@ -1049,14 +1020,7 @@ export const utils = new Proxy({}, {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     # Get all Function and Class nodes
     function_calls = [
@@ -1173,14 +1137,7 @@ export { useReExports };
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     # Get all import relationships
     import_relationships = [
@@ -1307,14 +1264,7 @@ export function useImports() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

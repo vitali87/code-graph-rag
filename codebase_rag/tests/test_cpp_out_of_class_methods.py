@@ -5,8 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -74,14 +73,7 @@ void useCalculator() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_out_of_class_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_out_of_class_project, mock_ingestor)
 
     method_names = _get_method_names(mock_ingestor, "Calculator")
 
@@ -132,14 +124,7 @@ void useNestedClass() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_out_of_class_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_out_of_class_project, mock_ingestor)
 
     method_names = _get_method_names(mock_ingestor, "MyClass")
 
@@ -203,14 +188,7 @@ void useVector() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_out_of_class_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_out_of_class_project, mock_ingestor)
 
     method_names = _get_method_names(mock_ingestor, "Vector2D")
     operator_methods = [m for m in method_names if "operator" in m]
@@ -281,14 +259,7 @@ void useResource() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_out_of_class_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_out_of_class_project, mock_ingestor)
 
     method_names = _get_method_names(mock_ingestor, "Resource")
 
@@ -339,14 +310,7 @@ void useDeepClass() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_out_of_class_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_out_of_class_project, mock_ingestor)
 
     method_names = _get_method_names(mock_ingestor, "DeepClass")
 
@@ -401,14 +365,7 @@ void useContainer() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_out_of_class_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_out_of_class_project, mock_ingestor)
 
     method_names = _get_method_names(mock_ingestor, "Container")
 
@@ -458,14 +415,7 @@ void useMixedClass() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_out_of_class_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_out_of_class_project, mock_ingestor)
 
     method_names = _get_method_names(mock_ingestor, "MixedClass")
 

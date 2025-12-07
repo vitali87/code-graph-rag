@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -158,14 +157,7 @@ const result = processor.processData([
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
@@ -369,14 +361,7 @@ const eagleHunt = eagle.hunt(); // Eagle specific
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
@@ -573,14 +558,7 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
@@ -795,14 +773,7 @@ const instanceCount = Counter.getInstanceCount();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
@@ -1008,14 +979,7 @@ const userInfo = user.toString();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     # Get all Class node creation calls
     class_calls = [
@@ -1148,14 +1112,7 @@ const testResult = testClasses();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

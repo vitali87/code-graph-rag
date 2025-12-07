@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -147,14 +146,7 @@ void demonstrateStdLibrary() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -272,14 +264,7 @@ void useLocalHeaders();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -446,14 +431,7 @@ void demonstrateConditionalIncludes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -584,14 +562,7 @@ void demonstrateIncludeTypes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -729,14 +700,7 @@ std::vector<int> PragmaClass::getItems() const {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -891,14 +855,7 @@ void demonstrateAllIncludes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

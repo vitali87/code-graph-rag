@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -326,14 +325,7 @@ console.log(secureObject[Symbol.for('public')]); // shared
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
@@ -766,14 +758,7 @@ console.log(users.map(u => u.getProfile()));
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
@@ -1161,14 +1146,7 @@ console.log(Email.isValid('test@example.com')); // true
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
@@ -1602,14 +1580,7 @@ console.log('Cloned:', cloned.toJSON());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
@@ -1745,14 +1716,7 @@ console.log(advanced.process());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

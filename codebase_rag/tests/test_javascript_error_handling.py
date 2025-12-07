@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -369,14 +368,7 @@ function cleanup() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
     # Get all Function nodes
     function_calls = [
@@ -794,14 +786,7 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
     # Get all Class nodes
     class_calls = [
@@ -1296,14 +1281,7 @@ testGracefulDegradation();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
     # Get all Function nodes
     function_calls = [
@@ -1479,14 +1457,7 @@ async function performAsyncOperation(data) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

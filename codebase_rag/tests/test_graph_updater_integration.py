@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -27,22 +26,12 @@ def temp_project(temp_repo: Path) -> Path:
 
 
 def test_function_call_relationships_are_created(
-    temp_project: Path, mock_ingestor: MemgraphIngestor
+    temp_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that GraphUpdater correctly identifies and creates CALLS relationships.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=temp_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(temp_project, mock_ingestor)
 
     project_name = temp_project.name
     main_func_qn = f"{project_name}.main.main_func"

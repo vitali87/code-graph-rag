@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -178,15 +177,7 @@ unsafe fn atomic_raw_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify unsafe functions are detected
@@ -348,15 +339,7 @@ impl CComplexStruct {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify extern functions are detected
@@ -588,15 +571,7 @@ unsafe fn deserialize_zerocopy<T: ZeroCopy>(bytes: &[u8]) -> Option<T> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify unsafe traits are detected
@@ -803,15 +778,7 @@ unsafe fn aarch64_specific() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify inline assembly functions are detected
@@ -1062,15 +1029,7 @@ unsafe fn bit_field_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify unions and transmute functions are detected

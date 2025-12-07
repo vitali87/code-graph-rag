@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -272,14 +271,7 @@ console.log(newRepo.name); // OK
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
     project_name = typescript_classes_project.name
 
@@ -632,14 +624,7 @@ console.log(car.start());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
     project_name = typescript_classes_project.name
 
@@ -944,14 +929,7 @@ service.process();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
     project_name = typescript_classes_project.name
 
@@ -1164,14 +1142,7 @@ console.log(userRepo.name); // users
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

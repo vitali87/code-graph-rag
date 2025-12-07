@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -236,14 +235,7 @@ void demonstrateBasicGenerators() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_coroutines_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_coroutines_project, mock_ingestor)
 
     project_name = cpp_coroutines_project.name
 
@@ -555,14 +547,7 @@ void demonstrateAsyncAwait() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_coroutines_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_coroutines_project, mock_ingestor)
 
     project_name = cpp_coroutines_project.name
 
@@ -920,14 +905,7 @@ void demonstrateCustomCoroutines() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_coroutines_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_coroutines_project, mock_ingestor)
 
     # Verify comprehensive coroutine coverage
     all_relationships = cast(

@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -195,14 +194,7 @@ const varResults = varFunctions.map(fn => fn());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     project_name = javascript_closures_project.name
 
@@ -498,14 +490,7 @@ tryCatchScope();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     project_name = javascript_closures_project.name
 
@@ -786,14 +771,7 @@ const nestedResult = nested();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     project_name = javascript_closures_project.name
 
@@ -1184,14 +1162,7 @@ const allConfig = Config.getAll();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     # Verify module patterns create proper function relationships
     call_relationships = [
@@ -1397,14 +1368,7 @@ const scopeResult = accessScopes();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

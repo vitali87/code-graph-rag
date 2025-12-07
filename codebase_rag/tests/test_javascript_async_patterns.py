@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -265,14 +264,7 @@ function handleProfileError(error) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
@@ -647,14 +639,7 @@ function delay(ms) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
@@ -1034,14 +1019,7 @@ fetchUserPromise(789)
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
@@ -1388,14 +1366,7 @@ consumeAsyncGenerator();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
@@ -1603,14 +1574,7 @@ function delay(ms) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

@@ -101,15 +101,13 @@ public class BasicMethodCalls {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check that method calls were detected by looking at CALLS relationships
@@ -239,15 +237,13 @@ public class InheritanceExample {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check class definitions
@@ -424,15 +420,13 @@ public class InterfaceExample {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check interface and class definitions
@@ -567,15 +561,13 @@ public class GenericMethods {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check generic method calls via CALLS relationships
@@ -656,15 +648,13 @@ public class StaticMethodCalls {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     # Check that fully qualified static method calls were detected by looking at CALLS relationships
@@ -772,15 +762,13 @@ public class MainClass {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     project_name = java_methods_project.name

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -26,17 +26,7 @@ def test_defines_method_relationship_is_created(
     """
     Tests that GraphUpdater correctly identifies and creates DEFINES_METHOD relationships.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=temp_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(temp_project, mock_ingestor)
 
     project_name = temp_project.name
     class_qn = f"{project_name}.main.MyClass"

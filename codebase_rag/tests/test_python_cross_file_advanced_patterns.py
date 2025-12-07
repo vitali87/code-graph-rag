@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -202,24 +201,14 @@ def run():
 
 
 def test_singleton_pattern_cross_file_calls(
-    singleton_project: Path, mock_ingestor: MemgraphIngestor
+    singleton_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Test that singleton pattern calls work across files.
     This mirrors the Java TheNews issue where Storage.getInstance() and
     storage.clearAll() were not detected across files.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=singleton_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(singleton_project, mock_ingestor)
 
     project_name = singleton_project.name
 
@@ -316,24 +305,14 @@ def test_singleton_pattern_cross_file_calls(
 
 
 def test_deep_package_hierarchy_cross_file_calls(
-    deep_hierarchy_project: Path, mock_ingestor: MemgraphIngestor
+    deep_hierarchy_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Test that calls work correctly with deep package hierarchies.
     This ensures that deeply nested packages (like app.services.data.processors.validator)
     can have their functions called from other files.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=deep_hierarchy_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(deep_hierarchy_project, mock_ingestor)
 
     project_name = deep_hierarchy_project.name
 
@@ -413,24 +392,14 @@ def test_deep_package_hierarchy_cross_file_calls(
 
 
 def test_chained_cross_file_calls(
-    singleton_project: Path, mock_ingestor: MemgraphIngestor
+    singleton_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Test that chained calls across multiple files are all detected.
     main.main -> Application.start -> SceneHandler.load_menu_scene -> Storage methods
     This creates a 4-level call chain across 3 different files.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=singleton_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(singleton_project, mock_ingestor)
 
     project_name = singleton_project.name
 

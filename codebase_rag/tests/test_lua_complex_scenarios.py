@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_web_framework_scenario(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -98,11 +97,7 @@ app:get("/", function(ctx) return ctx:json({message = "Hello World"}) end)
 app:start()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -242,11 +237,7 @@ print(inspect(users))
 db:close()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -391,11 +382,7 @@ end
 Game:init()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -573,11 +560,7 @@ local db_port = config_mgr:get("database", "port")
 local api_key = config_mgr:get("api", "key")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -766,11 +749,7 @@ local csv_data = pipeline:process_csv_file("input.csv")
 pipeline:export_results(csv_data)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -973,11 +952,7 @@ mesh:register_service("order-service", "http://orders:8080")
 local user_data = mesh:call_service("user-service", "/users/123", "GET")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [

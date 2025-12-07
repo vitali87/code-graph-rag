@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -220,15 +219,7 @@ mod windows_specific {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify module structures are detected
@@ -519,15 +510,7 @@ mod database {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify use statements and imports are detected
@@ -809,15 +792,7 @@ mod external_integration {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify path resolution is detected
@@ -1167,15 +1142,7 @@ pub fn test_visibility_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify visibility patterns are detected
@@ -1508,15 +1475,7 @@ pub fn test_all_attributes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify module attributes are detected

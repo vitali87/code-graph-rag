@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -371,14 +370,7 @@ console.log(merged.size()); // 2
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
     # TypeScript namespaces might be captured as special namespace nodes or as modules
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
@@ -783,14 +775,7 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
     # Check for merged namespace functionality
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
@@ -1218,14 +1203,7 @@ if (ConditionalModule.IS_NODE) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
     # Check for module patterns
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
@@ -1383,14 +1361,7 @@ Conditional.log('Debug message');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

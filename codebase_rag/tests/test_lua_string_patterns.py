@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_string_pattern_matching(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -89,11 +88,7 @@ local positions = find_word_positions("hello world hello", "hello")
 return pattern_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined pattern functions
     defines_rels = [
@@ -224,11 +219,7 @@ local formatted_text = string_manip.format_string("Value: %d, Percent: %.2f%%", 
 return string_manip
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined string functions
     defines_rels = [
@@ -343,11 +334,7 @@ local csv_fields = parse_csv_line("name, age, city")
 return complex_patterns
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined complex pattern functions
     defines_rels = [
@@ -443,11 +430,7 @@ local valid_utf8 = unicode_utils.get_utf8_length("Hello 🌍")
 return unicode_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined unicode functions
     defines_rels = [

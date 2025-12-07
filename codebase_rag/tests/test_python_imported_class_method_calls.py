@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -116,23 +115,13 @@ if __name__ == "__main__":
 
 
 def test_imported_class_method_calls_are_detected(
-    class_method_project: Path, mock_ingestor: MemgraphIngestor
+    class_method_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that GraphUpdater correctly identifies method calls on imported class instances
     across different files and modules.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=class_method_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(class_method_project, mock_ingestor)
 
     project_name = class_method_project.name
 
@@ -209,23 +198,13 @@ def test_imported_class_method_calls_are_detected(
 
 
 def test_cross_file_object_method_chaining(
-    class_method_project: Path, mock_ingestor: MemgraphIngestor
+    class_method_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that method calls on objects created from imported classes are detected,
     including chained method calls and method calls in complex expressions.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=class_method_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(class_method_project, mock_ingestor)
 
     project_name = class_method_project.name
 

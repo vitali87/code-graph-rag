@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_global_environment_access(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -73,11 +72,7 @@ end
 return env_manager
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -184,11 +179,7 @@ local result = chunk()
 return env_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -285,11 +276,7 @@ setfenv(1, {
 return M
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -387,11 +374,7 @@ local result = code_executor.execute_in_env(code, safe_env)
 return code_executor
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -500,11 +483,7 @@ restore_globals({"print", "require"})
 return global_manager
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [

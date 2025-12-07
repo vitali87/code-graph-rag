@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -297,14 +296,7 @@ void testTemplateAttributes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify function definitions with attributes are tracked
     all_relationships = cast(
@@ -686,14 +678,7 @@ void testAttributeInheritance() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify compiler-specific attributed functions are tracked
     all_relationships = cast(
@@ -1047,14 +1032,7 @@ void testUltimateAttributes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify complex attributed constructs are tracked
     all_relationships = cast(
@@ -1244,14 +1222,7 @@ void testAttributePolymorphism() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify comprehensive relationship creation
     all_relationships = cast(

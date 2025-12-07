@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -191,14 +190,7 @@ void demonstrateBasicNamespaces() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_namespaces_project, mock_ingestor)
 
     project_name = cpp_namespaces_project.name
 
@@ -428,14 +420,7 @@ void demonstrateTemplateUsing() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_namespaces_project, mock_ingestor)
 
     project_name = cpp_namespaces_project.name
 
@@ -637,14 +622,7 @@ void compareLinkageStyles() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_namespaces_project, mock_ingestor)
 
     # Expected anonymous namespace classes (may have unique qualified names)
     expected_internal_classes = [
@@ -862,14 +840,7 @@ void testNamespaceFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_namespaces_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

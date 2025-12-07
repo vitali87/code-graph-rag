@@ -29,6 +29,21 @@ def mock_ingestor() -> MagicMock:
     return MagicMock(spec=MemgraphIngestor)
 
 
+def run_updater(
+    repo_path: Path, mock_ingestor: MagicMock, skip_if_missing: str | None = None
+) -> None:
+    parsers, queries = load_parsers()
+    if skip_if_missing and skip_if_missing not in parsers:
+        pytest.skip(f"{skip_if_missing} parser not available")
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=repo_path,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+
 @pytest.fixture
 def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     """Provides a mocked GraphUpdater instance with necessary dependencies."""

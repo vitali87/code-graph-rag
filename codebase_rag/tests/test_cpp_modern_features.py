@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -181,14 +180,7 @@ void demonstrateAutoFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
@@ -457,14 +449,7 @@ void demonstrateLambdaFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
@@ -778,14 +763,7 @@ void demonstrateSmartPointersAndMove() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
@@ -1067,14 +1045,7 @@ void demonstrateVariadicConstexpr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
@@ -1358,14 +1329,7 @@ void demonstrateStructuredBindingsAndRanges() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
@@ -1565,14 +1529,7 @@ void demonstrateModernFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

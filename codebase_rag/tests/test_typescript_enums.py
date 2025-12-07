@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -228,14 +227,7 @@ movePlayer(Direction.Right);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
     # Note: TypeScript enums are not parsed as separate node types by this parser
     # Instead, we verify that functions and classes that use enums are properly parsed
@@ -513,14 +505,7 @@ function createMessage(level: LogLevel, text: string): string {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
     # Note: TypeScript enums are not parsed as separate node types by this parser
     # Instead, we verify that functions and classes that use string enums are properly parsed
@@ -807,14 +792,7 @@ methodHandlers[HttpMethod.GET]('/api/data');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
     # Note: TypeScript enums are not parsed as separate node types by this parser
     # Instead, we verify that functions and classes that use const enums are properly parsed
@@ -981,14 +959,7 @@ console.log(demo.getColor());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

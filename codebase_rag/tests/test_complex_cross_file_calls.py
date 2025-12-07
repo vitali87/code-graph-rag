@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -101,24 +100,14 @@ if __name__ == "__main__":
 
 
 def test_complex_cross_file_function_calls(
-    complex_project: Path, mock_ingestor: MemgraphIngestor
+    complex_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that GraphUpdater correctly identifies complex cross-file function calls
     including calls to functions with short names, functions in different packages,
     and method calls across modules.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(complex_project, mock_ingestor)
 
     project_name = complex_project.name
 
@@ -186,23 +175,13 @@ def test_complex_cross_file_function_calls(
 
 
 def test_cross_file_calls_with_short_names(
-    complex_project: Path, mock_ingestor: MemgraphIngestor
+    complex_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Specifically tests that functions with short names (like 'short') are correctly
     resolved across files, which was a problem with the previous heuristic implementation.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(complex_project, mock_ingestor)
 
     project_name = complex_project.name
 

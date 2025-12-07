@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_basic_closures(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -114,11 +113,7 @@ local add_5_10 = ClosureFactory.partial(add, 5, 10)
 print("Partial result:", add_5_10(3))  -- 5 + 10 + 3 = 18
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -350,11 +345,7 @@ local result = chain:execute(
 print("Middleware result:", result)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -578,11 +569,7 @@ print("=== After unsubscribe ===")
 events:emit("test", "Should not show regular listener")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -850,11 +837,7 @@ print("Is 4 positive and even?", is_positive_and_even(4))
 print("Is -2 positive and even?", is_positive_and_even(-2))
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c

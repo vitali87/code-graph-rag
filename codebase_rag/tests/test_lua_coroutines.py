@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_basic_coroutines(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -61,11 +60,7 @@ for i = 1, 10 do
 end
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships (Module defines functions)
     defines_rels = [
@@ -204,11 +199,7 @@ local id4 = sched:spawn(Tasks.long_task, sched, 10000)
 sched:run()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -356,11 +347,7 @@ while coroutine.status(sequence_task) ~= "dead" do
 end
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -484,11 +471,7 @@ local results = Gen.collect(limited)
 print("First 10 squares of even numbers:", table.concat(results, ", "))
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [
@@ -621,11 +604,7 @@ for frame = 1, 20 do
 end
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
     defines_rels = [

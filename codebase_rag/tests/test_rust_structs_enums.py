@@ -5,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -189,15 +190,7 @@ pub fn process_message(msg: Message) -> String {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify enums are detected
@@ -317,15 +310,7 @@ fn calculate(x: i32) -> Result<i32, String> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify pattern matching functions are detected
@@ -478,15 +463,7 @@ impl<T> Node<T> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify complex structs are detected
@@ -605,15 +582,7 @@ use std::collections::HashMap;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify structs with attributes are detected
@@ -811,15 +780,7 @@ pub fn classify_expression(expr: &Expr) -> &'static str {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify complex enums are detected

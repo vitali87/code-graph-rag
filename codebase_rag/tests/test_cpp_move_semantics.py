@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -317,14 +316,7 @@ void demonstrateStringMoveSemantics() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
     project_name = cpp_move_semantics_project.name
 
@@ -599,14 +591,7 @@ void testReferenceCollapsing() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
     project_name = cpp_move_semantics_project.name
 
@@ -1016,14 +1001,7 @@ void demonstrateAlgorithmOptimizations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
     project_name = cpp_move_semantics_project.name
 
@@ -1440,14 +1418,7 @@ void comprehensiveMoveDemo() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

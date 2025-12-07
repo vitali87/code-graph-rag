@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -157,14 +156,7 @@ try {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     project_name = javascript_destructuring_project.name
 
@@ -327,14 +319,7 @@ const result = processArray([10, 20, 30, 40]);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     project_name = javascript_destructuring_project.name
 
@@ -551,14 +536,7 @@ async function updateUser(id, data) { return { id, ...data }; }
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     project_name = javascript_destructuring_project.name
 
@@ -719,14 +697,7 @@ const response = processApiResponse({
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     # Verify both import and destructuring patterns are captured
     import_relationships = [
@@ -843,14 +814,7 @@ const formatted = formatData({
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

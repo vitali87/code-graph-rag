@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_math_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -51,11 +50,7 @@ local max_value = math_utils.get_max_value({10, 20, 30})
 return math_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined math functions
     defines_rels = [
@@ -133,11 +128,7 @@ local gsub_result = string_utils.replace_word("hello world", "world", "universe"
 return string_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined string functions
     defines_rels = [
@@ -218,11 +209,7 @@ table_utils.iterate_table({1, 2, 3}, print)
 return table_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined table functions
     defines_rels = [
@@ -314,11 +301,7 @@ local clock_time = os_utils.get_process_time()
 return os_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined OS functions
     defines_rels = [
@@ -421,11 +404,7 @@ local temp_file = io_utils.create_temp_file()
 return io_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined IO functions
     defines_rels = [
@@ -523,11 +502,7 @@ local upvalue = debug_utils.get_upvalue(print, 1)
 return debug_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined debug functions
     defines_rels = [
@@ -635,11 +610,7 @@ local searchpath = package_utils.search_module_path("module", package.path)
 return package_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined package functions
     defines_rels = [
@@ -801,11 +772,7 @@ local memory = builtin_utils.manage_memory("count")
 return builtin_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined builtin wrapper functions
     defines_rels = [

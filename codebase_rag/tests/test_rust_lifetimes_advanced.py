@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -246,15 +245,7 @@ fn test_complex_lifetimes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify complex lifetime patterns are detected
@@ -570,15 +561,7 @@ fn test_advanced_elision() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify lifetime elision patterns are detected
@@ -966,15 +949,7 @@ fn iterator_borrowing_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify borrowing edge cases are detected
@@ -1378,15 +1353,7 @@ fn test_generic_variance() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify lifetime variance patterns are detected

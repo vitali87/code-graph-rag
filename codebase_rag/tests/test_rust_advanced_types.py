@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -111,15 +110,7 @@ impl<T> Buffer<T> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify phantom type structs are detected
@@ -200,15 +191,7 @@ where
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify HRTB functions are detected
@@ -331,15 +314,7 @@ impl DatabaseDriver for PostgresDriver {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify associated type patterns are detected
@@ -493,15 +468,7 @@ fn create_factorial_array<const N: usize>() -> FactorialArray<N> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify type-level programming constructs are detected
@@ -701,15 +668,7 @@ impl<T, const N: usize> ConstArrayExt<T, N> for [T; N] {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify const generics are detected

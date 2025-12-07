@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -80,14 +79,7 @@ const data = shared;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -149,14 +141,7 @@ useEffect(() => {});
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -208,14 +193,7 @@ const url = constants.API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -290,14 +268,7 @@ const sum = mathAdd(1, 2);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -354,14 +325,7 @@ const finalUrl = apiEndpoint;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -427,14 +391,7 @@ const url = constants.API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -502,14 +459,7 @@ const debounced = debounce(() => {});
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -591,14 +541,7 @@ modulePromise.then(({ shared }) => {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     # Dynamic imports might be tracked as function calls to import()
     call_relationships = [
@@ -653,14 +596,7 @@ const url = API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -720,16 +656,7 @@ require('./also-side-effects');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    # Should not raise an exception
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -825,14 +752,7 @@ export { useUtils };
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     # Get all import relationships
     import_relationships = [
@@ -910,14 +830,7 @@ const url = API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(
@@ -1023,16 +936,7 @@ const area = multiply(PI, 2);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    # This would raise IndexError before the fix
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
     import_relationships = [
         c

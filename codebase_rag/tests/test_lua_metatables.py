@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_arithmetic_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -92,11 +91,7 @@ print(tostring(diff))
 print(tostring(scaled))
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -214,11 +209,7 @@ while queue:size() > 0 do
 end
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -380,11 +371,7 @@ props.computed = 20
 print("Computed:", props.computed)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -545,11 +532,7 @@ emitter:on("test", function(msg) print("Received:", msg) end)
 emitter("test", "Hello World")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -750,11 +733,7 @@ print("Registry count:", registry:count())
 print("Found by ID:", registry:get_by_id(id1).data)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c

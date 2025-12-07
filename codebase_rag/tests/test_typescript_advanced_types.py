@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -396,14 +395,7 @@ console.log(container.getValue());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for generic classes
     class_calls = [
@@ -831,14 +823,7 @@ console.log('API routes:', apiRoutes);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for utility type classes
     class_calls = [
@@ -1247,14 +1232,7 @@ console.log('Route parsing and conditional types working correctly');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for conditional type classes
     class_calls = [
@@ -1685,14 +1663,7 @@ console.log('Template literal types are working correctly');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for template literal type classes
     class_calls = [
@@ -1824,14 +1795,7 @@ console.log('All advanced type patterns working correctly');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

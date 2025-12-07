@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -90,15 +89,7 @@ fn scoped_threads() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify thread functions are detected
@@ -209,15 +200,7 @@ fn sync_channel() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify channel functions are detected
@@ -314,15 +297,7 @@ fn shared_data_structure() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify mutex functions are detected
@@ -420,15 +395,7 @@ impl TimerFuture {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify async functions are detected
@@ -549,15 +516,7 @@ async fn oneshot_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify Tokio functions are detected
@@ -689,15 +648,7 @@ fn barrier_synchronization() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify parallel computing functions are detected
@@ -835,15 +786,7 @@ fn memory_ordering_examples() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify atomic functions are detected

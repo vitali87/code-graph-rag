@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -225,15 +224,7 @@ fn generic_closures_demo() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify closure functions are detected
@@ -534,15 +525,7 @@ where
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify function pointer functions are detected
@@ -913,15 +896,7 @@ fn observable_demo() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify higher-order functions are detected
@@ -1224,15 +1199,7 @@ async fn demo_parallel_processing() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify async closure functions are detected

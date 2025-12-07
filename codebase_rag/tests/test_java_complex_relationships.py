@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -172,18 +171,7 @@ class ComputerService {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check builder pattern method calls (lots of chaining)
     call_relationships = [
@@ -375,18 +363,7 @@ class NewsSystem {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check interface implementations
     implements_relationships = [
@@ -640,18 +617,7 @@ class VehicleProduction {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check inheritance relationships (abstract factory and concrete factories)
     inherits_relationships = [
@@ -872,18 +838,7 @@ class CoffeeShop {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check inheritance relationships (decorators extending base decorator)
     inherits_relationships = [
@@ -1097,18 +1052,7 @@ class PaymentProcessor {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check interface implementations (strategies implementing PaymentStrategy)
     implements_relationships = [
@@ -1402,18 +1346,7 @@ class SmartHome {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check interface implementations (commands implementing Command)
     implements_relationships = [

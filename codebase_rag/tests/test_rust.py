@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -115,14 +114,7 @@ fn demonstrate_functions() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -314,14 +306,7 @@ fn demonstrate_types() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -520,14 +505,7 @@ fn demonstrate_traits() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -717,14 +695,7 @@ pub fn multiply(a: i32, b: i32) -> i32 {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -934,14 +905,7 @@ fn demonstrate_generics() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -1167,14 +1131,7 @@ fn demonstrate_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -1424,14 +1381,7 @@ fn demonstrate_function_usage() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -1676,14 +1626,7 @@ mod tests {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -1917,14 +1860,7 @@ impl Debug for CustomStruct {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     # Get all import relationships
     import_relationships = [
@@ -2228,14 +2164,7 @@ fn demonstrate_error_handling() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 
@@ -2599,14 +2528,7 @@ fn demonstrate_comprehensive_rust() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(
@@ -3384,14 +3306,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(rust_project, mock_ingestor)
 
     project_name = rust_project.name
 

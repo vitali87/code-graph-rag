@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -110,14 +109,7 @@ const total = sum(1, 2, 3, 4, 5);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
@@ -341,14 +333,7 @@ interface PaymentMethod {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
@@ -630,14 +615,7 @@ const errorResult = createError(new Error("Failed"));
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
@@ -894,14 +872,7 @@ const partial = deepPartial(requiredUser);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
@@ -1060,14 +1031,7 @@ addEventListener('click', (event) => {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

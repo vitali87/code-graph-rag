@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -125,14 +124,7 @@ void demonstrateBasicConcepts() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concepts_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concepts_project, mock_ingestor)
 
     # Verify concept definitions are detected
     all_relationships = cast(
@@ -281,14 +273,7 @@ void demonstrateAdvancedConcepts() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concepts_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concepts_project, mock_ingestor)
 
     # Verify advanced concept usage
     all_relationships = cast(
@@ -388,14 +373,7 @@ void demonstrateConceptComposition() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concepts_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concepts_project, mock_ingestor)
 
     # Verify concept relationships and namespace usage
     all_relationships = cast(

@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -195,15 +194,7 @@ async fn concurrent_requests(client: &reqwest::Client) -> Result<Vec<User>, Box<
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_web_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify HTTP client functions are detected
@@ -446,15 +437,7 @@ mod middleware {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_web_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify Axum server functions are detected
@@ -865,15 +848,7 @@ impl GameServer {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_web_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify WebSocket functions are detected
@@ -1159,15 +1134,7 @@ async fn batch_process_json_requests(requests: Vec<String>) -> Vec<ApiResponse<V
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_web_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify JSON API functions are detected
@@ -1634,15 +1601,7 @@ async fn migration_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_web_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify database functions are detected

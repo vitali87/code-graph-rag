@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -126,18 +125,7 @@ public class Car {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check CALLS relationships between Car and Engine, Car and Passenger
     call_relationships = [
@@ -271,18 +259,7 @@ class Application {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check that interface implementations are captured
     implements_relationships = [
@@ -541,18 +518,7 @@ public class UserController {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check that cross-package method calls are captured
     call_relationships = [
@@ -734,18 +700,7 @@ public class ShapeCalculator {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check inheritance relationships
     inherits_relationships = [
@@ -897,18 +852,7 @@ public class StaticUsageExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check static method calls
     call_relationships = [
@@ -1050,18 +994,7 @@ public class OuterClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check that inner class relationships are captured
     call_relationships = [

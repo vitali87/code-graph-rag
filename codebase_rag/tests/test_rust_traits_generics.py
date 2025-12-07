@@ -5,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -348,15 +349,7 @@ impl<T: std::hash::Hash + Eq> Collectable<T> for SetCollector {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify generic types are detected
@@ -578,15 +571,7 @@ impl Factory for StringFactory {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify traits with associated types are detected
@@ -794,15 +779,7 @@ pub fn compare_drawable_areas<T: AsRef<dyn Drawable>>(a: T, b: T) -> std::cmp::O
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify trait objects are handled
@@ -976,15 +953,7 @@ where
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify HRTB functions are detected

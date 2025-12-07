@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -895,17 +895,7 @@ def test_flask_model_calls(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of model usage in controllers."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Get all function calls
     function_calls = [
@@ -932,17 +922,7 @@ def test_flask_controller_imports(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of Flask controller imports and dependencies."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Get import calls
     import_calls = [
@@ -972,17 +952,7 @@ def test_flask_route_controller_calls(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of Flask route calling controller methods."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Get function calls
     function_calls = [
@@ -1010,17 +980,7 @@ def test_typescript_structure_detection(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of TypeScript project structure."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Get all relationship calls
     all_calls = cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
@@ -1048,17 +1008,7 @@ def test_typescript_hook_usage(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of React hook usage and store calls."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Get function calls
     function_calls = [
@@ -1104,17 +1054,7 @@ def test_api_service_calls(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of API service function calls."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Get function calls
     function_calls = [
@@ -1161,17 +1101,7 @@ def test_cross_language_api_structure(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test overall structure detection across Python and TypeScript."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Verify we processed both Python and TypeScript files
     all_calls = cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
@@ -1215,17 +1145,7 @@ def test_schema_inheritance_detection(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of schema inheritance patterns."""
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(todo_app_project, mock_ingestor)
 
     # Get inheritance calls
     inheritance_calls = [

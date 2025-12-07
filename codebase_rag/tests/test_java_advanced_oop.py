@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -100,18 +99,7 @@ public class Circle implements Shape, Movable {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify interfaces and classes were created
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -213,18 +201,7 @@ public class GenericUtility {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify complex generic classes were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -376,18 +353,7 @@ public class Square extends AbstractRectangle {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify abstract and concrete classes were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -501,18 +467,7 @@ public class MethodOverloading {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify all overloaded methods were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -640,18 +595,7 @@ class NumberContainer extends Container<Number> {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify all classes with covariant return types were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -795,18 +739,7 @@ public class Duck implements Amphibious {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify all interfaces and classes in diamond hierarchy were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1001,18 +934,7 @@ public abstract class AbstractJpaRepository<T, ID extends Serializable>
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify complex generic structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1180,18 +1102,7 @@ class ConflictResolver implements Conflicting1, Conflicting2 {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify all classes and interfaces with overriding were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1373,18 +1284,7 @@ enum Operation {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify type erasure related structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1571,18 +1471,7 @@ public class AnnotationProcessor {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify annotation-related structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -1790,18 +1679,7 @@ public class DeepNesting {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify nested structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
@@ -2006,18 +1884,7 @@ public class StaticNestedInitialization {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_advanced_oop_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
     # Verify static initialization classes were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list

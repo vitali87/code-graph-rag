@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -66,14 +65,7 @@ from http.server import HTTPServer
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -162,14 +154,7 @@ from ...models import User
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -268,14 +253,7 @@ class DataProcessor:
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -363,14 +341,7 @@ from marshmallow import Schema, fields, validate, post_load, pre_dump
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -452,14 +423,7 @@ from yaml import load as yaml_load
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -531,16 +495,7 @@ import sys, json  # trailing comma handled gracefully
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    # Should not raise an exception
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
     import_relationships = [
         c
@@ -606,14 +561,7 @@ if True:
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

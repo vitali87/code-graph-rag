@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -245,15 +244,7 @@ fn canvas_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify trait objects are detected
@@ -604,15 +595,7 @@ fn downcast_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify object safety patterns are detected
@@ -963,15 +946,7 @@ fn run_performance_tests() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify dynamic dispatch patterns are detected
@@ -1432,15 +1407,7 @@ async fn test_async_trait_objects() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify advanced trait object patterns are detected

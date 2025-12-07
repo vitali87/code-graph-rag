@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -330,14 +329,7 @@ void demonstrateBasicConstexpr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constexpr_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constexpr_project, mock_ingestor)
 
     project_name = cpp_constexpr_project.name
 
@@ -667,14 +659,7 @@ void demonstrateConstexprIfAndTemplates() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constexpr_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constexpr_project, mock_ingestor)
 
     project_name = cpp_constexpr_project.name
 
@@ -810,14 +795,7 @@ void demonstrateComprehensiveConstexpr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constexpr_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constexpr_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

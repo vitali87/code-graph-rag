@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -375,18 +374,7 @@ public class StreamOperations {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_streams_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the class was detected
     project_name = java_streams_project.name
@@ -715,18 +703,7 @@ public class FunctionalInterfaces {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_streams_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the classes and interfaces were detected
     project_name = java_streams_project.name
@@ -1059,18 +1036,7 @@ public class OptionalPatterns {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_streams_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the classes were detected
     project_name = java_streams_project.name
@@ -1436,18 +1402,7 @@ public class MethodReferences {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_streams_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
 
     # Verify the classes were detected
     project_name = java_streams_project.name

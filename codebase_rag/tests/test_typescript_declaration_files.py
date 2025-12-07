@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -362,14 +361,7 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
     # Check for ambient declarations
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
@@ -811,14 +803,7 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
     # Check for module declarations
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
@@ -1232,14 +1217,7 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
     # Check for global augmentation patterns
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
@@ -1372,14 +1350,7 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

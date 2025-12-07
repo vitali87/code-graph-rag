@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -114,23 +113,13 @@ std::string main() {
 
 
 def test_cpp_singleton_pattern_cross_file_calls(
-    cpp_singleton_project: Path, mock_ingestor: MemgraphIngestor
+    cpp_singleton_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Test that C++ singleton pattern calls work across files.
     This mirrors the Python/Java/JavaScript/TypeScript singleton tests.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_singleton_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_singleton_project, mock_ingestor)
 
     project_name = cpp_singleton_project.name
 

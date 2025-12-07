@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -94,14 +93,7 @@ const total = sum(1, 2, 3, 4, 5);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
@@ -221,14 +213,7 @@ const quadrupled = doubler(8);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
@@ -371,14 +356,7 @@ async function orchestrate() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
@@ -528,14 +506,7 @@ const configValue = Config.get('apiUrl');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     # Get all Function node creation calls
     function_calls = [
@@ -686,14 +657,7 @@ const memoizedAdd = memoize(add5);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
@@ -887,14 +851,7 @@ const isValid = Person.isValidAge(30);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     # Get all Method node creation calls (methods are often parsed as Method nodes)
     method_calls = [
@@ -1026,14 +983,7 @@ const orchestrated = orchestrator();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     # Verify all relationship types exist
     all_relationships = cast(

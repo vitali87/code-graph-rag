@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -180,15 +179,7 @@ fn tree_depth(node: &TreeNode) -> usize {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify pattern matching functions are detected
@@ -465,15 +456,7 @@ fn string_pattern_matching() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify destructuring functions are detected
@@ -678,15 +661,7 @@ fn classify_float(f: f64) -> &'static str {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify guard functions are detected
@@ -957,15 +932,7 @@ fn process_string_refs() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify if let and while let functions are detected
@@ -1253,15 +1220,7 @@ fn test_advanced_macro_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
     # Verify macro pattern functions are detected
