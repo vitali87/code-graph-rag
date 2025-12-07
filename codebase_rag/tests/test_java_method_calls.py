@@ -5,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 
 @pytest.fixture
@@ -111,11 +112,7 @@ public class BasicMethodCalls {
     updater.run()
 
     # Check that method calls were detected by looking at CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No method call relationships found"
 
@@ -271,11 +268,7 @@ public class InheritanceExample {
     )
 
     # Check method calls via CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No method call relationships found"
 
@@ -463,11 +456,7 @@ public class InterfaceExample {
     )
 
     # Check interface method calls via CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No method call relationships found"
 
@@ -571,11 +560,7 @@ public class GenericMethods {
     updater.run()
 
     # Check generic method calls via CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No generic method call relationships found"
 
@@ -658,11 +643,7 @@ public class StaticMethodCalls {
     updater.run()
 
     # Check that fully qualified static method calls were detected by looking at CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No static method call relationships found"
 
@@ -782,11 +763,7 @@ public class MainClass {
 
     # Check that CALLS relationships were created for cross-file method calls
     # The format is: ensure_relationship_batch((from_type, from_property, from_qn), "CALLS")
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Count cross-file calls from MainClass methods to Helper methods
     helper_calls_count = 0

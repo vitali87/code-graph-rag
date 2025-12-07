@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -128,11 +128,7 @@ public class Car {
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check CALLS relationships between Car and Engine, Car and Passenger
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for composition/aggregation"
@@ -262,22 +258,14 @@ class Application {
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check that interface implementations are captured
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found"
     )
 
     # Check that method calls across service boundaries are captured
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for dependency injection"
@@ -521,11 +509,7 @@ public class UserController {
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check that cross-package method calls are captured
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No cross-package method call relationships found"
@@ -703,20 +687,12 @@ public class ShapeCalculator {
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check inheritance relationships
-    inherits_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "INHERITS"
-    ]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     assert len(inherits_relationships) > 0, "No inheritance relationships found"
 
     # Check method calls including polymorphic calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for method overriding"
@@ -855,11 +831,7 @@ public class StaticUsageExample {
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check static method calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No static method call relationships found"
 
@@ -997,11 +969,7 @@ public class OuterClass {
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
     # Check that inner class relationships are captured
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for inner classes"

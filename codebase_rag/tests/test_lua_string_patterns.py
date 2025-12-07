@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_string_pattern_matching(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -91,18 +91,10 @@ return pattern_utils
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined pattern functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 9, (
         f"Expected at least 9 DEFINES relationships, got {len(defines_rels)}"
@@ -222,18 +214,10 @@ return string_manip
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined string functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 13, (
         f"Expected at least 13 DEFINES relationships, got {len(defines_rels)}"
@@ -337,18 +321,10 @@ return complex_patterns
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined complex pattern functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 9, (
         f"Expected at least 9 DEFINES relationships, got {len(defines_rels)}"
@@ -433,25 +409,13 @@ return unicode_utils
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships for user-defined unicode functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Verify IMPORTS relationships (for utf8 module)
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     assert len(defines_rels) >= 7, (
         f"Expected at least 7 DEFINES relationships, got {len(defines_rels)}"

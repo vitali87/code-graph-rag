@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_file_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -54,19 +54,9 @@ io.write("Processing complete\n")
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
@@ -131,19 +121,9 @@ end
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
@@ -215,19 +195,9 @@ temp:close()
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
@@ -326,18 +296,10 @@ local person = deserialize_from_file("person.lua")
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions
     assert len(defines_rels) >= 3, (
@@ -413,19 +375,9 @@ write_binary_file("copy.png", binary_data.data)
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"

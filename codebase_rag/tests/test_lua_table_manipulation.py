@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_table_construction_and_access(
@@ -47,19 +47,9 @@ nested.level1.level2.new_value = "added"
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships (Module defines functions)
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 1, (
         f"Expected at least 1 DEFINES relationship, got {len(defines_rels)}"
@@ -115,19 +105,9 @@ end
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships (pairs, ipairs, next, print)
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
@@ -188,19 +168,9 @@ local text = table.concat(data, "-")
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
@@ -256,19 +226,9 @@ local max_numeric = table.maxn(test_table)
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
@@ -335,19 +295,9 @@ proxy.name = "test"
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
@@ -400,19 +350,9 @@ local deserialized = deserialize_from_string(serialized)
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
     # Should have function definitions
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"

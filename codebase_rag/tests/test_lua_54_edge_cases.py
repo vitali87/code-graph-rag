@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_lua_54_goto_labels(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -454,11 +454,7 @@ print("Decomposed length:", norm_results.decomposed_len)
             assert expected_fn in fn_qns, f"Missing function: {expected_fn}"
 
         # Check UTF-8 library calls were extracted
-        calls_rels = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == "CALLS"
-        ]
+        calls_rels = get_relationships(mock_ingestor, "CALLS")
 
         # Should have UTF-8 library function calls
         assert len(calls_rels) >= 5, f"Expected at least 5 CALLS, got {len(calls_rels)}"

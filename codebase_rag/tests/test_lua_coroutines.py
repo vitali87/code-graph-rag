@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_lua_basic_coroutines(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -63,18 +63,10 @@ end
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships (Module defines functions)
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships (Functions call other functions)
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have module defining functions
     assert len(defines_rels) >= 3, (
@@ -202,25 +194,13 @@ sched:run()
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Verify IMPORTS relationships (main imports scheduler, tasks)
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have multiple modules defining functions
     assert len(defines_rels) >= 8, (
@@ -350,18 +330,10 @@ end
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have async module defining functions
     assert len(defines_rels) >= 4, (
@@ -474,18 +446,10 @@ print("First 10 squares of even numbers:", table.concat(results, ", "))
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have generator module defining functions
     assert len(defines_rels) >= 5, (
@@ -607,25 +571,13 @@ end
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have multiple modules defining functions
     assert len(defines_rels) >= 7, (

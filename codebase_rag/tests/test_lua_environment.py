@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_global_environment_access(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -75,18 +75,10 @@ return env_manager
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 4, (
@@ -182,18 +174,10 @@ return env_utils
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 5, (
@@ -279,18 +263,10 @@ return M
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have module function definitions (M.* and env_helpers.*)
     assert len(defines_rels) >= 5, (
@@ -377,18 +353,10 @@ return code_executor
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 5, (
@@ -486,18 +454,10 @@ return global_manager
     run_updater(project, mock_ingestor)
 
     # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 7, (

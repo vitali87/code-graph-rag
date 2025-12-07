@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -108,11 +108,7 @@ public class Service {
     run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")
 
     # Check that CALLS relationships were created
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Count calls from Service to utils.Helper (should be 1)
     utils_calls = 0
@@ -227,11 +223,7 @@ public class Service {
     run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")
 
     # Check that CALLS relationships were created
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Count calls from Service to app.Helper (should be 1)
     app_calls = 0

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -38,11 +38,7 @@ def test_defines_method_relationship_is_created(
         ("Method", "qualified_name", method_qn),
     )
 
-    actual_calls = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES_METHOD"
-    ]
+    actual_calls = get_relationships(mock_ingestor, "DEFINES_METHOD")
 
     assert len(actual_calls) == 1
     assert actual_calls[0] == expected_call

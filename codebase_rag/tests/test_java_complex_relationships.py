@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -174,11 +174,7 @@ class ComputerService {
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check builder pattern method calls (lots of chaining)
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for builder pattern"
@@ -366,22 +362,14 @@ class NewsSystem {
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check interface implementations
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for observer pattern"
     )
 
     # Check observer notification calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for observer pattern"
@@ -620,33 +608,21 @@ class VehicleProduction {
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check inheritance relationships (abstract factory and concrete factories)
-    inherits_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "INHERITS"
-    ]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     assert len(inherits_relationships) > 0, (
         "No inheritance relationships found for factory pattern"
     )
 
     # Check interface implementations
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for factory pattern"
     )
 
     # Check factory method calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for factory pattern"
@@ -841,33 +817,21 @@ class CoffeeShop {
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check inheritance relationships (decorators extending base decorator)
-    inherits_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "INHERITS"
-    ]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     assert len(inherits_relationships) > 0, (
         "No inheritance relationships found for decorator pattern"
     )
 
     # Check interface implementations
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for decorator pattern"
     )
 
     # Check decorator chaining calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for decorator pattern"
@@ -1055,22 +1019,14 @@ class PaymentProcessor {
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check interface implementations (strategies implementing PaymentStrategy)
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for strategy pattern"
     )
 
     # Check strategy method calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for strategy pattern"
@@ -1349,22 +1305,14 @@ class SmartHome {
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
     # Check interface implementations (commands implementing Command)
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for command pattern"
     )
 
     # Check command execution calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for command pattern"

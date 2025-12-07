@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 
 def test_lua_function_discovery(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -72,9 +73,5 @@ local r = compute(4, 2)
     assert any(qn.endswith(s) for s in expected_suffixes for qn in fn_qns), fn_qns
 
     # Calls should include call to compute and inline anonymous function
-    call_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_rels = get_relationships(mock_ingestor, "CALLS")
     assert len(call_rels) >= 1

@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 
 def test_lua_class_pattern_basic(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -52,25 +52,13 @@ bob:greet()
     main_qn = f"{project.name}.main"
 
     # Verify DEFINES relationships (Module defines functions)
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
     # Verify CALLS relationships (Functions call other functions)
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
     # Should have module defining functions
     assert len(defines_rels) >= 3, (
