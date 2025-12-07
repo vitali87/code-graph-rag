@@ -124,9 +124,43 @@ class MemgraphIngestor:
                 cursor.close()
 
     def clean_database(self) -> None:
+        """Wipe the entire database. Use with caution."""
         logger.info("--- Cleaning database... ---")
         self._execute_query("MATCH (n) DETACH DELETE n;")
         logger.info("--- Database cleaned. ---")
+
+    def list_projects(self) -> list[str]:
+        """List all indexed projects in the database.
+
+        Returns:
+            List of project names
+        """
+        result = self.fetch_all("MATCH (p:Project) RETURN p.name AS name ORDER BY p.name")
+        return [r["name"] for r in result]
+
+    def delete_project(self, project_name: str) -> None:
+        """Delete all nodes associated with a specific project.
+
+        This is an atomic operation that removes the Project node and all nodes
+        whose qualified_name starts with the project name prefix, preserving
+        other projects.
+
+        Args:
+            project_name: Name of the project to delete
+        """
+        logger.info(f"--- Deleting project: {project_name} ---")
+
+        self._execute_query(
+            """
+            MATCH (n)
+            WHERE n.qualified_name STARTS WITH $prefix
+               OR (n:Project AND n.name = $project_name)
+            DETACH DELETE n
+            """,
+            {"prefix": f"{project_name}.", "project_name": project_name},
+        )
+
+        logger.info(f"--- Project {project_name} deleted. ---")
 
     def ensure_constraints(self) -> None:
         logger.info("Ensuring constraints...")
