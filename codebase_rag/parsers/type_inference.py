@@ -589,8 +589,10 @@ class TypeInferenceEngine:
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = safe_decode_text(func_node)
-                    if class_name and class_name[0].isupper():  # Simple heuristic
-                        return str(class_name)
+                    if (
+                        class_name and len(class_name) > 0 and class_name[0].isupper()
+                    ):  # Simple heuristic
+                        return class_name
 
             elif func_node and func_node.type == "attribute":
                 method_call_text = self._extract_full_method_call(func_node)
@@ -616,8 +618,10 @@ class TypeInferenceEngine:
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = safe_decode_text(func_node)
-                    if class_name and class_name[0].isupper():  # Simple heuristic
-                        return str(class_name)
+                    if (
+                        class_name and len(class_name) > 0 and class_name[0].isupper()
+                    ):  # Simple heuristic
+                        return class_name
 
         elif node.type == "list_comprehension":
             body_node = node.child_by_field_name("body")
