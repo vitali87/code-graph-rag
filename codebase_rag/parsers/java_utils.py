@@ -112,7 +112,7 @@ def extract_java_import_path(import_node: Node) -> dict[str, str]:
     else:
         parts = imported_path.split(".")
         if parts:
-            imported_name = parts[-1]  # Last part is class/method name
+            imported_name = parts[-1]
             imports[imported_name] = imported_path
 
     return imports
@@ -504,7 +504,7 @@ def get_java_visibility(node: Node) -> str:
         elif child.type == "private":
             return "private"
 
-    return "package"  # Default package visibility
+    return "package"
 
 
 def build_java_qualified_name(

@@ -240,7 +240,7 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                         ; Variable references
                         (identifier) @local.reference
                         """
-                    else:  # typescript
+                    else:
                         locals_patterns = """
                         ; Variable definitions (TypeScript has multiple declaration types)
                         (variable_declarator name: (identifier) @local.definition)

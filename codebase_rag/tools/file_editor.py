@@ -118,8 +118,7 @@ class FileEditor:
                                 "simple_name": func_name,
                                 "qualified_name": qualified_name,
                                 "parent_class": parent_class,
-                                "line_number": node.start_point[0]
-                                + 1,  # 1-based line numbers
+                                "line_number": node.start_point[0] + 1,
                             }
                         )
 
@@ -287,7 +286,7 @@ class FileEditor:
 
         print(f"\n{CYAN}Changes to {file_path}:{RESET}")
 
-        CONTEXT_LINES = 5  # Show 5 lines before/after changes
+        CONTEXT_LINES = 5
 
         for op, text in diffs:
             lines = text.splitlines(keepends=True)
@@ -313,7 +312,7 @@ class FileEditor:
                     for line in lines:
                         print(f"  {line.rstrip()}")
 
-        print()  # Extra newline for spacing
+        print()
 
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
@@ -324,7 +323,7 @@ class FileEditor:
         )
         try:
             full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root)  # Security check
+            full_path.relative_to(self.project_root)
 
             if not full_path.is_file():
                 logger.error(f"File not found: {file_path}")
@@ -384,7 +383,7 @@ class FileEditor:
         logger.info(f"[FileEditor] Attempting full file replacement: {file_path}")
         try:
             full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root)  # Security check
+            full_path.relative_to(self.project_root)
 
             if not full_path.is_file():
                 error_msg = f"File not found or is a directory: {file_path}"

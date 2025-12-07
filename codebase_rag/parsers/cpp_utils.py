@@ -50,21 +50,17 @@ def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
     """Build qualified name for C++ entities, handling namespaces properly."""
     module_parts = module_qn.split(".")
 
-    is_module_file = (
-        len(module_parts) >= 3  # At least project.dir.filename
-        and (
-            "interfaces" in module_parts
-            or "modules" in module_parts
-            or any(
-                part.endswith((".ixx", ".cppm", ".ccm", ".mxx"))
-                for part in module_parts
-            )
+    is_module_file = len(module_parts) >= 3 and (
+        "interfaces" in module_parts
+        or "modules" in module_parts
+        or any(
+            part.endswith((".ixx", ".cppm", ".ccm", ".mxx")) for part in module_parts
         )
     )
 
     if is_module_file:
-        project_name = module_parts[0]  # First part is always project name
-        filename = module_parts[-1]  # Last part is filename (without extension)
+        project_name = module_parts[0]
+        filename = module_parts[-1]
 
         return f"{project_name}.{filename}.{name}"
     else:
@@ -107,14 +103,14 @@ def is_cpp_exported(node: Node) -> bool:
 
             for child in parent.children:
                 if child == current:
-                    break  # We've reached our node
+                    break
                 if child.text:
                     child_text = safe_decode_text(child)
                     if child_text == "export" and child.type in [
-                        "export",  # Direct export node type
-                        "export_keyword",  # Export keyword node type
-                        "identifier",  # Sometimes export appears as identifier
-                        "primitive_type",  # Fallback for some grammars
+                        "export",
+                        "export_keyword",
+                        "identifier",
+                        "primitive_type",
                     ]:
                         found_export = True
 
@@ -151,7 +147,7 @@ def extract_operator_name(operator_node: Node) -> str:
     operator_text = safe_decode_with_fallback(operator_node).strip()
 
     if operator_text.startswith("operator"):
-        symbol = operator_text[8:].strip()  # Remove "operator" prefix
+        symbol = operator_text[8:].strip()
         return convert_operator_symbol_to_name(symbol)
 
     return "operator_unknown"

@@ -148,13 +148,13 @@ def analyze_js_return_expression(expr_node: Node, method_qn: str) -> str | None:
         if class_name:
             qn_parts = method_qn.split(".")
             if len(qn_parts) >= 2:
-                return ".".join(qn_parts[:-1])  # Everything except method name
+                return ".".join(qn_parts[:-1])
             return class_name
 
     elif expr_node.type == "this":
         qn_parts = method_qn.split(".")
         if len(qn_parts) >= 2:
-            return ".".join(qn_parts[:-1])  # Everything except method name
+            return ".".join(qn_parts[:-1])
 
     elif expr_node.type == "member_expression":
         object_node = expr_node.child_by_field_name("object")

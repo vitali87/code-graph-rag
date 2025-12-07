@@ -123,7 +123,7 @@ public class Main {
                         for i in range(len(parts) - 1):
                             if i + 1 < len(parts) and parts[i] == parts[i + 1]:
                                 return ".".join(parts[: i + 1])
-                        return ".".join(parts[:-1])  # fallback
+                        return ".".join(parts[:-1])
 
                     source_package = extract_package(source_qn)
                     target_package = extract_package(target_qn)

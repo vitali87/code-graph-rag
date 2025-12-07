@@ -38,7 +38,7 @@ class GoogleProvider(ModelProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        provider_type: str = "gla",  # "gla" or "vertex"
+        provider_type: str = "gla",
         project_id: str | None = None,
         region: str = "us-central1",
         service_account_file: str | None = None,

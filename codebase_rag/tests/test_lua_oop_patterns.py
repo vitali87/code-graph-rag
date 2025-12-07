@@ -231,9 +231,7 @@ local quotient = calc.divide(20, 5)
     assert f"{calc_qn}.Calculator.add" in fn_qns
     assert f"{calc_qn}.Calculator.subtract" in fn_qns
     assert f"{calc_qn}.Calculator.multiply" in fn_qns
-    assert (
-        f"{calc_qn}.Calculator.divide" in fn_qns
-    )  # Assignment pattern should now be detected
+    assert f"{calc_qn}.Calculator.divide" in fn_qns
 
     assert f"{calc_qn}.validate" in fn_qns
 

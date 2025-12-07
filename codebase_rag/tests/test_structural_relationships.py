@@ -617,7 +617,7 @@ def test_depends_on_external_package_json(
         ("typescript", "^5.0.0"),
         ("eslint", ">=8.0.0"),
         ("@types/react", "^18.0.0"),
-        ("react-dom", "^18.2.0"),  # peerDependency
+        ("react-dom", "^18.2.0"),
     ]
 
     dependency_relationships = [
@@ -661,7 +661,7 @@ def test_depends_on_external_cargo_toml(
         "serde",
         "tokio",
         "clap",
-        "criterion",  # dev-dependency
+        "criterion",
     ]
 
     dependency_relationships = [

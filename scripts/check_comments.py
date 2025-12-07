@@ -78,6 +78,7 @@ def check_file(filepath: str) -> list[str]:
                 and "noqa" not in comment_part
                 and "pyright" not in comment_part
                 and "ty:" not in comment_part
+                and "@@protoc" not in comment_part
             ):
                 errors.append(f"{filepath}:{i}: {comment_part.strip()[:60]}")
 

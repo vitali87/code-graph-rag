@@ -340,7 +340,7 @@ def build_rust_module_path(
             if impl_target:
                 path_parts.append(impl_target)
         elif include_classes and class_node_types and current.type in class_node_types:
-            if current.type != "impl_item":  # Skip impl_item as it's handled above
+            if current.type != "impl_item":
                 if name_node := current.child_by_field_name("name"):
                     text = name_node.text
                     if text is not None:

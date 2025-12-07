@@ -17,7 +17,7 @@ from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
 
 _STDLIB_CACHE: dict[str, dict[str, str]] = {}
-_CACHE_TTL = 3600  # Cache results for 1 hour
+_CACHE_TTL = 3600
 _CACHE_TIMESTAMPS: dict[str, float] = {}
 
 _EXTERNAL_TOOLS: dict[str, bool] = {}
@@ -259,7 +259,7 @@ class ImportProcessor:
                 ).is_file():
                     full_name = f"{self.project_name}.{module_name}"
                 else:
-                    full_name = module_name  # For stdlib or third-party
+                    full_name = module_name
 
                 self.import_mapping[module_qn][local_name] = full_name
                 logger.debug(f"  Import: {local_name} -> {full_name}")
@@ -353,7 +353,7 @@ class ImportProcessor:
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         """Resolve relative imports like '.module' or '..parent.module'."""
-        module_parts = module_qn.split(".")[1:]  # Remove project name
+        module_parts = module_qn.split(".")[1:]
 
         dots = 0
         module_name = ""
@@ -409,17 +409,15 @@ class ImportProcessor:
         if not import_path.startswith("."):
             return import_path.replace("/", ".")
 
-        current_parts = current_module.split(".")[
-            :-1
-        ]  # Start from the current directory
+        current_parts = current_module.split(".")[:-1]
         import_parts = import_path.split("/")
 
         for part in import_parts:
             if part == ".":
-                continue  # Stays in the current directory
+                continue
             if part == "..":
                 if current_parts:
-                    current_parts.pop()  # Go up one level
+                    current_parts.pop()
             elif part:
                 current_parts.append(part)
 
@@ -576,7 +574,7 @@ class ImportProcessor:
                 else:
                     parts = imported_path.split(".")
                     if parts:
-                        imported_name = parts[-1]  # Last part is class/method name
+                        imported_name = parts[-1]
                         if is_static:
                             self.import_mapping[module_qn][imported_name] = (
                                 imported_path
@@ -966,7 +964,7 @@ class ImportProcessor:
             if entity_type in ("Class", "Function", "Method"):
                 parts = full_qualified_name.rsplit(".", 1)
                 if len(parts) == 2:
-                    return parts[0]  # Return the module path
+                    return parts[0]
 
         if language == "python":
             return self._extract_python_stdlib_path(full_qualified_name)
@@ -1104,7 +1102,7 @@ class ImportProcessor:
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Go stdlib module path using compile-time analysis."""
-        parts = full_qualified_name.split("/")  # Go uses / for package paths
+        parts = full_qualified_name.split("/")
         if len(parts) >= 2:
             try:
                 import json
@@ -1202,7 +1200,7 @@ func main() {
                 """
 
                 env = os.environ.copy()
-                env["PACKAGE_PATH"] = package_dir  # Use resolved directory path
+                env["PACKAGE_PATH"] = package_dir
                 env["ENTITY_NAME"] = entity_name
 
                 with subprocess.Popen(
@@ -1236,23 +1234,23 @@ func main() {
 
     def _extract_rust_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Rust stdlib module path using compile-time analysis."""
-        parts = full_qualified_name.split("::")  # Rust uses :: for namespacing
+        parts = full_qualified_name.split("::")
         if len(parts) >= 2:
             entity_name = parts[-1]
 
             if (
-                entity_name[0].isupper()  # PascalCase (types)
-                or entity_name.isupper()  # SCREAMING_SNAKE_CASE (constants)
+                entity_name[0].isupper()
+                or entity_name.isupper()
                 or "_" not in entity_name
                 and entity_name.islower()
-            ):  # Simple functions
+            ):
                 return "::".join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_cpp_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract C++ stdlib module path using header analysis."""
-        parts = full_qualified_name.split("::")  # C++ uses :: for namespacing
+        parts = full_qualified_name.split("::")
         if len(parts) >= 2:
             namespace = parts[0]
             if namespace == "std":
@@ -1309,11 +1307,11 @@ int main() {{
 
                 entity_name = parts[-1]
                 if (
-                    entity_name[0].isupper()  # Types usually start with uppercase
+                    entity_name[0].isupper()
                     or entity_name.startswith("is_")
                     or entity_name.startswith("has_")
                     or entity_name
-                    in {  # Common std library types/functions
+                    in {
                         "vector",
                         "string",
                         "map",
@@ -1334,7 +1332,7 @@ int main() {{
                         "transform",
                         "accumulate",
                     }
-                ):  # Type traits and common stdlib entities
+                ):
                     return "::".join(parts[:-1])
 
         return full_qualified_name
@@ -1458,13 +1456,13 @@ public class StdlibCheck {
 
             entity_name = parts[-1]
             if (
-                entity_name[0].isupper()  # Classes start with uppercase
+                entity_name[0].isupper()
                 or entity_name.endswith("Exception")
                 or entity_name.endswith("Error")
                 or entity_name.endswith("Interface")
                 or entity_name.endswith("Builder")
                 or entity_name
-                in {  # Common Java stdlib classes
+                in {
                     "String",
                     "Object",
                     "Integer",
@@ -1556,10 +1554,14 @@ end
                 pass
 
             entity_name = parts[-1]
-            if (
-                entity_name[0].isupper()  # Modules/tables often start uppercase
-                or entity_name in {"string", "table", "math", "io", "os", "debug"}
-            ):  # Standard modules
+            if entity_name[0].isupper() or entity_name in {
+                "string",
+                "table",
+                "math",
+                "io",
+                "os",
+                "debug",
+            }:
                 return ".".join(parts[:-1])
 
         return full_qualified_name

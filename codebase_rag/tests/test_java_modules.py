@@ -170,7 +170,7 @@ module com.example.service {
 
     run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
-    assert True  # Basic verification that parsing completed without errors
+    assert True
 
 
 def test_service_provider_interface(

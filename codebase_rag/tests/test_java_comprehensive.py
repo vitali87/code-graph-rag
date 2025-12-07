@@ -249,10 +249,10 @@ public class AnnotatedClass {
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.AnnotatedClass",
-        f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.MyAnnotation",  # Annotations are processed as classes
+        f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.MyAnnotation",
     }
 
-    expected_interfaces: set[str] = set()  # No interfaces in this test
+    expected_interfaces: set[str] = set()
 
     expected_enums = {
         f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.Color",

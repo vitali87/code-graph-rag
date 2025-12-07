@@ -122,11 +122,7 @@ def test_imported_class_method_calls_are_detected(
 
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    method_calls = [
-        call
-        for call in actual_calls
-        if call.args[2][0] == "Method"  # callee label is "Method"
-    ]
+    method_calls = [call for call in actual_calls if call.args[2][0] == "Method"]
 
     expected_method_calls = [
         (
@@ -155,7 +151,7 @@ def test_imported_class_method_calls_are_detected(
 
     found_method_calls = set()
     for call in method_calls:
-        caller_qn = call.args[0][2]  # qualified_name from (label, key, qualified_name)
+        caller_qn = call.args[0][2]
         callee_qn = call.args[2][2]
         found_method_calls.add((caller_qn, callee_qn))
 

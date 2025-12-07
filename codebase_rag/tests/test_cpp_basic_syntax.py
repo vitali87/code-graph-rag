@@ -159,7 +159,7 @@ void demonstrateClasses() {
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
     expected_methods = [
-        f"{project_name}.basic_classes.Person.Person",  # constructor
+        f"{project_name}.basic_classes.Person.Person",
         f"{project_name}.basic_classes.Person.setName",
         f"{project_name}.basic_classes.Person.getName",
         f"{project_name}.basic_classes.Person.greet",
@@ -292,7 +292,7 @@ void demonstrateFunctions() {
         f"{project_name}.basic_functions.multiply",
         f"{project_name}.basic_functions.printMessage",
         f"{project_name}.basic_functions.greet",
-        f"{project_name}.basic_functions.max",  # overloaded functions
+        f"{project_name}.basic_functions.max",
         f"{project_name}.basic_functions.minimum",
         f"{project_name}.basic_functions.createRange",
         f"{project_name}.basic_functions.demonstrateFunctions",

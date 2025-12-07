@@ -111,7 +111,7 @@ class TestSurgicalReplaceBasic:
             "Successfully replaced code in sample.py"
         )
 
-        target = 'print("Hello, World!")'  # Exact without indentation
+        target = 'print("Hello, World!")'
         replacement = 'print("Goodbye!")'
 
         await mcp_registry.surgical_replace_code("sample.py", target, replacement)

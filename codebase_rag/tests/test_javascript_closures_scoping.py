@@ -227,8 +227,7 @@ const varResults = varFunctions.map(fn => fn());
         call
         for call in function_calls
         if "basic_closures" in call[0][1]["qualified_name"]
-        and len(call[0][1]["qualified_name"].split("."))
-        > 3  # More than project.module.function means nested
+        and len(call[0][1]["qualified_name"].split(".")) > 3
     ]
 
     assert len(nested_functions) >= 5, (

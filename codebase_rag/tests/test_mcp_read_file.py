@@ -24,7 +24,7 @@ def temp_project_root(tmp_path: Path) -> Path:
 def sample_file(temp_project_root: Path) -> Path:
     """Create a sample file with known content."""
     file_path = temp_project_root / "test_file.txt"
-    content = "\n".join([f"Line {i}" for i in range(1, 101)])  # 100 lines
+    content = "\n".join([f"Line {i}" for i in range(1, 101)])
     file_path.write_text(content, encoding="utf-8")
     return file_path
 

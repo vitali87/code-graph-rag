@@ -160,7 +160,7 @@ class TestProviderConfiguration:
         """Test batch size validation and resolution."""
         config = AppConfig()
 
-        assert config.resolve_batch_size(None) == 1000  # Default from config
+        assert config.resolve_batch_size(None) == 1000
         assert config.resolve_batch_size(5000) == 5000
         assert config.resolve_batch_size(1) == 1
 

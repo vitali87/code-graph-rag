@@ -1009,4 +1009,4 @@ def test_comprehensive_modern_cpp_complete() -> None:
     print("   - Real-world usage patterns and integration examples")
     print("   - RAII patterns with lambda captures")
     print("   - State machines and factory patterns with modern C++")
-    assert True  # Always passes to indicate completion
+    assert True
