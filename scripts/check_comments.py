@@ -2,25 +2,60 @@
 import sys
 
 
+def find_comment_start(line: str) -> int | None:
+    """Find the index where a real comment starts, or None if no comment.
+
+    Properly handles quotes inside strings by tracking string state.
+    """
+    in_string = None  # (H) None, '"', or "'"
+    i = 0
+    while i < len(line):
+        char = line[i]
+
+        # (H) Handle escape sequences
+        if char == "\\" and in_string and i + 1 < len(line):
+            i += 2
+            continue
+
+        # (H) Handle string delimiters
+        if char in ('"', "'"):
+            if in_string is None:
+                in_string = char
+            elif in_string == char:
+                in_string = None
+            i += 1
+            continue
+
+        # (H) Hash outside of string is a comment
+        if char == "#" and in_string is None:
+            return i
+
+        i += 1
+
+    return None
+
+
 def check_file(filepath: str) -> list[str]:
     errors = []
 
     with open(filepath) as f:
         lines = f.readlines()
 
-    in_string = False
+    in_multiline_string = False
     found_first_code = False
 
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
 
+        # (H) Track multiline strings
         triple_quotes = line.count('"""') + line.count("'''")
         if triple_quotes % 2 == 1:
-            in_string = not in_string
+            in_multiline_string = not in_multiline_string
 
-        if in_string:
+        if in_multiline_string:
             continue
 
+        # (H) Track first code line
         if not found_first_code:
             if (
                 stripped
@@ -30,19 +65,21 @@ def check_file(filepath: str) -> list[str]:
             ):
                 found_first_code = True
 
-        hash_idx = line.find("#")
-        if hash_idx != -1 and found_first_code:
-            pre_hash = line[:hash_idx]
-            if pre_hash.count('"') % 2 == 0 and pre_hash.count("'") % 2 == 0:
-                comment_part = line[hash_idx:]
-                if (
-                    "(H)" not in comment_part
-                    and "type:" not in comment_part
-                    and "noqa" not in comment_part
-                    and "pyright" not in comment_part
-                    and "ty:" not in comment_part
-                ):
-                    errors.append(f"{filepath}:{i}: {comment_part.strip()[:60]}")
+        if not found_first_code:
+            continue
+
+        # (H) Find comment using proper string parsing
+        comment_idx = find_comment_start(line)
+        if comment_idx is not None:
+            comment_part = line[comment_idx:]
+            if (
+                "(H)" not in comment_part
+                and "type:" not in comment_part
+                and "noqa" not in comment_part
+                and "pyright" not in comment_part
+                and "ty:" not in comment_part
+            ):
+                errors.append(f"{filepath}:{i}: {comment_part.strip()[:60]}")
 
     return errors
 
