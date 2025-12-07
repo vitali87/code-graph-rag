@@ -30,15 +30,19 @@ def check_file(filepath: str) -> list[str]:
             ):
                 found_first_code = True
 
-        if stripped.startswith("#") and found_first_code:
-            if (
-                "(H)" not in stripped
-                and "type:" not in stripped
-                and "noqa" not in stripped
-                and "pyright" not in stripped
-                and "ty:" not in stripped
-            ):
-                errors.append(f"{filepath}:{i}: {stripped[:60]}")
+        hash_idx = line.find("#")
+        if hash_idx != -1 and found_first_code:
+            pre_hash = line[:hash_idx]
+            if pre_hash.count('"') % 2 == 0 and pre_hash.count("'") % 2 == 0:
+                comment_part = line[hash_idx:]
+                if (
+                    "(H)" not in comment_part
+                    and "type:" not in comment_part
+                    and "noqa" not in comment_part
+                    and "pyright" not in comment_part
+                    and "ty:" not in comment_part
+                ):
+                    errors.append(f"{filepath}:{i}: {comment_part.strip()[:60]}")
 
     return errors
 
