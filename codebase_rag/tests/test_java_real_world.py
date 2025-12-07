@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -153,9 +153,7 @@ public class DatabaseConnection {
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     # Verify Spring components were detected
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_real_world_project.name
 
     expected_classes = {
@@ -1315,9 +1313,7 @@ public final class MathUtils {
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_real_world_project.name
 
     expected_classes = {

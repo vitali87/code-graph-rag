@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -321,9 +321,7 @@ void demonstrateDesignatedInitializers() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
@@ -332,9 +330,7 @@ void demonstrateDesignatedInitializers() {
     )
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
@@ -676,9 +672,7 @@ void demonstrateConsteval() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions

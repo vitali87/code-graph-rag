@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -178,9 +178,7 @@ console.log(manager instanceof Person);    // true
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes (constructors and prototype methods)
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check constructor functions
     expected_constructors = [
@@ -416,9 +414,7 @@ myTask.outputTaskDetails();
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check factory functions
     expected_functions = [
@@ -639,9 +635,7 @@ square.scale(2);
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check constructor hierarchy
     expected_constructors = [
@@ -950,9 +944,7 @@ console.log(entity.validate());
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check mixin functions
     expected_functions = [
@@ -1218,9 +1210,7 @@ for (const value of generator) {
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check edge case constructors
     expected_constructors = [

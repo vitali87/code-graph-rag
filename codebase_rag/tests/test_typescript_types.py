@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -125,9 +125,7 @@ const total = sum(1, 2, 3, 4, 5);
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
     for expected_qn in expected_functions:
@@ -355,9 +353,7 @@ interface PaymentMethod {
         f"{project_name}.interfaces_types.validateAdmin",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify functions using interfaces were created
     missing_functions = set(expected_functions) - created_functions
@@ -623,9 +619,7 @@ const errorResult = createError(new Error("Failed"));
         f"{project_name}.generics.fetchData",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify generic functions were created
     found_generic_functions = [
@@ -643,9 +637,7 @@ const errorResult = createError(new Error("Failed"));
         f"{project_name}.generics.StringContainer",
     ]
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify generic classes were created
     found_generic_classes = [
@@ -872,9 +864,7 @@ const partial = deepPartial(requiredUser);
         f"{project_name}.utility_types.omit",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify utility type functions were created
     found_utility_functions = [
@@ -889,9 +879,7 @@ const partial = deepPartial(requiredUser);
         f"{project_name}.utility_types.UserService",
     ]
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify utility type classes were created
     found_utility_classes = [

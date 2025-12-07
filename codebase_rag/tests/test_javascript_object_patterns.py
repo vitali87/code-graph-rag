@@ -4,7 +4,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -330,9 +334,7 @@ console.log(secureObject[Symbol.for('public')]); // shared
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for functions from object literals
     expected_functions = [
@@ -759,9 +761,7 @@ console.log(users.map(u => u.getProfile()));
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for factory functions
     expected_factories = [
@@ -1143,9 +1143,7 @@ console.log(Email.isValid('test@example.com')); // true
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes (constructors are functions)
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for constructor functions
     expected_constructors = [
@@ -1573,9 +1571,7 @@ console.log('Cloned:', cloned.toJSON());
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Check for composition factory functions
     expected_composition_functions = [

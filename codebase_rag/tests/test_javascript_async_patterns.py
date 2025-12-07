@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -282,9 +282,7 @@ function handleProfileError(error) {
         f"{project_name}.promise_patterns.retry",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify Promise functions were created
     found_promise_functions = [
@@ -651,9 +649,7 @@ function delay(ms) {
         f"{project_name}.async_await_patterns.robustApiCall",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify async functions were created
     found_async_functions = [
@@ -668,9 +664,7 @@ function delay(ms) {
         f"{project_name}.async_await_patterns.UserService",
     ]
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify classes with async methods were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
@@ -1024,9 +1018,7 @@ fetchUserPromise(789)
         f"{project_name}.callback_patterns.mapWithCallback",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify callback functions were created
     found_callback_functions = [
@@ -1041,9 +1033,7 @@ fetchUserPromise(789)
         f"{project_name}.callback_patterns.EventEmitter",
     ]
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify EventEmitter class was created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
@@ -1366,9 +1356,7 @@ consumeAsyncGenerator();
         f"{project_name}.generator_patterns.depthFirstTraversal",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify generator functions were created
     found_generator_functions = [

@@ -6,7 +6,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names
+from codebase_rag.tests.conftest import get_node_names, get_nodes, get_qualified_names
 
 
 @pytest.fixture
@@ -248,9 +248,7 @@ def test_context_manager_function_definitions(
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
     for expected_qn in expected_functions:
@@ -380,15 +378,11 @@ def test_custom_context_manager_class(
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     assert expected_class in created_classes, f"Missing class: {expected_class}"
 
     # Get all Method node creation calls
-    method_calls = get_nodes(mock_ingestor, "Method")
-
-    created_methods = get_qualified_names(method_calls)
+    created_methods = get_node_names(mock_ingestor, "Method")
 
     # Verify all expected methods were created
     for expected_method in expected_methods:
@@ -415,9 +409,7 @@ def test_context_manager_in_control_structures(
     function_qn = f"{project_name}.context_managers.context_in_loops_and_conditions"
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
     assert function_qn in created_functions, f"Missing function: {function_qn}"
 
     # Check that calls within the context managers are tracked
@@ -461,9 +453,7 @@ def test_async_context_manager_parsing(
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify async functions were created
     for expected_qn in expected_functions:
@@ -493,7 +483,6 @@ def test_decorated_context_manager_function(
 
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
-
     created_functions = get_qualified_names(function_calls)
     assert expected_function in created_functions, (
         f"Missing decorated context manager function: {expected_function}"

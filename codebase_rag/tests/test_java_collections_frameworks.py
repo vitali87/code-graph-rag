@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -174,9 +174,7 @@ public class BasicCollections {
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -770,9 +768,7 @@ class SimpleHashMap<K, V> implements Map<K, V> {
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1015,9 +1011,7 @@ class FibonacciIterable implements Iterable<Long> {
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1257,9 +1251,7 @@ class Person implements Comparable<Person> {
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1788,9 +1780,7 @@ class Employee {
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -2074,9 +2064,7 @@ class DelayedTask implements Delayed {
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {

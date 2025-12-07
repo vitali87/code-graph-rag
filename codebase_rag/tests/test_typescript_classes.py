@@ -4,7 +4,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -276,9 +280,7 @@ console.log(newRepo.name); // OK
     project_name = typescript_classes_project.name
 
     # Get all Class nodes
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Check for classes with access modifiers
     expected_classes = [
@@ -625,9 +627,7 @@ console.log(car.start());
     project_name = typescript_classes_project.name
 
     # Get all Class nodes
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Check for abstract classes and their implementations
     expected_classes = [
@@ -926,9 +926,7 @@ service.process();
     project_name = typescript_classes_project.name
 
     # Get all Class nodes
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Check for classes with parameter properties
     expected_classes = [

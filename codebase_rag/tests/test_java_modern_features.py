@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -116,9 +116,7 @@ public record Employee(
 
     # Verify records were detected as classes (records are special classes)
     project_name = java_modern_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_records = {
         f"{project_name}.src.main.java.com.example.Records.Point",
@@ -568,9 +566,7 @@ public class TextBlocks {
 
     # Verify the class was detected despite text blocks
     project_name = java_modern_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.TextBlocks.TextBlocks",
@@ -700,9 +696,7 @@ public class VarKeyword {
 
     # Verify the class was detected despite var usage
     project_name = java_modern_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.VarKeyword.VarKeyword",
@@ -839,9 +833,7 @@ public class InstanceofPatterns {
 
     # Verify the class was detected
     project_name = java_modern_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.InstanceofPatterns.InstanceofPatterns",

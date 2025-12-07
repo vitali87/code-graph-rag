@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -112,9 +117,7 @@ const total = sum(1, 2, 3, 4, 5);
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
     for expected_qn in expected_functions:
@@ -365,9 +368,7 @@ async function orchestrate() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify async functions were created
     for expected_qn in expected_async_functions:
@@ -662,7 +663,6 @@ const memoizedAdd = memoize(add5);
 
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
-
     created_functions = get_qualified_names(function_calls)
 
     # Verify higher-order functions were created

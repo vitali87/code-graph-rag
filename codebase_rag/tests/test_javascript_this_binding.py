@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -435,9 +440,7 @@ console.log(result2); // [15, 20]
     )
 
     # Check function definitions
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
     project_name = javascript_this_project.name
 
     expected_functions = [

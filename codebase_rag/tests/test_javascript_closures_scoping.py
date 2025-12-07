@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -215,7 +220,6 @@ const varResults = varFunctions.map(fn => fn());
 
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
-
     created_functions = get_qualified_names(function_calls)
 
     # Verify closure functions were created
@@ -502,7 +506,6 @@ tryCatchScope();
     ]
 
     function_calls = get_nodes(mock_ingestor, "Function")
-
     created_functions = get_qualified_names(function_calls)
 
     # Verify scoping functions were created
@@ -781,9 +784,7 @@ const nestedResult = nested();
         f"{project_name}.hoisting_behavior.hoistingEdgeCases",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify hoisting functions were created
     found_hoisting_functions = [

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -133,9 +133,7 @@ fn demonstrate_functions() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify all expected functions were created
     missing_functions = set(expected_functions) - created_functions
@@ -322,9 +320,7 @@ fn demonstrate_types() {
     ]
 
     # Get all Class node creation calls (structs/enums are treated as classes)
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify all expected types were created
     missing_classes = set(expected_classes) - created_classes
@@ -343,9 +339,7 @@ fn demonstrate_types() {
     ]
 
     # Get all Method node creation calls
-    method_calls = get_nodes(mock_ingestor, "Method")
-
-    created_methods = get_qualified_names(method_calls)
+    created_methods = get_node_names(mock_ingestor, "Method")
 
     # Verify expected methods were created
     missing_methods = set(expected_methods) - created_methods
@@ -516,9 +510,7 @@ fn demonstrate_traits() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify all expected traits and structs were created
     all_expected = expected_traits + expected_structs
@@ -539,9 +531,7 @@ fn demonstrate_traits() {
     ]
 
     # Get all Method node creation calls
-    method_calls = get_nodes(mock_ingestor, "Method")
-
-    created_methods = get_qualified_names(method_calls)
+    created_methods = get_node_names(mock_ingestor, "Method")
 
     # Verify some expected trait methods were created
     found_methods = set(expected_methods) & created_methods
@@ -693,9 +683,7 @@ pub fn multiply(a: i32, b: i32) -> i32 {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify some expected functions were created
     found_functions = set(expected_functions) & created_functions
@@ -711,9 +699,7 @@ pub fn multiply(a: i32, b: i32) -> i32 {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify some expected structs were created
     found_structs = set(expected_structs) & created_classes
@@ -891,9 +877,7 @@ fn demonstrate_generics() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify generic structs were created
     found_structs = set(expected_structs) & created_classes
@@ -912,9 +896,7 @@ fn demonstrate_generics() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify generic functions were created
     found_functions = set(expected_functions) & created_functions
@@ -1107,9 +1089,7 @@ fn demonstrate_patterns() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify types were created
     found_types = set(expected_types) & created_classes
@@ -1131,9 +1111,7 @@ fn demonstrate_patterns() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify pattern matching functions were created
     found_functions = set(expected_functions) & created_functions
@@ -1353,9 +1331,7 @@ fn demonstrate_function_usage() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify closure-related functions were created
     found_functions = set(expected_functions) & created_functions
@@ -1592,9 +1568,7 @@ mod tests {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify some macro-related functions were created
     found_functions = set(expected_functions) & created_functions
@@ -1611,9 +1585,7 @@ mod tests {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify macro-generated structs were created
     found_structs = set(expected_structs) & created_classes
@@ -1869,9 +1841,7 @@ impl Debug for CustomStruct {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify some import-using functions were created
     found_functions = set(expected_functions) & created_functions
@@ -2125,9 +2095,7 @@ fn demonstrate_error_handling() {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify error handling functions were created
     found_functions = set(expected_functions) & created_functions
@@ -2141,9 +2109,7 @@ fn demonstrate_error_handling() {
     ]
 
     # Get all Class node creation calls (enums are treated as classes)
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify custom error enum was created
     found_enums = set(expected_enums) & created_classes
@@ -2521,9 +2487,7 @@ fn demonstrate_comprehensive_rust() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify comprehensive types were created
     found_types = set(expected_types) & created_classes
@@ -3260,9 +3224,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify advanced edge case functions were created
     found_functions = set(expected_functions) & created_functions
@@ -3301,9 +3263,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
     ]
 
     # Get all Class node creation calls (structs/enums/traits are treated as classes)
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify advanced types were created
     found_types = set(expected_types) & created_classes

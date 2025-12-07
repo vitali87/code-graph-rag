@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -170,9 +170,7 @@ try {
     ]
 
     # Get all Function node creation calls
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify functions with destructuring parameters were created
     missing_functions = set(expected_functions) - created_functions
@@ -331,9 +329,7 @@ const result = processArray([10, 20, 30, 40]);
         f"{project_name}.array_destructuring.processData",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify functions with array destructuring were created
     missing_functions = set(expected_functions) - created_functions
@@ -546,9 +542,7 @@ async function updateUser(id, data) { return { id, ...data }; }
         f"{project_name}.parameter_destructuring.processFile",
     ]
 
-    function_calls = get_nodes(mock_ingestor, "Function")
-
-    created_functions = get_qualified_names(function_calls)
+    created_functions = get_node_names(mock_ingestor, "Function")
 
     # Verify functions with parameter destructuring were created
     missing_functions = set(expected_functions) - created_functions
@@ -561,9 +555,7 @@ async function updateUser(id, data) { return { id, ...data }; }
         f"{project_name}.parameter_destructuring.DataProcessor",
     ]
 
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify classes with destructuring methods were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]

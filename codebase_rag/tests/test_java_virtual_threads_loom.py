@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -223,9 +223,7 @@ public class VirtualThreadBasics {
 
     # Verify the class was detected
     project_name = java_loom_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.VirtualThreads.VirtualThreadBasics",
@@ -498,9 +496,7 @@ public class StructuredConcurrencyExamples {
 
     # Verify the classes were detected
     project_name = java_loom_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.StructuredConcurrency.StructuredConcurrencyExamples",
@@ -755,9 +751,7 @@ public class ScopedValuesExamples {
 
     # Verify the classes were detected
     project_name = java_loom_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.ScopedValues.ScopedValuesExamples",

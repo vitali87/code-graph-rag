@@ -5,7 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names
+from codebase_rag.tests.conftest import get_node_names
 
 
 @pytest.fixture
@@ -466,9 +466,7 @@ public class QualifiedNames {
 
     # For this test, we mainly verify that parsing doesn't fail
     # and that the class and methods are detected even without imports
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_imports_project.name
     expected_class = (
         f"{project_name}.src.main.java.com.example.QualifiedNames.QualifiedNames"

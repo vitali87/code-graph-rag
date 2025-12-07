@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -171,9 +171,7 @@ public class OuterClass {
 
     # Verify outer class was detected (inner classes may not be fully detected by tree-sitter)
     project_name = java_nested_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # At minimum, the outer class should be detected
     expected_outer_class = {
@@ -505,9 +503,7 @@ public class AnonymousComplex {
 
     # Verify the main class was detected
     project_name = java_nested_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.AnonymousComplex.AnonymousComplex",
@@ -818,9 +814,7 @@ public class LocalClasses {
 
     # Verify the main class was detected
     project_name = java_nested_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.LocalClasses.LocalClasses",
@@ -1142,9 +1136,7 @@ public class LambdaEdgeCases {
 
     # Verify the main class was detected
     project_name = java_nested_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.LambdaEdgeCases.LambdaEdgeCases",
@@ -1492,9 +1484,7 @@ public class ComplexObject {
 
     # Verify the main class was detected
     project_name = java_nested_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.BuilderPattern.ComplexObject",
@@ -1952,9 +1942,7 @@ public abstract class Expression {
 
     # Verify the main class was detected
     project_name = java_nested_project.name
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.VisitorPattern.Expression",

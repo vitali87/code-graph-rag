@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -292,9 +292,7 @@ void demonstrateArithmeticOperators() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
@@ -585,9 +583,7 @@ void demonstrateComparisonOperators() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
@@ -856,9 +852,7 @@ void demonstrateStreamAndFunctionOperators() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
@@ -1262,9 +1256,7 @@ void demonstrateSubscriptAndIncrementOperators() {
     ]
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]

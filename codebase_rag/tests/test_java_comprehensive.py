@@ -3,7 +3,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -145,9 +150,7 @@ public abstract class Shape {
     )
 
     # Get all Method node creation calls
-    method_calls = get_nodes(mock_ingestor, "Method")
-
-    created_methods = get_qualified_names(method_calls)
+    created_methods = get_node_names(mock_ingestor, "Method")
 
     # Expected method qualified names (constructors and methods with parameter signatures)
     expected_methods = {
@@ -463,9 +466,7 @@ public abstract class AbstractService {
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Expected class qualified names
     project_name = java_project.name
@@ -561,9 +562,7 @@ public class OuterClass {
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Expected class qualified names
     project_name = java_project.name
@@ -811,9 +810,7 @@ public class ExceptionHandler {
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
-    class_calls = get_nodes(mock_ingestor, "Class")
-
-    created_classes = get_qualified_names(class_calls)
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     # Expected class qualified names
     project_name = java_project.name
