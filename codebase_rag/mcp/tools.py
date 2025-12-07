@@ -288,7 +288,7 @@ class MCPToolsRegistry:
             project_name: Name of the project to delete
 
         Returns:
-            Dictionary with deletion status and count of deleted nodes
+            Dictionary with deletion status
         """
         logger.info(f"[MCP] Deleting project: {project_name}")
         try:
@@ -298,19 +298,17 @@ class MCPToolsRegistry:
                 return {
                     "success": False,
                     "error": f"Project '{project_name}' not found. Available projects: {projects}",
-                    "deleted_nodes": 0,
                 }
 
-            deleted_count = self.ingestor.delete_project(project_name)
+            self.ingestor.delete_project(project_name)
             return {
                 "success": True,
                 "project": project_name,
-                "deleted_nodes": deleted_count,
-                "message": f"Successfully deleted project '{project_name}' ({deleted_count} nodes removed).",
+                "message": f"Successfully deleted project '{project_name}'.",
             }
         except Exception as e:
             logger.error(f"[MCP] Error deleting project: {e}")
-            return {"success": False, "error": str(e), "deleted_nodes": 0}
+            return {"success": False, "error": str(e)}
 
     async def wipe_database(self, confirm: bool) -> str:
         """Completely wipe the entire database.
@@ -350,9 +348,7 @@ class MCPToolsRegistry:
         try:
             # Delete only the current project's data (preserves other projects)
             logger.info(f"[MCP] Clearing existing data for project '{project_name}'...")
-            deleted_count = self.ingestor.delete_project(project_name)
-            if deleted_count > 0:
-                logger.info(f"[MCP] Removed {deleted_count} existing nodes for '{project_name}'.")
+            self.ingestor.delete_project(project_name)
 
             updater = GraphUpdater(
                 ingestor=self.ingestor,
