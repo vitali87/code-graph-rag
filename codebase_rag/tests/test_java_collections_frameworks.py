@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -176,7 +176,7 @@ public class BasicCollections {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -772,7 +772,7 @@ class SimpleHashMap<K, V> implements Map<K, V> {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1017,7 +1017,7 @@ class FibonacciIterable implements Iterable<Long> {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1259,7 +1259,7 @@ class Person implements Comparable<Person> {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1499,8 +1499,8 @@ enum Priority {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_enums = get_qualified_names(enum_calls)
 
     project_name = java_collections_project.name
     expected_classes = {
@@ -1790,7 +1790,7 @@ class Employee {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -2076,7 +2076,7 @@ class DelayedTask implements Delayed {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_collections_project.name
 
     expected_classes = {

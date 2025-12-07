@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -484,8 +484,8 @@ public class ConsoleLoggingProvider implements LoggingProvider {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Expected interfaces
     expected_interfaces = {
@@ -772,7 +772,7 @@ public class ModuleConfiguration {
     project_name = java_modules_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.core.module.com.example.core.ModuleConfiguration.ModuleConfiguration",
@@ -1328,8 +1328,8 @@ class UserEntity {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    get_qualified_names(interface_calls)
 
     # Verify we have classes from both API and Service modules
     api_classes = [cls for cls in created_classes if "api.module" in cls]

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -155,7 +155,7 @@ public class DatabaseConnection {
     # Verify Spring components were detected
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_real_world_project.name
 
     expected_classes = {
@@ -345,8 +345,8 @@ class WindowsTextField implements TextField {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     project_name = java_real_world_project.name
     expected_classes = {
@@ -572,8 +572,8 @@ class PaymentContext {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     project_name = java_real_world_project.name
     expected_classes = {
@@ -830,8 +830,8 @@ class CustomerRepository {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     project_name = java_real_world_project.name
     expected_classes = {
@@ -1028,8 +1028,8 @@ class SmtpEmailService implements EmailService {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     project_name = java_real_world_project.name
     expected_classes = {
@@ -1317,7 +1317,7 @@ public final class MathUtils {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_real_world_project.name
 
     expected_classes = {

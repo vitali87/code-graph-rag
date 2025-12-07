@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -606,7 +606,7 @@ void testReferenceCollapsing() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
@@ -1012,7 +1012,7 @@ void demonstrateAlgorithmOptimizations() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ class ServiceFactory {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # These should be correctly nested object methods
     expected_nested_functions = [
@@ -198,7 +198,7 @@ function DatabaseService(connectionString) {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # These should be the CORRECT qualified names for arrow functions in constructors
     # Note: The fix correctly nests arrow functions within their parent function/class context
@@ -312,7 +312,7 @@ class ServiceFactory {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify that ES6 export functions are correctly nested (not at module level)
     incorrect_module_level_names = [
@@ -406,7 +406,7 @@ class ModuleFactory {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # These should be the CORRECT qualified names for nested CommonJS export functions
     # Note: The fix correctly nests CommonJS exports within their parent function context

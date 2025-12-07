@@ -5,7 +5,11 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_nodes, get_relationships
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+)
 
 
 @pytest.fixture
@@ -246,7 +250,7 @@ public class InheritanceExample {
     # Check class definitions
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Expected class qualified names
     project_name = java_methods_project.name
@@ -424,8 +428,8 @@ public class InterfaceExample {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Expected type qualified names
     project_name = java_methods_project.name

@@ -5,7 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_nodes
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names
 
 
 @pytest.fixture
@@ -468,7 +468,7 @@ public class QualifiedNames {
     # and that the class and methods are detected even without imports
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_imports_project.name
     expected_class = (
         f"{project_name}.src.main.java.com.example.QualifiedNames.QualifiedNames"

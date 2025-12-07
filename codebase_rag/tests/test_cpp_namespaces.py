@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -206,7 +206,7 @@ void demonstrateBasicNamespaces() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify at least some namespaced classes were created
     missing_classes = set(expected_classes) - created_classes
@@ -226,7 +226,7 @@ void demonstrateBasicNamespaces() {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify namespaced functions were created
     missing_functions = set(expected_functions) - created_functions
@@ -427,7 +427,7 @@ void demonstrateTemplateUsing() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify nested namespace classes
     found_nested_classes = [
@@ -623,7 +623,7 @@ void compareLinkageStyles() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify anonymous namespace classes were created (they might have special naming)
     found_internal_classes = [
@@ -649,7 +649,7 @@ void compareLinkageStyles() {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify internal functions were created
     found_internal_functions = [

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -172,7 +172,7 @@ const result = processor.processData([
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify all expected classes were created
     for expected_qn in expected_classes:
@@ -196,7 +196,7 @@ const result = processor.processData([
     # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
+    created_methods = get_qualified_names(method_calls)
 
     # Verify at least some expected methods were created
     found_methods = [method for method in expected_methods if method in created_methods]
@@ -572,7 +572,7 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
     # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
+    created_methods = get_qualified_names(method_calls)
 
     # Verify at least some static methods were created
     found_static_methods = [
@@ -775,7 +775,7 @@ const instanceCount = Counter.getInstanceCount();
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify classes with private features were created
     for expected_qn in expected_classes:
@@ -796,7 +796,7 @@ const instanceCount = Counter.getInstanceCount();
     # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
+    created_methods = get_qualified_names(method_calls)
 
     # Verify at least some methods were created
     found_methods = [method for method in expected_methods if method in created_methods]

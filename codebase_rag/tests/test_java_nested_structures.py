@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -173,7 +173,7 @@ public class OuterClass {
     project_name = java_nested_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # At minimum, the outer class should be detected
     expected_outer_class = {
@@ -507,7 +507,7 @@ public class AnonymousComplex {
     project_name = java_nested_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.AnonymousComplex.AnonymousComplex",
@@ -820,7 +820,7 @@ public class LocalClasses {
     project_name = java_nested_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.LocalClasses.LocalClasses",
@@ -1144,7 +1144,7 @@ public class LambdaEdgeCases {
     project_name = java_nested_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.LambdaEdgeCases.LambdaEdgeCases",
@@ -1494,7 +1494,7 @@ public class ComplexObject {
     project_name = java_nested_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.BuilderPattern.ComplexObject",
@@ -1954,7 +1954,7 @@ public abstract class Expression {
     project_name = java_nested_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.VisitorPattern.Expression",

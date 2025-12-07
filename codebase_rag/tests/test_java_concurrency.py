@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -149,7 +149,7 @@ public class SynchronizedExample {
     project_name = java_concurrency_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.SynchronizedExample.SynchronizedExample",
@@ -311,7 +311,7 @@ public class VolatileExample {
     project_name = java_concurrency_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.VolatileExample.VolatileExample",
@@ -525,7 +525,7 @@ class Task {
     project_name = java_concurrency_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.ConcurrentCollections.ConcurrentCollections",
@@ -764,7 +764,7 @@ public class ExecutorExample {
     project_name = java_concurrency_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.ExecutorExample.ExecutorExample",
@@ -1006,7 +1006,7 @@ public class CompletableFutureExample {
     project_name = java_concurrency_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.CompletableFutureExample.CompletableFutureExample",
@@ -1247,7 +1247,7 @@ public class LocksExample {
     project_name = java_concurrency_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.LocksExample.LocksExample",

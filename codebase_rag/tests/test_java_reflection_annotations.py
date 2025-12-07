@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -253,7 +253,7 @@ public class AnnotatedUser {
     project_name = java_reflection_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Expected annotations (treated as classes by tree-sitter)
     expected_classes = {
@@ -574,7 +574,7 @@ public class ReflectionExample {
     project_name = java_reflection_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.ReflectionExample.ReflectionExample",
@@ -972,7 +972,7 @@ public class AnnotationProcessor {
     project_name = java_reflection_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.AnnotationProcessor.User",
@@ -1249,7 +1249,7 @@ public class MetaAnnotations {
     project_name = java_reflection_project.name
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Expected classes include both annotations and regular classes
     expected_classes = {

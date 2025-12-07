@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -180,7 +180,7 @@ console.log(manager instanceof Person);    // true
     # Get all Function nodes (constructors and prototype methods)
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check constructor functions
     expected_constructors = [
@@ -418,7 +418,7 @@ myTask.outputTaskDetails();
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check factory functions
     expected_functions = [
@@ -641,7 +641,7 @@ square.scale(2);
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check constructor hierarchy
     expected_constructors = [
@@ -952,7 +952,7 @@ console.log(entity.validate());
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check mixin functions
     expected_functions = [
@@ -1220,7 +1220,7 @@ for (const value of generator) {
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check edge case constructors
     expected_constructors = [

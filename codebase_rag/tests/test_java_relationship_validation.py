@@ -3,7 +3,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -518,7 +523,7 @@ public class UserController {
     # Verify all classes are created
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
     project_name = java_relationships_project.name
 
     # Expected classes from different packages

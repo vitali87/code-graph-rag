@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -332,7 +332,7 @@ console.log(secureObject[Symbol.for('public')]); // shared
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for functions from object literals
     expected_functions = [
@@ -761,7 +761,7 @@ console.log(users.map(u => u.getProfile()));
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for factory functions
     expected_factories = [
@@ -1145,7 +1145,7 @@ console.log(Email.isValid('test@example.com')); // true
     # Get all Function nodes (constructors are functions)
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for constructor functions
     expected_constructors = [
@@ -1575,7 +1575,7 @@ console.log('Cloned:', cloned.toJSON());
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for composition factory functions
     expected_composition_functions = [

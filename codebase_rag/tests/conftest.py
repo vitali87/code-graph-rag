@@ -69,6 +69,11 @@ def get_nodes(mock_ingestor: MagicMock, node_type: str) -> list:
     ]
 
 
+def get_qualified_names(calls: list) -> set[str]:
+    """Extract qualified names from a list of node calls."""
+    return {call[0][1]["qualified_name"] for call in calls}
+
+
 @pytest.fixture
 def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     """Provides a mocked GraphUpdater instance with necessary dependencies."""

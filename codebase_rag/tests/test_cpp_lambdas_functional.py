@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -518,7 +518,7 @@ void demonstrateLambdasAndFunctional() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
@@ -529,7 +529,7 @@ void demonstrateLambdasAndFunctional() {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
@@ -775,7 +775,7 @@ void demonstrateAsyncFunctionalPatterns() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]

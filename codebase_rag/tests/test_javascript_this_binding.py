@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -232,7 +232,7 @@ bound(); // preserved this
     )
 
     # Check for arrow functions (might have special property)
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
     arrow_patterns = ["arrowMethod", "innerArrow", "arrowProperty"]
 
     arrow_functions_found = [
@@ -437,7 +437,7 @@ console.log(result2); // [15, 20]
     # Check function definitions
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
     project_name = javascript_this_project.name
 
     expected_functions = [

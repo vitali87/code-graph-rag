@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -118,8 +118,8 @@ public abstract class Shape {
     # Get all Interface node creation calls (Java interfaces are processed separately)
     interface_calls = get_nodes(mock_ingestor, "Interface")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Expected class qualified names (including interfaces)
     expected_classes = {
@@ -147,7 +147,7 @@ public abstract class Shape {
     # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
+    created_methods = get_qualified_names(method_calls)
 
     # Expected method qualified names (constructors and methods with parameter signatures)
     expected_methods = {
@@ -249,9 +249,9 @@ public class AnnotatedClass {
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_enums = get_qualified_names(enum_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Expected type qualified names
     project_name = java_project.name
@@ -364,8 +364,8 @@ public class WildcardExample {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Expected type qualified names
     project_name = java_project.name
@@ -465,7 +465,7 @@ public abstract class AbstractService {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Expected class qualified names
     project_name = java_project.name
@@ -563,7 +563,7 @@ public class OuterClass {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Expected class qualified names
     project_name = java_project.name
@@ -680,8 +680,8 @@ public class LambdaExamples {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Expected type qualified names
     project_name = java_project.name
@@ -813,7 +813,7 @@ public class ExceptionHandler {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Expected class qualified names
     project_name = java_project.name

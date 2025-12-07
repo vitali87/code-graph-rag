@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -46,7 +46,6 @@ public class EmptyClass {
 
 // Empty class with just whitespace
 public class WhitespaceClass {
-
 
 }
 
@@ -105,9 +104,9 @@ public abstract class AbstractOnlyClass {
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
-    {call[0][1]["qualified_name"] for call in enum_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
+    get_qualified_names(enum_calls)
 
     # Verify at least some empty structures were detected
     assert len(created_classes) >= 5, "Should detect multiple empty classes"
@@ -225,9 +224,9 @@ public class ArrayFormats {
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
-    {call[0][1]["qualified_name"] for call in enum_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
+    get_qualified_names(enum_calls)
 
     # Should detect both single-line and multi-line versions
     assert any("SingleLineClass" in qn for qn in created_classes)
@@ -347,7 +346,7 @@ public class UnicodeConstants {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # At minimum, should detect some Unicode-named classes
     assert len(created_classes) >= 3, "Should detect classes with Unicode names"
@@ -457,7 +456,7 @@ enum EnumWithVeryLongNameThatTestsEnumNameLengthLimitationsAndParsingCapabilitie
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Should handle long qualified names
     long_class_found = any(
@@ -605,7 +604,7 @@ public class DeeplyNestedGenerics {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Should detect main class and nested classes
     assert any("DeeplyNestedGenerics" in qn for qn in created_classes)
@@ -810,7 +809,7 @@ class ComplexInheritance
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     assert any("SyntaxEdgeCases" in qn for qn in created_classes)
 
@@ -936,7 +935,7 @@ class WeirdGenerics<T,U,V> {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Should handle unusual formatting
     assert len(created_classes) >= 2, "Should detect classes despite unusual formatting"
@@ -1086,7 +1085,7 @@ public class BoundaryValues {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     assert any("BoundaryValues" in qn for qn in created_classes)
 
@@ -1220,7 +1219,7 @@ public class CommentEdgeCases {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     assert any("CommentEdgeCases" in qn for qn in created_classes)
 
@@ -1297,7 +1296,7 @@ def test_whitespace_edge_cases(
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     assert any("WhitespaceEdgeCases" in qn for qn in created_classes)
 
@@ -1455,7 +1454,7 @@ class AnotherClassInSameFile {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Should detect multiple classes in same file
     assert len(created_classes) >= 2, "Should detect multiple classes in same file"
@@ -1700,9 +1699,9 @@ public class NestedClassModifiers {
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
+    created_enums = get_qualified_names(enum_calls)
 
     # Should detect various types with different modifiers
     assert len(created_classes) >= 3, "Should detect multiple classes with modifiers"
@@ -1920,8 +1919,8 @@ public class GenericVarianceEdgeCases {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    get_qualified_names(interface_calls)
 
     # Should detect classes with complex generic variance
     assert any("GenericVarianceEdgeCases" in qn for qn in created_classes)
@@ -2169,9 +2168,9 @@ class ImplementingClass implements AnnotatedInterface {
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
-    {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_enums = get_qualified_names(enum_calls)
+    get_qualified_names(interface_calls)
 
     # Should detect main class, annotation interfaces, and enum
     assert any("AnnotationEdgeCases" in qn for qn in created_classes)
@@ -2430,6 +2429,6 @@ public class OperatorEdgeCases {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     assert any("OperatorEdgeCases" in qn for qn in created_classes)

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -106,8 +106,8 @@ public class Circle implements Shape, Movable {
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_interfaces = get_qualified_names(interface_calls)
+    created_classes = get_qualified_names(class_calls)
 
     project_name = java_advanced_oop_project.name
     expected_interfaces = {
@@ -208,8 +208,8 @@ public class GenericUtility {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     project_name = java_advanced_oop_project.name
     assert (
@@ -359,7 +359,7 @@ public class Square extends AbstractRectangle {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     project_name = java_advanced_oop_project.name
     expected_classes = {
@@ -473,7 +473,7 @@ public class MethodOverloading {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     method_calls = [call for call in all_calls if call[0][0] == "Method"]
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
+    created_methods = get_qualified_names(method_calls)
 
     # Check that multiple process methods were detected
     process_methods = [qn for qn in created_methods if ".process" in qn]
@@ -601,7 +601,7 @@ class NumberContainer extends Container<Number> {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     project_name = java_advanced_oop_project.name
     expected_classes = {
@@ -746,8 +746,8 @@ public class Duck implements Amphibious {
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_interfaces = get_qualified_names(interface_calls)
+    created_classes = get_qualified_names(class_calls)
 
     project_name = java_advanced_oop_project.name
     expected_interfaces = {
@@ -941,8 +941,8 @@ public abstract class AbstractJpaRepository<T, ID extends Serializable>
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Check that nested classes were detected
     nested_classes_found = any("Builder" in qn for qn in created_classes)
@@ -1109,8 +1109,8 @@ class ConflictResolver implements Conflicting1, Conflicting2 {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Check key classes were detected
     assert any("BaseClass" in qn for qn in created_classes)
@@ -1292,9 +1292,9 @@ enum Operation {
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_enums = get_qualified_names(enum_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
     # Check main class and nested classes
     assert any("TypeErasureExamples" in qn for qn in created_classes)
@@ -1477,7 +1477,7 @@ public class AnnotationProcessor {
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Check that annotation classes and regular classes were detected
     assert any("AnnotatedService" in qn for qn in created_classes)
@@ -1686,8 +1686,8 @@ public class DeepNesting {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    get_qualified_names(interface_calls)
 
     # Check main outer classes
     assert any("OuterClass" in qn for qn in created_classes)
@@ -1891,8 +1891,8 @@ public class StaticNestedInitialization {
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_enums = get_qualified_names(enum_calls)
 
     # Check main classes
     assert any("StaticInitialization" in qn for qn in created_classes)

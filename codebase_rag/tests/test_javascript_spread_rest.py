@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -164,7 +164,7 @@ console.log(max);           // 10
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for functions using array spread
     expected_functions = [
@@ -390,7 +390,7 @@ console.log(apiConfig);    // Environment-specific config
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for functions using object spread
     expected_functions = [
@@ -631,7 +631,7 @@ for (const value of combined) {
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for functions using rest parameters
     expected_rest_functions = [
@@ -914,7 +914,7 @@ console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50]
     # Get all Function nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Check for functions using destructuring with spread/rest
     expected_destructuring_functions = [

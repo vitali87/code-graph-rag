@@ -6,7 +6,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_nodes
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names
 
 
 @pytest.fixture
@@ -123,7 +123,7 @@ def test_nested_function_definitions_are_created(
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify all expected nested functions were created
     for expected_qn in expected_functions:
@@ -361,7 +361,7 @@ def test_function_in_class_method(
     # Get all Method node creation calls
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
+    created_methods = get_qualified_names(method_calls)
 
     assert expected_method_qn in created_methods, (
         f"Function in method not found as method: {expected_method_qn}"

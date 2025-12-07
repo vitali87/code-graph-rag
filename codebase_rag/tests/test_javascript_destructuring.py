@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -172,7 +172,7 @@ try {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify functions with destructuring parameters were created
     missing_functions = set(expected_functions) - created_functions
@@ -333,7 +333,7 @@ const result = processArray([10, 20, 30, 40]);
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify functions with array destructuring were created
     missing_functions = set(expected_functions) - created_functions
@@ -548,7 +548,7 @@ async function updateUser(id, data) { return { id, ...data }; }
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify functions with parameter destructuring were created
     missing_functions = set(expected_functions) - created_functions
@@ -563,7 +563,7 @@ async function updateUser(id, data) { return { id, ...data }; }
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify classes with destructuring methods were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]

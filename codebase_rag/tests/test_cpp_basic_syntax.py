@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ void demonstrateClasses() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify all expected classes were created
     for expected_qn in expected_classes:
@@ -183,8 +183,8 @@ void demonstrateClasses() {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_methods = get_qualified_names(method_calls)
+    created_functions = get_qualified_names(function_calls)
 
     # Verify all expected methods were created
     missing_methods = set(expected_methods) - created_methods
@@ -310,7 +310,7 @@ void demonstrateFunctions() {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
 
     # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
@@ -471,7 +471,7 @@ void demonstrateUsingDirectives() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify at least some expected namespaced classes were created
     missing_classes = set(expected_classes) - created_classes
@@ -498,8 +498,8 @@ void demonstrateUsingDirectives() {
     # Get all Function node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_methods = get_qualified_names(method_calls)
+    created_functions = get_qualified_names(function_calls)
 
     # Verify expected methods were created
     missing_methods = set(expected_methods) - created_methods
@@ -643,7 +643,7 @@ void bankingDemo() {
     # Get all Class node creation calls
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_qualified_names(class_calls)
 
     # Verify expected classes were created
     for expected_qn in expected_classes:
