@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import create_and_run_updater
 
 
 def test_lua_class_pattern_basic(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -46,14 +45,7 @@ local bob = Person:new("Bob", 25)
 bob:greet()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     # Check that Person class methods were detected
     person_qn = f"{project.name}.person"
@@ -164,14 +156,7 @@ local name = myDog:getName()  -- Should call inherited Animal's getName
 local breed = myDog:getBreed()  -- Should call Dog's getBreed
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     # Check class definitions
     animal_qn = f"{project.name}.animal"
@@ -262,14 +247,7 @@ local product = calc.multiply(6, 7)
 local quotient = calc.divide(20, 5)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     calc_qn = f"{project.name}.calculator"
     main_qn = f"{project.name}.main"
@@ -360,14 +338,7 @@ local x, y = circle1:getPosition()
 local circle2 = shapes.createCircle(0, 0, 10)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     shape_qn = f"{project.name}.shape"
     main_qn = f"{project.name}.main"
@@ -498,14 +469,7 @@ local json = user:serialize()  -- From Serializable mixin
 local name = user:getName()  -- From User itself
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     printable_qn = f"{project.name}.printable"
     serializable_qn = f"{project.name}.serializable"
@@ -609,14 +573,7 @@ local debug = config2:get("debug")  -- Should be true (same instance)
 config2:reset()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     config_qn = f"{project.name}.config"
     main_qn = f"{project.name}.main"

@@ -32,6 +32,12 @@ def mock_ingestor() -> MagicMock:
 def run_updater(
     repo_path: Path, mock_ingestor: MagicMock, skip_if_missing: str | None = None
 ) -> None:
+    create_and_run_updater(repo_path, mock_ingestor, skip_if_missing)
+
+
+def create_and_run_updater(
+    repo_path: Path, mock_ingestor: MagicMock, skip_if_missing: str | None = None
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     if skip_if_missing and skip_if_missing not in parsers:
         pytest.skip(f"{skip_if_missing} parser not available")
@@ -42,6 +48,7 @@ def run_updater(
         queries=queries,
     )
     updater.run()
+    return updater
 
 
 @pytest.fixture

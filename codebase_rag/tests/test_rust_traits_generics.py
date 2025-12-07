@@ -3,8 +3,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import run_updater
 
 
@@ -159,17 +157,7 @@ impl Printable for Rectangle {
 """
     )
 
-    parsers, queries = load_parsers()
-    assert "rust" in parsers, "Rust parser should be available"
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor, skip_if_missing="rust")
     calls = mock_ingestor.method_calls
 
     # Verify traits are detected

@@ -324,6 +324,8 @@ import seaborn as sns
 
 # Testing imports
 import pytest
+
+from codebase_rag.tests.conftest import run_updater
 from unittest.mock import MagicMock, patch, Mock
 from pytest import fixture, raises
 

@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import create_and_run_updater
 
 
 @pytest.mark.parametrize(
@@ -39,14 +38,7 @@ return 0
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     module_qn = f"{project.name}.main"
     import_map = updater.factory.import_processor.import_mapping.get(module_qn, {})

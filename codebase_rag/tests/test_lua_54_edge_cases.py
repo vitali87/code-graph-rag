@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_54_goto_labels(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -213,13 +212,10 @@ print("State machine:", table.concat(machine_results, " -> "))
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass  # Tests follow
 
         # Check function definitions
         created_functions = [
@@ -430,13 +426,10 @@ print("Decomposed length:", norm_results.decomposed_len)
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass  # Tests follow
 
         # Check function definitions
         created_functions = [
@@ -693,13 +686,10 @@ end
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass  # Tests follow
 
         # Check function definitions
         created_functions = [

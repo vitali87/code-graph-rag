@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_54_attributes_syntax(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -170,13 +169,10 @@ print("Sum:", sum)
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass  # Tests follow
 
         # Check if functions were properly defined
         created_functions = [
@@ -385,13 +381,10 @@ print("Index results:", table.concat(index_results, ", "))
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass  # Tests follow
 
         # Check function definitions
         created_functions = [
@@ -609,13 +602,10 @@ end
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass  # Tests follow
 
         # Check function definitions
         created_functions = [
@@ -808,13 +798,10 @@ print("Control flow: break =", #control_results.break_test, "continue =", #contr
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass  # Tests follow
 
         # Check function definitions
         created_functions = [

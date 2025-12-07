@@ -48,7 +48,6 @@ public class EmptyClass {
 public class WhitespaceClass {
 
 
-
 }
 
 // Empty interface
