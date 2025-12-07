@@ -43,6 +43,7 @@ class AppConfig(BaseSettings):
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
+    AGENT_RETRIES: int = 3
 
     ORCHESTRATOR_PROVIDER: str = ""
     ORCHESTRATOR_MODEL: str = ""
