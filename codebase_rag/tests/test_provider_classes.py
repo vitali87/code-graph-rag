@@ -219,30 +219,33 @@ class TestOllamaProvider:
 class TestModelCreation:
     """Test model creation through providers."""
 
-    @patch("codebase_rag.providers.base.GoogleGLAProvider")
-    @patch("codebase_rag.providers.base.GeminiModel")
+    @patch("codebase_rag.providers.base.PydanticGoogleProvider")
+    @patch("codebase_rag.providers.base.GoogleModel")
     def test_google_model_creation_without_thinking_budget(
-        self, mock_gemini_model: Any, mock_gla_provider: Any
+        self, mock_google_model: Any, mock_google_provider: Any
     ) -> None:
         """Test Google model creation without thinking budget."""
         provider = GoogleProvider(api_key="test-key", provider_type="gla")
 
         # Mock the model creation
         mock_model = MagicMock()
-        mock_gemini_model.return_value = mock_model
+        mock_google_model.return_value = mock_model
 
         provider.create_model("gemini-2.5-pro")
 
-        # Should call GeminiModel without model_settings
-        mock_gemini_model.assert_called_once()
-        call_kwargs = mock_gemini_model.call_args[1]
-        assert "model_settings" not in call_kwargs
+        # Should call GoogleModel without settings
+        mock_google_model.assert_called_once()
+        call_kwargs = mock_google_model.call_args[1]
+        assert "settings" not in call_kwargs
 
-    @patch("codebase_rag.providers.base.GoogleGLAProvider")
-    @patch("codebase_rag.providers.base.GeminiModel")
-    @patch("codebase_rag.providers.base.GeminiModelSettings")
+    @patch("codebase_rag.providers.base.PydanticGoogleProvider")
+    @patch("codebase_rag.providers.base.GoogleModel")
+    @patch("codebase_rag.providers.base.GoogleModelSettings")
     def test_google_model_creation_with_thinking_budget(
-        self, mock_model_settings: Any, mock_gemini_model: Any, mock_gla_provider: Any
+        self,
+        mock_model_settings: Any,
+        mock_google_model: Any,
+        mock_google_provider: Any,
     ) -> None:
         """Test Google model creation with thinking budget."""
         provider = GoogleProvider(
@@ -251,22 +254,22 @@ class TestModelCreation:
 
         # Mock the model creation
         mock_model = MagicMock()
-        mock_gemini_model.return_value = mock_model
+        mock_google_model.return_value = mock_model
         mock_settings = MagicMock()
         mock_model_settings.return_value = mock_settings
 
         provider.create_model("gemini-2.0-flash-thinking-exp")
 
-        # Should call GeminiModelSettings with thinking budget
+        # Should call GoogleModelSettings with thinking budget
         mock_model_settings.assert_called_once_with(
-            gemini_thinking_config={"thinking_budget": 5000}
+            google_thinking_config={"thinking_budget": 5000}
         )
 
-        # Should call GeminiModel with model_settings
-        mock_gemini_model.assert_called_once()
-        call_kwargs = mock_gemini_model.call_args[1]
-        assert "model_settings" in call_kwargs
-        assert call_kwargs["model_settings"] == mock_settings
+        # Should call GoogleModel with settings
+        mock_google_model.assert_called_once()
+        call_kwargs = mock_google_model.call_args[1]
+        assert "settings" in call_kwargs
+        assert call_kwargs["settings"] == mock_settings
 
     @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
     @patch("codebase_rag.providers.base.OpenAIResponsesModel")
@@ -291,9 +294,9 @@ class TestModelCreation:
         )
 
     @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIModel")
+    @patch("codebase_rag.providers.base.OpenAIChatModel")
     def test_ollama_model_creation(
-        self, mock_openai_model: Any, mock_openai_provider: Any
+        self, mock_openai_chat_model: Any, mock_openai_provider: Any
     ) -> None:
         """Test Ollama model creation (uses OpenAI interface)."""
         with patch.object(OllamaProvider, "validate_config"):  # Skip validation
@@ -301,7 +304,7 @@ class TestModelCreation:
 
             # Mock the model creation
             mock_model = MagicMock()
-            mock_openai_model.return_value = mock_model
+            mock_openai_chat_model.return_value = mock_model
 
             provider.create_model("llama3.2")
 

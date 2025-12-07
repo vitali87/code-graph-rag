@@ -63,7 +63,7 @@ class TestGetCodeSnippetBasic:
     ) -> None:
         """Test retrieving a function snippet."""
         # Mock the response from the code tool
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "sample.hello_world",
                 "source_code": 'def hello_world():\n    """Say hello to the world."""\n    print("Hello, World!")\n',
@@ -89,7 +89,7 @@ class TestGetCodeSnippetBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving a class method snippet."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "sample.Calculator.add",
                 "source_code": '    def add(self, a: int, b: int) -> int:\n        """Add two numbers."""\n        return a + b\n',
@@ -112,7 +112,7 @@ class TestGetCodeSnippetBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving a class snippet."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "sample.Calculator",
                 "source_code": 'class Calculator:\n    """Simple calculator class."""\n\n    def add(self, a: int, b: int) -> int:\n        """Add two numbers."""\n        return a + b\n',
@@ -139,7 +139,7 @@ class TestGetCodeSnippetNotFound:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test retrieving a nonexistent function."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "nonexistent.function",
                 "source_code": "",
@@ -161,7 +161,7 @@ class TestGetCodeSnippetNotFound:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test retrieving with malformed qualified name."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "..invalid..",
                 "source_code": "",
@@ -186,7 +186,7 @@ class TestGetCodeSnippetEdgeCases:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test retrieving code with no docstring."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "sample.no_docstring",
                 "source_code": "def no_docstring():\n    pass\n",
@@ -207,7 +207,7 @@ class TestGetCodeSnippetEdgeCases:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test retrieving code from deeply nested module."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "pkg.subpkg.module.ClassName.method",
                 "source_code": "    def method(self):\n        return True\n",
@@ -231,7 +231,7 @@ class TestGetCodeSnippetEdgeCases:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test retrieving code with unicode characters."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "sample.unicode_func",
                 "source_code": 'def unicode_func():\n    """返回 Unicode 字符串。"""\n    return "Hello 世界"\n',
@@ -257,7 +257,7 @@ class TestGetCodeSnippetErrorHandling:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test handling of exceptions during retrieval."""
-        mcp_registry._code_tool.function.side_effect = Exception("Database error")
+        mcp_registry._code_tool.function.side_effect = Exception  # ty: ignore[invalid-assignment]("Database error")
 
         result = await mcp_registry.get_code_snippet("sample.function")
 
@@ -268,7 +268,7 @@ class TestGetCodeSnippetErrorHandling:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test handling when tool returns None."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: None
         )
 
@@ -306,7 +306,7 @@ class TestGetCodeSnippetIntegration:
         ]
 
         for snippet_data in snippets:
-            mcp_registry._code_tool.function.return_value = MagicMock(
+            mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
                 model_dump=lambda s=snippet_data: s
             )
             qualified_name: str = snippet_data["qualified_name"]  # type: ignore[assignment]
@@ -318,7 +318,7 @@ class TestGetCodeSnippetIntegration:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test that qualified name is correctly passed to underlying tool."""
-        mcp_registry._code_tool.function.return_value = MagicMock(
+        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "test.function",
                 "source_code": "def function(): pass",

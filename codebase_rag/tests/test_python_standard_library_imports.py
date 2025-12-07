@@ -61,7 +61,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should NOT have project prefix
@@ -96,7 +97,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should NOT have project prefix
@@ -133,7 +135,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # SHOULD have project prefix because utils/ exists in repo
@@ -168,7 +171,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # SHOULD have project prefix because config.py exists in repo
@@ -205,7 +209,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should stay the same (no double prefix)
@@ -240,7 +245,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # SHOULD have project prefix because src/ exists in repo
@@ -265,7 +271,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should NOT have project prefix
@@ -290,7 +297,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # SHOULD have project prefix because utils/ exists in repo
@@ -317,7 +325,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # SHOULD have project prefix, local name should be 'src'
@@ -351,7 +360,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should NOT have project prefix
@@ -385,7 +395,8 @@ class TestStandardLibraryImports:
 
         # Call the method
         mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node, module_qn
+            mock_import_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # SHOULD have project prefix because utils/ exists in repo

@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-import mgclient
+import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
 

@@ -42,7 +42,8 @@ class TestRelativeImportResolution:
 
         # Test resolution
         result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node, module_qn
+            mock_relative_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should resolve to parent package: pkg.sub1.sub2.utils
@@ -68,7 +69,8 @@ class TestRelativeImportResolution:
 
         # Test resolution
         result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node, module_qn
+            mock_relative_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should resolve to grandparent package: pkg.sub1.shared
@@ -94,7 +96,8 @@ class TestRelativeImportResolution:
 
         # Test resolution
         result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node, module_qn
+            mock_relative_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should resolve to great-grandparent package: pkg.common
@@ -120,7 +123,8 @@ class TestRelativeImportResolution:
 
         # Test resolution
         result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node, module_qn
+            mock_relative_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should resolve to project root: config
@@ -144,7 +148,8 @@ class TestRelativeImportResolution:
 
         # Test resolution
         result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node, module_qn
+            mock_relative_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should resolve to grandparent package: pkg.sub1
@@ -172,7 +177,8 @@ class TestRelativeImportResolution:
 
         # Test resolution
         result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node, module_qn
+            mock_relative_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should resolve to root level: other
@@ -200,7 +206,8 @@ class TestRelativeImportResolution:
 
         # Test resolution
         result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node, module_qn
+            mock_relative_node,  # ty: ignore[invalid-argument-type]
+            module_qn,
         )
 
         # Should resolve to: pkg.sub1.sub2.helpers.database.models

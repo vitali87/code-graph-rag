@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -213,13 +213,13 @@ def _generic_get_name(node: "Node") -> str | None:
     """Generic name extraction for most languages."""
     name_node = node.child_by_field_name("name")
     if name_node and name_node.text:
-        return cast(str, name_node.text.decode("utf-8"))
+        return name_node.text.decode("utf-8")
 
     # Fallback for languages that use different field names
     for field_name in ["identifier", "name", "id"]:
         name_node = node.child_by_field_name(field_name)
         if name_node and name_node.text:
-            return cast(str, name_node.text.decode("utf-8"))
+            return name_node.text.decode("utf-8")
 
     return None
 
@@ -240,11 +240,11 @@ def _rust_get_name(node: "Node") -> str | None:
     if node.type in ("struct_item", "enum_item", "trait_item", "type_item"):
         name_node = node.child_by_field_name("name")
         if name_node and name_node.type == "type_identifier" and name_node.text:
-            return cast(str, name_node.text.decode("utf-8"))
+            return name_node.text.decode("utf-8")
     elif node.type in ("function_item", "mod_item"):
         name_node = node.child_by_field_name("name")
         if name_node and name_node.type == "identifier" and name_node.text:
-            return cast(str, name_node.text.decode("utf-8"))
+            return name_node.text.decode("utf-8")
 
     return _generic_get_name(node)
 
@@ -266,7 +266,7 @@ def _cpp_get_name(node: "Node") -> str | None:
     if node.type in ("class_specifier", "struct_specifier", "enum_specifier"):
         name_node = node.child_by_field_name("name")
         if name_node and name_node.text:
-            return cast(str, name_node.text.decode("utf-8"))
+            return name_node.text.decode("utf-8")
     elif node.type == "function_definition":
         declarator = node.child_by_field_name("declarator")
         if declarator:
@@ -274,7 +274,7 @@ def _cpp_get_name(node: "Node") -> str | None:
             if declarator.type == "function_declarator":
                 name_node = declarator.child_by_field_name("declarator")
                 if name_node and name_node.type == "identifier" and name_node.text:
-                    return cast(str, name_node.text.decode("utf-8"))
+                    return name_node.text.decode("utf-8")
 
     return _generic_get_name(node)
 

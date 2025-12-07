@@ -53,8 +53,9 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
     )
 
     # Mock the file editor tool
-    registry._file_editor_tool = MagicMock()
-    registry._file_editor_tool.function = AsyncMock()
+    mock_tool = MagicMock()
+    mock_tool.function = AsyncMock()
+    setattr(registry, "_file_editor_tool", mock_tool)
 
     return registry
 
@@ -66,7 +67,7 @@ class TestSurgicalReplaceBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test replacing a function's implementation."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code in sample.py"
         )
 
@@ -85,7 +86,7 @@ class TestSurgicalReplaceBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test replacing a method's implementation."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code in sample.py"
         )
 
@@ -109,7 +110,7 @@ class TestSurgicalReplaceBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test that replacement requires exact match."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code in sample.py"
         )
 
@@ -137,7 +138,7 @@ class TestSurgicalReplaceEdgeCases:
             'def greet():\n    print("Hello 世界")\n', encoding="utf-8"
         )
 
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code"
         )
 
@@ -154,7 +155,7 @@ class TestSurgicalReplaceEdgeCases:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test replacing a multiline code block."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code"
         )
 
@@ -184,7 +185,7 @@ class TestSurgicalReplaceEdgeCases:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test replacing code with empty string (deletion)."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code"
         )
 
@@ -201,7 +202,7 @@ class TestSurgicalReplaceEdgeCases:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test that whitespace in target/replacement is preserved."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code"
         )
 
@@ -224,7 +225,7 @@ class TestSurgicalReplaceErrorHandling:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test replacing code in a nonexistent file."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Error: File not found: nonexistent.py"
         )
 
@@ -238,7 +239,7 @@ class TestSurgicalReplaceErrorHandling:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test replacing code that doesn't exist in the file."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Error: Target code not found in file"
         )
 
@@ -255,7 +256,7 @@ class TestSurgicalReplaceErrorHandling:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test handling of exceptions during replacement."""
-        mcp_registry._file_editor_tool.function.side_effect = Exception(
+        mcp_registry._file_editor_tool.function.side_effect = Exception(  # ty: ignore[invalid-assignment]
             "Permission denied"
         )
 
@@ -273,7 +274,7 @@ class TestSurgicalReplaceErrorHandling:
         readonly_file.write_text("def func(): pass", encoding="utf-8")
         readonly_file.chmod(0o444)
 
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Error: Permission denied"
         )
 
@@ -300,7 +301,7 @@ class TestSurgicalReplacePathHandling:
         sub_file = subdir / "module.py"
         sub_file.write_text("def func(): pass", encoding="utf-8")
 
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code"
         )
 
@@ -314,7 +315,7 @@ class TestSurgicalReplacePathHandling:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test that directory traversal is prevented."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Error: Security risk - path traversal detected"
         )
 
@@ -332,7 +333,7 @@ class TestSurgicalReplaceIntegration:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test performing multiple replacements sequentially."""
-        mcp_registry._file_editor_tool.function.return_value = (
+        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
             "Successfully replaced code"
         )
 
@@ -352,7 +353,7 @@ class TestSurgicalReplaceIntegration:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test that all parameters are correctly passed to underlying tool."""
-        mcp_registry._file_editor_tool.function.return_value = "Success"
+        mcp_registry._file_editor_tool.function.return_value = "Success"  # ty: ignore[invalid-assignment]
 
         await mcp_registry.surgical_replace_code("test.py", "old_code", "new_code")
 
@@ -373,7 +374,7 @@ class TestSurgicalReplaceIntegration:
 
         for filename, content in files.items():
             (temp_project_root / filename).write_text(content, encoding="utf-8")
-            mcp_registry._file_editor_tool.function.return_value = "Success"
+            mcp_registry._file_editor_tool.function.return_value = "Success"  # ty: ignore[invalid-assignment]
 
             result = await mcp_registry.surgical_replace_code(
                 filename, list(content.split())[0], "replacement"

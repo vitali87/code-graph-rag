@@ -63,10 +63,14 @@ if has_qdrant_client():
         """
         try:
             client = get_qdrant_client()
-            hits = client.search(
-                collection_name=_COLLECTION, query_vector=query_embedding, limit=top_k
+            result = client.query_points(
+                collection_name=_COLLECTION, query=query_embedding, limit=top_k
             )
-            return [(hit.payload["node_id"], hit.score) for hit in hits]
+            return [
+                (hit.payload["node_id"], hit.score)
+                for hit in result.points
+                if hit.payload is not None
+            ]
         except Exception as e:
             logger.warning(f"Failed to search embeddings: {e}")
             return []

@@ -67,7 +67,7 @@ class TestReadFileWithoutPagination:
     ) -> None:
         """Test reading entire file without pagination."""
         expected_content = sample_file.read_text(encoding="utf-8")
-        mcp_registry._file_reader_tool.function.return_value = expected_content
+        mcp_registry._file_reader_tool.function.return_value = expected_content  # ty: ignore[invalid-assignment]
 
         result = await mcp_registry.read_file("test_file.txt")
 

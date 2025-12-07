@@ -146,7 +146,7 @@ class TestProviderConfiguration:
         # Create a config that doesn't load from .env file
         with patch.dict(os.environ, {}, clear=True):
             # Create config with empty settings (disabling .env file loading)
-            config = AppConfig(_env_file=None)
+            config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
 
             # Should default to Ollama
             orch_config = config.active_orchestrator_config

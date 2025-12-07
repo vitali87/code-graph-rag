@@ -68,7 +68,7 @@ class TestQueryCodeGraph:
 
     async def test_query_finds_functions(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for functions in the code graph."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function) RETURN f.name",
                 "results": [
@@ -90,7 +90,7 @@ class TestQueryCodeGraph:
 
     async def test_query_finds_classes(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for classes in the code graph."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (c:Class) RETURN c.name",
                 "results": [{"name": "Calculator"}],
@@ -107,7 +107,7 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test querying for function call relationships."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function)-[:CALLS]->(g:Function) RETURN f.name, g.name",
                 "results": [
@@ -125,7 +125,7 @@ class TestQueryCodeGraph:
 
     async def test_query_with_no_results(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query that returns no results."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (n:NonExistent) RETURN n",
                 "results": [],
@@ -142,7 +142,7 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test complex natural language query."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function)-[:DEFINED_IN]->(m:Module) WHERE m.name = 'calculator' RETURN f.name",
                 "results": [
@@ -162,7 +162,7 @@ class TestQueryCodeGraph:
 
     async def test_query_handles_unicode(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query with unicode characters."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function) WHERE f.name = '你好' RETURN f",
                 "results": [{"name": "你好"}],
@@ -176,7 +176,7 @@ class TestQueryCodeGraph:
 
     async def test_query_error_handling(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test error handling during query execution."""
-        mcp_registry._query_tool.function.side_effect = Exception("Database error")
+        mcp_registry._query_tool.function.side_effect = Exception  # ty: ignore[invalid-assignment]("Database error")
 
         result = await mcp_registry.query_code_graph("Find all nodes")
 
@@ -189,7 +189,7 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test that query parameter is correctly passed."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (n) RETURN n",
                 "results": [],
@@ -392,7 +392,7 @@ class TestQueryAndIndexIntegration:
             assert "Error:" not in index_result
 
             # Now query it
-            mcp_registry._query_tool.function.return_value = MagicMock(
+            mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
                 model_dump=lambda: {
                     "cypher_query": "MATCH (f:Function) RETURN f.name",
                     "results": [{"name": "add"}],
@@ -416,7 +416,7 @@ class TestQueryAndIndexIntegration:
             await mcp_registry.index_repository()
 
             # Step 2: Query for functions
-            mcp_registry._query_tool.function.return_value = MagicMock(
+            mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
                 model_dump=lambda: {
                     "cypher_query": "MATCH (f:Function) RETURN f",
                     "results": [{"name": "add"}, {"name": "multiply"}],
@@ -427,7 +427,7 @@ class TestQueryAndIndexIntegration:
             assert len(result["results"]) == 2
 
             # Step 3: Query for classes
-            mcp_registry._query_tool.function.return_value = MagicMock(
+            mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
                 model_dump=lambda: {
                     "cypher_query": "MATCH (c:Class) RETURN c",
                     "results": [{"name": "Calculator"}],

@@ -25,6 +25,8 @@ def extract_rust_impl_target(impl_node: Node) -> str | None:
     for i in range(impl_node.child_count):
         if impl_node.field_name_for_child(i) == "type":
             type_node = impl_node.child(i)
+            if type_node is None:
+                continue
             # Handle generic types by extracting the base type name
             if type_node.type == "generic_type":
                 # Look for the type identifier within the generic
@@ -64,6 +66,8 @@ def extract_rust_trait_name(impl_node: Node) -> str | None:
     for i in range(impl_node.child_count):
         if impl_node.field_name_for_child(i) == "trait":
             trait_node = impl_node.child(i)
+            if trait_node is None:
+                continue
             # Handle generic traits
             if trait_node.type == "generic_type":
                 for child in trait_node.children:
@@ -125,6 +129,8 @@ def extract_rust_macro_name(macro_node: Node) -> str | None:
     for i in range(macro_node.child_count):
         if macro_node.field_name_for_child(i) == "macro":
             macro_name_node = macro_node.child(i)
+            if macro_name_node is None:
+                continue
             if macro_name_node.type == "identifier":
                 return safe_decode_text(macro_name_node)
             elif macro_name_node.type == "scoped_identifier":

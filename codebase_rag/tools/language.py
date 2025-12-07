@@ -187,6 +187,7 @@ def add_grammar(
 
     # Step 3: Auto-detect node types from grammar
     # Try different possible locations for node-types.json
+    assert language_name is not None
     possible_paths = [
         os.path.join(grammar_path, "src", "node-types.json"),  # Standard location
         os.path.join(

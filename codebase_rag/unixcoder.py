@@ -79,11 +79,11 @@ class UniXcoder(nn.Module):
                     + [tokenizer.sep_token]
                 )
 
-            tokens_id = tokenizer.convert_tokens_to_ids(tokens)
+            tokens_id: list[int] = tokenizer.convert_tokens_to_ids(tokens)  # type: ignore[assignment]
             if padding:
-                tokens_id = tokens_id + [self.config.pad_token_id] * (
-                    max_length - len(tokens_id)
-                )
+                pad_id = self.config.pad_token_id
+                assert pad_id is not None
+                tokens_id = tokens_id + [pad_id] * (max_length - len(tokens_id))
             tokens_ids.append(tokens_id)
         return tokens_ids
 
@@ -104,7 +104,9 @@ class UniXcoder(nn.Module):
 
     def forward(self, source_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Obtain token embeddings and sentence embeddings"""
-        mask = source_ids.ne(self.config.pad_token_id)
+        pad_id = self.config.pad_token_id
+        assert pad_id is not None
+        mask = source_ids.ne(pad_id)
         token_embeddings = self.model(
             source_ids, attention_mask=mask.unsqueeze(1) * mask.unsqueeze(2)
         )[0]
@@ -122,16 +124,21 @@ class UniXcoder(nn.Module):
         max_length: int = 64,
     ) -> torch.Tensor:
         """Generate sequence given context (source_ids)"""
+        # (H) self.bias is registered as buffer (Tensor) but typed as Module by ty
+        bias: torch.Tensor = self.bias  # type: ignore[assignment]
+        pad_id = self.config.pad_token_id
+        assert pad_id is not None
 
         # Set encoder mask attention matrix: bidirectional for <encoder-decoder>, unirectional for <decoder-only>
         if decoder_only:
-            mask = self.bias[:, : source_ids.size(-1), : source_ids.size(-1)]
+            mask = bias[:, : source_ids.size(-1), : source_ids.size(-1)]
         else:
-            mask = source_ids.ne(self.config.pad_token_id)
+            mask = source_ids.ne(pad_id)
             mask = mask.unsqueeze(1) * mask.unsqueeze(2)
 
         if eos_id is None:
             eos_id = self.config.eos_token_id
+        assert eos_id is not None
 
         device = source_ids.device
 
@@ -167,9 +174,7 @@ class UniXcoder(nn.Module):
                     length = context_ids.size(-1) + input_ids.size(-1)
                     out = self.model(
                         input_ids,
-                        attention_mask=self.bias[
-                            :, context_ids.size(-1) : length, :length
-                        ],
+                        attention_mask=bias[:, context_ids.size(-1) : length, :length],
                         past_key_values=context,
                     ).last_hidden_state
                     hidden_states = out[:, -1, :]
