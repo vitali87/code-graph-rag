@@ -26,12 +26,10 @@ class TestGetProjectRoot:
         test_path = tmp_path / "settings_repo"
         test_path.mkdir()
 
-        # Ensure env var is not set
         with patch.dict(os.environ, {}, clear=False):
             if "TARGET_REPO_PATH" in os.environ:
                 del os.environ["TARGET_REPO_PATH"]
 
-            # Mock settings
             with patch("codebase_rag.mcp.server.settings") as mock_settings:
                 mock_settings.TARGET_REPO_PATH = str(test_path)
                 result = get_project_root()
@@ -42,15 +40,12 @@ class TestGetProjectRoot:
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
         """Test that current working directory is used when TARGET_REPO_PATH is not set."""
-        # Create a test directory to use as cwd
         test_cwd = tmp_path / "current_dir"
         test_cwd.mkdir()
 
-        # Change to the test directory and update PWD to match
         monkeypatch.chdir(test_cwd)
         monkeypatch.setenv("PWD", str(test_cwd))
 
-        # Clear TARGET_REPO_PATH if set
         if "TARGET_REPO_PATH" in os.environ:
             monkeypatch.delenv("TARGET_REPO_PATH")
 
@@ -91,7 +86,6 @@ class TestGetProjectRoot:
                 mock_settings.TARGET_REPO_PATH = str(settings_path)
                 result = get_project_root()
 
-        # Environment variable should win
         assert result == env_path.resolve()
 
     def test_raises_error_when_path_does_not_exist(self) -> None:
@@ -117,15 +111,12 @@ class TestGetProjectRoot:
 
     def test_resolves_relative_paths(self, tmp_path: Path, monkeypatch: Any) -> None:
         """Test that relative paths are resolved to absolute paths."""
-        # Create nested directory structure
         parent = tmp_path / "parent"
         child = parent / "child"
         child.mkdir(parents=True)
 
-        # Change to parent directory
         monkeypatch.chdir(parent)
 
-        # Use relative path
         with patch.dict(os.environ, {"TARGET_REPO_PATH": "./child"}):
             result = get_project_root()
 
@@ -142,7 +133,6 @@ class TestGetProjectRoot:
         with patch.dict(os.environ, {"TARGET_REPO_PATH": str(symlink_path)}):
             result = get_project_root()
 
-        # Should resolve to the real path
         assert result == real_path.resolve()
 
     def test_defaults_to_cwd_without_error(
@@ -159,20 +149,16 @@ class TestGetProjectRoot:
 
         with patch("codebase_rag.mcp.server.settings") as mock_settings:
             mock_settings.TARGET_REPO_PATH = None
-            # Should not raise any exceptions
             result = get_project_root()
 
-        # Verify it returns the cwd
         assert result == test_cwd.resolve()
         assert result.exists()
         assert result.is_dir()
 
     def test_works_with_actual_cwd(self) -> None:
         """Integration test: verify it works with the actual current working directory."""
-        # Get actual cwd
         actual_cwd = Path.cwd()
 
-        # Clear environment and settings
         with patch.dict(os.environ, {}, clear=False):
             if "TARGET_REPO_PATH" in os.environ:
                 del os.environ["TARGET_REPO_PATH"]
@@ -181,7 +167,6 @@ class TestGetProjectRoot:
                 mock_settings.TARGET_REPO_PATH = None
                 result = get_project_root()
 
-        # Should return actual cwd
         assert result == actual_cwd.resolve()
         assert result.exists()
         assert result.is_dir()

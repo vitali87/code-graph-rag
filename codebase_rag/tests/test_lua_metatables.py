@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_arithmetic_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -92,11 +91,7 @@ print(tostring(diff))
 print(tostring(scaled))
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -214,11 +209,7 @@ while queue:size() > 0 do
 end
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -380,11 +371,7 @@ props.computed = 20
 print("Computed:", props.computed)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -545,11 +532,7 @@ emitter:on("test", function(msg) print("Received:", msg) end)
 emitter("test", "Hello World")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -750,11 +733,7 @@ print("Registry count:", registry:count())
 print("Found by ID:", registry:get_by_id(id1).data)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -765,7 +744,6 @@ print("Found by ID:", registry:get_by_id(id1).data)
 
     weak_qn = f"{project.name}.weak_refs"
 
-    # WeakCache methods
     assert f"{weak_qn}.WeakCache:new" in fn_qns or f"{weak_qn}.WeakCache.new" in fn_qns
     assert f"{weak_qn}.WeakCache:set" in fn_qns or f"{weak_qn}.WeakCache.set" in fn_qns
     assert f"{weak_qn}.WeakCache:get" in fn_qns or f"{weak_qn}.WeakCache.get" in fn_qns
@@ -773,7 +751,6 @@ print("Found by ID:", registry:get_by_id(id1).data)
         f"{weak_qn}.WeakCache:size" in fn_qns or f"{weak_qn}.WeakCache.size" in fn_qns
     )
 
-    # Observable methods
     assert (
         f"{weak_qn}.Observable:new" in fn_qns or f"{weak_qn}.Observable.new" in fn_qns
     )
@@ -794,7 +771,6 @@ print("Found by ID:", registry:get_by_id(id1).data)
         or f"{weak_qn}.Observable.observer_count" in fn_qns
     )
 
-    # Registry methods
     assert f"{weak_qn}.Registry:new" in fn_qns or f"{weak_qn}.Registry.new" in fn_qns
     assert (
         f"{weak_qn}.Registry:register" in fn_qns

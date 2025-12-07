@@ -27,7 +27,6 @@ class CodeRetriever:
         """
         params = {"qn": qualified_name}
         try:
-            # Use the ingestor's public interface
             results = self.ingestor.fetch_all(query, params)
 
             if not results:

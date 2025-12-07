@@ -48,7 +48,6 @@ def _build_deep_assignment_chain(depth: int) -> NodeStub:
         )
         next_node = current
 
-    # Wrap in a root node to match traversal expectations
     return NodeStub("block", children=[next_node] if next_node else [])
 
 
@@ -69,7 +68,7 @@ def _make_engine() -> TypeInferenceEngine:
         function_registry={},
         repo_path=Path("."),
         project_name="proj",
-        ast_cache={},
+        ast_cache={},  # ty: ignore[invalid-argument-type]
         queries={},
         module_qn_to_file_path={},
         class_inheritance={},
@@ -79,16 +78,14 @@ def _make_engine() -> TypeInferenceEngine:
 def test_analyze_self_assignments_handles_deep_tree_without_recursion_error() -> None:
     engine = _make_engine()
 
-    # Force the expression inference to return a deterministic type
     engine._infer_type_from_expression = MagicMock(return_value="MockType")  # type: ignore[method-assign]
 
     root = _build_deep_assignment_chain(depth=1500)
     local_types: dict[str, Any] = {}
 
-    engine._analyze_self_assignments(root, local_types, "proj.module")
+    engine._analyze_self_assignments(root, local_types, "proj.module")  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
 
     assert local_types, "Expected at least one inferred instance variable"
-    # Should have invoked expression inference for each assignment in the chain
     assert engine._infer_type_from_expression.call_count == 1500  # type: ignore[attr-defined]
 
 
@@ -98,6 +95,6 @@ def test_find_return_statements_handles_deep_tree_without_recursion_error() -> N
     root = _build_deep_return_tree(depth=1500)
     returns: list[NodeStub] = []
 
-    engine._find_return_statements(root, returns)
+    engine._find_return_statements(root, returns)  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
 
     assert len(returns) == 1501

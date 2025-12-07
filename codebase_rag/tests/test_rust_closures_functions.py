@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -13,11 +12,9 @@ def rust_closures_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_closures_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Closures and functions test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_closures_test"
 version = "0.1.0"
@@ -225,18 +222,9 @@ fn generic_closures_demo() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify closure functions are detected
     closure_calls = [
         call
         for call in calls
@@ -534,18 +522,9 @@ where
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify function pointer functions are detected
     function_calls = [
         call
         for call in calls
@@ -913,18 +892,9 @@ fn observable_demo() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify higher-order functions are detected
     higher_order_calls = [
         call
         for call in calls
@@ -1224,18 +1194,9 @@ async fn demo_parallel_processing() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify async closure functions are detected
     async_calls = [
         call
         for call in calls

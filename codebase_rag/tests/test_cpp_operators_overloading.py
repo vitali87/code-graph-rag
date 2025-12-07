@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def cpp_operators_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_operators_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -282,33 +279,17 @@ void demonstrateArithmeticOperators() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_operators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_operators_project, mock_ingestor)
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with operator overloading
     expected_classes = [
         f"{project_name}.arithmetic_operators.Complex",
         f"{project_name}.arithmetic_operators.Vector3D",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 2, (
         f"Expected at least 2 arithmetic operator classes, found {len(found_classes)}: {found_classes}"
@@ -585,34 +566,18 @@ void demonstrateComparisonOperators() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_operators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_operators_project, mock_ingestor)
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with comparison operators
     expected_classes = [
         f"{project_name}.comparison_operators.Person",
         f"{project_name}.comparison_operators.Version",
         f"{project_name}.comparison_operators.Money",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 2, (
         f"Expected at least 2 comparison operator classes, found {len(found_classes)}: {found_classes}"
@@ -866,18 +831,10 @@ void demonstrateStreamAndFunctionOperators() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_operators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_operators_project, mock_ingestor)
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with stream and function call operators
     expected_classes = [
         f"{project_name}.stream_function_operators.Point",
         f"{project_name}.stream_function_operators.Adder",
@@ -885,16 +842,8 @@ void demonstrateStreamAndFunctionOperators() {
         f"{project_name}.stream_function_operators.Calculator",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 stream/function operator classes, found {len(found_classes)}: {found_classes}"
@@ -1284,34 +1233,18 @@ void demonstrateSubscriptAndIncrementOperators() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_operators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_operators_project, mock_ingestor)
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with subscript and increment operators
     expected_classes = [
         f"{project_name}.subscript_increment_operators.DynamicArray",
         f"{project_name}.subscript_increment_operators.Counter",
         f"{project_name}.subscript_increment_operators.SimpleString",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 2, (
         f"Expected at least 2 subscript/increment operator classes, found {len(found_classes)}: {found_classes}"
@@ -1453,24 +1386,11 @@ void demonstrateAllOperators() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_operators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_operators_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive operator coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1481,5 +1401,4 @@ void demonstrateAllOperators() {
         f"Expected at least 5 comprehensive operator calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that operator parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

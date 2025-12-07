@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,11 +13,9 @@ def cpp_concepts_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_concepts_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    # Create base files
     (project_path / "include" / "concepts.h").write_text(
         "#pragma once\n// Concepts header"
     )
@@ -125,23 +122,10 @@ void demonstrateBasicConcepts() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concepts_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concepts_project, mock_ingestor)
 
-    # Verify concept definitions are detected
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Look for concept-related definitions
     concept_definitions = [
         call
         for call in defines_relationships
@@ -281,23 +265,10 @@ void demonstrateAdvancedConcepts() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concepts_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concepts_project, mock_ingestor)
 
-    # Verify advanced concept usage
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-
-    # Look for concept-constrained template usage
     advanced_calls = [
         call for call in call_relationships if "advanced_concepts" in call.args[0][2]
     ]
@@ -388,21 +359,12 @@ void demonstrateConceptComposition() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concepts_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concepts_project, mock_ingestor)
 
-    # Verify concept relationships and namespace usage
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    # Look for namespace relationships
     namespace_relationships = [
         call
         for call in all_relationships
@@ -413,8 +375,7 @@ void demonstrateConceptComposition() {
         f"Expected namespace relationships for concepts, found {len(namespace_relationships)}"
     )
 
-    # Verify template specializations
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     composition_definitions = [
         call

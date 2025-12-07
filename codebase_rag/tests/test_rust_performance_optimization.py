@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -13,7 +12,6 @@ def rust_performance_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_performance_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_performance_test"
@@ -25,7 +23,6 @@ criterion = "0.5"
 rayon = "1.7"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Performance test crate")
 
@@ -307,18 +304,9 @@ fn memory_usage_tracking() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify benchmarking functions are detected
     benchmark_calls = [
         call
         for call in calls
@@ -582,18 +570,9 @@ mod fastrand {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify SIMD functions are detected
     simd_calls = [
         call
         for call in calls
@@ -900,18 +879,9 @@ mod fastrand {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify parallel processing functions are detected
     parallel_calls = [
         call
         for call in calls
@@ -1238,18 +1208,9 @@ fn memory_mapped_files() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify memory optimization functions are detected
     memory_calls = [
         call
         for call in calls
@@ -1659,18 +1620,9 @@ fn hotspot_detection() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_performance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify profiling functions are detected
     profiling_calls = [
         call
         for call in calls

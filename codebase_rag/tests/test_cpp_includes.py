@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,14 +12,12 @@ def cpp_includes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_includes_test"
     project_path.mkdir()
 
-    # Create include directory structure
     (project_path / "include").mkdir()
     (project_path / "include" / "common").mkdir()
     (project_path / "include" / "utils").mkdir()
     (project_path / "src").mkdir()
     (project_path / "external").mkdir()
 
-    # Create header files for testing
     (project_path / "include" / "base.h").write_text(
         """
 #pragma once
@@ -147,31 +143,18 @@ void demonstrateStdLibrary() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
         call for call in import_relationships if "stdlib_includes" in call.args[0][2]
     ]
 
-    # Should have multiple standard library includes
     assert len(stdlib_imports) >= 10, (
         f"Expected at least 10 stdlib includes, found {len(stdlib_imports)}"
     )
 
-    # Verify specific includes exist
     imported_headers = [call.args[2][2] for call in stdlib_imports]
     expected_headers = [
         "iostream",
@@ -255,7 +238,6 @@ void useLocalHeaders() {
 """
     )
 
-    # Create the corresponding header file
     header_file = cpp_includes_project / "src" / "local_includes.h"
     header_file.write_text(
         """
@@ -272,31 +254,18 @@ void useLocalHeaders();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     local_imports = [
         call for call in import_relationships if "local_includes" in call.args[0][2]
     ]
 
-    # Should have multiple local header includes
     assert len(local_imports) >= 4, (
         f"Expected at least 4 local includes, found {len(local_imports)}"
     )
 
-    # Verify specific local includes exist
     imported_headers = [call.args[2][2] for call in local_imports]
     expected_patterns = [
         "base",  # base.h -> qualified name contains "base"
@@ -446,20 +415,9 @@ void demonstrateConditionalIncludes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     conditional_imports = [
         call
@@ -467,12 +425,10 @@ void demonstrateConditionalIncludes() {
         if "conditional_includes" in call.args[0][2]
     ]
 
-    # Should have conditional includes (parser should capture available ones)
     assert len(conditional_imports) >= 3, (
         f"Expected at least 3 conditional includes, found {len(conditional_imports)}"
     )
 
-    # Verify that standard includes are always present
     imported_headers = [call.args[2][2] for call in conditional_imports]
     always_present = ["string", "vector", "memory"]
 
@@ -584,40 +540,26 @@ void demonstrateIncludeTypes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     include_type_imports = [
         call for call in import_relationships if "include_types" in call.args[0][2]
     ]
 
-    # Should have both system and local includes
     assert len(include_type_imports) >= 8, (
         f"Expected at least 8 include relationships, found {len(include_type_imports)}"
     )
 
     imported_headers = [call.args[2][2] for call in include_type_imports]
 
-    # System includes
     system_headers = ["iostream", "vector", "string", "algorithm", "memory", "map"]
     for expected in system_headers:
         assert any(expected in header for header in imported_headers), (
             f"Missing system include: {expected}\nFound: {imported_headers}"
         )
 
-    # Local includes (check for base names without .h extension)
     local_headers = ["base", "types", "math"]
     for expected in local_headers:
         assert any(expected in header for header in imported_headers), (
@@ -631,7 +573,6 @@ def test_include_guards_and_pragma_once(
 ) -> None:
     """Test handling of include guards and #pragma once."""
 
-    # Create header with traditional include guards
     guard_header = cpp_includes_project / "include" / "with_guards.h"
     guard_header.write_text(
         """
@@ -652,7 +593,6 @@ private:
 """
     )
 
-    # Create header with #pragma once
     pragma_header = cpp_includes_project / "include" / "with_pragma.h"
     pragma_header.write_text(
         """
@@ -729,20 +669,9 @@ std::vector<int> PragmaClass::getItems() const {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     guard_test_imports = [
         call
@@ -750,14 +679,12 @@ std::vector<int> PragmaClass::getItems() const {
         if "include_guards_test" in call.args[0][2]
     ]
 
-    # Should have include relationships (duplicates might be filtered by parser)
     assert len(guard_test_imports) >= 4, (
         f"Expected at least 4 include relationships, found {len(guard_test_imports)}"
     )
 
     imported_headers = [call.args[2][2] for call in guard_test_imports]
 
-    # Should include both header types (check for base names)
     expected_headers = ["with_guards", "with_pragma", "iostream", "string"]
     for expected in expected_headers:
         assert any(expected in header for header in imported_headers), (
@@ -891,25 +818,12 @@ void demonstrateAllIncludes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_includes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_includes_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
-
-    # Should have comprehensive include coverage
     comprehensive_imports = [
         call
         for call in import_relationships
@@ -920,7 +834,6 @@ void demonstrateAllIncludes() {
         f"Expected at least 10 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_imports:
         assert len(relationship.args) == 3, "Import relationship should have 3 args"
         assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
@@ -928,20 +841,16 @@ void demonstrateAllIncludes() {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_includes" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid header name
         assert isinstance(target_module, str) and target_module, (
             f"Target module should be non-empty string: {target_module}"
         )
 
-    # Test that include parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
-    # Should have inheritance relationship (ComprehensiveIncludeDemo : Base)
     inheritance_found = any(
         "ComprehensiveIncludeDemo" in call.args[0][2] and "Base" in call.args[2][2]
         for call in inherits_relationships

@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,12 +13,10 @@ def typescript_namespaces_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_namespaces_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "namespaces").mkdir()
     (project_path / "modules").mkdir()
     (project_path / "types").mkdir()
 
-    # Create base files
     (project_path / "types" / "common.ts").write_text(
         """
 export namespace Common {
@@ -371,16 +368,8 @@ console.log(merged.size()); // 2
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # TypeScript namespaces might be captured as special namespace nodes or as modules
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     namespace_like_nodes = [
@@ -398,7 +387,6 @@ console.log(merged.size()); // 2
         f"Expected at least 3 namespace-like nodes, found {len(namespace_like_nodes)}"
     )
 
-    # Check for functions within namespaces
     function_calls = [
         call
         for call in mock_ingestor.ensure_node_batch.call_args_list
@@ -425,12 +413,7 @@ console.log(merged.size()); // 2
         f"Expected at least 3 namespace functions, found {len(namespace_functions)}"
     )
 
-    # Check for classes within namespaces
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     namespace_classes = [
         call
@@ -783,16 +766,8 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # Check for merged namespace functionality
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     merged_namespace_nodes = [
@@ -809,12 +784,7 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
         f"Expected at least 4 merged namespace-related nodes, found {len(merged_namespace_nodes)}"
     )
 
-    # Check for merged functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     merged_functions = [
         call
@@ -835,7 +805,6 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
         f"Expected at least 3 functions from merged namespaces, found {len(merged_functions)}"
     )
 
-    # Check for interface/enum/class merging
     interface_calls = [
         call
         for call in all_nodes
@@ -1218,16 +1187,8 @@ if (ConditionalModule.IS_NODE) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # Check for module patterns
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     module_pattern_nodes = [
@@ -1249,7 +1210,6 @@ if (ConditionalModule.IS_NODE) {
         f"Expected at least 3 module pattern nodes, found {len(module_pattern_nodes)}"
     )
 
-    # Check for exported classes and interfaces
     class_calls = [
         call
         for call in all_nodes
@@ -1270,12 +1230,7 @@ if (ConditionalModule.IS_NODE) {
         f"Expected at least 2 classes/interfaces in modules, found {module_classes_interfaces}"
     )
 
-    # Check for utility functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     module_functions = [
         call
@@ -1383,24 +1338,15 @@ Conditional.log('Debug message');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_namespaces_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive namespace-related calls
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1411,7 +1357,6 @@ Conditional.log('Debug message');
         f"Expected at least 5 comprehensive namespace calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all namespace patterns were created
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     comprehensive_namespaces = [

@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 
 def test_lua_class_pattern_basic(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -10,7 +9,6 @@ def test_lua_class_pattern_basic(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_oop_test"
     project.mkdir()
 
-    # Create a Person "class" with constructor and methods
     (project / "person.lua").write_text("""
 -- Define a Person "class"
 local Person = {}
@@ -34,7 +32,6 @@ end
 return Person
 """)
 
-    # Create a file that uses the Person class
     (project / "main.lua").write_text("""
 local Person = require('person')
 
@@ -46,53 +43,29 @@ local bob = Person:new("Bob", 25)
 bob:greet()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
-    # Check that Person class methods were detected
     person_qn = f"{project.name}.person"
     main_qn = f"{project.name}.main"
 
-    # Verify DEFINES relationships (Module defines functions)
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships (Functions call other functions)
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have module defining functions
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have method calls (Person:new calls)
     assert len(calls_rels) >= 2, (
         f"Expected at least 2 CALLS relationships, got {len(calls_rels)}"
     )
 
-    # Should have import relationship (main imports person)
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
 
-    # Verify import was detected
     import_map = updater.factory.import_processor.import_mapping.get(main_qn, {})
     assert "Person" in import_map
     assert import_map["Person"] == person_qn
@@ -103,7 +76,6 @@ def test_lua_inheritance_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_inheritance_test"
     project.mkdir()
 
-    # Base class
     (project / "animal.lua").write_text("""
 local Animal = {}
 Animal.__index = Animal
@@ -125,7 +97,6 @@ end
 return Animal
 """)
 
-    # Derived class
     (project / "dog.lua").write_text("""
 local Animal = require('animal')
 
@@ -151,7 +122,6 @@ end
 return Dog
 """)
 
-    # Usage
     (project / "main.lua").write_text("""
 local Dog = require('dog')
 
@@ -161,18 +131,12 @@ local name = myDog:getName()  -- Should call inherited Animal's getName
 local breed = myDog:getBreed()  -- Should call Dog's getBreed
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
-    # Check class definitions
     animal_qn = f"{project.name}.animal"
     dog_qn = f"{project.name}.dog"
     main_qn = f"{project.name}.main"
 
-    # Get created functions
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -180,7 +144,6 @@ local breed = myDog:getBreed()  -- Should call Dog's getBreed
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
-    # Verify Animal methods
     assert f"{animal_qn}.Animal:new" in fn_qns or f"{animal_qn}.Animal.new" in fn_qns
     assert (
         f"{animal_qn}.Animal:speak" in fn_qns or f"{animal_qn}.Animal.speak" in fn_qns
@@ -190,12 +153,10 @@ local breed = myDog:getBreed()  -- Should call Dog's getBreed
         or f"{animal_qn}.Animal.getName" in fn_qns
     )
 
-    # Verify Dog methods
     assert f"{dog_qn}.Dog:new" in fn_qns or f"{dog_qn}.Dog.new" in fn_qns
     assert f"{dog_qn}.Dog:speak" in fn_qns or f"{dog_qn}.Dog.speak" in fn_qns
     assert f"{dog_qn}.Dog:getBreed" in fn_qns or f"{dog_qn}.Dog.getBreed" in fn_qns
 
-    # Verify imports
     dog_imports = updater.factory.import_processor.import_mapping.get(dog_qn, {})
     assert "Animal" in dog_imports
 
@@ -208,7 +169,6 @@ def test_lua_module_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_module_test"
     project.mkdir()
 
-    # Module with private and public functions
     (project / "calculator.lua").write_text("""
 local Calculator = {}
 
@@ -256,16 +216,11 @@ local product = calc.multiply(6, 7)
 local quotient = calc.divide(20, 5)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     calc_qn = f"{project.name}.calculator"
     main_qn = f"{project.name}.main"
 
-    # Get created functions
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -273,7 +228,6 @@ local quotient = calc.divide(20, 5)
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
-    # Verify module methods
     assert f"{calc_qn}.Calculator.add" in fn_qns
     assert f"{calc_qn}.Calculator.subtract" in fn_qns
     assert f"{calc_qn}.Calculator.multiply" in fn_qns
@@ -281,10 +235,8 @@ local quotient = calc.divide(20, 5)
         f"{calc_qn}.Calculator.divide" in fn_qns
     )  # Assignment pattern should now be detected
 
-    # Private function should also be detected (but as a local function)
     assert f"{calc_qn}.validate" in fn_qns
 
-    # Verify import
     import_map = updater.factory.import_processor.import_mapping.get(main_qn, {})
     assert "calc" in import_map
 
@@ -351,16 +303,11 @@ local x, y = circle1:getPosition()
 local circle2 = shapes.createCircle(0, 0, 10)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     shape_qn = f"{project.name}.shape"
     main_qn = f"{project.name}.main"
 
-    # Get created functions
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -368,7 +315,6 @@ local circle2 = shapes.createCircle(0, 0, 10)
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
-    # Verify prototype methods
     assert (
         f"{shape_qn}.ShapePrototype:clone" in fn_qns
         or f"{shape_qn}.ShapePrototype.clone" in fn_qns
@@ -382,13 +328,8 @@ local circle2 = shapes.createCircle(0, 0, 10)
         or f"{shape_qn}.ShapePrototype.getPosition" in fn_qns
     )
 
-    # Verify factory function
     assert f"{shape_qn}.createCircle" in fn_qns
 
-    # Note: The dynamically created circle:getArea might not be detected
-    # as it's defined inside a function
-
-    # Verify import
     import_map = updater.factory.import_processor.import_mapping.get(main_qn, {})
     assert "shapes" in import_map
 
@@ -398,7 +339,6 @@ def test_lua_mixin_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_mixin_test"
     project.mkdir()
 
-    # Mixin 1
     (project / "printable.lua").write_text("""
 local Printable = {}
 
@@ -419,7 +359,6 @@ end
 return Printable
 """)
 
-    # Mixin 2
     (project / "serializable.lua").write_text("""
 local Serializable = {}
 
@@ -443,7 +382,6 @@ end
 return Serializable
 """)
 
-    # Class using mixins
     (project / "user.lua").write_text("""
 local Printable = require('printable')
 local Serializable = require('serializable')
@@ -486,18 +424,13 @@ local json = user:serialize()  -- From Serializable mixin
 local name = user:getName()  -- From User itself
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     printable_qn = f"{project.name}.printable"
     serializable_qn = f"{project.name}.serializable"
     user_qn = f"{project.name}.user"
     main_qn = f"{project.name}.main"
 
-    # Get created functions
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -505,7 +438,6 @@ local name = user:getName()  -- From User itself
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
-    # Verify mixin methods
     assert (
         f"{printable_qn}.Printable:toString" in fn_qns
         or f"{printable_qn}.Printable.toString" in fn_qns
@@ -524,12 +456,10 @@ local name = user:getName()  -- From User itself
         or f"{serializable_qn}.Serializable.deserialize" in fn_qns
     )
 
-    # Verify User methods
     assert f"{user_qn}.User:new" in fn_qns or f"{user_qn}.User.new" in fn_qns
     assert f"{user_qn}.User:getName" in fn_qns or f"{user_qn}.User.getName" in fn_qns
     assert f"{user_qn}.User:getEmail" in fn_qns or f"{user_qn}.User.getEmail" in fn_qns
 
-    # Verify imports
     user_imports = updater.factory.import_processor.import_mapping.get(user_qn, {})
     assert "Printable" in user_imports
     assert "Serializable" in user_imports
@@ -594,16 +524,11 @@ local debug = config2:get("debug")  -- Should be true (same instance)
 config2:reset()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     config_qn = f"{project.name}.config"
     main_qn = f"{project.name}.main"
 
-    # Get created functions
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -611,7 +536,6 @@ config2:reset()
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
-    # Verify singleton methods
     assert (
         f"{config_qn}.Config:getInstance" in fn_qns
         or f"{config_qn}.Config.getInstance" in fn_qns
@@ -622,6 +546,5 @@ config2:reset()
         f"{config_qn}.Config:reset" in fn_qns or f"{config_qn}.Config.reset" in fn_qns
     )
 
-    # Verify import
     import_map = updater.factory.import_processor.import_mapping.get(main_qn, {})
     assert "Config" in import_map

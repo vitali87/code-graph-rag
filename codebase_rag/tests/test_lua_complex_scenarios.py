@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_web_framework_scenario(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -98,44 +97,22 @@ app:get("/", function(ctx) return ctx:json({message = "Hello World"}) end)
 app:start()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have web framework function definitions
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have framework method calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -242,44 +219,22 @@ print(inspect(users))
 db:close()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have database ORM function definitions
     assert len(defines_rels) >= 4, (
         f"Expected at least 4 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have database method calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -391,32 +346,16 @@ end
 Game:init()
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have game engine function definitions
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have game engine calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
@@ -573,44 +512,22 @@ local db_port = config_mgr:get("database", "port")
 local api_key = config_mgr:get("api", "key")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have configuration manager function definitions
     assert len(defines_rels) >= 6, (
         f"Expected at least 6 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have config manager calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -766,44 +683,22 @@ local csv_data = pipeline:process_csv_file("input.csv")
 pipeline:export_results(csv_data)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have data pipeline function definitions
     assert len(defines_rels) >= 8, (
         f"Expected at least 8 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have pipeline method calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -973,44 +868,22 @@ mesh:register_service("order-service", "http://orders:8080")
 local user_data = mesh:call_service("user-service", "/users/123", "GET")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Verify IMPORTS relationships
-    imports_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have service mesh function definitions
     assert len(defines_rels) >= 6, (
         f"Expected at least 6 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have service mesh calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )

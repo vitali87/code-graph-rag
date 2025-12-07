@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def cpp_ranges_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_ranges_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -293,18 +290,10 @@ void demonstrateBasicRanges() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_ranges_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_ranges_project, mock_ingestor)
 
     project_name = cpp_ranges_project.name
 
-    # Expected ranges-related functions and classes
     expected_functions = [
         f"{project_name}.basic_ranges.testBasicRangesConcepts",
         f"{project_name}.basic_ranges.testRangesAlgorithms",
@@ -317,31 +306,15 @@ void demonstrateBasicRanges() {
         f"{project_name}.basic_ranges.NumberSequence",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 ranges class, found {len(found_classes)}: {found_classes}"
@@ -672,18 +645,10 @@ void demonstrateViewsAndAdaptors() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_ranges_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_ranges_project, mock_ingestor)
 
     project_name = cpp_ranges_project.name
 
-    # Expected views-related functions
     expected_functions = [
         f"{project_name}.views_adaptors.testBasicViews",
         f"{project_name}.views_adaptors.testAdvancedViews",
@@ -692,16 +657,8 @@ void demonstrateViewsAndAdaptors() {
         f"{project_name}.views_adaptors.demonstrateViewsAndAdaptors",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1020,24 +977,11 @@ void demonstrateRangeGraphProcessing() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_ranges_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_ranges_project, mock_ingestor)
 
-    # Verify comprehensive ranges coverage
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive range processing coverage
     range_processing_calls = [
         call
         for call in call_relationships
@@ -1048,5 +992,4 @@ void demonstrateRangeGraphProcessing() {
         f"Expected at least 5 range processing calls, found {len(range_processing_calls)}"
     )
 
-    # Test that ranges parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

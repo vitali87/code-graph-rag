@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def cpp_smart_pointers_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_smart_pointers_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -361,18 +358,10 @@ void demonstratePolymorphicUniquePtr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_smart_pointers_project, mock_ingestor)
 
     project_name = cpp_smart_pointers_project.name
 
-    # Expected unique_ptr related classes and functions
     expected_entities = [
         f"{project_name}.unique_ptr_patterns.Resource",
         f"{project_name}.unique_ptr_patterns.ResourceManager",
@@ -381,7 +370,6 @@ void demonstratePolymorphicUniquePtr() {
         f"{project_name}.unique_ptr_patterns.demonstrateUniquePtrBasics",
     ]
 
-    # Get all node creation calls
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     function_calls = [call for call in all_calls if call[0][0] == "Function"]
@@ -390,7 +378,6 @@ void demonstratePolymorphicUniquePtr() {
         call[0][1]["qualified_name"] for call in class_calls + function_calls
     }
 
-    # Verify expected entities were created
     found_entities = [
         entity for entity in expected_entities if entity in created_entities
     ]
@@ -783,18 +770,10 @@ void demonstrateAllocators() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_smart_pointers_project, mock_ingestor)
 
     project_name = cpp_smart_pointers_project.name
 
-    # Expected shared_ptr related classes
     expected_classes = [
         f"{project_name}.shared_ptr_patterns.Node",
         f"{project_name}.shared_ptr_patterns.Observer",
@@ -803,16 +782,8 @@ void demonstrateAllocators() {
         f"{project_name}.shared_ptr_patterns.Cache",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 4, (
         f"Expected at least 4 shared_ptr classes, found {len(found_classes)}: {found_classes}"
@@ -1238,18 +1209,10 @@ void demonstrateWeakPtrCache() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_smart_pointers_project, mock_ingestor)
 
     project_name = cpp_smart_pointers_project.name
 
-    # Expected weak_ptr related classes
     expected_classes = [
         f"{project_name}.weak_ptr_advanced.TreeNode",
         f"{project_name}.weak_ptr_advanced.EventManager",
@@ -1258,16 +1221,8 @@ void demonstrateWeakPtrCache() {
         f"{project_name}.weak_ptr_advanced.WeakPtrCache",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 4, (
         f"Expected at least 4 weak_ptr classes, found {len(found_classes)}: {found_classes}"
@@ -1616,24 +1571,11 @@ void comprehensiveDemonstration() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_smart_pointers_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive smart pointer coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1644,5 +1586,4 @@ void comprehensiveDemonstration() {
         f"Expected at least 8 comprehensive smart pointer calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that smart pointer parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

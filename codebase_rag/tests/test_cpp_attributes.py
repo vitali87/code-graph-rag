@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,11 +13,9 @@ def cpp_attributes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_attributes_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    # Create base files
     (project_path / "include" / "attributes.h").write_text(
         "#pragma once\nnamespace attr_test {}"
     )
@@ -297,24 +294,11 @@ void testTemplateAttributes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
-    # Verify function definitions with attributes are tracked
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-
-    # Functions with attributes should be defined
     attributed_functions = [
         call
         for call in defines_relationships
@@ -337,7 +321,6 @@ void testTemplateAttributes() {
         f"Expected at least 7 attributed functions, found {len(attributed_functions)}"
     )
 
-    # Function calls should be tracked
     attribute_function_calls = [
         call
         for call in call_relationships
@@ -686,24 +669,15 @@ void testAttributeInheritance() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
-    # Verify compiler-specific attributed functions are tracked
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     [c for c in all_relationships if c.args[1] == "CALLS"]
 
-    # Functions with compiler-specific attributes should be defined
     compiler_attributed_functions = [
         call
         for call in defines_relationships
@@ -726,7 +700,6 @@ void testAttributeInheritance() {
         f"Expected at least 6 compiler-attributed functions, found {len(compiler_attributed_functions)}"
     )
 
-    # Classes with attributes should be tracked
     attributed_classes = [
         call
         for call in defines_relationships
@@ -1047,24 +1020,11 @@ void testUltimateAttributes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
-    # Verify complex attributed constructs are tracked
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-
-    # Edge case functions should be defined
     edge_case_functions = [
         call
         for call in defines_relationships
@@ -1086,7 +1046,6 @@ void testUltimateAttributes() {
         f"Expected at least 5 edge case attributed functions, found {len(edge_case_functions)}"
     )
 
-    # Lambda and complex call patterns
     complex_calls = [
         call for call in call_relationships if "attribute_edge_cases" in call.args[0][2]
     ]
@@ -1244,25 +1203,12 @@ void testAttributePolymorphism() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_attributes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_attributes_project, mock_ingestor)
 
-    # Verify comprehensive relationship creation
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
-
-    # Should have comprehensive coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1283,7 +1229,6 @@ void testAttributePolymorphism() {
         f"Expected at least 8 comprehensive attribute definitions, found {len(comprehensive_defines)}"
     )
 
-    # Inheritance should work with attributes
     attribute_inherits = [
         call
         for call in inherits_relationships

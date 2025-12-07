@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -13,7 +12,6 @@ def java_complex_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_complex_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -172,25 +170,9 @@ class ComputerService {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check builder pattern method calls (lots of chaining)
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for builder pattern"
@@ -375,36 +357,15 @@ class NewsSystem {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check interface implementations
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for observer pattern"
     )
 
-    # Check observer notification calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for observer pattern"
@@ -640,47 +601,21 @@ class VehicleProduction {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check inheritance relationships (abstract factory and concrete factories)
-    inherits_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "INHERITS"
-    ]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     assert len(inherits_relationships) > 0, (
         "No inheritance relationships found for factory pattern"
     )
 
-    # Check interface implementations
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for factory pattern"
     )
 
-    # Check factory method calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for factory pattern"
@@ -872,47 +807,21 @@ class CoffeeShop {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check inheritance relationships (decorators extending base decorator)
-    inherits_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "INHERITS"
-    ]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     assert len(inherits_relationships) > 0, (
         "No inheritance relationships found for decorator pattern"
     )
 
-    # Check interface implementations
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for decorator pattern"
     )
 
-    # Check decorator chaining calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for decorator pattern"
@@ -1097,36 +1006,15 @@ class PaymentProcessor {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check interface implementations (strategies implementing PaymentStrategy)
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for strategy pattern"
     )
 
-    # Check strategy method calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for strategy pattern"
@@ -1402,36 +1290,15 @@ class SmartHome {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_complex_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check interface implementations (commands implementing Command)
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found for command pattern"
     )
 
-    # Check command execution calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for command pattern"

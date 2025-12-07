@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -13,11 +12,9 @@ def rust_pattern_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_pattern_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Pattern matching test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_pattern_test"
 version = "0.1.0"
@@ -180,18 +177,9 @@ fn tree_depth(node: &TreeNode) -> usize {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify pattern matching functions are detected
     pattern_calls = [
         call
         for call in calls
@@ -465,18 +453,9 @@ fn string_pattern_matching() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify destructuring functions are detected
     destructure_calls = [
         call
         for call in calls
@@ -678,18 +657,9 @@ fn classify_float(f: f64) -> &'static str {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify guard functions are detected
     guard_calls = [
         call
         for call in calls
@@ -957,18 +927,9 @@ fn process_string_refs() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify if let and while let functions are detected
     let_calls = [
         call
         for call in calls
@@ -1253,18 +1214,9 @@ fn test_advanced_macro_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_pattern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify macro pattern functions are detected
     macro_calls = [
         call
         for call in calls

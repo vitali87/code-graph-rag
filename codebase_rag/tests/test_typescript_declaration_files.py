@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,12 +13,10 @@ def typescript_declarations_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_declarations_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "types").mkdir()
     (project_path / "lib").mkdir()
     (project_path / "external").mkdir()
 
-    # Create base declaration file
     (project_path / "types" / "common.d.ts").write_text(
         """
 // Common type declarations
@@ -362,19 +359,10 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
-    # Check for ambient declarations
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
-    # Look for declared functions, classes, interfaces, etc.
     ambient_nodes = [
         call
         for call in all_nodes
@@ -386,7 +374,6 @@ export {};
         f"Expected at least 5 ambient declaration nodes, found {len(ambient_nodes)}"
     )
 
-    # Check for specific ambient declarations
     function_calls = [
         call
         for call in all_nodes
@@ -408,7 +395,6 @@ export {};
         and "ambient_declarations" in call[0][1].get("qualified_name", "")
     ]
 
-    # Should have ambient functions, interfaces, and classes
     assert len(function_calls) >= 2, (
         f"Expected at least 2 ambient functions, found {len(function_calls)}"
     )
@@ -811,16 +797,8 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
-    # Check for module declarations
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     module_nodes = [
@@ -834,7 +812,6 @@ export {};
         f"Expected at least 8 module declaration nodes, found {len(module_nodes)}"
     )
 
-    # Check for specific module patterns
     interface_calls = [
         call
         for call in all_nodes
@@ -856,7 +833,6 @@ export {};
         and "module_declarations" in call[0][1].get("qualified_name", "")
     ]
 
-    # Should have module interfaces, classes, and functions
     assert len(interface_calls) >= 5, (
         f"Expected at least 5 module interfaces, found {len(interface_calls)}"
     )
@@ -1232,16 +1208,8 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
-    # Check for global augmentation patterns
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     global_nodes = [
@@ -1254,7 +1222,6 @@ export {};
         f"Expected at least 10 global augmentation nodes, found {len(global_nodes)}"
     )
 
-    # Check for interface extensions
     interface_calls = [
         call
         for call in all_nodes
@@ -1262,7 +1229,6 @@ export {};
         and "global_augmentations" in call[0][1].get("qualified_name", "")
     ]
 
-    # Check for class declarations in global scope
     [
         call
         for call in all_nodes
@@ -1270,7 +1236,6 @@ export {};
         and "global_augmentations" in call[0][1].get("qualified_name", "")
     ]
 
-    # Check for function declarations in global scope
     [
         call
         for call in all_nodes
@@ -1278,7 +1243,6 @@ export {};
         and "global_augmentations" in call[0][1].get("qualified_name", "")
     ]
 
-    # Should have global interfaces, classes, and functions
     assert len(interface_calls) >= 5, (
         f"Expected at least 5 global interfaces, found {len(interface_calls)}"
     )
@@ -1372,24 +1336,15 @@ export {};
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_declarations_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_declarations_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive declaration-related calls
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1400,7 +1355,6 @@ export {};
         f"Expected at least 1 comprehensive declaration call, found {len(comprehensive_calls)}"
     )
 
-    # Check all declaration patterns were created
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     comprehensive_declarations = [

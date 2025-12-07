@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,12 +13,10 @@ def typescript_types_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_types_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "types").mkdir()
     (project_path / "models").mkdir()
 
-    # Create base files
     (project_path / "src" / "base.ts").write_text("export interface BaseInterface {}")
     (project_path / "types" / "common.ts").write_text(
         "export type ID = string | number;"
@@ -110,18 +107,10 @@ const total = sum(1, 2, 3, 4, 5);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
-    # Expected function definitions with type annotations
     expected_functions = [
         f"{project_name}.basic_types.greet",
         f"{project_name}.basic_types.add",
@@ -132,27 +121,14 @@ const total = sum(1, 2, 3, 4, 5);
         f"{project_name}.basic_types.sum",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify all expected functions were created
     for expected_qn in expected_functions:
         assert expected_qn in created_functions, (
             f"Missing typed function: {expected_qn}"
         )
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_calls_found = [
         call for call in call_relationships if "basic_types" in call.args[0][2]
@@ -341,18 +317,10 @@ interface PaymentMethod {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
-    # Interfaces might be captured as Class nodes or special Interface nodes
     interface_nodes = [
         call
         for call in mock_ingestor.ensure_node_batch.call_args_list
@@ -360,12 +328,10 @@ interface PaymentMethod {
         and "interfaces_types" in call[0][1].get("qualified_name", "")
     ]
 
-    # Should have several interfaces defined
     assert len(interface_nodes) >= 3, (
         f"Expected at least 3 interface/type definitions, found {len(interface_nodes)}"
     )
 
-    # Expected functions using interfaces
     expected_functions = [
         f"{project_name}.interfaces_types.isUser",
         f"{project_name}.interfaces_types.isString",
@@ -374,21 +340,13 @@ interface PaymentMethod {
         f"{project_name}.interfaces_types.validateAdmin",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify functions using interfaces were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Should have inheritance relationships for interfaces
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -399,7 +357,6 @@ interface PaymentMethod {
         call for call in relationship_calls if "interfaces_types" in call[0][0][2]
     ]
 
-    # Should have some interface inheritance
     assert len(interface_inheritance) >= 1, (
         f"Expected at least 1 interface inheritance relationship, found {len(interface_inheritance)}"
     )
@@ -630,18 +587,10 @@ const errorResult = createError(new Error("Failed"));
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
-    # Expected generic functions
     expected_generic_functions = [
         f"{project_name}.generics.identity",
         f"{project_name}.generics.createArray",
@@ -653,15 +602,8 @@ const errorResult = createError(new Error("Failed"));
         f"{project_name}.generics.fetchData",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify generic functions were created
     found_generic_functions = [
         func for func in expected_generic_functions if func in created_functions
     ]
@@ -669,7 +611,6 @@ const errorResult = createError(new Error("Failed"));
         f"Expected at least 5 generic functions, found {len(found_generic_functions)}"
     )
 
-    # Expected generic classes
     expected_generic_classes = [
         f"{project_name}.generics.GenericContainer",
         f"{project_name}.generics.Cache",
@@ -677,15 +618,8 @@ const errorResult = createError(new Error("Failed"));
         f"{project_name}.generics.StringContainer",
     ]
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify generic classes were created
     found_generic_classes = [
         cls for cls in expected_generic_classes if cls in created_classes
     ]
@@ -894,18 +828,10 @@ const partial = deepPartial(requiredUser);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
     project_name = typescript_types_project.name
 
-    # Expected functions using utility types
     expected_utility_functions = [
         f"{project_name}.utility_types.updateUser",
         f"{project_name}.utility_types.createUser",
@@ -917,15 +843,8 @@ const partial = deepPartial(requiredUser);
         f"{project_name}.utility_types.omit",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify utility type functions were created
     found_utility_functions = [
         func for func in expected_utility_functions if func in created_functions
     ]
@@ -933,20 +852,12 @@ const partial = deepPartial(requiredUser);
         f"Expected at least 5 utility type functions, found {len(found_utility_functions)}"
     )
 
-    # Expected class using utility types
     expected_utility_classes = [
         f"{project_name}.utility_types.UserService",
     ]
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify utility type classes were created
     found_utility_classes = [
         cls for cls in expected_utility_classes if cls in created_classes
     ]
@@ -1060,27 +971,18 @@ addEventListener('click', (event) => {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_types_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     implements_relationships = [
         c for c in all_relationships if c.args[1] == "IMPLEMENTS"
     ]
 
-    # Should have comprehensive type coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_types" in call.args[0][2]
     ]
@@ -1089,14 +991,12 @@ addEventListener('click', (event) => {
         f"Expected at least 5 comprehensive type calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have implementation relationships
     [
         call
         for call in implements_relationships
         if "comprehensive_types" in call.args[0][2]
     ]
 
-    # Verify relationship structure for type-related calls
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1104,15 +1004,12 @@ addEventListener('click', (event) => {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_types" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that type parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

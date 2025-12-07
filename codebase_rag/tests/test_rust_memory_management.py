@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -13,7 +12,6 @@ def rust_memory_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_memory_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_memory_test"
@@ -21,7 +19,6 @@ version = "0.1.0"
 edition = "2021"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Memory management test crate")
 
@@ -67,18 +64,9 @@ fn main() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify functions are detected
     function_calls = [
         call
         for call in calls
@@ -134,18 +122,9 @@ impl<'a> ImportantExcerpt<'a> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify lifetime functions and structs are detected
     lifetime_calls = [
         call
         for call in calls
@@ -203,18 +182,9 @@ fn create_list() -> List {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify smart pointer functions are detected
     smart_pointer_calls = [
         call
         for call in calls
@@ -270,18 +240,9 @@ fn create_tree_with_cycles() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify reference counting functions are detected
     rc_calls = [
         call
         for call in calls
@@ -329,18 +290,9 @@ fn early_drop() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Drop trait implementation is detected
     drop_calls = [
         call
         for call in calls
@@ -411,18 +363,9 @@ unsafe impl Foo for Bar {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unsafe functions and traits are detected
     unsafe_calls = [
         call
         for call in calls
@@ -492,18 +435,9 @@ fn union_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify memory layout functions are detected
     memory_calls = [
         call
         for call in calls

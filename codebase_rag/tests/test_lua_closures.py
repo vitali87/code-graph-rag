@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_basic_closures(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -114,11 +113,7 @@ local add_5_10 = ClosureFactory.partial(add, 5, 10)
 print("Partial result:", add_5_10(3))  -- 5 + 10 + 3 = 18
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -350,11 +345,7 @@ local result = chain:execute(
 print("Middleware result:", result)
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -366,14 +357,12 @@ print("Middleware result:", result)
     decorators_qn = f"{project.name}.decorators"
     middleware_qn = f"{project.name}.middleware"
 
-    # Decorator functions
     assert f"{decorators_qn}.Decorators.timed" in fn_qns
     assert f"{decorators_qn}.Decorators.memoized" in fn_qns
     assert f"{decorators_qn}.Decorators.retry" in fn_qns
     assert f"{decorators_qn}.Decorators.rate_limited" in fn_qns
     assert f"{decorators_qn}.Decorators.logged" in fn_qns
 
-    # Middleware functions
     assert f"{middleware_qn}.Middleware.create_chain" in fn_qns
     assert f"{middleware_qn}.Middleware.logger" in fn_qns
     assert f"{middleware_qn}.Middleware.authenticator" in fn_qns
@@ -578,11 +567,7 @@ print("=== After unsubscribe ===")
 events:emit("test", "Should not show regular listener")
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -850,11 +835,7 @@ print("Is 4 positive and even?", is_positive_and_even(4))
 print("Is -2 positive and even?", is_positive_and_even(-2))
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
     created_functions = [
         c
@@ -865,27 +846,21 @@ print("Is -2 positive and even?", is_positive_and_even(-2))
 
     functional_qn = f"{project.name}.functional"
 
-    # Higher-order functions
     assert f"{functional_qn}.Functional.map" in fn_qns
     assert f"{functional_qn}.Functional.filter" in fn_qns
     assert f"{functional_qn}.Functional.reduce" in fn_qns
     assert f"{functional_qn}.Functional.fold_right" in fn_qns
 
-    # Currying
     assert f"{functional_qn}.Functional.curry2" in fn_qns
     assert f"{functional_qn}.Functional.curry3" in fn_qns
 
-    # Composition
     assert f"{functional_qn}.Functional.compose" in fn_qns
     assert f"{functional_qn}.Functional.pipe" in fn_qns
 
-    # Lazy evaluation
     assert f"{functional_qn}.Functional.lazy" in fn_qns
 
-    # Maybe monad
     assert f"{functional_qn}.Functional.maybe" in fn_qns
 
-    # Predicates
     assert f"{functional_qn}.Functional.all" in fn_qns
     assert f"{functional_qn}.Functional.any" in fn_qns
     assert f"{functional_qn}.Functional.not_pred" in fn_qns

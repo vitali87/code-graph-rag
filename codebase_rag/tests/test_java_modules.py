@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -13,22 +12,18 @@ def java_modules_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_modules_test"
     project_path.mkdir()
 
-    # Create modular Java project structure
     (project_path / "src").mkdir()
 
-    # Core module
     (project_path / "src" / "core.module").mkdir()
     (project_path / "src" / "core.module" / "com").mkdir()
     (project_path / "src" / "core.module" / "com" / "example").mkdir()
     (project_path / "src" / "core.module" / "com" / "example" / "core").mkdir()
 
-    # API module
     (project_path / "src" / "api.module").mkdir()
     (project_path / "src" / "api.module" / "com").mkdir()
     (project_path / "src" / "api.module" / "com" / "example").mkdir()
     (project_path / "src" / "api.module" / "com" / "example" / "api").mkdir()
 
-    # Service module
     (project_path / "src" / "service.module").mkdir()
     (project_path / "src" / "service.module" / "com").mkdir()
     (project_path / "src" / "service.module" / "com" / "example").mkdir()
@@ -42,7 +37,6 @@ def test_module_info_declarations(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test module-info.java declarations."""
-    # Core module-info.java
     core_module_info = java_modules_project / "src" / "core.module" / "module-info.java"
     core_module_info.write_text(
         """
@@ -83,7 +77,6 @@ module com.example.core {
 """
     )
 
-    # API module-info.java
     api_module_info = java_modules_project / "src" / "api.module" / "module-info.java"
     api_module_info.write_text(
         """
@@ -122,7 +115,6 @@ module com.example.api {
 """
     )
 
-    # Service module-info.java
     service_module_info = (
         java_modules_project / "src" / "service.module" / "module-info.java"
     )
@@ -176,22 +168,8 @@ module com.example.service {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify module-info files were processed (they should be detected as regular files)
-    # Since module-info.java files are special, they might not be parsed as regular classes
-    # but we can verify the parsing didn't fail
     assert True  # Basic verification that parsing completed without errors
 
 
@@ -200,7 +178,6 @@ def test_service_provider_interface(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test Java service provider interface patterns."""
-    # Service interface in core module
     spi_file = (
         java_modules_project
         / "src"
@@ -316,7 +293,6 @@ public class ServiceRegistry {
 """
     )
 
-    # Service implementations in core module
     impl_file = (
         java_modules_project
         / "src"
@@ -487,37 +463,23 @@ public class ConsoleLoggingProvider implements LoggingProvider {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify service interfaces and implementations were detected
     project_name = java_modules_project.name
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected interfaces
     expected_interfaces = {
         f"{project_name}.src.core.module.com.example.core.ServiceProviderInterface.DataProcessor",
         f"{project_name}.src.core.module.com.example.core.ServiceProviderInterface.ConfigurationProvider",
         f"{project_name}.src.core.module.com.example.core.ServiceProviderInterface.LoggingProvider",
     }
 
-    # Expected classes
     expected_classes = {
         f"{project_name}.src.core.module.com.example.core.ServiceProviderInterface.ServiceDiscovery",
         f"{project_name}.src.core.module.com.example.core.ServiceProviderInterface.ServiceRegistry",
@@ -789,28 +751,10 @@ public class ModuleConfiguration {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify the classes were detected
     project_name = java_modules_project.name
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.core.module.com.example.core.ModuleConfiguration.ModuleConfiguration",
@@ -829,7 +773,6 @@ def test_modular_application_structure(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test modular application structure and cross-module dependencies."""
-    # API module classes
     api_file = (
         java_modules_project
         / "src"
@@ -1002,7 +945,6 @@ public class AuthorizationException extends Exception {
 """
     )
 
-    # Service module implementation
     service_file = (
         java_modules_project
         / "src"
@@ -1358,29 +1300,16 @@ class UserEntity {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify classes across modules were detected
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    get_qualified_names(interface_calls)
 
-    # Verify we have classes from both API and Service modules
     api_classes = [cls for cls in created_classes if "api.module" in cls]
     service_classes = [cls for cls in created_classes if "service.module" in cls]
 

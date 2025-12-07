@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -14,11 +13,9 @@ def typescript_enums_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_enums_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "types").mkdir()
     (project_path / "constants").mkdir()
 
-    # Create base files
     (project_path / "types" / "status.ts").write_text(
         """
 export enum Status {
@@ -228,24 +225,9 @@ movePlayer(Direction.Right);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use enums are properly parsed
-
-    # Check functions that use enums
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     enum_using_functions = [
         call
@@ -265,12 +247,7 @@ movePlayer(Direction.Right);
         f"Expected at least 2 enum-using functions, found {len(enum_using_functions)}"
     )
 
-    # Check class using enums
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     task_class = [
         call for call in class_calls if "Task" in call[0][1]["qualified_name"]
@@ -513,24 +490,9 @@ function createMessage(level: LogLevel, text: string): string {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use string enums are properly parsed
-
-    # Check classes using string enums
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     string_enum_classes = [
         call
@@ -546,12 +508,7 @@ function createMessage(level: LogLevel, text: string): string {
         f"Expected at least 2 classes using string enums, found {len(string_enum_classes)}"
     )
 
-    # Check functions using string enums
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     string_enum_functions = [
         call
@@ -807,24 +764,9 @@ methodHandlers[HttpMethod.GET]('/api/data');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use const enums are properly parsed
-
-    # Check ApiClient class using const enums
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     api_client_class = [
         call for call in class_calls if "ApiClient" in call[0][1]["qualified_name"]
@@ -834,12 +776,7 @@ methodHandlers[HttpMethod.GET]('/api/data');
         f"Expected ApiClient class using const enums, found {len(api_client_class)}"
     )
 
-    # Check functions using const enums
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     const_enum_functions = [
         call
@@ -981,16 +918,8 @@ console.log(demo.getColor());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_enums_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_enums_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
@@ -998,20 +927,7 @@ console.log(demo.getColor());
     [c for c in all_relationships if c.args[1] == "CALLS"]
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Note: Function calls may not be detected in this parser implementation
-    # Focus on verifying the core parsing of functions and classes instead
-
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use enums are properly parsed
-
-    # Set comprehensive_enums to empty list since enums aren't detected as separate nodes
-
-    # Check EnumDemo class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     enum_demo_class = [
         call for call in class_calls if "EnumDemo" in call[0][1]["qualified_name"]

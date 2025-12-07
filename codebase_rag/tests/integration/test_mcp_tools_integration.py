@@ -17,7 +17,6 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
 @pytest.fixture
 def temp_test_repo(tmp_path: Path) -> Path:
     """Create a temporary test repository with sample code."""
-    # Create a sample Python file
     sample_file = tmp_path / "sample.py"
     sample_file.write_text(
         '''def hello_world():
@@ -39,7 +38,6 @@ class Calculator:
 @pytest.fixture
 def mcp_registry(temp_test_repo: Path) -> MCPToolsRegistry:
     """Create MCP tools registry with minimal mocks."""
-    # Mock only the database dependencies, not the tools themselves
     mock_ingestor = MagicMock()
     mock_cypher_gen = MagicMock()
 
@@ -60,7 +58,6 @@ class TestMCPToolsIntegration:
 
     async def test_query_code_graph_works(self, mcp_registry: MCPToolsRegistry) -> None:
         """Verify query_code_graph tool works without mocking."""
-        # Configure mock to return sample data
         mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
             {"name": "func1"},
             {"name": "func2"},
@@ -68,7 +65,6 @@ class TestMCPToolsIntegration:
 
         result = await mcp_registry.query_code_graph("find all functions")
 
-        # Should work without errors
         assert "error" not in result or result.get("error") is None
         assert "results" in result
         assert len(result["results"]) == 2
@@ -77,7 +73,6 @@ class TestMCPToolsIntegration:
         """Verify read_file tool works without mocking."""
         result = await mcp_registry.read_file("sample.py")
 
-        # Should successfully read the file
         assert "Error" not in result
         assert "def hello_world()" in result
         assert "class Calculator:" in result
@@ -86,7 +81,6 @@ class TestMCPToolsIntegration:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test get_code_snippet works correctly after the fix."""
-        # Configure mock to return valid graph data
         mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
             {
                 "name": "hello_world",
@@ -99,7 +93,6 @@ class TestMCPToolsIntegration:
 
         result = await mcp_registry.get_code_snippet("sample.hello_world")
 
-        # FIXED: Now works correctly
         assert result["found"] is True
         assert "def hello_world()" in result["source_code"]
         assert result["line_start"] == 1
@@ -109,7 +102,6 @@ class TestMCPToolsIntegration:
         """Verify list_directory tool works without mocking."""
         result = await mcp_registry.list_directory(".")
 
-        # Should successfully list directory
         assert "Error" not in result
         assert "sample.py" in result
 
@@ -132,7 +124,6 @@ class TestToolConsistency:
 
         takes_ctx_values = {name: tool.takes_ctx for name, tool in tools.items()}
 
-        # All tools have consistent takes_ctx=False
         assert takes_ctx_values == {
             "query": False,
             "code": False,
@@ -142,5 +133,4 @@ class TestToolConsistency:
             "lister": False,
         }
 
-        # Verify all are False
         assert all(not takes_ctx for takes_ctx in takes_ctx_values.values())

@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -13,7 +12,6 @@ def rust_concurrency_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_concurrency_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_concurrency_test"
@@ -25,7 +23,6 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Concurrency test crate")
 
@@ -90,18 +87,9 @@ fn scoped_threads() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify thread functions are detected
     thread_calls = [
         call
         for call in calls
@@ -209,18 +197,9 @@ fn sync_channel() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify channel functions are detected
     channel_calls = [
         call
         for call in calls
@@ -314,18 +293,9 @@ fn shared_data_structure() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify mutex functions are detected
     mutex_calls = [
         call
         for call in calls
@@ -420,18 +390,9 @@ impl TimerFuture {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify async functions are detected
     async_calls = [
         call
         for call in calls
@@ -549,18 +510,9 @@ async fn oneshot_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Tokio functions are detected
     tokio_calls = [
         call
         for call in calls
@@ -689,18 +641,9 @@ fn barrier_synchronization() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify parallel computing functions are detected
     parallel_calls = [
         call
         for call in calls
@@ -835,18 +778,9 @@ fn memory_ordering_examples() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify atomic functions are detected
     atomic_calls = [
         call
         for call in calls

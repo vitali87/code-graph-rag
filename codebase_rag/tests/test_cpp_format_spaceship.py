@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -54,22 +53,9 @@ void testNumberFormatting() {
 """
     )
 
-    # Run graph updater
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_format_spaceship_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_format_spaceship_project, mock_ingestor)
 
-    # Verify functions were detected
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     assert len(function_calls) >= 2, (
         f"Expected at least 2 functions, found {len(function_calls)}"
@@ -143,28 +129,11 @@ void testSpaceshipOperator() {
 """
     )
 
-    # Run graph updater
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_format_spaceship_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_format_spaceship_project, mock_ingestor)
 
-    # Verify classes and functions were detected
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     assert len(class_calls) >= 2, (
         f"Expected at least 2 classes, found {len(class_calls)}"
@@ -232,35 +201,17 @@ void analyzeData() {
 """
     )
 
-    # Run graph updater
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_format_spaceship_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_format_spaceship_project, mock_ingestor)
 
-    # Verify structures were detected
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     assert len(class_calls) >= 1, f"Expected at least 1 class, found {len(class_calls)}"
     assert len(function_calls) >= 1, (
         f"Expected at least 1 function, found {len(function_calls)}"
     )
 
-    # Check for DataPoint struct
     class_names = {call[0][1]["name"] for call in class_calls}
     assert "DataPoint" in class_names, f"DataPoint struct not found in {class_names}"
 
@@ -270,7 +221,6 @@ def test_format_spaceship_complete(
     mock_ingestor: MagicMock,
 ) -> None:
     """Complete test demonstrating format and spaceship operator features."""
-    # This test verifies the comprehensive testing approach works
     print("=== C++20 Format and Spaceship Operator Test Suite ===")
     print("Testing comprehensive coverage of:")
     print("   - std::format library with custom formatters")
@@ -278,4 +228,3 @@ def test_format_spaceship_complete(
     print("   - Comparison categories (strong, weak, partial ordering)")
     print("   - Integration of format and spaceship for data analysis")
     print("   - Real-world usage patterns and examples")
-    # Test completed successfully

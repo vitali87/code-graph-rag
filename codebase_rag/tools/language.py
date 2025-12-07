@@ -30,7 +30,6 @@ def add_grammar(
 ) -> None:
     """Add a new language grammar to the project."""
 
-    # Handle input validation and URL construction
     if not language_name and not grammar_url:
         language_name = click.prompt("Language name (e.g., 'c-sharp', 'python')")
 
@@ -43,7 +42,6 @@ def add_grammar(
         grammar_url = f"https://github.com/tree-sitter/tree-sitter-{language_name}"
         click.echo(f"🔍 Using default tree-sitter URL: {grammar_url}")
 
-    # Security check for custom URLs
     if grammar_url and "github.com/tree-sitter/tree-sitter" not in grammar_url:
         click.secho(
             "⚠️ WARNING: You are adding a grammar from a custom URL. This may execute code from the repository. Only proceed if you trust the source.",
@@ -53,7 +51,6 @@ def add_grammar(
         if not click.confirm("Do you want to continue?"):
             return
 
-    # Step 1: Clone the grammar into the grammars/ directory as a Git submodule
     grammars_dir = "grammars"
     if not os.path.exists(grammars_dir):
         os.makedirs(grammars_dir)
@@ -84,7 +81,6 @@ def add_grammar(
                 fg="yellow",
             )
             try:
-                # Force remove and re-add
                 click.echo("   -> Removing existing submodule entry...")
                 subprocess.run(
                     ["git", "submodule", "deinit", "-f", grammar_path],
@@ -99,7 +95,6 @@ def add_grammar(
                     text=True,
                 )
 
-                # Clean up .git/modules directory
                 modules_path = f".git/modules/{grammar_path}"
                 if os.path.exists(modules_path):
                     shutil.rmtree(modules_path)
@@ -139,7 +134,6 @@ def add_grammar(
             click.echo(f"❌ Git error: {error_output}")
             raise
 
-    # Step 2: Auto-extract language info from tree-sitter.json
     tree_sitter_json_path = os.path.join(grammar_path, "tree-sitter.json")
 
     if not os.path.exists(tree_sitter_json_path):
@@ -160,12 +154,10 @@ def add_grammar(
             grammar_info = tree_sitter_config["grammars"][0]
             detected_name = grammar_info.get("name", grammar_dir_name)
             raw_extensions = grammar_info.get("file-types", [])
-            # Ensure all extensions start with a dot
             file_extension = [
                 ext if ext.startswith(".") else f".{ext}" for ext in raw_extensions
             ]
 
-            # Use provided language_name or fall back to detected name
             if not language_name:
                 language_name = detected_name
 
@@ -185,8 +177,7 @@ def add_grammar(
                 ).split(",")
             ]
 
-    # Step 3: Auto-detect node types from grammar
-    # Try different possible locations for node-types.json
+    assert language_name is not None
     possible_paths = [
         os.path.join(grammar_path, "src", "node-types.json"),  # Standard location
         os.path.join(
@@ -207,7 +198,6 @@ def add_grammar(
         click.echo(
             f"Warning: node-types.json not found in any expected location for {language_name}"
         )
-        # Fallback to manual input
         function_nodes = ["function_definition", "method_definition"]
         class_nodes = ["class_declaration"]
         click.echo("Available nodes for mapping:")
@@ -239,12 +229,10 @@ def add_grammar(
             ).split(",")
         ]
     else:
-        # Auto-detect from node-types.json
         try:
             with open(node_types_path) as f:
                 node_types = json.load(f)
 
-            # Extract all node type names
             all_node_names = set()
 
             def extract_types(obj: dict | list) -> None:
@@ -261,7 +249,6 @@ def add_grammar(
 
             extract_types(node_types)
 
-            # Use tree-sitter's official semantic hierarchy
             def extract_semantic_categories(
                 node_types_json: list[dict],
             ) -> dict[str, list[str]]:
@@ -272,7 +259,6 @@ def add_grammar(
                     if isinstance(node, dict) and "type" in node:
                         node_type = node["type"]
 
-                        # If this node has subtypes, it's a semantic category
                         if "subtypes" in node:
                             subtypes = [
                                 subtype["type"]
@@ -284,7 +270,6 @@ def add_grammar(
                             else:
                                 categories[node_type] = subtypes
 
-                # Remove duplicates
                 for category in categories:
                     categories[category] = list(set(categories[category]))
 
@@ -292,28 +277,23 @@ def add_grammar(
 
             semantic_categories = extract_semantic_categories(node_types)
 
-            # Debug: show all available node types
             click.echo(f"📊 Found {len(all_node_names)} total node types in grammar")
 
-            # Show tree-sitter's official semantic categories
             click.echo("🌳 Tree-sitter semantic categories:")
             for category, subtypes in semantic_categories.items():
                 click.echo(
                     f"  {category}: {subtypes[:5]}{'...' if len(subtypes) > 5 else ''} ({len(subtypes)} total)"
                 )
 
-            # Map to our simplified categories - search ALL semantic categories
             functions = []
             classes = []
             modules = []
             calls = []
 
-            # Search ALL semantic categories for relevant types
             for category, subtypes in semantic_categories.items():
                 for subtype in subtypes:
                     subtype_lower = subtype.lower()
 
-                    # Function-like patterns
                     if (
                         any(
                             kw in subtype_lower
@@ -332,7 +312,6 @@ def add_grammar(
                     ):
                         functions.append(subtype)
 
-                    # Class-like patterns
                     elif (
                         any(
                             kw in subtype_lower
@@ -353,13 +332,11 @@ def add_grammar(
                     ):
                         classes.append(subtype)
 
-                    # Call patterns
                     elif any(
                         kw in subtype_lower for kw in ["call", "invoke", "invocation"]
                     ):
                         calls.append(subtype)
 
-                    # Module patterns
                     elif any(
                         kw in subtype_lower
                         for kw in [
@@ -372,7 +349,6 @@ def add_grammar(
                     ):
                         modules.append(subtype)
 
-            # Also check root nodes for modules
             root_nodes = [
                 node["type"]
                 for node in node_types
@@ -380,7 +356,6 @@ def add_grammar(
             ]
             modules.extend(root_nodes)
 
-            # Remove duplicates
             functions = list(set(functions))
             classes = list(set(classes))
             modules = list(set(modules))
@@ -394,13 +369,11 @@ def add_grammar(
 
         except Exception as e:
             click.echo(f"Error parsing node-types.json: {e}")
-            # Fallback to manual input
             functions = ["method_declaration"]
             classes = ["class_declaration"]
             modules = ["compilation_unit"]
             calls = ["invocation_expression"]
 
-    # Step 4: Generate LanguageConfig object
     new_language_config = LanguageConfig(
         name=language_name,
         file_extensions=file_extension,
@@ -412,11 +385,9 @@ def add_grammar(
 
     LANGUAGE_CONFIGS[language_name] = new_language_config
 
-    # Step 5: Automatically add to language_config.py
     config_file_path = "codebase_rag/language_config.py"
     try:
         config_content = pathlib.Path(config_file_path).read_text()
-        # Generate the new config entry
         config_entry = f"""    "{language_name}": LanguageConfig(
         name="{new_language_config.name}",
         file_extensions={new_language_config.file_extensions},
@@ -426,10 +397,8 @@ def add_grammar(
         call_node_types={new_language_config.call_node_types},
     ),"""
 
-        # Find the end of the LANGUAGE_CONFIGS dictionary
         closing_brace_pos = config_content.rfind("}")
         if closing_brace_pos != -1:
-            # Insert the new config before the closing brace
             new_content = (
                 config_content[:closing_brace_pos]
                 + config_entry
@@ -445,7 +414,6 @@ def add_grammar(
             )
             click.echo(f"📝 Updated {config_file_path}")
 
-            # User verification note
             click.echo()
             click.echo(
                 click.style(
@@ -526,16 +494,12 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         click.echo(f"📋 Available languages: {available_langs}")
         return
 
-    # Step 1: Remove from config file using diff-match-patch
     config_file = "codebase_rag/language_config.py"
     try:
         original_content = pathlib.Path(config_file).read_text()
-        # Find and remove the language config entry with better pattern
-        # Match the entire language config entry including multiline content
         pattern = rf'    "{language_name}": LanguageConfig\([\s\S]*?\),\n'
         new_content = re.sub(pattern, "", original_content)
 
-        # Use diff-match-patch for safer editing
         dmp_obj = dmp.diff_match_patch()
         patches = dmp_obj.patch_make(original_content, new_content)
         result, _ = dmp_obj.patch_apply(patches, original_content)
@@ -549,13 +513,11 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         click.echo(f"❌ Failed to update config file: {e}")
         return
 
-    # Step 2: Remove git submodule automatically (unless --keep-submodule flag is used)
     if not keep_submodule:
         submodule_path = f"grammars/tree-sitter-{language_name}"
         if os.path.exists(submodule_path):
             try:
                 click.echo(f"🔄 Removing git submodule '{submodule_path}'...")
-                # Remove submodule completely
                 subprocess.run(
                     ["git", "submodule", "deinit", "-f", submodule_path],
                     check=True,
@@ -565,7 +527,6 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
                     ["git", "rm", "-f", submodule_path], check=True, capture_output=True
                 )
 
-                # Clean up .git/modules directory (this is crucial!)
                 modules_path = f".git/modules/{submodule_path}"
                 if os.path.exists(modules_path):
                     shutil.rmtree(modules_path)
@@ -593,18 +554,15 @@ def cleanup_orphaned_modules() -> None:
         click.echo("📂 No grammars modules directory found.")
         return
 
-    # Read .gitmodules to see what should exist
     gitmodules_submodules = set()
     try:
         with open(".gitmodules") as f:
             content = f.read()
-            # Find all submodule paths
             paths = re.findall(r"path = (grammars/tree-sitter-[^\\n]+)", content)
             gitmodules_submodules = set(paths)
     except FileNotFoundError:
         click.echo("📄 No .gitmodules file found.")
 
-    # Check what modules exist
     orphaned = []
     for item in os.listdir(modules_dir):
         module_path = f"grammars/{item}"

@@ -1,6 +1,5 @@
 import importlib.util
 
-# Cache dependency checks to avoid repeated module lookups
 _dependency_cache: dict[str, bool] = {}
 
 
@@ -61,6 +60,5 @@ def get_missing_dependencies(required_modules: list[str]) -> list[str]:
     return [module for module in required_modules if not _check_dependency(module)]
 
 
-# Commonly used dependency combinations
 SEMANTIC_DEPENDENCIES = ["qdrant_client", "torch", "transformers"]
 ML_DEPENDENCIES = ["torch", "transformers"]

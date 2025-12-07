@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def cpp_move_semantics_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_move_semantics_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -317,18 +314,10 @@ void demonstrateStringMoveSemantics() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
     project_name = cpp_move_semantics_project.name
 
-    # Expected move semantics classes and functions
     expected_entities = [
         f"{project_name}.basic_move_semantics.MoveableResource",
         f"{project_name}.basic_move_semantics.MyString",
@@ -337,7 +326,6 @@ void demonstrateStringMoveSemantics() {
         f"{project_name}.basic_move_semantics.demonstrateBasicMoveSemantics",
     ]
 
-    # Get all node creation calls
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     function_calls = [call for call in all_calls if call[0][0] == "Function"]
@@ -346,7 +334,6 @@ void demonstrateStringMoveSemantics() {
         call[0][1]["qualified_name"] for call in class_calls + function_calls
     }
 
-    # Verify expected entities were created
     found_entities = [
         entity for entity in expected_entities if entity in created_entities
     ]
@@ -599,18 +586,10 @@ void testReferenceCollapsing() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
     project_name = cpp_move_semantics_project.name
 
-    # Expected perfect forwarding classes and functions
     expected_classes = [
         f"{project_name}.perfect_forwarding.ForwardingTarget",
         f"{project_name}.perfect_forwarding.Wrapper",
@@ -618,16 +597,8 @@ void testReferenceCollapsing() {
         f"{project_name}.perfect_forwarding.SFINAEWrapper",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 perfect forwarding classes, found {len(found_classes)}: {found_classes}"
@@ -1016,18 +987,10 @@ void demonstrateAlgorithmOptimizations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
     project_name = cpp_move_semantics_project.name
 
-    # Expected move optimization classes
     expected_classes = [
         f"{project_name}.move_optimization.OptimizedVector",
         f"{project_name}.move_optimization.MoveOnlyResource",
@@ -1035,16 +998,8 @@ void demonstrateAlgorithmOptimizations() {
         f"{project_name}.move_optimization.ConditionalNoexcept",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 move optimization classes, found {len(found_classes)}: {found_classes}"
@@ -1440,24 +1395,11 @@ void comprehensiveMoveDemo() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_move_semantics_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_move_semantics_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive move semantics coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1468,5 +1410,4 @@ void comprehensiveMoveDemo() {
         f"Expected at least 8 comprehensive move semantics calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that move semantics parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

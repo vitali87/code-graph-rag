@@ -40,23 +40,19 @@ def get_project_root() -> Path:
     Raises:
         ValueError: If the resolved path is invalid
     """
-    # Try explicit TARGET_REPO_PATH first
     repo_path: str | None = (
         os.environ.get("TARGET_REPO_PATH") or settings.TARGET_REPO_PATH
     )
 
     if not repo_path:
-        # Try Claude Code project root env var
         repo_path = os.environ.get("CLAUDE_PROJECT_ROOT")
 
         if not repo_path:
-            # Try PWD from parent process (often set by shells and reflects where command was run)
             repo_path = os.environ.get("PWD")
 
         if repo_path:
             logger.info(f"[GraphCode MCP] Using inferred project root: {repo_path}")
         else:
-            # Last resort: current working directory
             repo_path = str(Path.cwd())
             logger.info(
                 f"[GraphCode MCP] No project root configured, using current directory: {repo_path}"
@@ -82,7 +78,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     """
     setup_logging()
 
-    # Get project root
     try:
         project_root = get_project_root()
         logger.info(f"[GraphCode MCP] Using project root: {project_root}")
@@ -90,7 +85,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         logger.error(f"[GraphCode MCP] Configuration error: {e}")
         raise
 
-    # Initialize services
     logger.info("[GraphCode MCP] Initializing services...")
 
     ingestor = MemgraphIngestor(
@@ -99,10 +93,8 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         batch_size=settings.MEMGRAPH_BATCH_SIZE,
     )
 
-    # CypherGenerator gets config from settings automatically
     cypher_generator = CypherGenerator()
 
-    # Create tools registry
     tools = create_mcp_tools_registry(
         project_root=str(project_root),
         ingestor=ingestor,
@@ -111,7 +103,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     logger.info("[GraphCode MCP] Services initialized successfully")
 
-    # Create MCP server
     server = Server("graph-code")
 
     @server.list_tools()
@@ -141,7 +132,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         logger.info(f"[GraphCode MCP] Calling tool: {name}")
 
         try:
-            # Resolve handler from registry
             handler_info = tools.get_tool_handler(name)
             if not handler_info:
                 error_msg = f"Unknown tool: {name}"
@@ -150,10 +140,8 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
             handler, returns_json = handler_info
 
-            # Call handler with unpacked arguments
             result = await handler(**arguments)
 
-            # Format result based on output type
             if returns_json:
                 result_text = json.dumps(result, indent=2)
             else:
@@ -176,7 +164,6 @@ async def main() -> None:
     server, ingestor = create_server()
     logger.info("[GraphCode MCP] Server created, starting stdio transport...")
 
-    # Use context manager to ensure proper cleanup of Memgraph connection
     with ingestor:
         logger.info(
             f"[GraphCode MCP] Connected to Memgraph at {settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"

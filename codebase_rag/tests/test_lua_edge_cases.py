@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import create_and_run_updater
 
 
 @pytest.mark.parametrize(
@@ -25,11 +24,7 @@ def test_lua_require_edge_cases(
     (project / "side.lua").write_text("return {}\n")
     (project / "main.lua").write_text(f"{snippet}\nreturn 0\n")
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    updater = create_and_run_updater(project, mock_ingestor)
 
     module_qn = f"{project.name}.main"
     import_map = updater.factory.import_processor.import_mapping.get(module_qn, {})
@@ -37,5 +32,4 @@ def test_lua_require_edge_cases(
     if present:
         assert import_map, import_map
     else:
-        # No import should be recorded from comments-only
         assert not import_map, import_map

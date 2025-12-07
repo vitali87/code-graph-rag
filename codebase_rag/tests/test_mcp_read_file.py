@@ -33,7 +33,6 @@ def sample_file(temp_project_root: Path) -> Path:
 def large_file(temp_project_root: Path) -> Path:
     """Create a large file to test memory efficiency."""
     file_path = temp_project_root / "large_file.txt"
-    # Create a file with 10,000 lines
     with open(file_path, "w", encoding="utf-8") as f:
         for i in range(1, 10001):
             f.write(f"This is line {i} with some content\n")
@@ -52,7 +51,6 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
         cypher_gen=mock_cypher_gen,
     )
 
-    # Mock the file reader tool for non-paginated reads
     registry._file_reader_tool = MagicMock()
     registry._file_reader_tool.function = AsyncMock()
 
@@ -67,7 +65,7 @@ class TestReadFileWithoutPagination:
     ) -> None:
         """Test reading entire file without pagination."""
         expected_content = sample_file.read_text(encoding="utf-8")
-        mcp_registry._file_reader_tool.function.return_value = expected_content
+        mcp_registry._file_reader_tool.function.return_value = expected_content  # ty: ignore[invalid-assignment]
 
         result = await mcp_registry.read_file("test_file.txt")
 
@@ -87,11 +85,8 @@ class TestReadFileWithPagination:
         result = await mcp_registry.read_file("test_file.txt", offset=10)
 
         lines = result.split("\n")
-        # First line should be the header
         assert lines[0].startswith("# Lines 11-")
-        # Second line should be "Line 11" (offset 10 = line 11 in 1-indexed)
         assert lines[1] == "Line 11"
-        # Should have read from line 11 to 100 = 90 lines + header
         assert "Line 100" in result
 
     async def test_read_with_limit_only(
@@ -101,12 +96,9 @@ class TestReadFileWithPagination:
         result = await mcp_registry.read_file("test_file.txt", limit=10)
 
         lines = result.split("\n")
-        # First line should be the header
         assert lines[0] == "# Lines 1-10 of 100"
-        # Should have exactly 10 lines of content + header
         assert lines[1] == "Line 1"
         assert lines[10] == "Line 10"
-        # Should not contain Line 11
         assert "Line 11" not in result
 
     async def test_read_with_offset_and_limit(
@@ -116,12 +108,9 @@ class TestReadFileWithPagination:
         result = await mcp_registry.read_file("test_file.txt", offset=20, limit=10)
 
         lines = result.split("\n")
-        # First line should be the header
         assert lines[0] == "# Lines 21-30 of 100"
-        # Should read lines 21-30
         assert lines[1] == "Line 21"
         assert lines[10] == "Line 30"
-        # Should not contain adjacent lines
         assert "Line 20" not in result
         assert "Line 31" not in result
 
@@ -132,9 +121,7 @@ class TestReadFileWithPagination:
         result = await mcp_registry.read_file("test_file.txt", offset=150)
 
         lines = result.split("\n")
-        # Header should still show correct total line count
         assert "of 100" in lines[0]
-        # Should return empty content (no lines read)
         assert lines[0] == "# Lines 151-150 of 100"
 
     async def test_read_zero_offset(
@@ -156,16 +143,12 @@ class TestReadFileLargeFiles:
         self, mcp_registry: MCPToolsRegistry, large_file: Path
     ) -> None:
         """Test reading from middle of large file doesn't load entire file."""
-        # Read lines 5000-5010 from a 10,000 line file
         result = await mcp_registry.read_file("large_file.txt", offset=5000, limit=10)
 
         lines = result.split("\n")
-        # Verify header
         assert lines[0] == "# Lines 5001-5010 of 10000"
-        # Verify content
         assert "This is line 5001" in lines[1]
         assert "This is line 5010" in lines[10]
-        # Verify we didn't read other parts
         assert "line 1 " not in result
         assert "line 10000" not in result
 
@@ -176,7 +159,6 @@ class TestReadFileLargeFiles:
         result = await mcp_registry.read_file("large_file.txt", offset=9995, limit=10)
 
         lines = result.split("\n")
-        # Should read lines 9996-10000 (only 5 lines available)
         assert "Lines 9996-10000" in lines[0]
         assert "This is line 9996" in lines[1]
         assert "This is line 10000" in result

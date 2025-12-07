@@ -22,38 +22,30 @@ class TestImportDistanceCalculation:
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that functions in sibling modules receive the proximity bonus."""
-        # Set up function registry
         function_qn = "proj.pkg.sibling_mod.some_func"
         mock_updater.function_registry[function_qn] = "Function"
 
         caller_module = "proj.pkg.caller_mod"
 
-        # Calculate distance
         distance = mock_updater.factory.call_processor._calculate_import_distance(
             function_qn, caller_module
         )
 
-        # Function should get proximity bonus (-1)
-        # Base distance: max(3, 4) - 2 = 2, then -1 proximity bonus = 1
         assert distance == 1, (
             f"Function in sibling module should have distance 1, got {distance}"
         )
 
     def test_sibling_module_bonus_for_methods(self, mock_updater: GraphUpdater) -> None:
         """Test that methods in sibling modules receive the proximity bonus."""
-        # Set up function registry
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
         mock_updater.function_registry[method_qn] = "Method"
 
         caller_module = "proj.pkg.caller_mod"
 
-        # Calculate distance
         distance = mock_updater.factory.call_processor._calculate_import_distance(
             method_qn, caller_module
         )
 
-        # Method should get proximity bonus (-1)
-        # Base distance: max(3, 5) - 2 = 3, then -1 proximity bonus = 2
         assert distance == 2, (
             f"Method in sibling module should have distance 2, got {distance}"
         )
@@ -62,7 +54,6 @@ class TestImportDistanceCalculation:
         self, mock_updater: GraphUpdater
     ) -> None:
         """Test that the distance difference between functions and methods is predictable."""
-        # Set up function registry
         function_qn = "proj.pkg.sibling_mod.some_func"
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
         mock_updater.function_registry[function_qn] = "Function"
@@ -70,7 +61,6 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        # Calculate distances
         func_distance = mock_updater.factory.call_processor._calculate_import_distance(
             function_qn, caller_module
         )
@@ -80,7 +70,6 @@ class TestImportDistanceCalculation:
             )
         )
 
-        # Both get the same proximity bonus, difference should only be from nesting level
         distance_diff = method_distance - func_distance
         assert distance_diff == 1, (
             f"Expected method distance to be exactly 1 higher than function distance "
@@ -89,7 +78,6 @@ class TestImportDistanceCalculation:
 
     def test_non_sibling_modules_no_bonus(self, mock_updater: GraphUpdater) -> None:
         """Test that non-sibling modules don't receive the proximity bonus."""
-        # Set up function registry
         function_qn = "proj.other_pkg.other_mod.some_func"
         method_qn = "proj.other_pkg.other_mod.SomeClass.some_method"
         mock_updater.function_registry[function_qn] = "Function"
@@ -97,7 +85,6 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        # Calculate distances
         func_distance = mock_updater.factory.call_processor._calculate_import_distance(
             function_qn, caller_module
         )
@@ -107,7 +94,6 @@ class TestImportDistanceCalculation:
             )
         )
 
-        # Neither should get proximity bonus since they're in different packages
         assert func_distance > 0, (
             "Function in different package should not get proximity bonus"
         )
@@ -117,7 +103,6 @@ class TestImportDistanceCalculation:
 
     def test_same_module_candidates(self, mock_updater: GraphUpdater) -> None:
         """Test distance calculation for candidates in the same module as caller."""
-        # Set up function registry
         function_qn = "proj.pkg.caller_mod.local_func"
         method_qn = "proj.pkg.caller_mod.LocalClass.local_method"
         mock_updater.function_registry[function_qn] = "Function"
@@ -125,7 +110,6 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        # Calculate distances
         func_distance = mock_updater.factory.call_processor._calculate_import_distance(
             function_qn, caller_module
         )
@@ -145,11 +129,9 @@ class TestImportDistanceCalculation:
 
     def test_edge_case_missing_from_registry(self, mock_updater: GraphUpdater) -> None:
         """Test behavior when candidate is not in function registry."""
-        # Don't add to function registry - should default to "Function"
         unknown_qn = "proj.pkg.sibling_mod.unknown_func"
         caller_module = "proj.pkg.caller_mod"
 
-        # Should not crash and should treat as function
         distance = mock_updater.factory.call_processor._calculate_import_distance(
             unknown_qn, caller_module
         )
@@ -159,17 +141,14 @@ class TestImportDistanceCalculation:
 
     def test_method_detection_correctness(self, mock_updater: GraphUpdater) -> None:
         """Test that the method detection logic correctly identifies methods vs functions."""
-        # Method in sibling module
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
         mock_updater.function_registry[method_qn] = "Method"
 
-        # Function in sibling module
         function_qn = "proj.pkg.sibling_mod.some_func"
         mock_updater.function_registry[function_qn] = "Function"
 
         caller_module = "proj.pkg.caller_mod"
 
-        # Both should get the same proximity bonus
         func_distance = mock_updater.factory.call_processor._calculate_import_distance(
             function_qn, caller_module
         )
@@ -179,8 +158,6 @@ class TestImportDistanceCalculation:
             )
         )
 
-        # Verify both got the same proximity bonus with expected nesting difference
-        # Function: distance=1; Method: distance=2 (1 higher due to extra nesting)
         assert func_distance == 1, (
             f"Function should have distance 1, got {func_distance}"
         )

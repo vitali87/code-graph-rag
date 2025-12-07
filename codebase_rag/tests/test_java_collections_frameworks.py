@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -13,7 +12,6 @@ def java_collections_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_collections_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -173,26 +171,9 @@ public class BasicCollections {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -784,26 +765,9 @@ class SimpleHashMap<K, V> implements Map<K, V> {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1044,26 +1008,9 @@ class FibonacciIterable implements Iterable<Long> {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1301,26 +1248,9 @@ class Person implements Comparable<Person> {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -1554,25 +1484,14 @@ enum Priority {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_enums = get_qualified_names(enum_calls)
 
     project_name = java_collections_project.name
     expected_classes = {
@@ -1858,26 +1777,9 @@ class Employee {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {
@@ -2159,26 +2061,9 @@ class DelayedTask implements Delayed {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_collections_project.name
 
     expected_classes = {

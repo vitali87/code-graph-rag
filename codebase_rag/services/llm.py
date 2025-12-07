@@ -31,10 +31,8 @@ class CypherGenerator:
 
     def __init__(self) -> None:
         try:
-            # Get active cypher model configuration
             config = settings.active_cypher_config
 
-            # Create provider instance
             provider = get_provider(
                 config.provider,
                 api_key=config.api_key,
@@ -45,10 +43,8 @@ class CypherGenerator:
                 thinking_budget=config.thinking_budget,
             )
 
-            # Create model using provider
             llm = provider.create_model(config.model_id)
 
-            # Select system prompt based on provider
             system_prompt = (
                 LOCAL_CYPHER_SYSTEM_PROMPT
                 if config.provider == "ollama"
@@ -90,10 +86,8 @@ class CypherGenerator:
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
-        # Get active orchestrator model configuration
         config = settings.active_orchestrator_config
 
-        # Create provider instance
         provider = get_provider(
             config.provider,
             api_key=config.api_key,
@@ -104,7 +98,6 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             thinking_budget=config.thinking_budget,
         )
 
-        # Create model using provider
         llm = provider.create_model(config.model_id)
 
         return Agent(

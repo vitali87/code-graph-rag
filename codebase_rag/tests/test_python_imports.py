@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def python_imports_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "python_imports_test"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "package").mkdir()
     (project_path / "package" / "__init__.py").write_text("")
     (project_path / "package" / "subpackage").mkdir()
@@ -22,7 +19,6 @@ def python_imports_project(temp_repo: Path) -> Path:
     (project_path / "package" / "subpackage" / "deep").mkdir()
     (project_path / "package" / "subpackage" / "deep" / "__init__.py").write_text("")
 
-    # Module files for testing
     (project_path / "utils.py").write_text("def helper(): pass")
     (project_path / "models.py").write_text("class User: pass")
     (project_path / "package" / "module.py").write_text("def func(): pass")
@@ -66,33 +62,19 @@ from http.server import HTTPServer
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
     ]
 
-    # Should have multiple standard library imports
     assert len(stdlib_imports) >= 15, (
         f"Expected at least 15 stdlib imports, found {len(stdlib_imports)}"
     )
 
-    # Verify specific imports exist
     imported_modules = [call.args[2][2] for call in stdlib_imports]
-    # IMPORTS relationships point to modules only, not classes/functions
     expected_modules = [
         "os",
         "sys",
@@ -120,7 +102,6 @@ def test_relative_imports(
 ) -> None:
     """Test relative import parsing and relationship creation."""
 
-    # Test file in root
     test_file = python_imports_project / "relative_imports.py"
     test_file.write_text(
         """
@@ -133,7 +114,6 @@ from .package import module
 """
     )
 
-    # Test file in package
     package_test = python_imports_project / "package" / "relative_test.py"
     package_test.write_text(
         """
@@ -150,7 +130,6 @@ from .subpackage.deep import something
 """
     )
 
-    # Test file in nested package
     nested_test = python_imports_project / "package" / "subpackage" / "nested_test.py"
     nested_test.write_text(
         """
@@ -162,22 +141,10 @@ from ...models import User
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Test relative imports from different levels
     relative_imports = [
         call
         for call in import_relationships
@@ -191,7 +158,6 @@ from ...models import User
         f"Expected at least 8 relative imports, found {len(relative_imports)}"
     )
 
-    # Check that relative imports are resolved correctly
     imported_modules = [call.args[2][2] for call in relative_imports]
     project_name = python_imports_project.name
 
@@ -268,47 +234,31 @@ class DataProcessor:
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     complex_imports = [
         call for call in import_relationships if "complex_imports" in call.args[0][2]
     ]
 
-    # Should have many complex imports
     assert len(complex_imports) >= 12, (
         f"Expected at least 12 complex imports, found {len(complex_imports)}"
     )
 
     imported_modules = [call.args[2][2] for call in complex_imports]
 
-    # Test wildcard imports are captured (they're stored as *module patterns)
     wildcard_patterns = ["os", "typing"]
     for pattern in wildcard_patterns:
-        # Wildcard imports should appear as target modules
         assert any(pattern in module for module in imported_modules), (
             f"Missing wildcard import target: {pattern}\nFound modules: {imported_modules}"
         )
 
-    # Test multiple imports from same module
     collections_imports = [m for m in imported_modules if "collections" in m]
     assert len(collections_imports) >= 3, (
         f"Expected multiple collections imports, found: {collections_imports}"
     )
 
-    # Test conditional imports
     conditional_imports = [m for m in imported_modules if "typing" in m or "numpy" in m]
     assert conditional_imports, (
         f"Expected conditional imports, found: {conditional_imports}"
@@ -346,6 +296,8 @@ import seaborn as sns
 
 # Testing imports
 import pytest
+
+from codebase_rag.tests.conftest import get_relationships, run_updater
 from unittest.mock import MagicMock, patch, Mock
 from pytest import fixture, raises
 
@@ -363,33 +315,20 @@ from marshmallow import Schema, fields, validate, post_load, pre_dump
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     framework_imports = [
         call for call in import_relationships if "framework_imports" in call.args[0][2]
     ]
 
-    # Should have many framework imports
     assert len(framework_imports) >= 25, (
         f"Expected at least 25 framework imports, found {len(framework_imports)}"
     )
 
     imported_modules = [call.args[2][2] for call in framework_imports]
 
-    # Test specific framework categories
     framework_categories = {
         "flask": ["flask", "flask_sqlalchemy", "flask_migrate"],
         "django": ["django.db", "django.contrib", "django.http"],
@@ -452,33 +391,20 @@ from yaml import load as yaml_load
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     alias_imports = [
         call for call in import_relationships if "alias_imports" in call.args[0][2]
     ]
 
-    # Should have many aliased imports
     assert len(alias_imports) >= 15, (
         f"Expected at least 15 aliased imports, found {len(alias_imports)}"
     )
 
     imported_modules = [call.args[2][2] for call in alias_imports]
 
-    # IMPORTS relationships point to modules only, not classes/functions
     expected_original_modules = [
         "numpy",
         "pandas",
@@ -531,34 +457,19 @@ import sys, json  # trailing comma handled gracefully
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    run_updater(python_imports_project, mock_ingestor)
 
-    # Should not raise an exception
-    updater.run()
-
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     error_file_imports = [
         call for call in import_relationships if "error_imports" in call.args[0][2]
     ]
 
-    # Should still parse valid imports despite errors
     assert len(error_file_imports) >= 4, (
         f"Expected at least 4 valid imports despite errors, found {len(error_file_imports)}"
     )
 
     imported_modules = [call.args[2][2] for call in error_file_imports]
-    # IMPORTS relationships point to modules only
     expected_valid = ["os", "pathlib", "json", "datetime"]
 
     for expected in expected_valid:
@@ -572,7 +483,6 @@ def test_import_relationships_comprehensive(
     mock_ingestor: MagicMock,
 ) -> None:
     """Comprehensive test ensuring all import types create proper relationships."""
-    # Create a master test file with all patterns
     test_file = python_imports_project / "comprehensive_imports.py"
     test_file.write_text(
         """
@@ -606,24 +516,11 @@ if True:
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=python_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(python_imports_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive import coverage
     comprehensive_imports = [
         call
         for call in import_relationships
@@ -634,24 +531,19 @@ if True:
         f"Expected at least 15 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_imports:
-        # Each relationship should have proper structure
         assert len(relationship.args) == 3, "Import relationship should have 3 args"
         assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
 
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_imports" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name
         assert isinstance(target_module, str) and target_module, (
             f"Target module should be non-empty string: {target_module}"
         )
 
-    # Test that import parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -3,8 +3,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -13,7 +17,6 @@ def java_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -108,40 +111,17 @@ public abstract class Shape {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify classes were detected
     project_name = java_project.name
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Get all Interface node creation calls (Java interfaces are processed separately)
-    interface_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_calls = get_nodes(mock_ingestor, "Interface")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected class qualified names (including interfaces)
     expected_classes = {
         f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass",
         f"{project_name}.src.main.java.com.example.BasicClasses.ExtendedClass",
@@ -153,7 +133,6 @@ public abstract class Shape {
         f"{project_name}.src.main.java.com.example.BasicClasses.Drawable",
     }
 
-    # Verify all expected classes and interfaces were created
     missing_classes = expected_classes - created_classes
     missing_interfaces = expected_interfaces - created_interfaces
 
@@ -164,16 +143,8 @@ public abstract class Shape {
         f"Missing expected interfaces: {sorted(list(missing_interfaces))}"
     )
 
-    # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    created_methods = get_node_names(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-
-    # Expected method qualified names (constructors and methods with parameter signatures)
     expected_methods = {
         f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.BasicClass(String)",
         f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.getName()",
@@ -188,7 +159,6 @@ public abstract class Shape {
         f"{project_name}.src.main.java.com.example.BasicClasses.Shape.getColor()",
     }
 
-    # Verify all expected methods were created
     missing_methods = expected_methods - created_methods
     assert not missing_methods, (
         f"Missing expected methods: {sorted(list(missing_methods))}"
@@ -264,31 +234,18 @@ public class AnnotatedClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Get all node creation calls by type (Java has distinct node types)
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_enums = {call[0][1]["qualified_name"] for call in enum_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_enums = get_qualified_names(enum_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected type qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.AnnotatedClass",
@@ -302,7 +259,6 @@ public class AnnotatedClass {
         f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.Planet",
     }
 
-    # Verify all expected types were created in their respective categories
     missing_classes = expected_classes - created_classes
     missing_enums = expected_enums - created_enums
     missing_interfaces = expected_interfaces - created_interfaces
@@ -391,29 +347,16 @@ public class WildcardExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Get all node creation calls by type
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected type qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Generics.Container",
@@ -426,7 +369,6 @@ public class WildcardExample {
         f"{project_name}.src.main.java.com.example.Generics.Comparable",
     }
 
-    # Verify all expected types were created
     missing_classes = expected_classes - created_classes
     missing_interfaces = expected_interfaces - created_interfaces
 
@@ -506,29 +448,10 @@ public abstract class AbstractService {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    updater.run()
-
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Expected class qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Modifiers.Constants",
@@ -536,7 +459,6 @@ public abstract class AbstractService {
         f"{project_name}.src.main.java.com.example.Modifiers.AbstractService",
     }
 
-    # Verify all expected classes were created
     missing_classes = expected_classes - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -619,32 +541,12 @@ public class OuterClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    updater.run()
-
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Expected class qualified names
     project_name = java_project.name
 
-    # Verify all expected classes were created (some inner classes may not be detected)
     outer_class_found = any(
         f"{project_name}.src.main.java.com.example.InnerClasses.OuterClass" in qn
         for qn in created_classes
@@ -748,29 +650,16 @@ public class LambdaExamples {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Get all node creation calls by type
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected type qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Lambdas.LambdaExamples",
@@ -781,7 +670,6 @@ public class LambdaExamples {
         f"{project_name}.src.main.java.com.example.Lambdas.StringProcessor",
     }
 
-    # Verify all expected types were created
     missing_classes = expected_classes - created_classes
     missing_interfaces = expected_interfaces - created_interfaces
 
@@ -895,29 +783,10 @@ public class ExceptionHandler {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    updater.run()
-
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Expected class qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Exceptions.CustomException",
@@ -925,7 +794,6 @@ public class ExceptionHandler {
         f"{project_name}.src.main.java.com.example.Exceptions.ExceptionHandler",
     }
 
-    # Verify all expected classes were created
     missing_classes = expected_classes - created_classes
     assert not missing_classes, (
         f"Missing expected exception classes: {sorted(list(missing_classes))}"

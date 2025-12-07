@@ -3,8 +3,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -13,7 +17,6 @@ def java_relationships_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_relationships_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -126,25 +129,9 @@ public class Car {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check CALLS relationships between Car and Engine, Car and Passenger
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for composition/aggregation"
@@ -271,36 +258,15 @@ class Application {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check that interface implementations are captured
-    implements_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "IMPLEMENTS"
-    ]
+    implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found"
     )
 
-    # Check that method calls across service boundaries are captured
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for dependency injection"
@@ -312,7 +278,6 @@ def test_cross_package_relationships(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test that relationships across different packages are correctly captured."""
-    # Create another package
     (
         java_relationships_project
         / "src"
@@ -332,7 +297,6 @@ def test_cross_package_relationships(
         / "model"
     ).mkdir()
 
-    # Model classes in model package
     model_file = (
         java_relationships_project
         / "src"
@@ -390,7 +354,6 @@ public class User {
 """
     )
 
-    # Service classes in service package
     service_file = (
         java_relationships_project
         / "src"
@@ -476,7 +439,6 @@ public class UserRepository {
 """
     )
 
-    # Controller that uses both packages
     controller_file = (
         java_relationships_project
         / "src"
@@ -541,48 +503,23 @@ public class UserController {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check that cross-package method calls are captured
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No cross-package method call relationships found"
     )
 
-    # Verify all classes are created
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_relationships_project.name
 
-    # Expected classes from different packages
     expected_user_class = f"{project_name}.src.main.java.com.example.model.User.User"
     expected_repo_class = f"{project_name}.src.main.java.com.example.service.UserRepository.UserRepository"
     expected_controller_class = (
         f"{project_name}.src.main.java.com.example.UserController.UserController"
     )
 
-    # Check that classes from different packages are found
     assert any(expected_user_class in qn for qn in created_classes), (
         "User model class not found"
     )
@@ -734,34 +671,13 @@ public class ShapeCalculator {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check inheritance relationships
-    inherits_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "INHERITS"
-    ]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     assert len(inherits_relationships) > 0, "No inheritance relationships found"
 
-    # Check method calls including polymorphic calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for method overriding"
@@ -897,25 +813,9 @@ public class StaticUsageExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check static method calls
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No static method call relationships found"
 
@@ -1050,35 +950,14 @@ public class OuterClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_relationships_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Check that inner class relationships are captured
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for inner classes"
     )
 
-    # Check that all class types are detected
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     assert len(class_calls) > 0, "No class nodes found for inner class example"

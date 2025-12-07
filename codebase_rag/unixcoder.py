@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-
 import torch
 import torch.nn as nn
 from transformers import RobertaConfig, RobertaModel, RobertaTokenizer
@@ -79,11 +78,11 @@ class UniXcoder(nn.Module):
                     + [tokenizer.sep_token]
                 )
 
-            tokens_id = tokenizer.convert_tokens_to_ids(tokens)
+            tokens_id: list[int] = tokenizer.convert_tokens_to_ids(tokens)  # type: ignore[assignment]
             if padding:
-                tokens_id = tokens_id + [self.config.pad_token_id] * (
-                    max_length - len(tokens_id)
-                )
+                pad_id = self.config.pad_token_id
+                assert pad_id is not None
+                tokens_id = tokens_id + [pad_id] * (max_length - len(tokens_id))
             tokens_ids.append(tokens_id)
         return tokens_ids
 
@@ -104,7 +103,9 @@ class UniXcoder(nn.Module):
 
     def forward(self, source_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Obtain token embeddings and sentence embeddings"""
-        mask = source_ids.ne(self.config.pad_token_id)
+        pad_id = self.config.pad_token_id
+        assert pad_id is not None
+        mask = source_ids.ne(pad_id)
         token_embeddings = self.model(
             source_ids, attention_mask=mask.unsqueeze(1) * mask.unsqueeze(2)
         )[0]
@@ -122,20 +123,23 @@ class UniXcoder(nn.Module):
         max_length: int = 64,
     ) -> torch.Tensor:
         """Generate sequence given context (source_ids)"""
+        # (H) self.bias is registered as buffer (Tensor) but typed as Module by ty
+        bias: torch.Tensor = self.bias  # type: ignore[assignment]
+        pad_id = self.config.pad_token_id
+        assert pad_id is not None
 
-        # Set encoder mask attention matrix: bidirectional for <encoder-decoder>, unirectional for <decoder-only>
         if decoder_only:
-            mask = self.bias[:, : source_ids.size(-1), : source_ids.size(-1)]
+            mask = bias[:, : source_ids.size(-1), : source_ids.size(-1)]
         else:
-            mask = source_ids.ne(self.config.pad_token_id)
+            mask = source_ids.ne(pad_id)
             mask = mask.unsqueeze(1) * mask.unsqueeze(2)
 
         if eos_id is None:
             eos_id = self.config.eos_token_id
+        assert eos_id is not None
 
         device = source_ids.device
 
-        # Decoding using beam search
         preds = []
         zero = torch.LongTensor(1).fill_(0).to(device)
         source_len = list(source_ids.ne(1).sum(-1).cpu().numpy())
@@ -167,9 +171,7 @@ class UniXcoder(nn.Module):
                     length = context_ids.size(-1) + input_ids.size(-1)
                     out = self.model(
                         input_ids,
-                        attention_mask=self.bias[
-                            :, context_ids.size(-1) : length, :length
-                        ],
+                        attention_mask=bias[:, context_ids.size(-1) : length, :length],
                         past_key_values=context,
                     ).last_hidden_state
                     hidden_states = out[:, -1, :]
@@ -200,16 +202,11 @@ class Beam:
     def __init__(self, size: int, eos: int, device: torch.device) -> None:
         self.size = size
         self.device = device
-        # The score for each translation on the beam.
         self.scores: torch.Tensor = torch.FloatTensor(size).zero_().to(device)
-        # The backpointers at each time-step.
         self.prevKs: list[torch.Tensor] = []
-        # The outputs at each time-step.
         self.nextYs: list[torch.Tensor] = [torch.LongTensor(size).fill_(0).to(device)]
-        # Has EOS topped the beam yet.
         self._eos = eos
         self.eosTop = False
-        # Time and k pair for finished.
         self.finished: list[tuple[torch.Tensor, int, int]] = []
 
     def getCurrentState(self) -> torch.Tensor:
@@ -235,11 +232,9 @@ class Beam:
         """
         numWords = wordLk.size(1)
 
-        # Sum the previous scores.
         if len(self.prevKs) > 0:
             beamLk = wordLk + self.scores.unsqueeze(1).expand_as(wordLk)
 
-            # Don't let EOS have children.
             for i in range(self.nextYs[-1].size(0)):
                 if self.nextYs[-1][i] == self._eos:
                     beamLk[i] = -1e20
@@ -250,8 +245,6 @@ class Beam:
 
         self.scores = bestScores
 
-        # bestScoresId is flattened beam x word array, so calculate which
-        # word and beam each score came from
         prevK = torch.div(bestScoresId, numWords, rounding_mode="floor")
         self.prevKs.append(prevK)
         self.nextYs.append(bestScoresId - prevK * numWords)
@@ -261,7 +254,6 @@ class Beam:
                 s = self.scores[i]
                 self.finished.append((s, len(self.nextYs) - 1, i))
 
-        # End condition is when top-of-beam is EOS and no global score.
         if self.nextYs[-1][0] == self._eos:
             self.eosTop = True
 

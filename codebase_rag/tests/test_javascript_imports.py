@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def javascript_imports_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_imports_test"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "src").mkdir()
     (project_path / "src" / "components").mkdir()
     (project_path / "src" / "utils").mkdir()
@@ -24,7 +21,6 @@ def javascript_imports_project(temp_repo: Path) -> Path:
     (project_path / "node_modules" / "@babel").mkdir()
     (project_path / "node_modules" / "@babel" / "core").mkdir()
 
-    # Create module files for testing
     (project_path / "src" / "utils" / "helpers.js").write_text(
         "export const helper = () => {};"
     )
@@ -42,7 +38,6 @@ def javascript_imports_project(temp_repo: Path) -> Path:
     )
     (project_path / "shared.js").write_text("export const shared = 'data';")
 
-    # Create package.json and node_modules structure
     (project_path / "package.json").write_text(
         '{"name": "test-project", "version": "1.0.0"}'
     )
@@ -80,20 +75,9 @@ const data = shared;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     default_imports = [
         call
@@ -149,20 +133,9 @@ useEffect(() => {});
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     named_imports = [
         call for call in import_relationships if "es6_named_imports" in call.args[0][2]
@@ -208,20 +181,9 @@ const url = constants.API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     namespace_imports = [
         call
@@ -290,20 +252,9 @@ const sum = mathAdd(1, 2);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     commonjs_imports = [
         call for call in import_relationships if "commonjs_imports" in call.args[0][2]
@@ -354,20 +305,9 @@ const finalUrl = apiEndpoint;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     aliased_imports = [
         call
@@ -375,7 +315,6 @@ const finalUrl = apiEndpoint;
         if "commonjs_aliased_destructuring" in call.args[0][2]
     ]
 
-    # Should have at least 3 import relationships for the aliased destructuring
     assert len(aliased_imports) >= 3, (
         f"Expected at least 3 aliased destructuring imports, found {len(aliased_imports)}"
     )
@@ -398,7 +337,6 @@ def test_relative_path_resolution(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test relative import path resolution (./ and ../)."""
-    # Create a nested test file
     nested_dir = javascript_imports_project / "src" / "components" / "forms"
     nested_dir.mkdir()
     test_file = nested_dir / "Input.js"
@@ -427,20 +365,9 @@ const url = constants.API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     relative_imports = [
         call for call in import_relationships if "Input" in call.args[0][2]
@@ -502,20 +429,9 @@ const debounced = debounce(() => {});
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     package_imports = [
         call for call in import_relationships if "package_imports" in call.args[0][2]
@@ -591,27 +507,14 @@ modulePromise.then(({ shared }) => {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    # Dynamic imports might be tracked as function calls to import()
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     dynamic_calls = [
         call for call in call_relationships if "dynamic_imports" in call.args[0][2]
     ]
 
-    # Should have some calls tracked (at minimum, the import() calls)
     assert len(dynamic_calls) >= 1, (
         f"Expected at least 1 dynamic import call, found {len(dynamic_calls)}"
     )
@@ -653,20 +556,9 @@ const url = API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     mixed_imports = [
         call for call in import_relationships if "mixed_imports" in call.args[0][2]
@@ -678,7 +570,6 @@ const url = API_URL;
 
     imported_modules = [call.args[2][2] for call in mixed_imports]
 
-    # Should include both ES6 and CommonJS imports
     expected_patterns = [
         "react",
         "helpers",
@@ -720,28 +611,14 @@ require('./also-side-effects');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    # Should not raise an exception
-    updater.run()
-
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     error_file_imports = [
         call for call in import_relationships if "error_imports" in call.args[0][2]
     ]
 
-    # Should still parse valid imports despite errors
     assert len(error_file_imports) >= 3, (
         f"Expected at least 3 valid imports despite errors, found {len(error_file_imports)}"
     )
@@ -761,7 +638,6 @@ def test_aliased_re_export_import_mapping(
 ) -> None:
     """Test that aliased re-exports create correct import mappings (regression test for bug fix)."""
 
-    # Create source files
     (javascript_imports_project / "math_utils.js").write_text(
         """
 export function add(a, b) { return a + b; }
@@ -779,7 +655,6 @@ export const EMPTY_STRING = '';
 """
     )
 
-    # Create a re-export file with aliased exports - this would trigger the bug before fix
     re_export_file = javascript_imports_project / "utils_index.js"
     re_export_file.write_text(
         """
@@ -795,7 +670,6 @@ export { capitalize } from './string_utils';  // normal re-export
 """
     )
 
-    # Create a consumer file that imports the aliased re-exports
     consumer_file = javascript_imports_project / "consumer.js"
     consumer_file.write_text(
         """
@@ -825,23 +699,10 @@ export { useUtils };
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    # Get all import relationships
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Test consumer imports (should work correctly with our fix)
     consumer_imports = [
         call for call in import_relationships if "consumer" in call.args[0][2]
     ]
@@ -850,7 +711,6 @@ export { useUtils };
         f"Expected at least 2 consumer import relationships, found {len(consumer_imports)}"
     )
 
-    # Test re-export module imports (the core fix)
     re_export_imports = [
         call for call in import_relationships if "utils_index" in call.args[0][2]
     ]
@@ -859,7 +719,6 @@ export { useUtils };
         f"Expected at least 2 re-export import relationships, found {len(re_export_imports)}"
     )
 
-    # Verify that we import from the correct source modules
     re_export_targets = [call.args[2][2] for call in re_export_imports]
 
     expected_targets = ["math_utils", "string_utils"]
@@ -910,24 +769,11 @@ const url = API_URL;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive import coverage
     comprehensive_imports = [
         call
         for call in import_relationships
@@ -938,7 +784,6 @@ const url = API_URL;
         f"Expected at least 10 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_imports:
         assert len(relationship.args) == 3, "Import relationship should have 3 args"
         assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
@@ -946,17 +791,14 @@ const url = API_URL;
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_imports" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name
         assert isinstance(target_module, str) and target_module, (
             f"Target module should be non-empty string: {target_module}"
         )
 
-    # Test that import parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
 
@@ -1023,22 +865,9 @@ const area = multiply(PI, 2);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_imports_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    run_updater(javascript_imports_project, mock_ingestor)
 
-    # This would raise IndexError before the fix
-    updater.run()
-
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     regression_imports = [
         call
@@ -1046,14 +875,11 @@ const area = multiply(PI, 2);
         if "regression_multiple_destructured" in call.args[0][2]
     ]
 
-    # Should handle all the destructuring patterns without IndexError
-    # We expect multiple imports from the destructuring patterns
     assert len(regression_imports) >= 7, (
         f"Expected at least 7 imports from multiple destructuring patterns, "
         f"found {len(regression_imports)}. This suggests the regression fix may not be working."
     )
 
-    # Verify specific modules are imported
     imported_modules = [call.args[2][2] for call in regression_imports]
 
     expected_patterns = [
@@ -1071,7 +897,6 @@ const area = multiply(PI, 2);
         if any(pattern in module for module in imported_modules):
             found_patterns.append(pattern)
 
-    # Should find most of the expected patterns
     assert len(found_patterns) >= 5, (
         f"Expected to find at least 5 module patterns {expected_patterns}, "
         f"but only found {len(found_patterns)}: {found_patterns}\n"

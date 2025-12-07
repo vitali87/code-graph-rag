@@ -1,11 +1,15 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -14,12 +18,10 @@ def cpp_basic_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_basic_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
     (project_path / "lib").mkdir()
 
-    # Create base files
     (project_path / "src" / "main.cpp").write_text("int main() { return 0; }")
     (project_path / "include" / "base.h").write_text("#pragma once\nclass Base {};")
 
@@ -140,18 +142,10 @@ void demonstrateClasses() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_basic_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_basic_project, mock_ingestor)
 
     project_name = cpp_basic_project.name
 
-    # Expected class definitions
     expected_classes = [
         f"{project_name}.basic_classes.Person",
         f"{project_name}.basic_classes.MathUtils",
@@ -159,20 +153,11 @@ void demonstrateClasses() {
         f"{project_name}.basic_classes.Rectangle",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify all expected classes were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
-    # Expected method definitions (class methods)
     expected_methods = [
         f"{project_name}.basic_classes.Person.Person",  # constructor
         f"{project_name}.basic_classes.Person.setName",
@@ -184,35 +169,22 @@ void demonstrateClasses() {
         f"{project_name}.basic_classes.Rectangle.area",
     ]
 
-    # Expected free function definitions
     expected_functions = [
         f"{project_name}.basic_classes.demonstrateClasses",
     ]
 
-    # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_methods = get_qualified_names(method_calls)
+    created_functions = get_qualified_names(function_calls)
 
-    # Verify all expected methods were created
     missing_methods = set(expected_methods) - created_methods
     assert not missing_methods, (
         f"Missing expected methods: {sorted(list(missing_methods))}"
     )
 
-    # Verify all expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -311,18 +283,10 @@ void demonstrateFunctions() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_basic_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_basic_project, mock_ingestor)
 
     project_name = cpp_basic_project.name
 
-    # Expected function definitions
     expected_functions = [
         f"{project_name}.basic_functions.add",
         f"{project_name}.basic_functions.multiply",
@@ -334,27 +298,14 @@ void demonstrateFunctions() {
         f"{project_name}.basic_functions.demonstrateFunctions",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_calls_relationships = [
         call
@@ -486,18 +437,10 @@ void demonstrateUsingDirectives() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_basic_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_basic_project, mock_ingestor)
 
     project_name = cpp_basic_project.name
 
-    # Expected classes in namespaces
     expected_classes = [
         f"{project_name}.basic_namespaces.utils.Logger",
         f"{project_name}.basic_namespaces.utils.math.Calculator",
@@ -506,27 +449,17 @@ void demonstrateUsingDirectives() {
         f"{project_name}.basic_namespaces.graphics.Circle",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify at least some expected namespaced classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Expected methods in namespaces (class methods)
     expected_methods = [
         f"{project_name}.basic_namespaces.graphics.Circle.area",
     ]
 
-    # Expected free functions in namespaces
     expected_functions = [
         f"{project_name}.basic_namespaces.globalFunction",
         f"{project_name}.basic_namespaces.utils.printDebug",
@@ -534,30 +467,18 @@ void demonstrateUsingDirectives() {
         f"{project_name}.basic_namespaces.demonstrateNamespaces",
     ]
 
-    # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_methods = get_qualified_names(method_calls)
+    created_functions = get_qualified_names(function_calls)
 
-    # Verify expected methods were created
     missing_methods = set(expected_methods) - created_methods
     assert not missing_methods, (
         f"Missing expected methods: {sorted(list(missing_methods))}"
     )
 
-    # Verify expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -680,37 +601,20 @@ void bankingDemo() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_basic_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_basic_project, mock_ingestor)
 
     project_name = cpp_basic_project.name
 
-    # Expected classes
     expected_classes = [
         f"{project_name}.member_functions.BankAccount",
         f"{project_name}.member_functions.SavingsAccount",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
-    # Verify inheritance relationship
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -725,12 +629,7 @@ void bankingDemo() {
         "Expected inheritance relationship SavingsAccount -> BankAccount"
     )
 
-    # Verify method calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     method_call_relationships = [
         call
@@ -902,25 +801,12 @@ void globalUtility() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_basic_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_basic_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
-
-    # Should have comprehensive basic C++ coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_basic" in call.args[0][2]
     ]
@@ -929,7 +815,6 @@ void globalUtility() {
         f"Expected at least 8 comprehensive basic calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have inheritance relationships
     basic_inheritance = [
         call
         for call in inherits_relationships
@@ -940,7 +825,6 @@ void globalUtility() {
         f"Expected at least 1 inheritance relationship, found {len(basic_inheritance)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -948,15 +832,12 @@ void globalUtility() {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_basic" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that C++ parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

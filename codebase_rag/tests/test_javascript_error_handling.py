@@ -4,8 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -14,11 +18,9 @@ def javascript_error_handling_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_error_handling_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "utils").mkdir()
     (project_path / "errors").mkdir()
 
-    # Create base files
     (project_path / "errors" / "custom.js").write_text(
         """
 export class CustomError extends Error {
@@ -369,25 +371,10 @@ function cleanup() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for error handling functions
     expected_functions = [
         "basicTryCatch",
         "tryCatchFinally",
@@ -407,12 +394,7 @@ function cleanup() {
         f"Expected at least 4 error handling functions, found {len(error_handling_functions)}"
     )
 
-    # Check for DataProcessor class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     data_processor_class = [
         call for call in class_calls if "DataProcessor" in call[0][1]["qualified_name"]
@@ -794,25 +776,10 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Check for custom error classes
     expected_error_classes = [
         "CustomError",
         "ValidationError",
@@ -834,12 +801,7 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
         f"Expected at least 5 custom error classes, found {len(custom_error_classes)}"
     )
 
-    # Check inheritance relationships for error classes
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     error_inheritance = [
         call
@@ -1296,23 +1258,10 @@ testGracefulDegradation();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Check for async error handling functions
     async_error_functions = [
         call
         for call in function_calls
@@ -1327,12 +1276,7 @@ testGracefulDegradation();
         f"Expected at least 4 async error handling functions, found {len(async_error_functions)}"
     )
 
-    # Check for error handling classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     async_error_classes = [
         call
@@ -1479,24 +1423,15 @@ async function performAsyncOperation(data) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_error_handling_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_error_handling_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive error handling
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1507,7 +1442,6 @@ async function performAsyncOperation(data) {
         f"Expected at least 3 comprehensive error calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all error handling components
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     comprehensive_nodes = [

@@ -14,21 +14,26 @@ repos:
         exclude: ^codec/schema_pb2\.(py|pyi)$
     -   id: ruff-format
         exclude: ^codec/schema_pb2\.(py|pyi)$
--   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.1
+-   repo: local
     hooks:
-    -   id: mypy
-        files: \.py$
+    -   id: ty
+        name: ty check
+        entry: uv run ty check
+        language: system
+        types: [python]
         exclude: ^codec/.*_pb2\.py$
-        additional_dependencies: [
-            types-toml,
-            "types-protobuf>=5.0.0",
-            ]
+        pass_filenames: false
 -   repo: local
     hooks:
     -   id: no-module-docstrings
         name: no module-level docstrings
         entry: bash -c 'for f in "$@"; do head -1 "$f" | grep -q "^\"\"\"" && echo "$f starts with module docstring" && exit 1; done; exit 0' --
+        language: system
+        types: [python]
+        exclude: ^codec/schema_pb2\.py$
+    -   id: no-inline-comments
+        name: no inline comments without (H)
+        entry: uv run python scripts/check_comments.py
         language: system
         types: [python]
         exclude: ^codec/schema_pb2\.py$

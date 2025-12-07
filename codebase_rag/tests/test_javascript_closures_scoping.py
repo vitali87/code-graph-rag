@@ -1,11 +1,15 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -14,11 +18,9 @@ def javascript_closures_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_closures_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create helper files
     (project_path / "src" / "counter.js").write_text("export let globalCounter = 0;")
     (project_path / "utils" / "logger.js").write_text(
         "export function log(message) { console.log(message); }"
@@ -195,18 +197,10 @@ const varResults = varFunctions.map(fn => fn());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     project_name = javascript_closures_project.name
 
-    # Expected functions demonstrating closures
     expected_functions = [
         f"{project_name}.basic_closures.outerFunction",
         f"{project_name}.basic_closures.createCounter",
@@ -221,22 +215,14 @@ const varResults = varFunctions.map(fn => fn());
         f"{project_name}.basic_closures.createFunctionArrayVar",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
+    created_functions = get_qualified_names(function_calls)
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify closure functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify nested functions are captured
     nested_functions = [
         call
         for call in function_calls
@@ -249,12 +235,7 @@ const varResults = varFunctions.map(fn => fn());
         f"Expected at least 5 nested functions from closures, found {len(nested_functions)}"
     )
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     closure_calls = [
         call for call in call_relationships if "basic_closures" in call.args[0][2]
@@ -498,18 +479,10 @@ tryCatchScope();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     project_name = javascript_closures_project.name
 
-    # Expected functions demonstrating scoping
     expected_scoping_functions = [
         f"{project_name}.variable_scoping.functionScope",
         f"{project_name}.variable_scoping.blockScope",
@@ -520,15 +493,9 @@ tryCatchScope();
         f"{project_name}.variable_scoping.tryCatchScope",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
+    created_functions = get_qualified_names(function_calls)
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify scoping functions were created
     found_scoping_functions = [
         func for func in expected_scoping_functions if func in created_functions
     ]
@@ -536,7 +503,6 @@ tryCatchScope();
         f"Expected at least 5 scoping functions, found {len(found_scoping_functions)}"
     )
 
-    # Should have nested functions demonstrating scope chain
     nested_scoping_functions = [
         call
         for call in function_calls
@@ -786,18 +752,10 @@ const nestedResult = nested();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
     project_name = javascript_closures_project.name
 
-    # Expected functions demonstrating hoisting
     expected_hoisting_functions = [
         f"{project_name}.hoisting_behavior.hoistedFunction",
         f"{project_name}.hoisting_behavior.temporalDeadZoneExample",
@@ -811,15 +769,8 @@ const nestedResult = nested();
         f"{project_name}.hoisting_behavior.hoistingEdgeCases",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify hoisting functions were created
     found_hoisting_functions = [
         func for func in expected_hoisting_functions if func in created_functions
     ]
@@ -827,12 +778,7 @@ const nestedResult = nested();
         f"Expected at least 7 hoisting functions, found {len(found_hoisting_functions)}"
     )
 
-    # Should have classes demonstrating hoisting behavior
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     hoisting_classes = [
         call
@@ -1184,21 +1130,9 @@ const allConfig = Config.getAll();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
-    # Verify module patterns create proper function relationships
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     module_calls = [
         call for call in call_relationships if "module_patterns" in call.args[0][2]
@@ -1208,12 +1142,7 @@ const allConfig = Config.getAll();
         f"Expected at least 15 function calls in module patterns, found {len(module_calls)}"
     )
 
-    # Should have many functions from IIFE patterns
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     module_functions = [
         call
@@ -1397,24 +1326,11 @@ const scopeResult = accessScopes();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_closures_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_closures_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive closure coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1425,7 +1341,6 @@ const scopeResult = accessScopes();
         f"Expected at least 8 comprehensive closure calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1433,15 +1348,12 @@ const scopeResult = accessScopes();
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_closures" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that closure parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -13,11 +12,9 @@ def rust_trait_objects_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_trait_objects_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Trait objects test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_trait_objects_test"
 version = "0.1.0"
@@ -245,18 +242,9 @@ fn canvas_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify trait objects are detected
     trait_obj_calls = [
         call
         for call in calls
@@ -604,18 +592,9 @@ fn downcast_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify object safety patterns are detected
     safety_calls = [
         call
         for call in calls
@@ -963,18 +942,9 @@ fn run_performance_tests() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify dynamic dispatch patterns are detected
     dispatch_calls = [
         call
         for call in calls
@@ -1432,18 +1402,9 @@ async fn test_async_trait_objects() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_trait_objects_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify advanced trait object patterns are detected
     advanced_calls = [
         call
         for call in calls

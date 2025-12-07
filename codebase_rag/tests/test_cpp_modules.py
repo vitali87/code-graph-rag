@@ -1,11 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,7 +12,6 @@ def cpp_modules_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_modules_test"
     project_path.mkdir()
 
-    # Create module structure
     (project_path / "modules").mkdir()
     (project_path / "src").mkdir()
     (project_path / "interfaces").mkdir()
@@ -27,7 +24,6 @@ def test_basic_module_interface(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test basic module interface declarations and exports."""
-    # Create module interface file
     interface_file = cpp_modules_project / "interfaces" / "math_module.ixx"
     interface_file.write_text(
         """
@@ -177,7 +173,6 @@ namespace math::internal {
 """
     )
 
-    # Create implementation file
     impl_file = cpp_modules_project / "src" / "math_module.cpp"
     impl_file.write_text(
         """
@@ -267,18 +262,10 @@ namespace math {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modules_project, mock_ingestor)
 
     project_name = cpp_modules_project.name
 
-    # Expected module-related classes and functions
     expected_classes = [
         f"{project_name}.math_module.Calculator",
         f"{project_name}.math_module.MathProcessor",
@@ -295,31 +282,15 @@ namespace math {
         f"{project_name}.math_module.factorial",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 module class, found {len(found_classes)}: {found_classes}"
     )
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -331,7 +302,6 @@ def test_module_partitions(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test module partitions and internal module structure."""
-    # Create primary module interface
     primary_interface = cpp_modules_project / "interfaces" / "data_structures.ixx"
     primary_interface.write_text(
         """
@@ -373,7 +343,6 @@ export namespace ds {
 """
     )
 
-    # Create container partition
     container_partition = cpp_modules_project / "modules" / "containers.ixx"
     container_partition.write_text(
         """
@@ -534,7 +503,6 @@ export namespace ds::containers {
 """
     )
 
-    # Create algorithms partition
     algorithms_partition = cpp_modules_project / "modules" / "algorithms.ixx"
     algorithms_partition.write_text(
         """
@@ -620,33 +588,17 @@ export namespace ds::algorithms {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modules_project, mock_ingestor)
 
     project_name = cpp_modules_project.name
 
-    # Expected partition-related classes and functions
     expected_classes = [
         f"{project_name}.containers.DynamicArray",
         f"{project_name}.containers.LinkedList",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert found_classes, (
         f"Expected at least 1 partition class, found {len(found_classes)}: {found_classes}"
@@ -658,7 +610,6 @@ def test_module_imports_usage(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test module imports and usage patterns."""
-    # Create a file that uses the modules
     usage_file = cpp_modules_project / "src" / "module_usage.cpp"
     usage_file.write_text(
         """
@@ -830,24 +781,11 @@ void showcaseModuleFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modules_project, mock_ingestor)
 
-    # Verify comprehensive module usage coverage
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    imports_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-
-    # Should have module import relationships
     [
         call
         for call in imports_relationships
@@ -858,7 +796,6 @@ void showcaseModuleFeatures() {
         )
     ]
 
-    # Should have calls to module functions
     module_function_calls = [
         call for call in call_relationships if "module_usage" in call.args[0][2]
     ]

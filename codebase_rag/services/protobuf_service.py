@@ -16,9 +16,6 @@ class ProtobufFileIngestor:
     to build the graph first
     """
 
-    # This mapping is the single source of truth for connecting the dynamic parser labels
-    # to the static, consistent field names in the .proto schema's 'oneof' block.
-    # Format: <NodeLabel> : <oneof payload field name>
     LABEL_TO_ONEOF_FIELD: dict[str, str] = {
         "Project": "project",
         "Package": "package",
@@ -68,17 +65,14 @@ class ProtobufFileIngestor:
 
         payload_message = payload_message_class()
 
-        # Populate the specific payload message (e.g., pb.Class)
         for key, value in properties.items():
             if hasattr(payload_message, key):
                 if value is None:
                     continue
                 destination_attribute = getattr(payload_message, key)
                 if hasattr(destination_attribute, "extend") and isinstance(value, list):
-                    # This is a repeated field. Use .extend() to populate it.
                     destination_attribute.extend(value)
                 else:
-                    # This is a scalar field. Use a simple assignment.
                     setattr(payload_message, key, value)
 
         node = pb.Node()
@@ -90,7 +84,6 @@ class ProtobufFileIngestor:
             )
             return
 
-        # Set the 'oneof' payload field using the correct name
         getattr(node, payload_field_name).CopyFrom(payload_message)
 
         self._nodes[node_id] = node

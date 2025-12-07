@@ -17,7 +17,6 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
 @pytest.fixture
 def temp_project_root(tmp_path: Path) -> Path:
     """Create a temporary project root directory with sample code."""
-    # Create a simple Python module
     sample_file = tmp_path / "calculator.py"
     sample_file.write_text(
         '''"""Calculator module."""
@@ -56,7 +55,6 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
         cypher_gen=mock_cypher_gen,
     )
 
-    # Mock the query tool
     registry._query_tool = MagicMock()
     registry._query_tool.function = AsyncMock()
 
@@ -68,7 +66,7 @@ class TestQueryCodeGraph:
 
     async def test_query_finds_functions(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for functions in the code graph."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function) RETURN f.name",
                 "results": [
@@ -90,7 +88,7 @@ class TestQueryCodeGraph:
 
     async def test_query_finds_classes(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for classes in the code graph."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (c:Class) RETURN c.name",
                 "results": [{"name": "Calculator"}],
@@ -107,7 +105,7 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test querying for function call relationships."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function)-[:CALLS]->(g:Function) RETURN f.name, g.name",
                 "results": [
@@ -125,7 +123,7 @@ class TestQueryCodeGraph:
 
     async def test_query_with_no_results(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query that returns no results."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (n:NonExistent) RETURN n",
                 "results": [],
@@ -142,7 +140,7 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test complex natural language query."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function)-[:DEFINED_IN]->(m:Module) WHERE m.name = 'calculator' RETURN f.name",
                 "results": [
@@ -162,7 +160,7 @@ class TestQueryCodeGraph:
 
     async def test_query_handles_unicode(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query with unicode characters."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (f:Function) WHERE f.name = '你好' RETURN f",
                 "results": [{"name": "你好"}],
@@ -176,7 +174,7 @@ class TestQueryCodeGraph:
 
     async def test_query_error_handling(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test error handling during query execution."""
-        mcp_registry._query_tool.function.side_effect = Exception("Database error")
+        mcp_registry._query_tool.function.side_effect = Exception("Database error")  # ty: ignore[invalid-assignment]
 
         result = await mcp_registry.query_code_graph("Find all nodes")
 
@@ -189,7 +187,7 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test that query parameter is correctly passed."""
-        mcp_registry._query_tool.function.return_value = MagicMock(
+        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "cypher_query": "MATCH (n) RETURN n",
                 "results": [],
@@ -233,7 +231,6 @@ class TestIndexRepository:
 
             await mcp_registry.index_repository()
 
-            # Verify GraphUpdater was instantiated with correct args
             mock_updater_class.assert_called_once()
             call_kwargs = mock_updater_class.call_args.kwargs
             assert call_kwargs["ingestor"] == mcp_registry.ingestor
@@ -272,7 +269,6 @@ class TestIndexRepository:
 
             result = await empty_registry.index_repository()
 
-            # Should succeed even with empty directory
             assert "Error:" not in result or "Success" in result
 
     async def test_index_repository_multiple_times(
@@ -284,15 +280,12 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            # Index first time
             result1 = await mcp_registry.index_repository()
             assert "Error:" not in result1
 
-            # Index second time (re-index)
             result2 = await mcp_registry.index_repository()
             assert "Error:" not in result2
 
-            # Should have been called twice
             assert mock_updater.run.call_count == 2
 
     async def test_index_repository_clears_database_first(
@@ -304,13 +297,10 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            # Index repository
             result = await mcp_registry.index_repository()
 
-            # Verify clean_database was called
             mcp_registry.ingestor.clean_database.assert_called_once()  # type: ignore[attr-defined]
             assert "Error:" not in result
-            # Verify message indicates data was cleared
             assert "cleared" in result.lower() or "previous data" in result.lower()
 
     async def test_index_repository_clears_before_updater_runs(
@@ -334,14 +324,12 @@ class TestIndexRepository:
 
             await mcp_registry.index_repository()
 
-            # Verify clean was called before run
             assert call_order == ["clean", "run"]
 
     async def test_sequential_index_clears_previous_repo_data(
         self, tmp_path: Path
     ) -> None:
         """Test that indexing a second repository clears the first repository's data."""
-        # Create two mock registries for different projects
         mock_ingestor = MagicMock()
         mock_cypher = MagicMock()
 
@@ -366,11 +354,9 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            # Index first repository
             await registry1.index_repository()
             assert mock_ingestor.clean_database.call_count == 1
 
-            # Index second repository - should clear database again
             await registry2.index_repository()
             assert mock_ingestor.clean_database.call_count == 2
 
@@ -387,12 +373,10 @@ class TestQueryAndIndexIntegration:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            # Index the repository
             index_result = await mcp_registry.index_repository()
             assert "Error:" not in index_result
 
-            # Now query it
-            mcp_registry._query_tool.function.return_value = MagicMock(
+            mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
                 model_dump=lambda: {
                     "cypher_query": "MATCH (f:Function) RETURN f.name",
                     "results": [{"name": "add"}],
@@ -412,11 +396,9 @@ class TestQueryAndIndexIntegration:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            # Step 1: Index
             await mcp_registry.index_repository()
 
-            # Step 2: Query for functions
-            mcp_registry._query_tool.function.return_value = MagicMock(
+            mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
                 model_dump=lambda: {
                     "cypher_query": "MATCH (f:Function) RETURN f",
                     "results": [{"name": "add"}, {"name": "multiply"}],
@@ -426,8 +408,7 @@ class TestQueryAndIndexIntegration:
             result = await mcp_registry.query_code_graph("Find all functions")
             assert len(result["results"]) == 2
 
-            # Step 3: Query for classes
-            mcp_registry._query_tool.function.return_value = MagicMock(
+            mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
                 model_dump=lambda: {
                     "cypher_query": "MATCH (c:Class) RETURN c",
                     "results": [{"name": "Calculator"}],

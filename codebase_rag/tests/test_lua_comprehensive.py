@@ -1,10 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
-
-# Error Handling Tests
+from codebase_rag.tests.conftest import run_updater
 
 
 def test_lua_pcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -45,11 +42,7 @@ end
 return ErrorHandler
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_xpcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -79,14 +72,7 @@ end
 return ErrorHandler
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# String Pattern Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_string_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -130,11 +116,7 @@ end
 return StringUtils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_string_interpolation(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -172,14 +154,7 @@ end
 return Formatter
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Table Manipulation Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_table_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -240,11 +215,7 @@ end
 return TableOps
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_table_iteration(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -310,14 +281,7 @@ end
 return Iterators
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Environment and Global Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_environment_management(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -373,11 +337,7 @@ end
 return EnvManager
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_module_system(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -426,14 +386,7 @@ end
 return ModuleLoader
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# File I/O and Serialization Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_file_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -498,11 +451,7 @@ end
 return FileUtils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_json_serialization(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -577,14 +526,7 @@ end
 return JSONUtils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Data Structure Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_linked_list(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -661,11 +603,7 @@ end
 return LinkedList
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_binary_tree(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -738,11 +676,7 @@ end
 return BinaryTree
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_hash_table(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -830,14 +764,7 @@ end
 return HashTable
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Algorithm Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_sorting_algorithms(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -939,11 +866,7 @@ end
 return Sorting
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_search_algorithms(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1035,14 +958,7 @@ end
 return Searching
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Design Pattern Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_observer_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1095,11 +1011,7 @@ end
 return {Subject = Subject, Observer = Observer}
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_factory_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1167,11 +1079,7 @@ return {
 }
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_strategy_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1265,14 +1173,7 @@ return {
 }
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Performance and Memory Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_memory_management(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1341,11 +1242,7 @@ end
 return MemoryManager
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_performance_utils(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1438,14 +1335,7 @@ end
 return Performance
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Real-world Application Tests
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_web_framework(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1536,11 +1426,7 @@ end
 return WebFramework
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_database_orm(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1698,11 +1584,7 @@ end
 return ORM
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_template_engine(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1842,14 +1724,7 @@ end
 return TemplateEngine
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
-
-
-# Final count test function to verify our progress
+    run_updater(project, mock_ingestor)
 
 
 def test_lua_final_comprehensive_check(
@@ -1930,8 +1805,4 @@ end
 return Comprehensive
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)

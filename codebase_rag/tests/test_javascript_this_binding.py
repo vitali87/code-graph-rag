@@ -4,8 +4,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -14,11 +19,9 @@ def javascript_this_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_this_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "utils" / "helpers.js").write_text(
         """
 export function helperFunction() {
@@ -213,29 +216,12 @@ bound(); // preserved this
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_this_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_this_project, mock_ingestor)
 
-    # Get all Function and Method nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Should create various functions and methods
     all_callables = function_calls + method_calls
     this_context_callables = [
         call
@@ -247,8 +233,7 @@ bound(); // preserved this
         f"Expected at least 10 functions/methods with this context, found {len(this_context_callables)}"
     )
 
-    # Check for arrow functions (might have special property)
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
     arrow_patterns = ["arrowMethod", "innerArrow", "arrowProperty"]
 
     arrow_functions_found = [
@@ -428,21 +413,9 @@ console.log(result2); // [15, 20]
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_this_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_this_project, mock_ingestor)
 
-    # Check CALLS relationships for bind/call/apply
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     bind_call_apply_calls = [
         call
@@ -457,14 +430,7 @@ console.log(result2); // [15, 20]
         f"Expected at least 5 bind/call/apply calls, found {len(bind_call_apply_calls)}"
     )
 
-    # Check function definitions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
-
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_node_names(mock_ingestor, "Function")
     project_name = javascript_this_project.name
 
     expected_functions = [
@@ -701,23 +667,10 @@ regularFunction(10, 20, 30);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_this_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_this_project, mock_ingestor)
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Check for arrow functions
     arrow_functions = [
         call
         for call in function_calls
@@ -732,12 +685,7 @@ regularFunction(10, 20, 30);
         f"Expected at least 5 arrow functions, found {len(arrow_functions)}"
     )
 
-    # Check classes with arrow function properties
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     classes_with_arrows = [
         call
@@ -1027,21 +975,9 @@ searchHandler.debouncedSearch('test query');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_this_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_this_project, mock_ingestor)
 
-    # Check for various callback patterns
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     callback_functions = [
         call
@@ -1053,12 +989,7 @@ searchHandler.debouncedSearch('test query');
         f"Expected at least 10 callback-related functions, found {len(callback_functions)}"
     )
 
-    # Check for event handler methods
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     event_methods = [
         call
@@ -1193,24 +1124,15 @@ outer.call({ context: 'custom' });
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_this_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_this_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive this-related calls
     comprehensive_calls = [
         call for call in calls_relationships if "comprehensive_this" in call.args[0][2]
     ]
@@ -1219,7 +1141,6 @@ outer.call({ context: 'custom' });
         f"Expected at least 5 comprehensive this-related calls, found {len(comprehensive_calls)}"
     )
 
-    # Check for bind/call/apply calls
     binding_calls = [
         call
         for call in comprehensive_calls

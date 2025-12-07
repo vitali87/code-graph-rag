@@ -43,10 +43,8 @@ class ProcessorFactory:
         self.simple_name_lookup = simple_name_lookup
         self.ast_cache = ast_cache
 
-        # Mapping from module qualified names to file paths for efficient lookups
         self.module_qn_to_file_path: dict[str, Path] = {}
 
-        # Create processors with proper dependencies
         self._import_processor: ImportProcessor | None = None
         self._structure_processor: StructureProcessor | None = None
         self._definition_processor: DefinitionProcessor | None = None

@@ -4,8 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -14,11 +13,9 @@ def typescript_decorators_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_decorators_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "decorators").mkdir()
     (project_path / "examples").mkdir()
 
-    # Create base files
     (project_path / "decorators" / "common.ts").write_text(
         """
 // Common decorators
@@ -319,21 +316,9 @@ console.log((user as any).getValidationErrors()); // []
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
-    # Check for decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     decorator_functions = [
         call
@@ -349,12 +334,7 @@ console.log((user as any).getValidationErrors()); // []
         f"Expected at least 5 decorator functions, found {len(decorator_functions)}"
     )
 
-    # Check for decorated classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     decorated_classes = [
         call
@@ -376,12 +356,7 @@ console.log((user as any).getValidationErrors()); // []
         f"Expected at least 4 decorated classes, found {len(decorated_classes)}"
     )
 
-    # Check inheritance relationships (from decorator extensions)
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     decorator_inheritance = [
         call
@@ -736,21 +711,9 @@ processor.saveToDatabase({ important: 'data' })
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
-    # Check for method decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     method_decorators = [
         call
@@ -766,12 +729,7 @@ processor.saveToDatabase({ important: 'data' })
         f"Expected at least 6 method decorator functions, found {len(method_decorators)}"
     )
 
-    # Check for classes with decorated methods
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     decorated_method_classes = [
         call
@@ -787,12 +745,7 @@ processor.saveToDatabase({ important: 'data' })
         f"Expected at least 2 classes with decorated methods, found {len(decorated_method_classes)}"
     )
 
-    # Check for method nodes within decorated classes
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     decorated_methods = [
         call
@@ -1198,21 +1151,9 @@ console.log(product.timestamps); // Should initialize on first access
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
-    # Check for property decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     property_decorators = [
         call
@@ -1235,12 +1176,7 @@ console.log(product.timestamps); // Should initialize on first access
         f"Expected at least 6 property decorator functions, found {len(property_decorators)}"
     )
 
-    # Check for classes with decorated properties
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     decorated_property_classes = [
         call
@@ -1589,21 +1525,9 @@ try {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
-    # Check for parameter decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     parameter_decorators = [
         call
@@ -1626,12 +1550,7 @@ try {
         f"Expected at least 6 parameter decorator functions, found {len(parameter_decorators)}"
     )
 
-    # Check for classes using parameter decorators
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     parameter_decorated_classes = [
         call
@@ -1647,12 +1566,7 @@ try {
         f"Expected at least 3 classes with parameter decorators, found {len(parameter_decorated_classes)}"
     )
 
-    # Check for methods with decorated parameters
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     decorated_parameter_methods = [
         call
@@ -1745,24 +1659,15 @@ console.log((example as any).tableName); // 'comprehensive_items'
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_decorators_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_decorators_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive decorator-related calls
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1773,12 +1678,7 @@ console.log((example as any).tableName); // 'comprehensive_items'
         f"Expected at least 2 comprehensive decorator calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all decorator patterns were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_decorators = [
         call
@@ -1794,12 +1694,7 @@ console.log((example as any).tableName); // 'comprehensive_items'
         f"Expected at least 4 decorator functions, found {len(comprehensive_decorators)}"
     )
 
-    # Check comprehensive decorated class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     comprehensive_class = [
         call

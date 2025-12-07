@@ -1,11 +1,15 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -14,11 +18,9 @@ def javascript_functions_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_functions_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create helper files
     (project_path / "src" / "helpers.js").write_text("export const log = console.log;")
     (project_path / "utils" / "common.js").write_text(
         "export function isString(value) { return typeof value === 'string'; }"
@@ -94,18 +96,10 @@ const total = sum(1, 2, 3, 4, 5);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
-    # Expected function definitions
     expected_functions = [
         f"{project_name}.function_declarations.greet",
         f"{project_name}.function_declarations.add",
@@ -119,27 +113,13 @@ const total = sum(1, 2, 3, 4, 5);
         f"{project_name}.function_declarations.calculator",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify all expected functions were created
     for expected_qn in expected_functions:
         assert expected_qn in created_functions, f"Missing function: {expected_qn}"
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have calls between functions
     function_to_function_calls = [
         call
         for call in call_relationships
@@ -221,25 +201,12 @@ const quadrupled = doubler(8);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Arrow functions should be captured
     arrow_functions = [
         call
         for call in function_calls
@@ -250,8 +217,7 @@ const quadrupled = doubler(8);
         f"Expected at least 10 arrow functions, found {len(arrow_functions)}"
     )
 
-    # Verify some specific arrow functions
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
     expected_arrow_functions = [
         f"{project_name}.arrow_functions.double",
         f"{project_name}.arrow_functions.add",
@@ -371,18 +337,10 @@ async function orchestrate() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
-    # Expected async functions
     expected_async_functions = [
         f"{project_name}.async_functions.fetchData",
         f"{project_name}.async_functions.processData",
@@ -394,27 +352,14 @@ async function orchestrate() {
         f"{project_name}.async_functions.orchestrate",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify async functions were created
     for expected_qn in expected_async_functions:
         assert expected_qn in created_functions, (
             f"Missing async function: {expected_qn}"
         )
 
-    # Verify function calls between async functions
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     async_to_async_calls = [
         call
@@ -528,23 +473,10 @@ const configValue = Config.get('apiUrl');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    # IIFEs should be captured as functions
     iife_functions = [
         call
         for call in function_calls
@@ -555,12 +487,7 @@ const configValue = Config.get('apiUrl');
         f"Expected at least 5 IIFE functions, found {len(iife_functions)}"
     )
 
-    # Should also capture function calls (the invocations)
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     iife_calls = [
         call for call in call_relationships if "iife_patterns" in call.args[0][2]
@@ -686,18 +613,10 @@ const memoizedAdd = memoize(add5);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
     project_name = javascript_functions_project.name
 
-    # Expected higher-order functions
     expected_hof_functions = [
         f"{project_name}.higher_order_functions.createAdder",
         f"{project_name}.higher_order_functions.createMultiplier",
@@ -712,22 +631,14 @@ const memoizedAdd = memoize(add5);
         f"{project_name}.higher_order_functions.memoize",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
+    created_functions = get_qualified_names(function_calls)
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify higher-order functions were created
     for expected_qn in expected_hof_functions:
         assert expected_qn in created_functions, (
             f"Missing higher-order function: {expected_qn}"
         )
 
-    # Should also have nested functions (returned functions)
     nested_functions = [
         call
         for call in function_calls
@@ -887,30 +798,12 @@ const isValid = Person.isValidAge(30);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
-    # Get all Method node creation calls (methods are often parsed as Method nodes)
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Also get Function nodes that might represent methods
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Combine both types
     all_methods = method_calls + function_calls
     method_definitions = [
         call
@@ -922,12 +815,7 @@ const isValid = Person.isValidAge(30);
         f"Expected at least 10 method definitions, found {len(method_definitions)}"
     )
 
-    # Verify method calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     method_calls = [
         call for call in call_relationships if "method_definitions" in call.args[0][2]
@@ -1026,24 +914,11 @@ const orchestrated = orchestrator();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_functions_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive function coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1054,7 +929,6 @@ const orchestrated = orchestrator();
         f"Expected at least 8 comprehensive function calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1062,15 +936,12 @@ const orchestrated = orchestrator();
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_functions" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that function parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
