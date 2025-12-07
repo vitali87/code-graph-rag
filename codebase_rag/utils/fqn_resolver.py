@@ -85,7 +85,7 @@ def find_function_source_by_fqn(
                     node, file_path, repo_root, project_name, fqn_config
                 )
                 if actual_fqn == target_fqn:
-                    return safe_decode_text(node) if node.text else None
+                    return safe_decode_text(node)
 
             for child in node.children:
                 result = walk(child)

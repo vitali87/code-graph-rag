@@ -208,11 +208,11 @@ def _extract_name_from_field_declaration(func_node: Node) -> str | None:
         if child.type == "function_declarator":
             declarator = child.child_by_field_name("declarator")
             if declarator and declarator.type == "field_identifier" and declarator.text:
-                return safe_decode_text(declarator) if declarator.text else None
+                return safe_decode_text(declarator)
 
             for grandchild in child.children:
                 if grandchild.type == "field_identifier" and grandchild.text:
-                    return safe_decode_text(grandchild) if grandchild.text else None
+                    return safe_decode_text(grandchild)
     return None
 
 
@@ -220,7 +220,7 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
     """Extract function name from function_declarator nodes."""
     for child in func_node.children:
         if child.type in ["identifier", "field_identifier"] and child.text:
-            return safe_decode_text(child) if child.text else None
+            return safe_decode_text(child)
         elif child.type == "qualified_identifier":
             # (H) Handle out-of-class method definitions like Calculator::add
             # (H) or deeply nested like Outer::Inner::MyClass::method
@@ -228,7 +228,7 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
                 last_name = None
                 for qchild in node.children:
                     if qchild.type in ["identifier", "field_identifier"]:
-                        last_name = safe_decode_text(qchild) if qchild.text else None
+                        last_name = safe_decode_text(qchild)
                     elif qchild.type == "operator_name":
                         last_name = extract_operator_name(qchild)
                     elif qchild.type == "destructor_name":

@@ -122,7 +122,7 @@ def extract_js_constructor_name(new_expr_node: Node) -> str | None:
     if constructor_node and constructor_node.type == "identifier":
         constructor_text = constructor_node.text
         if constructor_text:
-            return str(safe_decode_text(constructor_node))
+            return safe_decode_text(constructor_node)
 
     return None
 

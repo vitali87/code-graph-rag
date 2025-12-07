@@ -48,8 +48,9 @@ class LuaTypeInferenceEngine:
                     for child in assignment.children:
                         if child.type == "variable_list":
                             for var_node in child.children:
-                                if var_node.type == "identifier" and var_node.text:
-                                    var_names.append(safe_decode_text(var_node))
+                                if var_node.type == "identifier":
+                                    if decoded_name := safe_decode_text(var_node):
+                                        var_names.append(decoded_name)
                         elif child.type == "expression_list":
                             for expr_node in child.children:
                                 if expr_node.type == "function_call":
@@ -87,17 +88,9 @@ class LuaTypeInferenceEngine:
                     for grandchild in child.children:
                         if grandchild.type == "identifier":
                             if class_name is None:
-                                class_name = (
-                                    safe_decode_text(grandchild)
-                                    if grandchild.text
-                                    else None
-                                )
+                                class_name = safe_decode_text(grandchild)
                             else:
-                                method_name = (
-                                    safe_decode_text(grandchild)
-                                    if grandchild.text
-                                    else None
-                                )
+                                method_name = safe_decode_text(grandchild)
 
                     if class_name and method_name:
                         class_qn = self._resolve_lua_class_name(class_name, module_qn)

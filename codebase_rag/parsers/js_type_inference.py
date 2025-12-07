@@ -118,7 +118,7 @@ class JsTypeInferenceEngine:
             elif func_node and func_node.type == "identifier":
                 func_name = func_node.text
                 if func_name:
-                    return str(safe_decode_text(func_node))
+                    return safe_decode_text(func_node)
 
         logger.debug(
             f"No type inference pattern matched for value node type: {value_node.type}"

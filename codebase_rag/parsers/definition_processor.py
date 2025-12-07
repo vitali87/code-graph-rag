@@ -239,24 +239,16 @@ class DefinitionProcessor:
         """Extract the name from a decorator node (@decorator or @decorator(...))."""
         for child in decorator_node.children:
             if child.type == "identifier":
-                text = child.text
-                if text is not None:
-                    return safe_decode_text(child)
+                return safe_decode_text(child)
             elif child.type == "attribute":
-                text = child.text
-                if text is not None:
-                    return safe_decode_text(child)
+                return safe_decode_text(child)
             elif child.type == "call":
                 func_node = child.child_by_field_name("function")
                 if func_node:
                     if func_node.type == "identifier":
-                        text = func_node.text
-                        if text is not None:
-                            return safe_decode_text(func_node)
+                        return safe_decode_text(func_node)
                     elif func_node.type == "attribute":
-                        text = func_node.text
-                        if text is not None:
-                            return safe_decode_text(func_node)
+                        return safe_decode_text(func_node)
         return None
 
     def _extract_template_class_type(self, template_node: Node) -> str | None:
@@ -286,11 +278,11 @@ class DefinitionProcessor:
 
         for child in class_node.children:
             if child.type == "type_identifier" and child.text:
-                return str(safe_decode_text(child))
+                return safe_decode_text(child)
 
         name_node = class_node.child_by_field_name("name")
         if name_node and name_node.text:
-            return str(safe_decode_text(name_node))
+            return safe_decode_text(name_node)
 
         return None
 
@@ -298,14 +290,14 @@ class DefinitionProcessor:
         """Extract class name, handling both class declarations and class expressions."""
         name_node = class_node.child_by_field_name("name")
         if name_node and name_node.text:
-            return str(safe_decode_text(name_node))
+            return safe_decode_text(name_node)
 
         current = class_node.parent
         while current:
             if current.type == "variable_declarator":
                 for child in current.children:
                     if child.type == "identifier" and child.text:
-                        return str(safe_decode_text(child))
+                        return safe_decode_text(child)
             current = current.parent
 
         return None
@@ -314,7 +306,7 @@ class DefinitionProcessor:
         """Extract function name, handling both regular functions and arrow functions."""
         name_node = func_node.child_by_field_name("name")
         if name_node and name_node.text:
-            return str(safe_decode_text(name_node))
+            return safe_decode_text(name_node)
 
         if func_node.type == "arrow_function":
             current = func_node.parent
@@ -322,7 +314,7 @@ class DefinitionProcessor:
                 if current.type == "variable_declarator":
                     for child in current.children:
                         if child.type == "identifier" and child.text:
-                            return str(safe_decode_text(child))
+                            return safe_decode_text(child)
                 current = current.parent
 
         return None
