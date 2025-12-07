@@ -21,8 +21,10 @@ def _get_method_names(mock_ingestor: MagicMock, class_name: str) -> set[str]:
     method_names = set()
     for call in method_calls:
         qn = call[0][1].get("qualified_name", "")
-        if class_name in qn:
-            name_part = qn.split(".")[-1]
+        # (H) Use precise matching to avoid "Resource" matching "AnotherResource"
+        parts = qn.split(".")
+        if class_name in parts:
+            name_part = parts[-1]
             method_names.add(name_part)
     return method_names
 

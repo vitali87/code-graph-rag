@@ -73,9 +73,19 @@ class GoogleProvider(ModelProvider):
         self.validate_config()
 
         if self.provider_type == "vertex":
+            credentials = None
+            if self.service_account_file:
+                # (H) Convert service account file to credentials object for pydantic-ai
+                from google.oauth2 import service_account
+
+                credentials = service_account.Credentials.from_service_account_file(
+                    self.service_account_file,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
             provider = PydanticGoogleProvider(
                 project=self.project_id,
                 location=self.region,
+                credentials=credentials,
             )
         else:
             # (H) api_key is guaranteed to be set by validate_config for gla type
