@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -542,7 +541,6 @@ if True:
     run_updater(python_imports_project, mock_ingestor)
 
     # Verify all relationship types exist
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")

@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -869,7 +868,6 @@ void demonstrateComprehensiveCasting() {
     run_updater(cpp_casting_project, mock_ingestor)
 
     # Verify all relationship types exist
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")

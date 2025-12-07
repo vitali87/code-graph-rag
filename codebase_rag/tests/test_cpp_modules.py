@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -800,7 +799,6 @@ void showcaseModuleFeatures() {
     run_updater(cpp_modules_project, mock_ingestor)
 
     # Verify comprehensive module usage coverage
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     imports_relationships = get_relationships(mock_ingestor, "IMPORTS")

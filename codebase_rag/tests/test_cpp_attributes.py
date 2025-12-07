@@ -299,7 +299,6 @@ void testTemplateAttributes() {
     run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify function definitions with attributes are tracked
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     call_relationships = get_relationships(mock_ingestor, "CALLS")
@@ -1033,7 +1032,6 @@ void testUltimateAttributes() {
     run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify complex attributed constructs are tracked
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     call_relationships = get_relationships(mock_ingestor, "CALLS")
@@ -1221,7 +1219,6 @@ void testAttributePolymorphism() {
     run_updater(cpp_attributes_project, mock_ingestor)
 
     # Verify comprehensive relationship creation
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")

@@ -127,7 +127,6 @@ void demonstrateBasicConcepts() {
     run_updater(cpp_concepts_project, mock_ingestor)
 
     # Verify concept definitions are detected
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
@@ -274,7 +273,6 @@ void demonstrateAdvancedConcepts() {
     run_updater(cpp_concepts_project, mock_ingestor)
 
     # Verify advanced concept usage
-    cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
