@@ -111,6 +111,7 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             model=llm,
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
+            retries=3,  # Increase retries to handle output validation issues
         )
     except Exception as e:
         raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e
