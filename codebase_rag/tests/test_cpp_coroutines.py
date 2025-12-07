@@ -888,8 +888,6 @@ void demonstrateCustomCoroutines() {
 
     run_updater(cpp_coroutines_project, mock_ingestor)
 
-    # Verify comprehensive coroutine coverage
-
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 

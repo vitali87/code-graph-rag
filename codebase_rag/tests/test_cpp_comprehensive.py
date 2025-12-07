@@ -888,8 +888,6 @@ int main() {
 
     run_updater(cpp_comprehensive_project, mock_ingestor)
 
-    # Verify real-world scenario parsing
-
     imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 

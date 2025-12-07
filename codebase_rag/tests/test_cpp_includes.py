@@ -836,8 +836,6 @@ void demonstrateAllIncludes() {
 
     run_updater(cpp_includes_project, mock_ingestor)
 
-    # Verify all relationship types exist
-
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")

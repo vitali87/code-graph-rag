@@ -787,8 +787,6 @@ const url = API_URL;
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    # Verify all relationship types exist
-
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 

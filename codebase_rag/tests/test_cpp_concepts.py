@@ -126,8 +126,6 @@ void demonstrateBasicConcepts() {
 
     run_updater(cpp_concepts_project, mock_ingestor)
 
-    # Verify concept definitions are detected
-
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     # Look for concept-related definitions
@@ -271,8 +269,6 @@ void demonstrateAdvancedConcepts() {
     )
 
     run_updater(cpp_concepts_project, mock_ingestor)
-
-    # Verify advanced concept usage
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 

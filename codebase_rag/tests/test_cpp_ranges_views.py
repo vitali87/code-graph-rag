@@ -988,8 +988,6 @@ void demonstrateRangeGraphProcessing() {
 
     run_updater(cpp_ranges_project, mock_ingestor)
 
-    # Verify comprehensive ranges coverage
-
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 

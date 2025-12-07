@@ -798,8 +798,6 @@ void showcaseModuleFeatures() {
 
     run_updater(cpp_modules_project, mock_ingestor)
 
-    # Verify comprehensive module usage coverage
-
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
