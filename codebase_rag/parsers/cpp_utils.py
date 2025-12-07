@@ -1,5 +1,7 @@
 from tree_sitter import Node
 
+from .utils import safe_decode_text, safe_decode_with_fallback
+
 CPP_OPERATOR_SYMBOL_MAP = {
     "+": "operator_plus",
     "-": "operator_minus",
@@ -74,14 +76,14 @@ def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
                 namespace_name = None
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.text:
-                    namespace_name = name_node.text.decode("utf8")
+                    namespace_name = safe_decode_text(name_node)
                 else:
                     for child in current.children:
                         if (
                             child.type in ["namespace_identifier", "identifier"]
                             and child.text
                         ):
-                            namespace_name = child.text.decode("utf8")
+                            namespace_name = safe_decode_text(child)
                             break
                 if namespace_name:
                     path_parts.append(namespace_name)
@@ -107,7 +109,7 @@ def is_cpp_exported(node: Node) -> bool:
                 if child == current:
                     break  # We've reached our node
                 if child.text:
-                    child_text = child.text.decode("utf-8")
+                    child_text = safe_decode_text(child)
                     if child_text == "export" and child.type in [
                         "export",  # Direct export node type
                         "export_keyword",  # Export keyword node type
@@ -136,7 +138,7 @@ def extract_cpp_exported_class_name(class_node: Node) -> str | None:
     """Extract class name from misclassified exported class nodes (function_definition nodes that are actually classes)."""
     for child in class_node.children:
         if child.type == "identifier" and child.text:
-            decoded_text: str = child.text.decode("utf-8")
+            decoded_text = safe_decode_text(child)
             return decoded_text
     return None
 
@@ -146,7 +148,7 @@ def extract_operator_name(operator_node: Node) -> str:
     if not operator_node.text:
         return "operator_unknown"
 
-    operator_text = operator_node.text.decode("utf8").strip()
+    operator_text = safe_decode_with_fallback(operator_node).strip()
 
     if operator_text.startswith("operator"):
         symbol = operator_text[8:].strip()  # Remove "operator" prefix
@@ -159,7 +161,7 @@ def extract_destructor_name(destructor_node: Node) -> str:
     """Extract destructor name from destructor_name node."""
     for child in destructor_node.children:
         if child.type == "identifier" and child.text:
-            class_name = child.text.decode("utf8")
+            class_name = safe_decode_text(child)
             return f"~{class_name}"
     return "~destructor"
 
@@ -206,11 +208,11 @@ def _extract_name_from_field_declaration(func_node: Node) -> str | None:
         if child.type == "function_declarator":
             declarator = child.child_by_field_name("declarator")
             if declarator and declarator.type == "field_identifier" and declarator.text:
-                return declarator.text.decode("utf8") if declarator.text else None
+                return safe_decode_text(declarator) if declarator.text else None
 
             for grandchild in child.children:
                 if grandchild.type == "field_identifier" and grandchild.text:
-                    return grandchild.text.decode("utf8") if grandchild.text else None
+                    return safe_decode_text(grandchild) if grandchild.text else None
     return None
 
 
@@ -218,7 +220,7 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
     """Extract function name from function_declarator nodes."""
     for child in func_node.children:
         if child.type in ["identifier", "field_identifier"] and child.text:
-            return child.text.decode("utf8") if child.text else None
+            return safe_decode_text(child) if child.text else None
         elif child.type == "qualified_identifier":
             # (H) Handle out-of-class method definitions like Calculator::add
             # (H) or deeply nested like Outer::Inner::MyClass::method
@@ -226,7 +228,7 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
                 last_name = None
                 for qchild in node.children:
                     if qchild.type in ["identifier", "field_identifier"]:
-                        last_name = qchild.text.decode("utf8") if qchild.text else None
+                        last_name = safe_decode_text(qchild) if qchild.text else None
                     elif qchild.type == "operator_name":
                         last_name = extract_operator_name(qchild)
                     elif qchild.type == "destructor_name":

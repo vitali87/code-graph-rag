@@ -11,6 +11,7 @@ from .js_utils import (
     find_js_method_in_ast,
     find_js_return_statements,
 )
+from .utils import safe_decode_text
 
 if TYPE_CHECKING:
     pass
@@ -52,23 +53,24 @@ class JsTypeInferenceEngine:
                 if name_node and value_node:
                     var_name_text = name_node.text
                     if var_name_text:
-                        var_name = var_name_text.decode("utf8")
-                        logger.debug(
-                            f"Found variable declarator: {var_name} in {module_qn}"
-                        )
+                        var_name = safe_decode_text(name_node)
+                        if var_name is not None:
+                            logger.debug(
+                                f"Found variable declarator: {var_name} in {module_qn}"
+                            )
 
-                        var_type = self._infer_js_variable_type_from_value(
-                            value_node, module_qn
-                        )
-                        if var_type:
-                            local_var_types[var_name] = var_type
-                            logger.debug(
-                                f"Inferred JS variable: {var_name} -> {var_type}"
+                            var_type = self._infer_js_variable_type_from_value(
+                                value_node, module_qn
                             )
-                        else:
-                            logger.debug(
-                                f"Could not infer type for variable: {var_name}"
-                            )
+                            if var_type:
+                                local_var_types[var_name] = var_type
+                                logger.debug(
+                                    f"Inferred JS variable: {var_name} -> {var_type}"
+                                )
+                            else:
+                                logger.debug(
+                                    f"Could not infer type for variable: {var_name}"
+                                )
 
             stack.extend(reversed(current.children))
 
@@ -116,7 +118,7 @@ class JsTypeInferenceEngine:
             elif func_node and func_node.type == "identifier":
                 func_name = func_node.text
                 if func_name:
-                    return str(func_name.decode("utf8"))
+                    return str(safe_decode_text(func_node))
 
         logger.debug(
             f"No type inference pattern matched for value node type: {value_node.type}"

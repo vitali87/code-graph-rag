@@ -4,6 +4,7 @@ from loguru import logger
 from tree_sitter import Node
 
 from .import_processor import ImportProcessor
+from .utils import safe_decode_text
 
 if TYPE_CHECKING:
     pass
@@ -48,7 +49,7 @@ class LuaTypeInferenceEngine:
                         if child.type == "variable_list":
                             for var_node in child.children:
                                 if var_node.type == "identifier" and var_node.text:
-                                    var_names.append(var_node.text.decode("utf8"))
+                                    var_names.append(safe_decode_text(var_node))
                         elif child.type == "expression_list":
                             for expr_node in child.children:
                                 if expr_node.type == "function_call":
@@ -87,13 +88,13 @@ class LuaTypeInferenceEngine:
                         if grandchild.type == "identifier":
                             if class_name is None:
                                 class_name = (
-                                    grandchild.text.decode("utf8")
+                                    safe_decode_text(grandchild)
                                     if grandchild.text
                                     else None
                                 )
                             else:
                                 method_name = (
-                                    grandchild.text.decode("utf8")
+                                    safe_decode_text(grandchild)
                                     if grandchild.text
                                     else None
                                 )

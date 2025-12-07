@@ -10,6 +10,7 @@ from .java_type_inference import JavaTypeInferenceEngine
 from .js_type_inference import JsTypeInferenceEngine
 from .lua_type_inference import LuaTypeInferenceEngine
 from .python_utils import resolve_class_name
+from .utils import safe_decode_text
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -141,16 +142,17 @@ class TypeInferenceEngine:
             if param.type == "identifier":
                 param_text = param.text
                 if param_text is not None:
-                    param_name = param_text.decode("utf8")
+                    param_name = safe_decode_text(param)
 
-                    inferred_type = self._infer_type_from_parameter_name(
-                        param_name, module_qn
-                    )
-                    if inferred_type:
-                        local_var_types[param_name] = inferred_type
-                        logger.debug(
-                            f"Inferred parameter type: {param_name} -> {inferred_type}"
+                    if param_name is not None:
+                        inferred_type = self._infer_type_from_parameter_name(
+                            param_name, module_qn
                         )
+                        if inferred_type:
+                            local_var_types[param_name] = inferred_type
+                            logger.debug(
+                                f"Inferred parameter type: {param_name} -> {inferred_type}"
+                            )
 
             elif param.type == "typed_parameter":
                 param_name_node = param.child_by_field_name("name")
@@ -161,9 +163,10 @@ class TypeInferenceEngine:
                     and param_name_node.text
                     and param_type_node.text
                 ):
-                    param_name = param_name_node.text.decode("utf8")
-                    param_type = param_type_node.text.decode("utf8")
-                    local_var_types[param_name] = param_type
+                    param_name = safe_decode_text(param_name_node)
+                    param_type = safe_decode_text(param_type_node)
+                    if param_name is not None and param_type is not None:
+                        local_var_types[param_name] = param_type
 
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
@@ -311,10 +314,11 @@ class TypeInferenceEngine:
         elif iterable_node.type == "identifier":
             var_text = iterable_node.text
             if var_text is not None:
-                var_name = var_text.decode("utf8")
-                return self._infer_variable_element_type(
-                    var_name, local_var_types, module_qn
-                )
+                var_name = safe_decode_text(iterable_node)
+                if var_name is not None:
+                    return self._infer_variable_element_type(
+                        var_name, local_var_types, module_qn
+                    )
 
         return None
 
@@ -328,8 +332,12 @@ class TypeInferenceEngine:
                 if func_node and func_node.type == "identifier":
                     func_text = func_node.text
                     if func_text is not None:
-                        class_name = func_text.decode("utf8")
-                        if class_name[0].isupper():
+                        class_name = safe_decode_text(func_node)
+                        if (
+                            class_name
+                            and len(class_name) > 0
+                            and class_name[0].isupper()
+                        ):
                             return str(class_name)
         return None
 
@@ -400,7 +408,7 @@ class TypeInferenceEngine:
             if child.type == "function_definition":
                 name_node = child.child_by_field_name("name")
                 if name_node and name_node.text:
-                    method_name = name_node.text.decode("utf8")
+                    method_name = safe_decode_text(name_node)
                     logger.debug(f"      Found method: {method_name}")
                     if method_name == "__init__":
                         logger.debug("      Found __init__ method!")
@@ -423,8 +431,9 @@ class TypeInferenceEngine:
 
                 if left_node and right_node and left_node.type == "attribute":
                     left_text = left_node.text
-                    if left_text and left_text.decode("utf8").startswith("self."):
-                        attr_name = left_text.decode("utf8")
+                    left_decoded = safe_decode_text(left_node)
+                    if left_text and left_decoded and left_decoded.startswith("self."):
+                        attr_name = left_decoded
                         assigned_type = self._infer_type_from_expression(
                             right_node, module_qn
                         )
@@ -566,8 +575,10 @@ class TypeInferenceEngine:
         if node.type == "identifier":
             text = node.text
             if text is not None:
-                result: str = text.decode("utf8")
-                return result
+                decoded = safe_decode_text(node)
+                if decoded:
+                    result: str = str(decoded)
+                    return result
         return None
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
@@ -577,7 +588,7 @@ class TypeInferenceEngine:
             if func_node and func_node.type == "identifier":
                 func_text = func_node.text
                 if func_text is not None:
-                    class_name = func_text.decode("utf8")
+                    class_name = safe_decode_text(func_node)
                     if class_name and class_name[0].isupper():  # Simple heuristic
                         return str(class_name)
 
@@ -604,7 +615,7 @@ class TypeInferenceEngine:
             if func_node and func_node.type == "identifier":
                 func_text = func_node.text
                 if func_text is not None:
-                    class_name = func_text.decode("utf8")
+                    class_name = safe_decode_text(func_node)
                     if class_name and class_name[0].isupper():  # Simple heuristic
                         return str(class_name)
 
@@ -633,8 +644,10 @@ class TypeInferenceEngine:
     def _extract_full_method_call(self, attr_node: Node) -> str | None:
         """Extract the full method call text from an attribute node."""
         if attr_node.text:
-            result: str = attr_node.text.decode("utf8")
-            return result
+            decoded = safe_decode_text(attr_node)
+            if decoded:
+                result: str = str(decoded)
+                return result
         return None
 
     def _infer_method_call_return_type(
@@ -1003,7 +1016,7 @@ class TypeInferenceEngine:
             if text is None:
                 continue
 
-            found_class_name = text.decode("utf8")
+            found_class_name = safe_decode_text(name_node)
             if found_class_name != class_name:
                 continue
 
@@ -1027,7 +1040,7 @@ class TypeInferenceEngine:
                 if method_text is None:
                     continue
 
-                found_method_name = method_text.decode("utf8")
+                found_method_name = safe_decode_text(method_name_node)
                 if found_method_name == method_name:
                     return method_node
 
@@ -1072,19 +1085,24 @@ class TypeInferenceEngine:
             if func_node and func_node.type == "identifier":
                 func_text = func_node.text
                 if func_text is not None:
-                    class_name = func_text.decode("utf8")
-                    if class_name == "cls":
-                        qn_parts = method_qn.split(".")
-                        if len(qn_parts) >= 2:
-                            return qn_parts[-2]  # Class name is second to last
-                    elif class_name[0].isupper():  # Class names start with uppercase
-                        module_qn = ".".join(
-                            method_qn.split(".")[:-2]
-                        )  # Remove class.method to get module
-                        resolved_class = self._find_class_in_scope(
-                            class_name, module_qn
-                        )
-                        return resolved_class or class_name
+                    class_name = safe_decode_text(func_node)
+                    if class_name:
+                        if class_name == "cls":
+                            qn_parts = method_qn.split(".")
+                            if len(qn_parts) >= 2:
+                                return qn_parts[-2]  # Class name is second to last
+                        elif (
+                            class_name
+                            and len(class_name) > 0
+                            and class_name[0].isupper()
+                        ):  # Class names start with uppercase
+                            module_qn = ".".join(
+                                method_qn.split(".")[:-2]
+                            )  # Remove class.method to get module
+                            resolved_class = self._find_class_in_scope(
+                                class_name, module_qn
+                            )
+                            return resolved_class or class_name
 
             elif func_node and func_node.type == "attribute":
                 method_call_text = self._extract_full_method_call(func_node)
@@ -1099,7 +1117,7 @@ class TypeInferenceEngine:
         elif expr_node.type == "identifier":
             text = expr_node.text
             if text is not None:
-                identifier = text.decode("utf8")
+                identifier = safe_decode_text(expr_node)
                 if identifier == "self" or identifier == "cls":
                     qn_parts = method_qn.split(".")
                     if len(qn_parts) >= 2:
@@ -1130,7 +1148,7 @@ class TypeInferenceEngine:
             if object_node and object_node.type == "identifier":
                 object_text = object_node.text
                 if object_text is not None:
-                    object_name = object_text.decode("utf8")
+                    object_name = safe_decode_text(object_node)
                     if object_name == "cls" or object_name == "self":
                         qn_parts = method_qn.split(".")
                         if len(qn_parts) >= 2:

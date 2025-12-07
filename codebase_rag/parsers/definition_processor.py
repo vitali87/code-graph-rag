@@ -1,29 +1,32 @@
-import json
-import re
 import textwrap
-import xml.etree.ElementTree as ET
 from collections import deque
 from pathlib import Path
 from typing import Any
 
-import toml
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
-from ..language_config import LanguageConfig
+from ..language_config import LANGUAGE_FQN_CONFIGS, LanguageConfig
 from ..services import IngestorProtocol
+from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp_utils import (
     build_cpp_qualified_name,
     extract_cpp_exported_class_name,
     extract_cpp_function_name,
     is_cpp_exported,
 )
+from .dependency_parser import parse_dependencies
 from .import_processor import ImportProcessor
 from .java_utils import extract_java_method_info
 from .lua_utils import extract_lua_assigned_name
 from .python_utils import resolve_class_name
 from .rust_utils import build_rust_module_path, extract_rust_impl_target
-from .utils import ingest_exported_function, ingest_method
+from .utils import (
+    ingest_exported_function,
+    ingest_method,
+    safe_decode_text,
+    safe_decode_with_fallback,
+)
 
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
 
@@ -170,192 +173,11 @@ class DefinitionProcessor:
 
     def process_dependencies(self, filepath: Path) -> None:
         """Parse various dependency files for external package dependencies."""
-        file_name = filepath.name.lower()
         logger.info(f"  Parsing dependency file: {filepath}")
 
-        try:
-            if file_name == "pyproject.toml":
-                self._parse_pyproject_toml(filepath)
-            elif file_name == "requirements.txt":
-                self._parse_requirements_txt(filepath)
-            elif file_name == "package.json":
-                self._parse_package_json(filepath)
-            elif file_name == "cargo.toml":
-                self._parse_cargo_toml(filepath)
-            elif file_name == "go.mod":
-                self._parse_go_mod(filepath)
-            elif file_name == "gemfile":
-                self._parse_gemfile(filepath)
-            elif file_name == "composer.json":
-                self._parse_composer_json(filepath)
-            elif filepath.suffix.lower() == ".csproj":
-                self._parse_csproj(filepath)
-            else:
-                logger.debug(f"    Unknown dependency file format: {filepath}")
-        except Exception as e:
-            logger.error(f"    Error parsing {filepath}: {e}")
-
-    def _extract_pep508_package_name(self, dep_string: str) -> tuple[str, str]:
-        """Extracts the package name and the rest of the spec from a PEP 508 string."""
-        match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", dep_string.strip())
-        if not match:
-            return "", ""
-        name_with_extras = match.group(1)
-        name_match = re.match(r"^([a-zA-Z0-9_.-]+)", name_with_extras)
-        if not name_match:
-            return "", ""
-        name = name_match.group(1)
-        spec = dep_string[len(name_with_extras) :].strip()
-        return name, spec
-
-    def _parse_pyproject_toml(self, filepath: Path) -> None:
-        """Parse pyproject.toml for Python dependencies."""
-        data = toml.load(filepath)
-
-        poetry_deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
-        if poetry_deps:
-            for dep_name, dep_spec in poetry_deps.items():
-                if dep_name.lower() == "python":
-                    continue
-                self._add_dependency(dep_name, str(dep_spec))
-
-        project_deps = data.get("project", {}).get("dependencies", [])
-        if project_deps:
-            for dep_line in project_deps:
-                dep_name, _ = self._extract_pep508_package_name(dep_line)
-                if dep_name:
-                    self._add_dependency(dep_name, dep_line)
-
-        optional_deps = data.get("project", {}).get("optional-dependencies", {})
-        for group_name, deps in optional_deps.items():
-            for dep_line in deps:
-                dep_name, _ = self._extract_pep508_package_name(dep_line)
-                if dep_name:
-                    self._add_dependency(
-                        dep_name, dep_line, properties={"group": group_name}
-                    )
-
-    def _parse_requirements_txt(self, filepath: Path) -> None:
-        """Parse requirements.txt for Python dependencies."""
-        with open(filepath, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or line.startswith("-"):
-                    continue
-
-                dep_name, version_spec = self._extract_pep508_package_name(line)
-                if dep_name:
-                    self._add_dependency(dep_name, version_spec)
-
-    def _parse_package_json(self, filepath: Path) -> None:
-        """Parse package.json for Node.js dependencies."""
-
-        with open(filepath, encoding="utf-8") as f:
-            data = json.load(f)
-
-        deps = data.get("dependencies", {})
-        for dep_name, dep_spec in deps.items():
-            self._add_dependency(dep_name, dep_spec)
-
-        dev_deps = data.get("devDependencies", {})
-        for dep_name, dep_spec in dev_deps.items():
-            self._add_dependency(dep_name, dep_spec)
-
-        peer_deps = data.get("peerDependencies", {})
-        for dep_name, dep_spec in peer_deps.items():
-            self._add_dependency(dep_name, dep_spec)
-
-    def _parse_cargo_toml(self, filepath: Path) -> None:
-        """Parse Cargo.toml for Rust dependencies."""
-        data = toml.load(filepath)
-
-        deps = data.get("dependencies", {})
-        for dep_name, dep_spec in deps.items():
-            version = (
-                dep_spec if isinstance(dep_spec, str) else dep_spec.get("version", "")
-            )
-            self._add_dependency(dep_name, version)
-
-        dev_deps = data.get("dev-dependencies", {})
-        for dep_name, dep_spec in dev_deps.items():
-            version = (
-                dep_spec if isinstance(dep_spec, str) else dep_spec.get("version", "")
-            )
-            self._add_dependency(dep_name, version)
-
-    def _parse_go_mod(self, filepath: Path) -> None:
-        """Parse go.mod for Go dependencies."""
-        with open(filepath, encoding="utf-8") as f:
-            in_require_block = False
-            for line in f:
-                line = line.strip()
-
-                if line.startswith("require ("):
-                    in_require_block = True
-                    continue
-                elif line == ")" and in_require_block:
-                    in_require_block = False
-                    continue
-                elif line.startswith("require ") and not in_require_block:
-                    parts = line.split()[1:]
-                    if len(parts) >= 2:
-                        dep_name = parts[0]
-                        version = parts[1]
-                        self._add_dependency(dep_name, version)
-                elif in_require_block and line and not line.startswith("//"):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        dep_name = parts[0]
-                        version = parts[1]
-                        if not version.startswith("//"):  # Skip comments
-                            self._add_dependency(dep_name, version)
-
-    def _parse_gemfile(self, filepath: Path) -> None:
-        """Parse Gemfile for Ruby dependencies."""
-        with open(filepath, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("gem "):
-                    match = re.match(
-                        r'gem\s+["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])?',
-                        line,
-                    )
-                    if match:
-                        dep_name = match.group(1)
-                        version = match.group(2) if match.group(2) else ""
-                        self._add_dependency(dep_name, version)
-
-    def _parse_composer_json(self, filepath: Path) -> None:
-        """Parse composer.json for PHP dependencies."""
-
-        with open(filepath, encoding="utf-8") as f:
-            data = json.load(f)
-
-        deps = data.get("require", {})
-        for dep_name, dep_spec in deps.items():
-            if dep_name != "php":  # Skip PHP version requirement
-                self._add_dependency(dep_name, dep_spec)
-
-        dev_deps = data.get("require-dev", {})
-        for dep_name, dep_spec in dev_deps.items():
-            self._add_dependency(dep_name, dep_spec)
-
-    def _parse_csproj(self, filepath: Path) -> None:
-        """Parse .csproj files for .NET dependencies."""
-
-        try:
-            tree = ET.parse(filepath)
-            root = tree.getroot()
-
-            for pkg_ref in root.iter("PackageReference"):
-                include = pkg_ref.get("Include")
-                version = pkg_ref.get("Version")
-
-                if include:
-                    self._add_dependency(include, version or "")
-
-        except ET.ParseError as e:
-            logger.error(f"    Error parsing XML in {filepath}: {e}")
+        dependencies = parse_dependencies(filepath)
+        for dep in dependencies:
+            self._add_dependency(dep.name, dep.spec, dep.properties)
 
     def _add_dependency(
         self, dep_name: str, dep_spec: str, properties: dict[str, str] | None = None
@@ -390,7 +212,9 @@ class DefinitionProcessor:
         ):
             text = first_statement.children[0].text
             if text is not None:
-                result: str = text.decode("utf-8").strip("'\" \n")
+                result: str = safe_decode_with_fallback(
+                    first_statement.children[0]
+                ).strip("'\" \n")
                 return result
         return None
 
@@ -417,26 +241,22 @@ class DefinitionProcessor:
             if child.type == "identifier":
                 text = child.text
                 if text is not None:
-                    decorator_name: str = text.decode("utf8")
-                    return decorator_name
+                    return safe_decode_text(child)
             elif child.type == "attribute":
                 text = child.text
                 if text is not None:
-                    attr_name: str = text.decode("utf8")
-                    return attr_name
+                    return safe_decode_text(child)
             elif child.type == "call":
                 func_node = child.child_by_field_name("function")
                 if func_node:
                     if func_node.type == "identifier":
                         text = func_node.text
                         if text is not None:
-                            func_name: str = text.decode("utf8")
-                            return func_name
+                            return safe_decode_text(func_node)
                     elif func_node.type == "attribute":
                         text = func_node.text
                         if text is not None:
-                            func_attr_name: str = text.decode("utf8")
-                            return func_attr_name
+                            return safe_decode_text(func_node)
         return None
 
     def _extract_template_class_type(self, template_node: Node) -> str | None:
@@ -466,11 +286,11 @@ class DefinitionProcessor:
 
         for child in class_node.children:
             if child.type == "type_identifier" and child.text:
-                return str(child.text.decode("utf8"))
+                return str(safe_decode_text(child))
 
         name_node = class_node.child_by_field_name("name")
         if name_node and name_node.text:
-            return str(name_node.text.decode("utf8"))
+            return str(safe_decode_text(name_node))
 
         return None
 
@@ -478,14 +298,14 @@ class DefinitionProcessor:
         """Extract class name, handling both class declarations and class expressions."""
         name_node = class_node.child_by_field_name("name")
         if name_node and name_node.text:
-            return str(name_node.text.decode("utf8"))
+            return str(safe_decode_text(name_node))
 
         current = class_node.parent
         while current:
             if current.type == "variable_declarator":
                 for child in current.children:
                     if child.type == "identifier" and child.text:
-                        return str(child.text.decode("utf8"))
+                        return str(safe_decode_text(child))
             current = current.parent
 
         return None
@@ -494,7 +314,7 @@ class DefinitionProcessor:
         """Extract function name, handling both regular functions and arrow functions."""
         name_node = func_node.child_by_field_name("name")
         if name_node and name_node.text:
-            return str(name_node.text.decode("utf8"))
+            return str(safe_decode_text(name_node))
 
         if func_node.type == "arrow_function":
             current = func_node.parent
@@ -502,7 +322,7 @@ class DefinitionProcessor:
                 if current.type == "variable_declarator":
                     for child in current.children:
                         if child.type == "identifier" and child.text:
-                            return str(child.text.decode("utf8"))
+                            return str(safe_decode_text(child))
                 current = current.parent
 
         return None
@@ -545,6 +365,7 @@ class DefinitionProcessor:
         captures = cursor.captures(root_node)
 
         func_nodes = captures.get("function", [])
+        file_path = self.module_qn_to_file_path.get(module_qn)
 
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
@@ -555,42 +376,61 @@ class DefinitionProcessor:
             if self._is_method(func_node, lang_config):
                 continue
 
-            if language == "cpp":
-                func_name = extract_cpp_function_name(func_node)
-                if not func_name:
-                    if func_node.type == "lambda_expression":
-                        func_name = f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
-                    else:
-                        continue  # Skip other unnamed C++ function-like nodes
-                func_qn = build_cpp_qualified_name(func_node, module_qn, func_name)
-                is_exported = is_cpp_exported(func_node)
-            else:
-                is_exported = False  # Default for non-C++ languages
-                func_name = self._extract_function_name(func_node)
+            func_qn = None
+            func_name = None
+            is_exported = False
 
-                if (
-                    not func_name
-                    and language == "lua"
-                    and func_node.type == "function_definition"
-                ):
-                    func_name = self._extract_lua_assignment_function_name(func_node)
+            # (H) Try unified FQN resolution first
+            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
+            if fqn_config and file_path:
+                func_qn = resolve_fqn_from_ast(
+                    func_node, file_path, self.repo_path, self.project_name, fqn_config
+                )
+                if func_qn:
+                    func_name = func_qn.split(".")[-1]
+                    if language == "cpp":
+                        is_exported = is_cpp_exported(func_node)
 
-                if not func_name:
-                    func_name = self._generate_anonymous_function_name(
-                        func_node, module_qn
-                    )
-
-                if language == "rust":
-                    func_qn = self._build_rust_function_qualified_name(
-                        func_node, module_qn, func_name
-                    )
+            # (H) Fallback to legacy logic if resolution failed (e.g. anonymous functions, specific language patterns)
+            if not func_qn:
+                if language == "cpp":
+                    func_name = extract_cpp_function_name(func_node)
+                    if not func_name:
+                        if func_node.type == "lambda_expression":
+                            func_name = f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
+                        else:
+                            continue  # Skip other unnamed C++ function-like nodes
+                    func_qn = build_cpp_qualified_name(func_node, module_qn, func_name)
+                    is_exported = is_cpp_exported(func_node)
                 else:
-                    func_qn = (
-                        self._build_nested_qualified_name(
-                            func_node, module_qn, func_name, lang_config
+                    is_exported = False  # Default for non-C++ languages
+                    func_name = self._extract_function_name(func_node)
+
+                    if (
+                        not func_name
+                        and language == "lua"
+                        and func_node.type == "function_definition"
+                    ):
+                        func_name = self._extract_lua_assignment_function_name(
+                            func_node
                         )
-                        or f"{module_qn}.{func_name}"
-                    )  # Fallback to simple name
+
+                    if not func_name:
+                        func_name = self._generate_anonymous_function_name(
+                            func_node, module_qn
+                        )
+
+                    if language == "rust":
+                        func_qn = self._build_rust_function_qualified_name(
+                            func_node, module_qn, func_name
+                        )
+                    else:
+                        func_qn = (
+                            self._build_nested_qualified_name(
+                                func_node, module_qn, func_name, lang_config
+                            )
+                            or f"{module_qn}.{func_name}"
+                        )  # Fallback to simple name
 
             decorators = self._extract_decorators(func_node)
             func_props: dict[str, Any] = {
@@ -606,7 +446,8 @@ class DefinitionProcessor:
             self.ingestor.ensure_node_batch("Function", func_props)
 
             self.function_registry[func_qn] = "Function"
-            self.simple_name_lookup[func_name].add(func_qn)
+            if func_name:
+                self.simple_name_lookup[func_name].add(func_qn)
 
             parent_type, parent_qn = self._determine_function_parent(
                 func_node, module_qn, lang_config
@@ -658,7 +499,7 @@ class DefinitionProcessor:
                 if name_node := current.child_by_field_name("name"):
                     text = name_node.text
                     if text is not None:
-                        path_parts.append(text.decode("utf8"))
+                        path_parts.append(safe_decode_text(name_node))
                 else:
                     func_name_from_assignment = self._extract_function_name(current)
                     if func_name_from_assignment:
@@ -671,14 +512,14 @@ class DefinitionProcessor:
                         if name_node := current.child_by_field_name("name"):
                             text = name_node.text
                             if text is not None:
-                                path_parts.append(text.decode("utf8"))
+                                path_parts.append(safe_decode_text(name_node))
                     else:
                         return None
             elif current.type == "method_definition":
                 if name_node := current.child_by_field_name("name"):
                     text = name_node.text
                     if text is not None:
-                        path_parts.append(text.decode("utf8"))
+                        path_parts.append(safe_decode_text(name_node))
 
             current = current.parent
 
@@ -753,11 +594,12 @@ class DefinitionProcessor:
                     parent_text = name_node.text
                     if parent_text is None:
                         continue
-                    parent_func_name = parent_text.decode("utf8")
-                    if parent_func_qn := self._build_nested_qualified_name(
-                        current, module_qn, parent_func_name, lang_config
-                    ):
-                        return "Function", parent_func_qn
+                    parent_func_name = safe_decode_text(name_node)
+                    if parent_func_name:
+                        if parent_func_qn := self._build_nested_qualified_name(
+                            current, module_qn, parent_func_name, lang_config
+                        ):
+                            return "Function", parent_func_qn
                 break
 
             current = current.parent
@@ -773,7 +615,7 @@ class DefinitionProcessor:
         def find_module_declarations(node: Node) -> None:
             """Recursively find module-related declarations."""
             if node.type == "module_declaration":
-                text = node.text.decode("utf-8").strip() if node.text else ""
+                text = safe_decode_with_fallback(node).strip() if node.text else ""
                 module_declarations.append((node, text))
 
             elif node.type == "declaration":
@@ -781,12 +623,13 @@ class DefinitionProcessor:
 
                 for child in node.children:
                     if child.type == "module" or (
-                        child.text and child.text.decode("utf-8").strip() == "module"
+                        child.text
+                        and safe_decode_with_fallback(child).strip() == "module"
                     ):
                         has_module = True
 
                 if has_module:
-                    text = node.text.decode("utf-8").strip() if node.text else ""
+                    text = safe_decode_with_fallback(node).strip() if node.text else ""
                     module_declarations.append((node, text))
 
             for child in node.children:
@@ -859,7 +702,7 @@ class DefinitionProcessor:
 
         def traverse_for_exported_classes(node: Node) -> None:
             if node.type == "function_definition":
-                node_text = node.text.decode("utf-8").strip() if node.text else ""
+                node_text = safe_decode_with_fallback(node).strip() if node.text else ""
 
                 if (
                     node_text.startswith("export class ")
@@ -868,7 +711,7 @@ class DefinitionProcessor:
                 ):
                     for child in node.children:
                         if child.type == "ERROR" and child.text:
-                            error_text = child.text.decode("utf-8")
+                            error_text = safe_decode_text(child)
                             if error_text in ["class", "struct"]:
                                 exported_class_nodes.append(node)
                                 break
@@ -905,21 +748,17 @@ class DefinitionProcessor:
             additional_class_nodes = self._find_cpp_exported_classes(root_node)
             class_nodes.extend(additional_class_nodes)
 
+        file_path = self.module_qn_to_file_path.get(module_qn)
+
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
-            if language == "cpp":
-                if class_node.type == "function_definition":
-                    class_name = extract_cpp_exported_class_name(class_node)
-                    is_exported = True  # We know it's exported because we found it in the exported classes search
-                else:
-                    class_name = self._extract_cpp_class_name(class_node)
-                    is_exported = is_cpp_exported(class_node)
 
-                if not class_name:
-                    continue
-                class_qn = build_cpp_qualified_name(class_node, module_qn, class_name)
-            elif language == "rust" and class_node.type == "impl_item":
+            class_qn = None
+            class_name = None
+            is_exported = False
+
+            if language == "rust" and class_node.type == "impl_item":
                 impl_target = extract_rust_impl_target(class_node)
                 if not impl_target:
                     continue
@@ -948,15 +787,45 @@ class DefinitionProcessor:
                         )
 
                 continue
-            else:
-                is_exported = False  # Default for non-C++ languages
-                class_name = self._extract_class_name(class_node)
-                if not class_name:
-                    continue
-                nested_qn = self._build_nested_qualified_name_for_class(
-                    class_node, module_qn, class_name, lang_config
+
+            # (H) Try unified FQN resolution
+            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
+            if fqn_config and file_path:
+                class_qn = resolve_fqn_from_ast(
+                    class_node, file_path, self.repo_path, self.project_name, fqn_config
                 )
-                class_qn = nested_qn if nested_qn else f"{module_qn}.{class_name}"
+                if class_qn:
+                    class_name = class_qn.split(".")[-1]
+                    if language == "cpp":
+                        if class_node.type == "function_definition":
+                            is_exported = True
+                        else:
+                            is_exported = is_cpp_exported(class_node)
+
+            if not class_qn:
+                if language == "cpp":
+                    if class_node.type == "function_definition":
+                        class_name = extract_cpp_exported_class_name(class_node)
+                        is_exported = True  # We know it's exported because we found it in the exported classes search
+                    else:
+                        class_name = self._extract_cpp_class_name(class_node)
+                        is_exported = is_cpp_exported(class_node)
+
+                    if not class_name:
+                        continue
+                    class_qn = build_cpp_qualified_name(
+                        class_node, module_qn, class_name
+                    )
+                else:
+                    is_exported = False  # Default for non-C++ languages
+                    class_name = self._extract_class_name(class_node)
+                    if not class_name:
+                        continue
+                    nested_qn = self._build_nested_qualified_name_for_class(
+                        class_node, module_qn, class_name, lang_config
+                    )
+                    class_qn = nested_qn if nested_qn else f"{module_qn}.{class_name}"
+
             decorators = self._extract_decorators(class_node)
             class_props: dict[str, Any] = {
                 "qualified_name": class_qn,
@@ -993,7 +862,9 @@ class DefinitionProcessor:
                     f"  Found Template {node_type}: {class_name} (qn: {class_qn})"
                 )
             elif class_node.type == "function_definition" and language == "cpp":
-                node_text = class_node.text.decode("utf-8") if class_node.text else ""
+                node_text = (
+                    safe_decode_with_fallback(class_node) if class_node.text else ""
+                )
                 if "export struct " in node_text:
                     node_type = "Class"  # In C++, structs are essentially classes
                     logger.info(
@@ -1021,7 +892,8 @@ class DefinitionProcessor:
             self.ingestor.ensure_node_batch(node_type, class_props)
 
             self.function_registry[class_qn] = node_type
-            self.simple_name_lookup[class_name].add(class_qn)
+            if class_name:
+                self.simple_name_lookup[class_name].add(class_qn)
 
             parent_classes = self._extract_parent_classes(class_node, module_qn)
             self.class_inheritance[class_qn] = parent_classes
@@ -1102,10 +974,10 @@ class DefinitionProcessor:
             text = module_name_node.text
             if text is None:
                 continue
-            module_name = text.decode("utf8")
+            module_name = safe_decode_text(module_name_node)
 
             nested_qn = self._build_nested_qualified_name_for_class(
-                module_node, module_qn, module_name, lang_config
+                module_node, module_qn, module_name or "", lang_config
             )
             inline_module_qn = nested_qn if nested_qn else f"{module_qn}.{module_name}"
 
@@ -1175,15 +1047,15 @@ class DefinitionProcessor:
 
             if base_child.type == "type_identifier":
                 if base_child.text:
-                    parent_name = base_child.text.decode("utf8")
+                    parent_name = safe_decode_text(base_child)
 
             elif base_child.type == "qualified_identifier":
                 if base_child.text:
-                    parent_name = base_child.text.decode("utf8")
+                    parent_name = safe_decode_text(base_child)
 
             elif base_child.type == "template_type":
                 if base_child.text:
-                    parent_name = base_child.text.decode("utf8")
+                    parent_name = safe_decode_text(base_child)
 
             elif base_child.type in ["access_specifier", "virtual", ",", ":"]:
                 continue
@@ -1213,12 +1085,13 @@ class DefinitionProcessor:
         """Resolve a superclass name from a type_identifier node."""
         parent_text = type_identifier_node.text
         if parent_text:
-            parent_name = parent_text.decode("utf8")
-            return (
-                self._resolve_class_name(parent_name, module_qn)
-                or f"{module_qn}.{parent_name}"
-            )
-        return None
+            parent_name = safe_decode_text(type_identifier_node)
+            if parent_name:
+                return (
+                    self._resolve_class_name(parent_name, module_qn)
+                    or f"{module_qn}.{parent_name}"
+                )
+            return None
 
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
         """Extract parent class names from a class definition."""
@@ -1259,7 +1132,7 @@ class DefinitionProcessor:
                 if child.type == "identifier":
                     parent_text = child.text
                     if parent_text:
-                        parent_name = parent_text.decode("utf8")
+                        parent_name = safe_decode_text(child)
                         if module_qn in self.import_processor.import_mapping:
                             import_map = self.import_processor.import_mapping[module_qn]
                             if parent_name in import_map:
@@ -1305,10 +1178,13 @@ class DefinitionProcessor:
                     ):
                         parent_text = child.text
                         if parent_text:
-                            parent_name = parent_text.decode("utf8")
-                            parent_classes.append(
-                                self._resolve_js_ts_parent_class(parent_name, module_qn)
-                            )
+                            parent_name = safe_decode_text(child)
+                            if parent_name:
+                                parent_classes.append(
+                                    self._resolve_js_ts_parent_class(
+                                        parent_name, module_qn
+                                    )
+                                )
                 elif child.type == "call_expression":
                     child_index = class_heritage_node.children.index(child)
                     if (
@@ -1332,10 +1208,13 @@ class DefinitionProcessor:
                     if child.type == "type_identifier":
                         parent_text = child.text
                         if parent_text:
-                            parent_name = parent_text.decode("utf8")
-                            parent_classes.append(
-                                self._resolve_js_ts_parent_class(parent_name, module_qn)
-                            )
+                            parent_name = safe_decode_text(child)
+                            if parent_name:
+                                parent_classes.append(
+                                    self._resolve_js_ts_parent_class(
+                                        parent_name, module_qn
+                                    )
+                                )
 
         return parent_classes
 
@@ -1349,10 +1228,11 @@ class DefinitionProcessor:
             if child.type == "arguments":
                 for arg_child in child.children:
                     if arg_child.type == "identifier" and arg_child.text:
-                        parent_name = arg_child.text.decode("utf8")
-                        parent_classes.append(
-                            self._resolve_js_ts_parent_class(parent_name, module_qn)
-                        )
+                        parent_name = safe_decode_text(arg_child)
+                        if parent_name:
+                            parent_classes.append(
+                                self._resolve_js_ts_parent_class(parent_name, module_qn)
+                            )
                     elif arg_child.type == "call_expression":
                         parent_classes.extend(
                             self._extract_mixin_parent_classes(arg_child, module_qn)
@@ -1434,8 +1314,8 @@ class DefinitionProcessor:
                 for child_node, parent_node in zip(child_classes, parent_classes):
                     if not child_node.text or not parent_node.text:
                         continue
-                    child_name = child_node.text.decode("utf8")
-                    parent_name = parent_node.text.decode("utf8")
+                    child_name = safe_decode_text(child_node)
+                    parent_name = safe_decode_text(parent_node)
 
                     child_qn = f"{module_qn}.{child_name}"
                     parent_qn = f"{module_qn}.{parent_name}"
@@ -1491,12 +1371,12 @@ class DefinitionProcessor:
                 constructor_names, method_names, method_functions
             ):
                 constructor_name = (
-                    constructor_node.text.decode("utf8")
+                    safe_decode_text(constructor_node)
                     if constructor_node.text
                     else None
                 )
                 method_name = (
-                    method_node.text.decode("utf8") if method_node.text else None
+                    safe_decode_text(method_node) if method_node.text else None
                 )
 
                 if constructor_name and method_name:
@@ -1593,7 +1473,7 @@ class DefinitionProcessor:
 
             if (
                 function_node.text is None
-                or function_node.text.decode("utf8") != "require"
+                or safe_decode_text(function_node) != "require"
             ):
                 return
 
@@ -1610,15 +1490,16 @@ class DefinitionProcessor:
             if not module_string_node or module_string_node.text is None:
                 return
 
-            module_name = module_string_node.text.decode("utf8").strip("'\"")
+            module_name = safe_decode_with_fallback(module_string_node).strip("'\"")
 
             for child in name_node.children:
                 if child.type == "shorthand_property_identifier_pattern":
                     if child.text is not None:
-                        destructured_name = child.text.decode("utf8")
-                        self._process_commonjs_import(
-                            destructured_name, module_name, module_qn
-                        )
+                        destructured_name = safe_decode_text(child)
+                        if destructured_name:
+                            self._process_commonjs_import(
+                                destructured_name, module_name, module_qn
+                            )
 
                 elif child.type == "pair_pattern":
                     key_node = child.child_by_field_name("key")
@@ -1631,10 +1512,11 @@ class DefinitionProcessor:
                         and value_node.type == "identifier"
                     ):
                         if value_node.text is not None:
-                            alias_name = value_node.text.decode("utf8")
-                            self._process_commonjs_import(
-                                alias_name, module_name, module_qn
-                            )
+                            alias_name = safe_decode_text(value_node)
+                            if alias_name:
+                                self._process_commonjs_import(
+                                    alias_name, module_name, module_qn
+                                )
 
         except Exception as e:
             logger.debug(f"Failed to process variable declarator for CommonJS: {e}")
@@ -1718,7 +1600,7 @@ class DefinitionProcessor:
                         method_names, method_functions
                     ):
                         if method_name_node.text and method_func_node:
-                            method_name = method_name_node.text.decode("utf8")
+                            method_name = safe_decode_text(method_name_node)
 
                             if self._is_class_method(
                                 method_func_node
@@ -1728,7 +1610,7 @@ class DefinitionProcessor:
                                 continue
 
                             lang_config = lang_queries.get("config")
-                            if lang_config:
+                            if lang_config and method_name:
                                 method_qn = self._build_object_method_qualified_name(
                                     method_name_node,
                                     method_func_node,
@@ -1762,7 +1644,8 @@ class DefinitionProcessor:
                             self.ingestor.ensure_node_batch("Function", method_props)
 
                             self.function_registry[method_qn] = "Function"
-                            self.simple_name_lookup[method_name].add(method_qn)
+                            if method_name:
+                                self.simple_name_lookup[method_name].add(method_qn)
 
                             self.ingestor.ensure_relationship_batch(
                                 ("Module", "qualified_name", module_qn),
@@ -1825,20 +1708,21 @@ class DefinitionProcessor:
                         if (
                             exports_obj.text
                             and export_name.text
-                            and exports_obj.text.decode("utf8") == "exports"
+                            and safe_decode_text(exports_obj) == "exports"
                         ):
-                            function_name = export_name.text.decode("utf8")
-                            ingest_exported_function(
-                                export_function,
-                                function_name,
-                                module_qn,
-                                "CommonJS Export",
-                                self.ingestor,
-                                self.function_registry,
-                                self.simple_name_lookup,
-                                self._get_docstring,
-                                self._is_export_inside_function,
-                            )
+                            function_name = safe_decode_text(export_name)
+                            if function_name:
+                                ingest_exported_function(
+                                    export_function,
+                                    function_name,
+                                    module_qn,
+                                    "CommonJS Export",
+                                    self.ingestor,
+                                    self.function_registry,
+                                    self.simple_name_lookup,
+                                    self._get_docstring,
+                                    self._is_export_inside_function,
+                                )
 
                     for (
                         module_obj,
@@ -1852,21 +1736,22 @@ class DefinitionProcessor:
                             module_obj.text
                             and exports_prop.text
                             and export_name.text
-                            and module_obj.text.decode("utf8") == "module"
-                            and exports_prop.text.decode("utf8") == "exports"
+                            and safe_decode_text(module_obj) == "module"
+                            and safe_decode_text(exports_prop) == "exports"
                         ):
-                            function_name = export_name.text.decode("utf8")
-                            ingest_exported_function(
-                                export_function,
-                                function_name,
-                                module_qn,
-                                "CommonJS Module Export",
-                                self.ingestor,
-                                self.function_registry,
-                                self.simple_name_lookup,
-                                self._get_docstring,
-                                self._is_export_inside_function,
-                            )
+                            function_name = safe_decode_text(export_name)
+                            if function_name:
+                                ingest_exported_function(
+                                    export_function,
+                                    function_name,
+                                    module_qn,
+                                    "CommonJS Module Export",
+                                    self.ingestor,
+                                    self.function_registry,
+                                    self.simple_name_lookup,
+                                    self._get_docstring,
+                                    self._is_export_inside_function,
+                                )
 
                 except Exception as e:
                     logger.debug(f"Failed to process CommonJS exports query: {e}")
@@ -1908,18 +1793,19 @@ class DefinitionProcessor:
                         export_names, export_functions
                     ):
                         if export_name.text and export_function:
-                            function_name = export_name.text.decode("utf8")
-                            ingest_exported_function(
-                                export_function,
-                                function_name,
-                                module_qn,
-                                "ES6 Export Function",
-                                self.ingestor,
-                                self.function_registry,
-                                self.simple_name_lookup,
-                                self._get_docstring,
-                                self._is_export_inside_function,
-                            )
+                            function_name = safe_decode_text(export_name)
+                            if function_name:
+                                ingest_exported_function(
+                                    export_function,
+                                    function_name,
+                                    module_qn,
+                                    "ES6 Export Function",
+                                    self.ingestor,
+                                    self.function_registry,
+                                    self.simple_name_lookup,
+                                    self._get_docstring,
+                                    self._is_export_inside_function,
+                                )
 
                     if not export_names:  # Only function declarations
                         for export_function in export_functions:
@@ -1928,18 +1814,19 @@ class DefinitionProcessor:
                                     "name"
                                 ):
                                     if name_node.text:
-                                        function_name = name_node.text.decode("utf8")
-                                        ingest_exported_function(
-                                            export_function,
-                                            function_name,
-                                            module_qn,
-                                            "ES6 Export Function Declaration",
-                                            self.ingestor,
-                                            self.function_registry,
-                                            self.simple_name_lookup,
-                                            self._get_docstring,
-                                            self._is_export_inside_function,
-                                        )
+                                        function_name = safe_decode_text(name_node)
+                                        if function_name:
+                                            ingest_exported_function(
+                                                export_function,
+                                                function_name,
+                                                module_qn,
+                                                "ES6 Export Function Declaration",
+                                                self.ingestor,
+                                                self.function_registry,
+                                                self.simple_name_lookup,
+                                                self._get_docstring,
+                                                self._is_export_inside_function,
+                                            )
 
                 except Exception as e:
                     logger.debug(f"Failed to process ES6 exports query: {e}")
@@ -1995,10 +1882,10 @@ class DefinitionProcessor:
                         method_names, arrow_functions
                     ):
                         if method_name.text and arrow_function:
-                            function_name = method_name.text.decode("utf8")
+                            function_name = safe_decode_text(method_name)
 
                             lang_config = queries[language].get("config")
-                            if lang_config:
+                            if lang_config and function_name:
                                 function_qn = self._build_nested_qualified_name(
                                     arrow_function,
                                     module_qn,
@@ -2024,13 +1911,14 @@ class DefinitionProcessor:
                             )
                             self.ingestor.ensure_node_batch("Function", function_props)
                             self.function_registry[function_qn] = "Function"
-                            self.simple_name_lookup[function_name].add(function_qn)
+                            if function_name:
+                                self.simple_name_lookup[function_name].add(function_qn)
 
                     for member_expr, arrow_function in zip(
                         member_exprs, arrow_functions
                     ):
                         if member_expr.text and arrow_function:
-                            member_text = member_expr.text.decode("utf8")
+                            member_text = safe_decode_with_fallback(member_expr)
                             if "." in member_text:
                                 function_name = member_text.split(".")[
                                     -1
@@ -2069,7 +1957,7 @@ class DefinitionProcessor:
 
                     for member_expr, function_expr in zip(member_exprs, function_exprs):
                         if member_expr.text and function_expr:
-                            member_text = member_expr.text.decode("utf8")
+                            member_text = safe_decode_with_fallback(member_expr)
                             if "." in member_text:
                                 function_name = member_text.split(".")[
                                     -1
@@ -2183,11 +2071,11 @@ class DefinitionProcessor:
             if current.type == "variable_declarator":
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.type == "identifier" and name_node.text:
-                    return str(name_node.text.decode("utf8"))
+                    return str(safe_decode_text(name_node))
             elif current.type == "assignment_expression":
                 left_child = current.child_by_field_name("left")
                 if left_child and left_child.type == "identifier" and left_child.text:
-                    return str(left_child.text.decode("utf8"))
+                    return str(safe_decode_text(left_child))
             current = current.parent
         return None
 
@@ -2223,15 +2111,15 @@ class DefinitionProcessor:
             if current.type in lang_config.function_node_types:
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.text:
-                    path_parts.append(name_node.text.decode("utf8"))
+                    path_parts.append(safe_decode_text(name_node))
             elif current.type in lang_config.class_node_types:
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.text:
-                    path_parts.append(name_node.text.decode("utf8"))
+                    path_parts.append(safe_decode_text(name_node))
             elif current.type == "method_definition":
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.text:
-                    path_parts.append(name_node.text.decode("utf8"))
+                    path_parts.append(safe_decode_text(name_node))
 
             current = current.parent
 
@@ -2270,15 +2158,15 @@ class DefinitionProcessor:
             if current.type in lang_config.function_node_types:
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.text:
-                    path_parts.append(name_node.text.decode("utf8"))
+                    path_parts.append(safe_decode_text(name_node))
             elif current.type in lang_config.class_node_types:
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.text:
-                    path_parts.append(name_node.text.decode("utf8"))
+                    path_parts.append(safe_decode_text(name_node))
             elif current.type == "method_definition":
                 name_node = current.child_by_field_name("name")
                 if name_node and name_node.text:
-                    path_parts.append(name_node.text.decode("utf8"))
+                    path_parts.append(safe_decode_text(name_node))
 
             current = current.parent
 
@@ -2313,12 +2201,15 @@ class DefinitionProcessor:
                     if type_child.type == "type_identifier":
                         interface_name = type_child.text
                         if interface_name:
-                            interface_name_str = interface_name.decode("utf8")
-                            resolved_interface = (
-                                self._resolve_class_name(interface_name_str, module_qn)
-                                or f"{module_qn}.{interface_name_str}"
-                            )
-                            interface_list.append(resolved_interface)
+                            interface_name_str = safe_decode_text(type_child)
+                            if interface_name_str:
+                                resolved_interface = (
+                                    self._resolve_class_name(
+                                        interface_name_str, module_qn
+                                    )
+                                    or f"{module_qn}.{interface_name_str}"
+                                )
+                                interface_list.append(resolved_interface)
 
     def _create_implements_relationship(
         self, class_type: str, class_qn: str, interface_qn: str
