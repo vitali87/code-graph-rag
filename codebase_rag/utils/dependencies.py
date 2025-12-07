@@ -1,6 +1,5 @@
 import importlib.util
 
-# Cache dependency checks to avoid repeated module lookups
 _dependency_cache: dict[str, bool] = {}
 
 

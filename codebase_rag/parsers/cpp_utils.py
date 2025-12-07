@@ -1,6 +1,5 @@
 from tree_sitter import Node
 
-# Centralized C++ operator symbol to name mapping
 CPP_OPERATOR_SYMBOL_MAP = {
     "+": "operator_plus",
     "-": "operator_minus",

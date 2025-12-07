@@ -7,8 +7,6 @@ from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services import IngestorProtocol
-
-# No longer need constants import - using Tree-sitter directly
 from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
 from .import_processor import ImportProcessor
 from .python_utils import resolve_class_name

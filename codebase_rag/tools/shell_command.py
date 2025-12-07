@@ -11,7 +11,6 @@ from pydantic_ai import Tool
 
 from ..schemas import ShellCommandResult
 
-# A strict list of commands the agent is allowed to execute.
 COMMAND_ALLOWLIST = {
     "ls",
     "rg",

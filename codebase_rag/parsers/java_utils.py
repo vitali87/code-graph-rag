@@ -4,7 +4,6 @@ from tree_sitter import Node
 
 from .utils import safe_decode_text
 
-# Constants for delimiter tokens used in argument parsing
 DELIMITER_TOKENS = ["(", ")", ","]
 
 

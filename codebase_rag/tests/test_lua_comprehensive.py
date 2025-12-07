@@ -3,8 +3,6 @@ from unittest.mock import MagicMock
 
 from codebase_rag.tests.conftest import run_updater
 
-# Error Handling Tests
-
 
 def test_lua_pcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test pcall error handling patterns."""

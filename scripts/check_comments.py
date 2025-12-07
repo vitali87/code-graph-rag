@@ -28,10 +28,7 @@ def check_file(filepath: str) -> list[str]:
                 and not stripped.startswith('"""')
                 and not stripped.startswith("'''")
             ):
-                if not stripped.startswith("import ") and not stripped.startswith(
-                    "from "
-                ):
-                    found_first_code = True
+                found_first_code = True
 
         if stripped.startswith("#") and found_first_code:
             if (

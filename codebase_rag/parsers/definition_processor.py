@@ -12,8 +12,6 @@ from tree_sitter import Node, Query, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services import IngestorProtocol
-
-# No longer need constants import - using Tree-sitter directly
 from .cpp_utils import (
     build_cpp_qualified_name,
     extract_cpp_exported_class_name,
