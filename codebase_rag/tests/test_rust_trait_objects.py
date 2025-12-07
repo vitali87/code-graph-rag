@@ -245,7 +245,6 @@ fn canvas_operations() {
     run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify trait objects are detected
     trait_obj_calls = [
         call
         for call in calls
@@ -596,7 +595,6 @@ fn downcast_example() {
     run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify object safety patterns are detected
     safety_calls = [
         call
         for call in calls
@@ -947,7 +945,6 @@ fn run_performance_tests() {
     run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify dynamic dispatch patterns are detected
     dispatch_calls = [
         call
         for call in calls
@@ -1408,7 +1405,6 @@ async fn test_async_trait_objects() {
     run_updater(rust_trait_objects_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify advanced trait object patterns are detected
     advanced_calls = [
         call
         for call in calls

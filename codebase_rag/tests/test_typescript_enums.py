@@ -227,10 +227,6 @@ movePlayer(Direction.Right);
 
     run_updater(typescript_enums_project, mock_ingestor)
 
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use enums are properly parsed
-
-    # Check functions that use enums
     function_calls = get_nodes(mock_ingestor, "Function")
 
     enum_using_functions = [
@@ -251,7 +247,6 @@ movePlayer(Direction.Right);
         f"Expected at least 2 enum-using functions, found {len(enum_using_functions)}"
     )
 
-    # Check class using enums
     class_calls = get_nodes(mock_ingestor, "Class")
 
     task_class = [
@@ -497,10 +492,6 @@ function createMessage(level: LogLevel, text: string): string {
 
     run_updater(typescript_enums_project, mock_ingestor)
 
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use string enums are properly parsed
-
-    # Check classes using string enums
     class_calls = get_nodes(mock_ingestor, "Class")
 
     string_enum_classes = [
@@ -517,7 +508,6 @@ function createMessage(level: LogLevel, text: string): string {
         f"Expected at least 2 classes using string enums, found {len(string_enum_classes)}"
     )
 
-    # Check functions using string enums
     function_calls = get_nodes(mock_ingestor, "Function")
 
     string_enum_functions = [
@@ -776,10 +766,6 @@ methodHandlers[HttpMethod.GET]('/api/data');
 
     run_updater(typescript_enums_project, mock_ingestor)
 
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use const enums are properly parsed
-
-    # Check ApiClient class using const enums
     class_calls = get_nodes(mock_ingestor, "Class")
 
     api_client_class = [
@@ -790,7 +776,6 @@ methodHandlers[HttpMethod.GET]('/api/data');
         f"Expected ApiClient class using const enums, found {len(api_client_class)}"
     )
 
-    # Check functions using const enums
     function_calls = get_nodes(mock_ingestor, "Function")
 
     const_enum_functions = [
@@ -942,15 +927,6 @@ console.log(demo.getColor());
     [c for c in all_relationships if c.args[1] == "CALLS"]
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Note: Function calls may not be detected in this parser implementation
-    # Focus on verifying the core parsing of functions and classes instead
-
-    # Note: TypeScript enums are not parsed as separate node types by this parser
-    # Instead, we verify that functions and classes that use enums are properly parsed
-
-    # Set comprehensive_enums to empty list since enums aren't detected as separate nodes
-
-    # Check EnumDemo class
     class_calls = get_nodes(mock_ingestor, "Class")
 
     enum_demo_class = [

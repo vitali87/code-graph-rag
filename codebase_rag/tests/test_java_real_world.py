@@ -151,7 +151,6 @@ public class DatabaseConnection {
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify Spring components were detected
     created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_real_world_project.name
 

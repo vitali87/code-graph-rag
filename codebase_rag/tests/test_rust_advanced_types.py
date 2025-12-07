@@ -111,7 +111,6 @@ impl<T> Buffer<T> {
     run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify phantom type structs are detected
     struct_calls = [
         call
         for call in calls
@@ -192,7 +191,6 @@ where
     run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify HRTB functions are detected
     function_calls = [
         call
         for call in calls
@@ -315,7 +313,6 @@ impl DatabaseDriver for PostgresDriver {
     run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify associated type patterns are detected
     trait_calls = [
         call
         for call in calls
@@ -469,7 +466,6 @@ fn create_factorial_array<const N: usize>() -> FactorialArray<N> {
     run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify type-level programming constructs are detected
     type_calls = [
         call
         for call in calls
@@ -669,7 +665,6 @@ impl<T, const N: usize> ConstArrayExt<T, N> for [T; N] {
     run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify const generics are detected
     const_calls = [
         call
         for call in calls

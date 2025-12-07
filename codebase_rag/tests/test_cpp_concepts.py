@@ -126,7 +126,6 @@ void demonstrateBasicConcepts() {
 
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Look for concept-related definitions
     concept_definitions = [
         call
         for call in defines_relationships
@@ -270,7 +269,6 @@ void demonstrateAdvancedConcepts() {
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Look for concept-constrained template usage
     advanced_calls = [
         call for call in call_relationships if "advanced_concepts" in call.args[0][2]
     ]
@@ -363,12 +361,10 @@ void demonstrateConceptComposition() {
 
     run_updater(cpp_concepts_project, mock_ingestor)
 
-    # Verify concept relationships and namespace usage
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    # Look for namespace relationships
     namespace_relationships = [
         call
         for call in all_relationships
@@ -379,7 +375,6 @@ void demonstrateConceptComposition() {
         f"Expected namespace relationships for concepts, found {len(namespace_relationships)}"
     )
 
-    # Verify template specializations
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     composition_definitions = [

@@ -78,12 +78,10 @@ return env_manager
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 4, (
         f"Expected at least 4 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have calls to user-defined functions (env_manager functions)
     assert len(calls_rels) >= 2, (
         f"Expected at least 2 CALLS relationships, got {len(calls_rels)}"
     )
@@ -175,12 +173,10 @@ return env_utils
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have calls to user-defined helper functions
     assert len(calls_rels) >= 2, (
         f"Expected at least 2 CALLS relationships, got {len(calls_rels)}"
     )
@@ -262,12 +258,10 @@ return M
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have module function definitions (M.* and env_helpers.*)
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have calls to helper functions
     assert len(calls_rels) >= 2, (
         f"Expected at least 2 CALLS relationships, got {len(calls_rels)}"
     )
@@ -350,12 +344,10 @@ return code_executor
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have calls to our helper functions
     assert len(calls_rels) >= 3, (
         f"Expected at least 3 CALLS relationships, got {len(calls_rels)}"
     )
@@ -449,12 +441,10 @@ return global_manager
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have function definitions for user-defined functions
     assert len(defines_rels) >= 7, (
         f"Expected at least 7 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have calls to our helper functions
     assert len(calls_rels) >= 3, (
         f"Expected at least 3 CALLS relationships, got {len(calls_rels)}"
     )

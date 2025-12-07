@@ -99,12 +99,9 @@ class TestJavaScriptPathResolution:
         current_module = "test_project.src.Button"
 
         test_cases = [
-            # Going up beyond project root
             ("../../external", "external"),
             ("../../../global", "global"),
-            # Empty components (should be handled gracefully)
             ("./", "test_project.src"),
-            # Single dot (current directory)
             (".", "test_project.src"),
         ]
 

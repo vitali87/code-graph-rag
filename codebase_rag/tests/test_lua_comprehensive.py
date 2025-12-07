@@ -77,9 +77,6 @@ return ErrorHandler
     run_updater(project, mock_ingestor)
 
 
-# String Pattern Tests
-
-
 def test_lua_string_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test Lua string pattern matching."""
     project = temp_repo / "lua_strings"
@@ -160,9 +157,6 @@ return Formatter
 """)
 
     run_updater(project, mock_ingestor)
-
-
-# Table Manipulation Tests
 
 
 def test_lua_table_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -292,9 +286,6 @@ return Iterators
     run_updater(project, mock_ingestor)
 
 
-# Environment and Global Tests
-
-
 def test_lua_environment_management(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test environment and global variable management."""
     project = temp_repo / "lua_environment"
@@ -398,9 +389,6 @@ return ModuleLoader
 """)
 
     run_updater(project, mock_ingestor)
-
-
-# File I/O and Serialization Tests
 
 
 def test_lua_file_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -541,9 +529,6 @@ return JSONUtils
 """)
 
     run_updater(project, mock_ingestor)
-
-
-# Data Structure Tests
 
 
 def test_lua_linked_list(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -784,9 +769,6 @@ return HashTable
     run_updater(project, mock_ingestor)
 
 
-# Algorithm Tests
-
-
 def test_lua_sorting_algorithms(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test various sorting algorithms."""
     project = temp_repo / "lua_sorting"
@@ -979,9 +961,6 @@ return Searching
 """)
 
     run_updater(project, mock_ingestor)
-
-
-# Design Pattern Tests
 
 
 def test_lua_observer_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1199,9 +1178,6 @@ return {
     run_updater(project, mock_ingestor)
 
 
-# Performance and Memory Tests
-
-
 def test_lua_memory_management(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test memory management patterns."""
     project = temp_repo / "lua_memory"
@@ -1362,9 +1338,6 @@ return Performance
 """)
 
     run_updater(project, mock_ingestor)
-
-
-# Real-world Application Tests
 
 
 def test_lua_web_framework(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -1754,9 +1727,6 @@ return TemplateEngine
 """)
 
     run_updater(project, mock_ingestor)
-
-
-# Final count test function to verify our progress
 
 
 def test_lua_final_comprehensive_check(

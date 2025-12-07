@@ -32,5 +32,4 @@ def test_lua_require_edge_cases(
     if present:
         assert import_map, import_map
     else:
-        # No import should be recorded from comments-only
         assert not import_map, import_map

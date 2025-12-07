@@ -227,7 +227,6 @@ void demonstrateTemplateMetaprogramming() {
 
     project_name = cpp_templates_project.name
 
-    # Expected template function definitions
     expected_functions = [
         f"{project_name}.function_templates.maximum",
         f"{project_name}.function_templates.add",
@@ -242,13 +241,11 @@ void demonstrateTemplateMetaprogramming() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some template functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Expected template class
     expected_classes = [
         f"{project_name}.function_templates.FixedArray",
         f"{project_name}.function_templates.Factorial",
@@ -257,7 +254,6 @@ void demonstrateTemplateMetaprogramming() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify template classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -641,7 +637,6 @@ void demonstrateTemplateTemplateParameters() {
 
     project_name = cpp_templates_project.name
 
-    # Expected template classes
     expected_classes = [
         f"{project_name}.class_templates.Container",
         f"{project_name}.class_templates.SimpleMap",
@@ -651,13 +646,11 @@ void demonstrateTemplateTemplateParameters() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify template classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Verify inheritance relationship (Stack inherits from Container)
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -987,7 +980,6 @@ void demonstrateConcepts() {
 
     project_name = cpp_templates_project.name
 
-    # Expected metaprogramming structures
     expected_classes = [
         f"{project_name}.template_metaprogramming.Fibonacci",
         f"{project_name}.template_metaprogramming.RemovePointer",
@@ -1003,13 +995,11 @@ void demonstrateConcepts() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify metaprogramming classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Verify CRTP inheritance relationships
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1220,7 +1210,6 @@ void demonstrateComprehensiveTemplates() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have comprehensive template coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1231,7 +1220,6 @@ void demonstrateComprehensiveTemplates() {
         f"Expected at least 10 comprehensive template calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have template inheritance relationships
     template_inheritance = [
         call
         for call in inherits_relationships
@@ -1242,5 +1230,4 @@ void demonstrateComprehensiveTemplates() {
         f"Expected at least 2 template inheritance relationships, found {len(template_inheritance)}"
     )
 
-    # Test that template parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

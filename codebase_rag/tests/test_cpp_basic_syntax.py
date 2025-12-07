@@ -146,7 +146,6 @@ void demonstrateClasses() {
 
     project_name = cpp_basic_project.name
 
-    # Expected class definitions
     expected_classes = [
         f"{project_name}.basic_classes.Person",
         f"{project_name}.basic_classes.MathUtils",
@@ -156,11 +155,9 @@ void demonstrateClasses() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify all expected classes were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
-    # Expected method definitions (class methods)
     expected_methods = [
         f"{project_name}.basic_classes.Person.Person",  # constructor
         f"{project_name}.basic_classes.Person.setName",
@@ -172,7 +169,6 @@ void demonstrateClasses() {
         f"{project_name}.basic_classes.Rectangle.area",
     ]
 
-    # Expected free function definitions
     expected_functions = [
         f"{project_name}.basic_classes.demonstrateClasses",
     ]
@@ -184,13 +180,11 @@ void demonstrateClasses() {
     created_methods = get_qualified_names(method_calls)
     created_functions = get_qualified_names(function_calls)
 
-    # Verify all expected methods were created
     missing_methods = set(expected_methods) - created_methods
     assert not missing_methods, (
         f"Missing expected methods: {sorted(list(missing_methods))}"
     )
 
-    # Verify all expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -293,7 +287,6 @@ void demonstrateFunctions() {
 
     project_name = cpp_basic_project.name
 
-    # Expected function definitions
     expected_functions = [
         f"{project_name}.basic_functions.add",
         f"{project_name}.basic_functions.multiply",
@@ -307,7 +300,6 @@ void demonstrateFunctions() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -449,7 +441,6 @@ void demonstrateUsingDirectives() {
 
     project_name = cpp_basic_project.name
 
-    # Expected classes in namespaces
     expected_classes = [
         f"{project_name}.basic_namespaces.utils.Logger",
         f"{project_name}.basic_namespaces.utils.math.Calculator",
@@ -460,18 +451,15 @@ void demonstrateUsingDirectives() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify at least some expected namespaced classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Expected methods in namespaces (class methods)
     expected_methods = [
         f"{project_name}.basic_namespaces.graphics.Circle.area",
     ]
 
-    # Expected free functions in namespaces
     expected_functions = [
         f"{project_name}.basic_namespaces.globalFunction",
         f"{project_name}.basic_namespaces.utils.printDebug",
@@ -617,7 +605,6 @@ void bankingDemo() {
 
     project_name = cpp_basic_project.name
 
-    # Expected classes
     expected_classes = [
         f"{project_name}.member_functions.BankAccount",
         f"{project_name}.member_functions.SavingsAccount",
@@ -628,7 +615,6 @@ void bankingDemo() {
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
-    # Verify inheritance relationship
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -643,7 +629,6 @@ void bankingDemo() {
         "Expected inheritance relationship SavingsAccount -> BankAccount"
     )
 
-    # Verify method calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     method_call_relationships = [
@@ -822,7 +807,6 @@ void globalUtility() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have comprehensive basic C++ coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_basic" in call.args[0][2]
     ]
@@ -831,7 +815,6 @@ void globalUtility() {
         f"Expected at least 8 comprehensive basic calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have inheritance relationships
     basic_inheritance = [
         call
         for call in inherits_relationships
@@ -857,5 +840,4 @@ void globalUtility() {
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that C++ parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -75,7 +75,6 @@ def test_protobuf_ingestor_joint_serialization_and_deserialization(
     assert output_file.exists()
     assert output_file.stat().st_size > 0
 
-    # Read and deserialize
     with open(output_file, "rb") as f:
         serialized_data = f.read()
 
@@ -84,7 +83,6 @@ def test_protobuf_ingestor_joint_serialization_and_deserialization(
 
     assert len(deserialized_index.nodes) == 3
 
-    # Create a simple lookup map for easy assertion
     deserialized_nodes_map = {}
     for node in deserialized_index.nodes:
         payload_field = node.WhichOneof("payload")
@@ -94,7 +92,6 @@ def test_protobuf_ingestor_joint_serialization_and_deserialization(
         )
         deserialized_nodes_map[node_id] = payload_message
 
-    # Assert project node
     project_payload = deserialized_nodes_map["test_project"]
     assert isinstance(project_payload, pb.Project)
     assert project_payload.name == "test_project"
@@ -146,13 +143,11 @@ def test_protobuf_ingestor_split_index_serialization_and_deserialization(
     nodes_path = output_dir / "nodes.bin"
     rels_path = output_dir / "relationships.bin"
 
-    # Assert files exist and are non-empty
     assert nodes_path.exists()
     assert rels_path.exists()
     assert nodes_path.stat().st_size > 0
     assert rels_path.stat().st_size > 0
 
-    # Deserialize nodes file
     nodes_index = pb.GraphCodeIndex()
     with open(nodes_path, "rb") as f:
         nodes_index.ParseFromString(f.read())
@@ -160,7 +155,6 @@ def test_protobuf_ingestor_split_index_serialization_and_deserialization(
     assert len(nodes_index.nodes) == 3
     assert len(nodes_index.relationships) == 0
 
-    # Deserialize relationships file
     rels_index = pb.GraphCodeIndex()
     with open(rels_path, "rb") as f:
         rels_index.ParseFromString(f.read())

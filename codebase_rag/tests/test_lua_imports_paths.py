@@ -52,7 +52,6 @@ return 0
     else:
         assert target.startswith(expect_target), target
 
-    # Also verify IMPORTS relationships emitted
     rels = cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
     imports = [c for c in rels if c.args[1] == "IMPORTS"]
     assert any(module_qn in c.args[0][2] for c in imports), imports

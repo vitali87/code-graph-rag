@@ -225,7 +225,6 @@ fn generic_closures_demo() {
     run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify closure functions are detected
     closure_calls = [
         call
         for call in calls
@@ -526,7 +525,6 @@ where
     run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify function pointer functions are detected
     function_calls = [
         call
         for call in calls
@@ -897,7 +895,6 @@ fn observable_demo() {
     run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify higher-order functions are detected
     higher_order_calls = [
         call
         for call in calls
@@ -1200,7 +1197,6 @@ async fn demo_parallel_processing() {
     run_updater(rust_closures_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify async closure functions are detected
     async_calls = [
         call
         for call in calls

@@ -240,7 +240,6 @@ void demonstrateThreadUtilities() {
 
     project_name = cpp_concurrency_project.name
 
-    # Expected thread-related classes and functions
     expected_entities = [
         f"{project_name}.thread_basics.simpleThreadFunction",
         f"{project_name}.thread_basics.threadWithParameters",
@@ -249,7 +248,6 @@ void demonstrateThreadUtilities() {
         f"{project_name}.thread_basics.demonstrateThreadBasics",
     ]
 
-    # Get all node creation calls
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     function_calls = [call for call in all_calls if call[0][0] == "Function"]
@@ -260,7 +258,6 @@ void demonstrateThreadUtilities() {
         for call in class_calls + function_calls + method_calls
     }
 
-    # Verify expected entities were created
     found_entities = [
         entity for entity in expected_entities if entity in created_entities
     ]
@@ -583,7 +580,6 @@ void demonstrateMutexPatterns() {
 
     project_name = cpp_concurrency_project.name
 
-    # Expected mutex-related classes
     expected_classes = [
         f"{project_name}.mutex_locks.Counter",
         f"{project_name}.mutex_locks.BankAccount",
@@ -927,7 +923,6 @@ void compareAtomicVsMutex() {
 
     project_name = cpp_concurrency_project.name
 
-    # Expected atomic-related classes
     expected_classes = [
         f"{project_name}.atomics.LockFreeCounter",
         f"{project_name}.atomics.SpinLock",
@@ -1334,7 +1329,6 @@ void demonstrateAsyncPipeline() {
 
     project_name = cpp_concurrency_project.name
 
-    # Expected condition variable and future classes
     expected_classes = [
         f"{project_name}.condition_futures.ProducerConsumerQueue",
         f"{project_name}.condition_futures.Event",
@@ -1844,7 +1838,6 @@ void runComprehensiveBenchmark() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive concurrency coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1855,5 +1848,4 @@ void runComprehensiveBenchmark() {
         f"Expected at least 10 comprehensive concurrency calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that concurrency parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

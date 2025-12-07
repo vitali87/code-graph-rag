@@ -362,7 +362,6 @@ void demonstratePolymorphicUniquePtr() {
 
     project_name = cpp_smart_pointers_project.name
 
-    # Expected unique_ptr related classes and functions
     expected_entities = [
         f"{project_name}.unique_ptr_patterns.Resource",
         f"{project_name}.unique_ptr_patterns.ResourceManager",
@@ -371,7 +370,6 @@ void demonstratePolymorphicUniquePtr() {
         f"{project_name}.unique_ptr_patterns.demonstrateUniquePtrBasics",
     ]
 
-    # Get all node creation calls
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     function_calls = [call for call in all_calls if call[0][0] == "Function"]
@@ -380,7 +378,6 @@ void demonstratePolymorphicUniquePtr() {
         call[0][1]["qualified_name"] for call in class_calls + function_calls
     }
 
-    # Verify expected entities were created
     found_entities = [
         entity for entity in expected_entities if entity in created_entities
     ]
@@ -777,7 +774,6 @@ void demonstrateAllocators() {
 
     project_name = cpp_smart_pointers_project.name
 
-    # Expected shared_ptr related classes
     expected_classes = [
         f"{project_name}.shared_ptr_patterns.Node",
         f"{project_name}.shared_ptr_patterns.Observer",
@@ -1217,7 +1213,6 @@ void demonstrateWeakPtrCache() {
 
     project_name = cpp_smart_pointers_project.name
 
-    # Expected weak_ptr related classes
     expected_classes = [
         f"{project_name}.weak_ptr_advanced.TreeNode",
         f"{project_name}.weak_ptr_advanced.EventManager",
@@ -1581,7 +1576,6 @@ void comprehensiveDemonstration() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive smart pointer coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1592,5 +1586,4 @@ void comprehensiveDemonstration() {
         f"Expected at least 8 comprehensive smart pointer calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that smart pointer parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

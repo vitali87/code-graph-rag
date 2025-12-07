@@ -156,7 +156,6 @@ fn vector_binary_search() {
     run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify vector functions are detected
     vector_calls = [
         call
         for call in calls
@@ -330,7 +329,6 @@ fn hashmap_iteration_patterns() {
     run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify HashMap functions are detected
     hashmap_calls = [
         call
         for call in calls
@@ -541,7 +539,6 @@ fn custom_iterator() {
     run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify iterator functions are detected
     iterator_calls = [
         call
         for call in calls
@@ -747,7 +744,6 @@ fn collection_performance_characteristics() {
     run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify other collections functions are detected
     collections_calls = [
         call
         for call in calls
@@ -967,7 +963,6 @@ fn monad_like_operations() {
     run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify functional programming functions are detected
     functional_calls = [
         call
         for call in calls

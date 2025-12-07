@@ -215,7 +215,6 @@ void demonstrateStaticCastExamples() {
 
     project_name = cpp_casting_project.name
 
-    # Expected classes and functions with static_cast usage
     expected_classes = [
         f"{project_name}.static_cast_examples.Shape",
         f"{project_name}.static_cast_examples.Rectangle",
@@ -237,7 +236,6 @@ void demonstrateStaticCastExamples() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -515,7 +513,6 @@ void demonstrateDynamicCastExamples() {
 
     project_name = cpp_casting_project.name
 
-    # Expected classes with dynamic_cast usage
     expected_classes = [
         f"{project_name}.dynamic_cast_examples.Node",
         f"{project_name}.dynamic_cast_examples.FunctionNode",
@@ -728,7 +725,6 @@ void demonstrateOtherCastOperators() {
 
     project_name = cpp_casting_project.name
 
-    # Expected classes with other cast operators
     expected_classes = [
         f"{project_name}.other_cast_operators.OtherCastsDemo",
     ]
@@ -862,7 +858,6 @@ void demonstrateComprehensiveCasting() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive casting coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -873,5 +868,4 @@ void demonstrateComprehensiveCasting() {
         f"Expected at least 2 comprehensive casting calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that casting parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

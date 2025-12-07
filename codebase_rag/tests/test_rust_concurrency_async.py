@@ -90,7 +90,6 @@ fn scoped_threads() {
     run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify thread functions are detected
     thread_calls = [
         call
         for call in calls
@@ -201,7 +200,6 @@ fn sync_channel() {
     run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify channel functions are detected
     channel_calls = [
         call
         for call in calls
@@ -298,7 +296,6 @@ fn shared_data_structure() {
     run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify mutex functions are detected
     mutex_calls = [
         call
         for call in calls
@@ -396,7 +393,6 @@ impl TimerFuture {
     run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify async functions are detected
     async_calls = [
         call
         for call in calls
@@ -517,7 +513,6 @@ async fn oneshot_example() {
     run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Tokio functions are detected
     tokio_calls = [
         call
         for call in calls
@@ -649,7 +644,6 @@ fn barrier_synchronization() {
     run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify parallel computing functions are detected
     parallel_calls = [
         call
         for call in calls
@@ -787,7 +781,6 @@ fn memory_ordering_examples() {
     run_updater(rust_concurrency_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify atomic functions are detected
     atomic_calls = [
         call
         for call in calls

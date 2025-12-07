@@ -100,7 +100,6 @@ public class Circle implements Shape, Movable {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify interfaces and classes were created
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -202,7 +201,6 @@ public class GenericUtility {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify complex generic classes were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
@@ -354,7 +352,6 @@ public class Square extends AbstractRectangle {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify abstract and concrete classes were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
@@ -468,13 +465,11 @@ public class MethodOverloading {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify all overloaded methods were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     method_calls = [call for call in all_calls if call[0][0] == "Method"]
 
     created_methods = get_qualified_names(method_calls)
 
-    # Check that multiple process methods were detected
     process_methods = [qn for qn in created_methods if ".process" in qn]
     calculate_methods = [qn for qn in created_methods if ".calculate" in qn]
     constructor_methods = [qn for qn in created_methods if ".MethodOverloading" in qn]
@@ -596,7 +591,6 @@ class NumberContainer extends Container<Number> {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify all classes with covariant return types were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
@@ -740,7 +734,6 @@ public class Duck implements Amphibious {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify all interfaces and classes in diamond hierarchy were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -935,7 +928,6 @@ public abstract class AbstractJpaRepository<T, ID extends Serializable>
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify complex generic structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
@@ -943,11 +935,9 @@ public abstract class AbstractJpaRepository<T, ID extends Serializable>
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
 
-    # Check that nested classes were detected
     nested_classes_found = any("Builder" in qn for qn in created_classes)
     assert nested_classes_found, "Nested generic classes should be detected"
 
-    # Check that repository interfaces were detected
     repository_interfaces_found = any("Repository" in qn for qn in created_interfaces)
     assert repository_interfaces_found, "Repository interfaces should be detected"
 
@@ -1103,7 +1093,6 @@ class ConflictResolver implements Conflicting1, Conflicting2 {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify all classes and interfaces with overriding were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
@@ -1111,14 +1100,12 @@ class ConflictResolver implements Conflicting1, Conflicting2 {
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
 
-    # Check key classes were detected
     assert any("BaseClass" in qn for qn in created_classes)
     assert any("DerivedClass" in qn for qn in created_classes)
     assert any("StringProcessor" in qn for qn in created_classes)
     assert any("Document" in qn for qn in created_classes)
     assert any("ConflictResolver" in qn for qn in created_classes)
 
-    # Check interfaces were detected
     assert any("Printable" in qn for qn in created_interfaces)
     assert any("AdvancedPrintable" in qn for qn in created_interfaces)
 
@@ -1285,7 +1272,6 @@ enum Operation {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify type erasure related structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
@@ -1295,16 +1281,13 @@ enum Operation {
     created_enums = get_qualified_names(enum_calls)
     created_interfaces = get_qualified_names(interface_calls)
 
-    # Check main class and nested classes
     assert any("TypeErasureExamples" in qn for qn in created_classes)
     assert any("Container" in qn for qn in created_classes)
     assert any("NumberContainer" in qn for qn in created_classes)
     assert any("StringProcessor" in qn for qn in created_classes)
 
-    # Check enum
     assert any("Operation" in qn for qn in created_enums)
 
-    # Check interface
     assert any("Processor" in qn for qn in created_interfaces)
 
 
@@ -1472,18 +1455,15 @@ public class AnnotationProcessor {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify annotation-related structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
 
     created_classes = get_qualified_names(class_calls)
 
-    # Check that annotation classes and regular classes were detected
     assert any("AnnotatedService" in qn for qn in created_classes)
     assert any("GenericContainer" in qn for qn in created_classes)
     assert any("AnnotationProcessor" in qn for qn in created_classes)
 
-    # Annotation interfaces should be detected as classes in Java parsing
     assert any("CustomAnnotation" in qn for qn in created_classes)
     assert any("MethodInfo" in qn for qn in created_classes)
 
@@ -1680,7 +1660,6 @@ public class DeepNesting {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify nested structures were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
@@ -1688,13 +1667,9 @@ public class DeepNesting {
     created_classes = get_qualified_names(class_calls)
     get_qualified_names(interface_calls)
 
-    # Check main outer classes
     assert any("OuterClass" in qn for qn in created_classes)
     assert any("InterfaceContainer" in qn for qn in created_classes)
     assert any("DeepNesting" in qn for qn in created_classes)
-
-    # Some nested classes might be detected depending on parser capabilities
-    # At minimum, the outer classes should be detected
 
 
 def test_complex_static_initialization(
@@ -1885,7 +1860,6 @@ public class StaticNestedInitialization {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify static initialization classes were parsed
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     enum_calls = [call for call in all_calls if call[0][0] == "Enum"]
@@ -1893,10 +1867,8 @@ public class StaticNestedInitialization {
     created_classes = get_qualified_names(class_calls)
     created_enums = get_qualified_names(enum_calls)
 
-    # Check main classes
     assert any("StaticInitialization" in qn for qn in created_classes)
     assert any("Singleton" in qn for qn in created_classes)
     assert any("StaticNestedInitialization" in qn for qn in created_classes)
 
-    # Check enum
     assert any("Status" in qn for qn in created_enums)

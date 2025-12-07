@@ -303,7 +303,6 @@ void demonstrateDesignatedInitializers() {
 
     project_name = cpp_designated_consteval_project.name
 
-    # Expected designated initializer functions and classes
     expected_functions = [
         f"{project_name}.designated_initializers.testBasicDesignatedInitializers",
         f"{project_name}.designated_initializers.testNestedDesignatedInitializers",
@@ -320,7 +319,6 @@ void demonstrateDesignatedInitializers() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -656,7 +654,6 @@ void demonstrateConsteval() {
 
     project_name = cpp_designated_consteval_project.name
 
-    # Expected consteval functions
     expected_functions = [
         f"{project_name}.consteval_functions.square",
         f"{project_name}.consteval_functions.power_of_two",
@@ -668,7 +665,6 @@ void demonstrateConsteval() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -990,14 +986,12 @@ void demonstrateLambdaInitCaptures() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive coverage of all advanced features
     total_calls = len(call_relationships)
 
     assert total_calls >= 15, (
         f"Expected at least 15 total calls across all tests, found {total_calls}"
     )
 
-    # Test that parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
     print(

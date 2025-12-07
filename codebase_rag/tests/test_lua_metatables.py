@@ -744,7 +744,6 @@ print("Found by ID:", registry:get_by_id(id1).data)
 
     weak_qn = f"{project.name}.weak_refs"
 
-    # WeakCache methods
     assert f"{weak_qn}.WeakCache:new" in fn_qns or f"{weak_qn}.WeakCache.new" in fn_qns
     assert f"{weak_qn}.WeakCache:set" in fn_qns or f"{weak_qn}.WeakCache.set" in fn_qns
     assert f"{weak_qn}.WeakCache:get" in fn_qns or f"{weak_qn}.WeakCache.get" in fn_qns
@@ -752,7 +751,6 @@ print("Found by ID:", registry:get_by_id(id1).data)
         f"{weak_qn}.WeakCache:size" in fn_qns or f"{weak_qn}.WeakCache.size" in fn_qns
     )
 
-    # Observable methods
     assert (
         f"{weak_qn}.Observable:new" in fn_qns or f"{weak_qn}.Observable.new" in fn_qns
     )
@@ -773,7 +771,6 @@ print("Found by ID:", registry:get_by_id(id1).data)
         or f"{weak_qn}.Observable.observer_count" in fn_qns
     )
 
-    # Registry methods
     assert f"{weak_qn}.Registry:new" in fn_qns or f"{weak_qn}.Registry.new" in fn_qns
     assert (
         f"{weak_qn}.Registry:register" in fn_qns

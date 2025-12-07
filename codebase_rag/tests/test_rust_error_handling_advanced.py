@@ -115,7 +115,6 @@ fn result_combinators() -> Result<String, Box<dyn std::error::Error>> {
     run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Result/Option functions are detected
     result_calls = [
         call for call in calls if "divide" in str(call) or "find_item" in str(call)
     ]
@@ -267,7 +266,6 @@ fn make_api_request(endpoint: &str) -> Result<String, ApiError> {
     run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify custom error types are detected
     error_calls = [
         call for call in calls if "MathError" in str(call) or "ApiError" in str(call)
     ]
@@ -424,7 +422,6 @@ fn recoverable_errors() -> Result<Vec<i32>, AppError> {
     run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify error propagation functions are detected
     propagation_calls = [
         call
         for call in calls
@@ -553,7 +550,6 @@ fn graceful_shutdown() {
     run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify panic handling functions are detected
     panic_calls = [
         call
         for call in calls
@@ -810,7 +806,6 @@ fn cached_data_source() -> Result<String> {
     run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify error pattern functions are detected
     pattern_calls = [
         call
         for call in calls

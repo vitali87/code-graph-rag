@@ -357,14 +357,12 @@ print("Middleware result:", result)
     decorators_qn = f"{project.name}.decorators"
     middleware_qn = f"{project.name}.middleware"
 
-    # Decorator functions
     assert f"{decorators_qn}.Decorators.timed" in fn_qns
     assert f"{decorators_qn}.Decorators.memoized" in fn_qns
     assert f"{decorators_qn}.Decorators.retry" in fn_qns
     assert f"{decorators_qn}.Decorators.rate_limited" in fn_qns
     assert f"{decorators_qn}.Decorators.logged" in fn_qns
 
-    # Middleware functions
     assert f"{middleware_qn}.Middleware.create_chain" in fn_qns
     assert f"{middleware_qn}.Middleware.logger" in fn_qns
     assert f"{middleware_qn}.Middleware.authenticator" in fn_qns
@@ -848,27 +846,21 @@ print("Is -2 positive and even?", is_positive_and_even(-2))
 
     functional_qn = f"{project.name}.functional"
 
-    # Higher-order functions
     assert f"{functional_qn}.Functional.map" in fn_qns
     assert f"{functional_qn}.Functional.filter" in fn_qns
     assert f"{functional_qn}.Functional.reduce" in fn_qns
     assert f"{functional_qn}.Functional.fold_right" in fn_qns
 
-    # Currying
     assert f"{functional_qn}.Functional.curry2" in fn_qns
     assert f"{functional_qn}.Functional.curry3" in fn_qns
 
-    # Composition
     assert f"{functional_qn}.Functional.compose" in fn_qns
     assert f"{functional_qn}.Functional.pipe" in fn_qns
 
-    # Lazy evaluation
     assert f"{functional_qn}.Functional.lazy" in fn_qns
 
-    # Maybe monad
     assert f"{functional_qn}.Functional.maybe" in fn_qns
 
-    # Predicates
     assert f"{functional_qn}.Functional.all" in fn_qns
     assert f"{functional_qn}.Functional.any" in fn_qns
     assert f"{functional_qn}.Functional.not_pred" in fn_qns

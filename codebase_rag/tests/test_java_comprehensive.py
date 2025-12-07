@@ -117,13 +117,11 @@ public abstract class Shape {
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Get all Interface node creation calls (Java interfaces are processed separately)
     interface_calls = get_nodes(mock_ingestor, "Interface")
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected class qualified names (including interfaces)
     expected_classes = {
         f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass",
         f"{project_name}.src.main.java.com.example.BasicClasses.ExtendedClass",
@@ -135,7 +133,6 @@ public abstract class Shape {
         f"{project_name}.src.main.java.com.example.BasicClasses.Drawable",
     }
 
-    # Verify all expected classes and interfaces were created
     missing_classes = expected_classes - created_classes
     missing_interfaces = expected_interfaces - created_interfaces
 
@@ -148,7 +145,6 @@ public abstract class Shape {
 
     created_methods = get_node_names(mock_ingestor, "Method")
 
-    # Expected method qualified names (constructors and methods with parameter signatures)
     expected_methods = {
         f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.BasicClass(String)",
         f"{project_name}.src.main.java.com.example.BasicClasses.BasicClass.getName()",
@@ -163,7 +159,6 @@ public abstract class Shape {
         f"{project_name}.src.main.java.com.example.BasicClasses.Shape.getColor()",
     }
 
-    # Verify all expected methods were created
     missing_methods = expected_methods - created_methods
     assert not missing_methods, (
         f"Missing expected methods: {sorted(list(missing_methods))}"
@@ -241,7 +236,6 @@ public class AnnotatedClass {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    # Get all node creation calls by type (Java has distinct node types)
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -252,7 +246,6 @@ public class AnnotatedClass {
     created_enums = get_qualified_names(enum_calls)
     created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected type qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.AnnotatedClass",
@@ -266,7 +259,6 @@ public class AnnotatedClass {
         f"{project_name}.src.main.java.com.example.EnumsAndAnnotations.Planet",
     }
 
-    # Verify all expected types were created in their respective categories
     missing_classes = expected_classes - created_classes
     missing_enums = expected_enums - created_enums
     missing_interfaces = expected_interfaces - created_interfaces
@@ -357,7 +349,6 @@ public class WildcardExample {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    # Get all node creation calls by type
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -366,7 +357,6 @@ public class WildcardExample {
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected type qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Generics.Container",
@@ -379,7 +369,6 @@ public class WildcardExample {
         f"{project_name}.src.main.java.com.example.Generics.Comparable",
     }
 
-    # Verify all expected types were created
     missing_classes = expected_classes - created_classes
     missing_interfaces = expected_interfaces - created_interfaces
 
@@ -463,7 +452,6 @@ public abstract class AbstractService {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Expected class qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Modifiers.Constants",
@@ -471,7 +459,6 @@ public abstract class AbstractService {
         f"{project_name}.src.main.java.com.example.Modifiers.AbstractService",
     }
 
-    # Verify all expected classes were created
     missing_classes = expected_classes - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -558,10 +545,8 @@ public class OuterClass {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Expected class qualified names
     project_name = java_project.name
 
-    # Verify all expected classes were created (some inner classes may not be detected)
     outer_class_found = any(
         f"{project_name}.src.main.java.com.example.InnerClasses.OuterClass" in qn
         for qn in created_classes
@@ -667,7 +652,6 @@ public class LambdaExamples {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    # Get all node creation calls by type
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
@@ -676,7 +660,6 @@ public class LambdaExamples {
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected type qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Lambdas.LambdaExamples",
@@ -687,7 +670,6 @@ public class LambdaExamples {
         f"{project_name}.src.main.java.com.example.Lambdas.StringProcessor",
     }
 
-    # Verify all expected types were created
     missing_classes = expected_classes - created_classes
     missing_interfaces = expected_interfaces - created_interfaces
 
@@ -805,7 +787,6 @@ public class ExceptionHandler {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Expected class qualified names
     project_name = java_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.Exceptions.CustomException",
@@ -813,7 +794,6 @@ public class ExceptionHandler {
         f"{project_name}.src.main.java.com.example.Exceptions.ExceptionHandler",
     }
 
-    # Verify all expected classes were created
     missing_classes = expected_classes - created_classes
     assert not missing_classes, (
         f"Missing expected exception classes: {sorted(list(missing_classes))}"

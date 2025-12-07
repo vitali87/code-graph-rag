@@ -12,7 +12,6 @@ def cpp_singleton_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_singleton_test"
     project_path.mkdir()
 
-    # storage/Storage.h - Singleton class header
     storage_dir = project_path / "storage"
     storage_dir.mkdir()
 
@@ -52,7 +51,6 @@ public:
 Storage* Storage::instance = nullptr;
 """)
 
-    # controllers/SceneController.h - Uses Storage singleton
     controllers_dir = project_path / "controllers"
     controllers_dir.mkdir()
 
@@ -81,7 +79,6 @@ public:
 };
 """)
 
-    # main.cpp - Entry point
     (project_path / "main.cpp").write_text("""
 #include "controllers/SceneController.h"
 #include "storage/Storage.h"
@@ -141,32 +138,23 @@ def test_cpp_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Expected cross-file calls
-    # Note: C++ header files with inline methods attribute calls to the class level,
-    # not individual methods, so we look for class-to-method calls
     expected_calls = [
-        # From SceneController class to Storage methods (cross-file)
         ("controllers.SceneController", "storage.Storage.Storage.getInstance"),
         ("controllers.SceneController", "storage.Storage.Storage.clearAll"),
         ("controllers.SceneController", "storage.Storage.Storage.save"),
         ("controllers.SceneController", "storage.Storage.Storage.load"),
-        # From main module to SceneController methods (cross-file)
         ("main", "controllers.SceneController.SceneController.loadMenuScene"),
         ("main", "controllers.SceneController.SceneController.loadGameScene"),
-        # From main module to Storage methods (cross-file)
         ("main", "storage.Storage.Storage.getInstance"),
         ("main", "storage.Storage.Storage.load"),
-        # From main.main to Application.start
         ("main.main", "main.Application.start"),
     ]
 
-    # Check for missing calls
     missing_calls = []
     for expected_caller, expected_callee in expected_calls:
         if (expected_caller, expected_callee) not in found_calls:
             missing_calls.append((expected_caller, expected_callee))
 
-    # Print detailed info if test fails
     if missing_calls:
         print(f"\n### Missing {len(missing_calls)} expected C++ cross-file calls:")
         for caller, callee in missing_calls:

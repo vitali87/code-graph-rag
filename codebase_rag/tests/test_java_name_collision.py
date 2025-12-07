@@ -31,7 +31,6 @@ def test_name_collision_prefers_explicit_import(
     """
     Test that explicit imports are respected when multiple classes share a name.
     """
-    # Create Helper class in utils package
     utils_helper = (
         java_collision_project
         / "src"
@@ -54,7 +53,6 @@ public class Helper {
 """
     )
 
-    # Create Helper class in other package (name collision!)
     other_helper = (
         java_collision_project
         / "src"
@@ -77,7 +75,6 @@ public class Helper {
 """
     )
 
-    # Create Service class that explicitly imports utils.Helper
     service = (
         java_collision_project
         / "src"
@@ -106,12 +103,9 @@ public class Service {
 
     run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")
 
-    # Check that CALLS relationships were created
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Count calls from Service to utils.Helper (should be 1)
     utils_calls = 0
-    # Count calls from Service to other.Helper (should be 0)
     other_calls = 0
 
     for call in call_relationships:
@@ -122,9 +116,7 @@ public class Service {
                 from_qn = from_tuple[2]
                 if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
                     to_qn = to_tuple[2]
-                    # Check if call is from Service
                     if "Service" in from_qn and "processData" in from_qn:
-                        # Check which Helper it calls
                         if "utils.Helper" in to_qn and "utilsMethod" in to_qn:
                             utils_calls += 1
                         elif "other.Helper" in to_qn:
@@ -148,7 +140,6 @@ def test_name_collision_prefers_same_package(
     """
     Test that when no explicit import exists, same-package classes are preferred.
     """
-    # Create Helper in same package as Service
     app_helper = (
         java_collision_project
         / "src"
@@ -171,7 +162,6 @@ public class Helper {
 """
     )
 
-    # Create Helper in distant package
     other_helper = (
         java_collision_project
         / "src"
@@ -194,7 +184,6 @@ public class Helper {
 """
     )
 
-    # Create Service without explicit import (relies on same package)
     service = (
         java_collision_project
         / "src"
@@ -221,12 +210,9 @@ public class Service {
 
     run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")
 
-    # Check that CALLS relationships were created
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Count calls from Service to app.Helper (should be 1)
     app_calls = 0
-    # Count calls from Service to other.Helper (should be 0)
     other_calls = 0
 
     for call in call_relationships:
@@ -237,9 +223,7 @@ public class Service {
                 from_qn = from_tuple[2]
                 if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
                     to_qn = to_tuple[2]
-                    # Check if call is from Service
                     if "Service" in from_qn and "processData" in from_qn:
-                        # Check which Helper it calls
                         if "app.Helper" in to_qn and "appMethod" in to_qn:
                             app_calls += 1
                         elif "other.Helper" in to_qn:

@@ -17,7 +17,6 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
 @pytest.fixture
 def temp_project_root(tmp_path: Path) -> Path:
     """Create a temporary project root directory with sample files."""
-    # Create a sample Python file
     sample_file = tmp_path / "sample.py"
     sample_file.write_text(
         '''def hello_world():
@@ -117,7 +116,6 @@ class TestSurgicalReplaceBasic:
 
         await mcp_registry.surgical_replace_code("sample.py", target, replacement)
 
-        # Verify the function was called with the exact parameters
         call_args = mcp_registry._file_editor_tool.function.call_args
         assert call_args.kwargs["file_path"] == "sample.py"
         assert call_args.kwargs["target_code"] == target
@@ -204,13 +202,11 @@ class TestSurgicalReplaceEdgeCases:
             "Successfully replaced code"
         )
 
-        # Target with specific indentation
         target = "    def add(self, a: int, b: int) -> int:"
         replacement = "    def multiply(self, a: int, b: int) -> int:"
 
         await mcp_registry.surgical_replace_code("sample.py", target, replacement)
 
-        # Verify whitespace was passed correctly
         call_args = mcp_registry._file_editor_tool.function.call_args
         assert call_args.kwargs["target_code"] == target
         assert call_args.kwargs["replacement_code"] == replacement
@@ -283,7 +279,6 @@ class TestSurgicalReplaceErrorHandling:
 
             assert "Error:" in result
         finally:
-            # Restore write permissions for cleanup
             readonly_file.chmod(0o644)
 
 
@@ -355,7 +350,6 @@ class TestSurgicalReplaceIntegration:
 
         await mcp_registry.surgical_replace_code("test.py", "old_code", "new_code")
 
-        # Verify the tool was called with correct parameters
         mcp_registry._file_editor_tool.function.assert_called_once_with(
             file_path="test.py", target_code="old_code", replacement_code="new_code"
         )
@@ -378,5 +372,4 @@ class TestSurgicalReplaceIntegration:
                 filename, list(content.split())[0], "replacement"
             )
 
-            # Should work for any text file
             assert result is not None

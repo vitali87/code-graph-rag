@@ -195,7 +195,6 @@ async fn concurrent_requests(client: &reqwest::Client) -> Result<Vec<User>, Box<
     run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify HTTP client functions are detected
     client_calls = [
         call
         for call in calls
@@ -438,7 +437,6 @@ mod middleware {
     run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Axum server functions are detected
     server_calls = [
         call
         for call in calls
@@ -849,7 +847,6 @@ impl GameServer {
     run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify WebSocket functions are detected
     websocket_calls = [
         call
         for call in calls
@@ -1135,7 +1132,6 @@ async fn batch_process_json_requests(requests: Vec<String>) -> Vec<ApiResponse<V
     run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify JSON API functions are detected
     json_calls = [
         call
         for call in calls
@@ -1602,7 +1598,6 @@ async fn migration_example() {
     run_updater(rust_web_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify database functions are detected
     db_calls = [
         call
         for call in calls

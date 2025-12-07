@@ -122,16 +122,13 @@ def test_imported_class_method_calls_are_detected(
 
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Filter for method calls only
     method_calls = [
         call
         for call in actual_calls
         if call.args[2][0] == "Method"  # callee label is "Method"
     ]
 
-    # Expected method calls on imported class instances
     expected_method_calls = [
-        # From UserService.handle_user_creation to imported User methods
         (
             f"{project_name}.services.user_service.UserService.handle_user_creation",
             f"{project_name}.models.user.User.get_name",
@@ -144,10 +141,8 @@ def test_imported_class_method_calls_are_detected(
             f"{project_name}.services.user_service.UserService.handle_user_creation",
             f"{project_name}.models.user.User.validate",
         ),
-        # From main.main to imported class methods
         (f"{project_name}.main.main", f"{project_name}.models.user.User.get_name"),
         (f"{project_name}.main.main", f"{project_name}.models.user.User.set_name"),
-        # Internal method calls (UserManager methods calling User methods)
         (
             f"{project_name}.models.user.UserManager.process_user",
             f"{project_name}.models.user.User.validate",
@@ -158,20 +153,17 @@ def test_imported_class_method_calls_are_detected(
         ),
     ]
 
-    # Convert actual calls to comparable format
     found_method_calls = set()
     for call in method_calls:
         caller_qn = call.args[0][2]  # qualified_name from (label, key, qualified_name)
         callee_qn = call.args[2][2]
         found_method_calls.add((caller_qn, callee_qn))
 
-    # Check that all expected method calls are found
     missing_calls = []
     for expected_caller, expected_callee in expected_method_calls:
         if (expected_caller, expected_callee) not in found_method_calls:
             missing_calls.append((expected_caller, expected_callee))
 
-    # Assert that we found all expected method calls
     if missing_calls:
         found_calls_list = sorted(list(found_method_calls))
         pytest.fail(
@@ -180,7 +172,6 @@ def test_imported_class_method_calls_are_detected(
             f"Found: {found_calls_list}"
         )
 
-    # Verify we found at least the expected number of method calls
     assert len(found_method_calls) >= len(expected_method_calls), (
         f"Expected at least {len(expected_method_calls)} method calls, "
         f"but found {len(found_method_calls)}"
@@ -200,8 +191,6 @@ def test_cross_file_object_method_chaining(
 
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Look for calls from UserService.batch_process to User.get_name
-    # This tests list comprehension method calls: [user.get_name() for user in users]
     batch_process_calls = [
         call
         for call in actual_calls
@@ -217,7 +206,6 @@ def test_cross_file_object_method_chaining(
         "indicating that method calls in list comprehensions are detected"
     )
 
-    # Look for chained method calls: user2.set_name() after user2 = self.manager.create_user()
     set_name_calls = [
         call
         for call in actual_calls

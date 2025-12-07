@@ -697,7 +697,6 @@ public class FunctionalInterfaces {
 
     run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the classes and interfaces were detected
     project_name = java_streams_project.name
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
@@ -1030,7 +1029,6 @@ public class OptionalPatterns {
 
     run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the classes were detected
     project_name = java_streams_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -1390,7 +1388,6 @@ public class MethodReferences {
 
     run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the classes were detected
     project_name = java_streams_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 

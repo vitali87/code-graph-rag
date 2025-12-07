@@ -287,7 +287,6 @@ fn box_raw_patterns() {
     run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Box patterns are detected
     box_calls = [
         call
         for call in calls
@@ -684,7 +683,6 @@ fn test_rc_trait_objects() {
     run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Rc patterns are detected
     rc_calls = [
         call
         for call in calls
@@ -1134,7 +1132,6 @@ fn test_arc_trait_objects() {
     run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Arc patterns are detected
     arc_calls = [
         call
         for call in calls
@@ -1555,7 +1552,6 @@ fn test_advanced_refcell() {
     run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify RefCell patterns are detected
     refcell_calls = [
         call
         for call in calls
@@ -2032,7 +2028,6 @@ fn test_thread_safe_ptr() {
     run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify custom smart pointer patterns are detected
     custom_calls = [
         call
         for call in calls

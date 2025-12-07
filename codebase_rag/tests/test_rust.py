@@ -20,7 +20,6 @@ def rust_project(temp_repo: Path) -> Path:
     (project_path / "tests").mkdir()
     (project_path / "examples").mkdir()
 
-    # Create Cargo.toml for package detection
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_test"
 version = "0.1.0"
@@ -116,7 +115,6 @@ fn demonstrate_functions() {
 
     project_name = rust_project.name
 
-    # Expected function definitions
     expected_functions = [
         f"{project_name}.basic_functions.simple_function",
         f"{project_name}.basic_functions.function_with_params",
@@ -132,7 +130,6 @@ fn demonstrate_functions() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify all expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -296,7 +293,6 @@ fn demonstrate_types() {
 
     project_name = rust_project.name
 
-    # Expected struct/enum/union definitions (treated as classes in the graph)
     expected_classes = [
         f"{project_name}.types.Point",
         f"{project_name}.types.Color",
@@ -311,16 +307,13 @@ fn demonstrate_types() {
         f"{project_name}.types.FloatOrInt",
     ]
 
-    # Get all Class node creation calls (structs/enums are treated as classes)
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify all expected types were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected types: {sorted(list(missing_classes))}"
     )
 
-    # Expected methods in impl blocks
     expected_methods = [
         f"{project_name}.types.Point.new",
         f"{project_name}.types.Point.distance",
@@ -481,7 +474,6 @@ fn demonstrate_traits() {
 
     project_name = rust_project.name
 
-    # Expected trait definitions (treated as classes in the graph)
     expected_traits = [
         f"{project_name}.traits.Display",
         f"{project_name}.traits.Clone",
@@ -493,7 +485,6 @@ fn demonstrate_traits() {
         f"{project_name}.traits.Drawable",
     ]
 
-    # Expected struct definitions
     expected_structs = [
         f"{project_name}.traits.Point",
         f"{project_name}.traits.Circle",
@@ -501,14 +492,12 @@ fn demonstrate_traits() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify all expected traits and structs were created
     all_expected = expected_traits + expected_structs
     missing_classes = set(all_expected) - created_classes
     assert not missing_classes, (
         f"Missing expected traits/structs: {sorted(list(missing_classes))}"
     )
 
-    # Expected trait methods
     expected_methods = [
         f"{project_name}.traits.Display.fmt",
         f"{project_name}.traits.Display.print",
@@ -521,7 +510,6 @@ fn demonstrate_traits() {
 
     created_methods = get_node_names(mock_ingestor, "Method")
 
-    # Verify some expected trait methods were created
     found_methods = set(expected_methods) & created_methods
     assert len(found_methods) >= 3, (
         f"Expected at least 3 trait methods, found: {sorted(list(found_methods))}"
@@ -533,7 +521,6 @@ def test_rust_modules_and_crates(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test Rust module system and crate organization."""
-    # Main module file
     main_file = rust_project / "modules.rs"
     main_file.write_text(
         """
@@ -615,7 +602,6 @@ fn demonstrate_modules() {
 """
     )
 
-    # Create file-based modules
     file_module = rust_project / "file_module.rs"
     file_module.write_text(
         """
@@ -657,7 +643,6 @@ pub fn multiply(a: i32, b: i32) -> i32 {
 
     project_name = rust_project.name
 
-    # Expected function definitions across modules
     expected_functions = [
         f"{project_name}.modules.inline_module.public_function",
         f"{project_name}.modules.inline_module.private_function",
@@ -672,13 +657,11 @@ pub fn multiply(a: i32, b: i32) -> i32 {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify some expected functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 5, (
         f"Expected at least 5 module functions, found: {sorted(list(found_functions))}"
     )
 
-    # Expected struct definitions
     expected_structs = [
         f"{project_name}.modules.public_module.PublicStruct",
         f"{project_name}.modules.public_module.CrateVisibleStruct",
@@ -687,7 +670,6 @@ pub fn multiply(a: i32, b: i32) -> i32 {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify some expected structs were created
     found_structs = set(expected_structs) & created_classes
     assert len(found_structs) >= 2, (
         f"Expected at least 2 module structs, found: {sorted(list(found_structs))}"
@@ -853,7 +835,6 @@ fn demonstrate_generics() {
 
     project_name = rust_project.name
 
-    # Expected generic struct definitions
     expected_structs = [
         f"{project_name}.generics.Pair",
         f"{project_name}.generics.BoundedStruct",
@@ -864,13 +845,11 @@ fn demonstrate_generics() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify generic structs were created
     found_structs = set(expected_structs) & created_classes
     assert len(found_structs) >= 3, (
         f"Expected at least 3 generic structs, found: {sorted(list(found_structs))}"
     )
 
-    # Expected generic functions
     expected_functions = [
         f"{project_name}.generics.generic_function",
         f"{project_name}.generics.longest",
@@ -882,7 +861,6 @@ fn demonstrate_generics() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify generic functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 4, (
         f"Expected at least 4 generic functions, found: {sorted(list(found_functions))}"
@@ -1065,7 +1043,6 @@ fn demonstrate_patterns() {
 
     project_name = rust_project.name
 
-    # Expected enum and struct definitions
     expected_types = [
         f"{project_name}.pattern_matching.Color",
         f"{project_name}.pattern_matching.Message",
@@ -1074,13 +1051,11 @@ fn demonstrate_patterns() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify types were created
     found_types = set(expected_types) & created_classes
     assert len(found_types) >= 3, (
         f"Expected at least 3 types, found: {sorted(list(found_types))}"
     )
 
-    # Expected functions with pattern matching
     expected_functions = [
         f"{project_name}.pattern_matching.match_color",
         f"{project_name}.pattern_matching.match_with_guards",
@@ -1095,7 +1070,6 @@ fn demonstrate_patterns() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify pattern matching functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 6, (
         f"Expected at least 6 pattern matching functions, found: {sorted(list(found_functions))}"
@@ -1296,7 +1270,6 @@ fn demonstrate_function_usage() {
 
     project_name = rust_project.name
 
-    # Expected functions that use closures
     expected_functions = [
         f"{project_name}.closures.demonstrate_closures",
         f"{project_name}.closures.apply_twice",
@@ -1309,13 +1282,11 @@ fn demonstrate_function_usage() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify closure-related functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 5, (
         f"Expected at least 5 closure functions, found: {sorted(list(found_functions))}"
     )
 
-    # Verify function calls are tracked (closures calling other functions)
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     closure_call_relationships = [
@@ -1530,7 +1501,6 @@ mod tests {
 
     project_name = rust_project.name
 
-    # Expected macro-generated and regular functions
     expected_functions = [
         f"{project_name}.macros.foo",  # Generated by create_function!
         f"{project_name}.macros.bar",  # Generated by create_function!
@@ -1541,13 +1511,11 @@ mod tests {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify some macro-related functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 2, (
         f"Expected at least 2 macro functions, found: {sorted(list(found_functions))}"
     )
 
-    # Expected macro-generated structs
     expected_structs = [
         f"{project_name}.macros.Person",  # Generated by create_struct!
         f"{project_name}.macros.Point",  # Generated by create_struct!
@@ -1557,7 +1525,6 @@ mod tests {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify macro-generated structs were created
     found_structs = set(expected_structs) & created_classes
     assert len(found_structs) >= 2, (
         f"Expected at least 2 macro structs, found: {sorted(list(found_structs))}"
@@ -1748,21 +1715,18 @@ impl Debug for CustomStruct {
 
     run_updater(rust_project, mock_ingestor)
 
-    # Get all import relationships
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     rust_imports = [
         call for call in import_relationships if "imports" in call.args[0][2]
     ]
 
-    # Should have many import relationships
     assert len(rust_imports) >= 10, (
         f"Expected at least 10 import relationships, found {len(rust_imports)}"
     )
 
     imported_modules = [call.args[2][2] for call in rust_imports]
 
-    # Verify specific standard library imports (should be module paths, not entity paths)
     expected_std_imports = [
         "std::collections",  # HashMap and HashSet should resolve to this module
         "std::io",  # self import and Read/Write traits resolve to this module
@@ -1780,7 +1744,6 @@ impl Debug for CustomStruct {
         f"Expected at least 3 std module imports, found {found_std_imports} matches"
     )
 
-    # Verify external crate imports
     expected_external_imports = [
         "serde",
         "serde_json",
@@ -1798,7 +1761,6 @@ impl Debug for CustomStruct {
 
     project_name = rust_project.name
 
-    # Expected functions that use imports
     expected_functions = [
         f"{project_name}.imports.demonstrate_imports",
         f"{project_name}.imports.complex_import_usage",
@@ -1808,7 +1770,6 @@ impl Debug for CustomStruct {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify some import-using functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 3, (
         f"Expected at least 3 import-related functions, found: {sorted(list(found_functions))}"
@@ -2043,7 +2004,6 @@ fn demonstrate_error_handling() {
 
     project_name = rust_project.name
 
-    # Expected error handling functions
     expected_functions = [
         f"{project_name}.error_handling.divide",
         f"{project_name}.error_handling.parse_number",
@@ -2061,21 +2021,17 @@ fn demonstrate_error_handling() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify error handling functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 8, (
         f"Expected at least 8 error handling functions, found: {sorted(list(found_functions))}"
     )
 
-    # Expected custom error enum
     expected_enums = [
         f"{project_name}.error_handling.CustomError",
     ]
 
-    # Get all Class node creation calls (enums are treated as classes)
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify custom error enum was created
     found_enums = set(expected_enums) & created_classes
     assert len(found_enums) >= 1, (
         f"Expected at least 1 custom error enum, found: {sorted(list(found_enums))}"
@@ -2391,7 +2347,6 @@ fn demonstrate_comprehensive_rust() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have comprehensive Rust coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive" in call.args[0][2]
     ]
@@ -2400,7 +2355,6 @@ fn demonstrate_comprehensive_rust() {
         f"Expected at least 5 comprehensive function calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have imports
     comprehensive_imports = [
         call for call in import_relationships if "comprehensive" in call.args[0][2]
     ]
@@ -2424,12 +2378,10 @@ fn demonstrate_comprehensive_rust() {
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that Rust parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
     project_name = rust_project.name
 
-    # Expected comprehensive types
     expected_types = [
         f"{project_name}.comprehensive.User",
         f"{project_name}.comprehensive.RepositoryError",
@@ -2439,7 +2391,6 @@ fn demonstrate_comprehensive_rust() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify comprehensive types were created
     found_types = set(expected_types) & created_classes
     assert len(found_types) >= 3, (
         f"Expected at least 3 comprehensive types, found: {sorted(list(found_types))}"
@@ -3152,7 +3103,6 @@ async fn test_async_features() -> Result<String, ComplexError> {
 
     project_name = rust_project.name
 
-    # Expected advanced edge case functions
     expected_functions = [
         f"{project_name}.advanced_edge_cases.apply_closure",
         f"{project_name}.advanced_edge_cases.complex_lifetime_function",
@@ -3175,13 +3125,11 @@ async fn test_async_features() -> Result<String, ComplexError> {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify advanced edge case functions were created
     found_functions = set(expected_functions) & created_functions
     assert len(found_functions) >= 10, (
         f"Expected at least 10 advanced edge case functions, found: {sorted(list(found_functions))}"
     )
 
-    # Expected advanced types (structs, enums, traits)
     expected_types = [
         f"{project_name}.advanced_edge_cases.ComplexLifetimes",
         f"{project_name}.advanced_edge_cases.ConstrainedStruct",
@@ -3200,7 +3148,6 @@ async fn test_async_features() -> Result<String, ComplexError> {
         f"{project_name}.advanced_edge_cases.HigherRankedImpl",
         f"{project_name}.advanced_edge_cases.MathImpl",
         f"{project_name}.advanced_edge_cases.ComplexError",
-        # Traits
         f"{project_name}.advanced_edge_cases.AssociatedLifetime",
         f"{project_name}.advanced_edge_cases.AsyncProcessor",
         f"{project_name}.advanced_edge_cases.UnsafeTrait",
@@ -3211,28 +3158,23 @@ async fn test_async_features() -> Result<String, ComplexError> {
         f"{project_name}.advanced_edge_cases.ComplexDefault",
     ]
 
-    # Get all Class node creation calls (structs/enums/traits are treated as classes)
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify advanced types were created
     found_types = set(expected_types) & created_classes
     assert len(found_types) >= 8, (
         f"Expected at least 8 advanced types, found: {sorted(list(found_types))}"
     )
 
-    # Verify complex relationships are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     edge_case_calls = [
         call for call in call_relationships if "advanced_edge_cases" in call.args[0][2]
     ]
 
-    # Should have multiple complex function calls tracked
     assert len(edge_case_calls) >= 8, (
         f"Expected at least 8 advanced edge case call relationships, found {len(edge_case_calls)}"
     )
 
-    # Verify import relationships for advanced features
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     edge_case_imports = [
@@ -3241,7 +3183,6 @@ async fn test_async_features() -> Result<String, ComplexError> {
         if "advanced_edge_cases" in call.args[0][2]
     ]
 
-    # Should have many imports for advanced std library features
     assert len(edge_case_imports) >= 5, (
         f"Expected at least 5 import relationships for advanced features, found {len(edge_case_imports)}"
     )

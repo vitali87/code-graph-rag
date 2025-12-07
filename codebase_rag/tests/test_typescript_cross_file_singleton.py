@@ -12,7 +12,6 @@ def ts_singleton_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "ts_singleton_test"
     project_path.mkdir()
 
-    # storage/Storage.ts - Singleton class
     storage_dir = project_path / "storage"
     storage_dir.mkdir()
 
@@ -45,7 +44,6 @@ export class Storage {
 }
 """)
 
-    # controllers/SceneController.ts - Uses Storage singleton
     controllers_dir = project_path / "controllers"
     controllers_dir.mkdir()
 
@@ -71,7 +69,6 @@ export class SceneController {
 }
 """)
 
-    # main.ts - Entry point
     (project_path / "main.ts").write_text("""
 import { SceneController } from './controllers/SceneController';
 import { Storage } from './storage/Storage';
@@ -131,9 +128,7 @@ def test_ts_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Expected cross-file calls
     expected_calls = [
-        # From SceneController.loadMenuScene to Storage (cross-file)
         (
             "controllers.SceneController.SceneController.loadMenuScene",
             "storage.Storage.Storage.getInstance",
@@ -150,7 +145,6 @@ def test_ts_singleton_pattern_cross_file_calls(
             "controllers.SceneController.SceneController.loadMenuScene",
             "storage.Storage.Storage.load",
         ),
-        # From SceneController.loadGameScene to Storage
         (
             "controllers.SceneController.SceneController.loadGameScene",
             "storage.Storage.Storage.getInstance",
@@ -159,7 +153,6 @@ def test_ts_singleton_pattern_cross_file_calls(
             "controllers.SceneController.SceneController.loadGameScene",
             "storage.Storage.Storage.save",
         ),
-        # From Application.start to SceneController
         (
             "main.Application.start",
             "controllers.SceneController.SceneController.loadMenuScene",
@@ -168,10 +161,8 @@ def test_ts_singleton_pattern_cross_file_calls(
             "main.Application.start",
             "controllers.SceneController.SceneController.loadGameScene",
         ),
-        # From Application.start to Storage
         ("main.Application.start", "storage.Storage.Storage.getInstance"),
         ("main.Application.start", "storage.Storage.Storage.load"),
-        # From main.main to Application.start
         ("main.main", "main.Application.start"),
     ]
 
@@ -194,7 +185,6 @@ def test_ts_singleton_pattern_cross_file_calls(
             f"See output above."
         )
 
-    # Verify minimum calls found
     assert len(found_calls) >= len(expected_calls), (
         f"Expected at least {len(expected_calls)} calls, found {len(found_calls)}"
     )

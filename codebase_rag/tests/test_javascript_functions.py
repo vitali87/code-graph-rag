@@ -100,7 +100,6 @@ const total = sum(1, 2, 3, 4, 5);
 
     project_name = javascript_functions_project.name
 
-    # Expected function definitions
     expected_functions = [
         f"{project_name}.function_declarations.greet",
         f"{project_name}.function_declarations.add",
@@ -116,13 +115,11 @@ const total = sum(1, 2, 3, 4, 5);
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify all expected functions were created
     for expected_qn in expected_functions:
         assert expected_qn in created_functions, f"Missing function: {expected_qn}"
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have calls between functions
     function_to_function_calls = [
         call
         for call in call_relationships
@@ -210,7 +207,6 @@ const quadrupled = doubler(8);
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Arrow functions should be captured
     arrow_functions = [
         call
         for call in function_calls
@@ -221,7 +217,6 @@ const quadrupled = doubler(8);
         f"Expected at least 10 arrow functions, found {len(arrow_functions)}"
     )
 
-    # Verify some specific arrow functions
     created_functions = get_qualified_names(function_calls)
     expected_arrow_functions = [
         f"{project_name}.arrow_functions.double",
@@ -346,7 +341,6 @@ async function orchestrate() {
 
     project_name = javascript_functions_project.name
 
-    # Expected async functions
     expected_async_functions = [
         f"{project_name}.async_functions.fetchData",
         f"{project_name}.async_functions.processData",
@@ -360,13 +354,11 @@ async function orchestrate() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify async functions were created
     for expected_qn in expected_async_functions:
         assert expected_qn in created_functions, (
             f"Missing async function: {expected_qn}"
         )
 
-    # Verify function calls between async functions
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     async_to_async_calls = [
@@ -485,7 +477,6 @@ const configValue = Config.get('apiUrl');
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # IIFEs should be captured as functions
     iife_functions = [
         call
         for call in function_calls
@@ -496,7 +487,6 @@ const configValue = Config.get('apiUrl');
         f"Expected at least 5 IIFE functions, found {len(iife_functions)}"
     )
 
-    # Should also capture function calls (the invocations)
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     iife_calls = [
@@ -627,7 +617,6 @@ const memoizedAdd = memoize(add5);
 
     project_name = javascript_functions_project.name
 
-    # Expected higher-order functions
     expected_hof_functions = [
         f"{project_name}.higher_order_functions.createAdder",
         f"{project_name}.higher_order_functions.createMultiplier",
@@ -645,13 +634,11 @@ const memoizedAdd = memoize(add5);
     function_calls = get_nodes(mock_ingestor, "Function")
     created_functions = get_qualified_names(function_calls)
 
-    # Verify higher-order functions were created
     for expected_qn in expected_hof_functions:
         assert expected_qn in created_functions, (
             f"Missing higher-order function: {expected_qn}"
         )
 
-    # Should also have nested functions (returned functions)
     nested_functions = [
         call
         for call in function_calls
@@ -813,13 +800,10 @@ const isValid = Person.isValidAge(30);
 
     run_updater(javascript_functions_project, mock_ingestor)
 
-    # Get all Method node creation calls (methods are often parsed as Method nodes)
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Also get Function nodes that might represent methods
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Combine both types
     all_methods = method_calls + function_calls
     method_definitions = [
         call
@@ -831,7 +815,6 @@ const isValid = Person.isValidAge(30);
         f"Expected at least 10 method definitions, found {len(method_definitions)}"
     )
 
-    # Verify method calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     method_calls = [
@@ -936,7 +919,6 @@ const orchestrated = orchestrator();
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive function coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -962,5 +944,4 @@ const orchestrated = orchestrator();
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that function parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -294,7 +294,6 @@ void demonstrateBasicRanges() {
 
     project_name = cpp_ranges_project.name
 
-    # Expected ranges-related functions and classes
     expected_functions = [
         f"{project_name}.basic_ranges.testBasicRangesConcepts",
         f"{project_name}.basic_ranges.testRangesAlgorithms",
@@ -309,7 +308,6 @@ void demonstrateBasicRanges() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -651,7 +649,6 @@ void demonstrateViewsAndAdaptors() {
 
     project_name = cpp_ranges_project.name
 
-    # Expected views-related functions
     expected_functions = [
         f"{project_name}.views_adaptors.testBasicViews",
         f"{project_name}.views_adaptors.testAdvancedViews",
@@ -662,7 +659,6 @@ void demonstrateViewsAndAdaptors() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -986,7 +982,6 @@ void demonstrateRangeGraphProcessing() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive range processing coverage
     range_processing_calls = [
         call
         for call in call_relationships
@@ -997,5 +992,4 @@ void demonstrateRangeGraphProcessing() {
         f"Expected at least 5 range processing calls, found {len(range_processing_calls)}"
     )
 
-    # Test that ranges parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

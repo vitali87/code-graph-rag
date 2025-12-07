@@ -375,7 +375,6 @@ function cleanup() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check for error handling functions
     expected_functions = [
         "basicTryCatch",
         "tryCatchFinally",
@@ -395,7 +394,6 @@ function cleanup() {
         f"Expected at least 4 error handling functions, found {len(error_handling_functions)}"
     )
 
-    # Check for DataProcessor class
     class_calls = get_nodes(mock_ingestor, "Class")
 
     data_processor_class = [
@@ -782,7 +780,6 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Check for custom error classes
     expected_error_classes = [
         "CustomError",
         "ValidationError",
@@ -804,7 +801,6 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
         f"Expected at least 5 custom error classes, found {len(custom_error_classes)}"
     )
 
-    # Check inheritance relationships for error classes
     inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     error_inheritance = [
@@ -1266,7 +1262,6 @@ testGracefulDegradation();
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Check for async error handling functions
     async_error_functions = [
         call
         for call in function_calls
@@ -1281,7 +1276,6 @@ testGracefulDegradation();
         f"Expected at least 4 async error handling functions, found {len(async_error_functions)}"
     )
 
-    # Check for error handling classes
     class_calls = get_nodes(mock_ingestor, "Class")
 
     async_error_classes = [
@@ -1438,7 +1432,6 @@ async function performAsyncOperation(data) {
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive error handling
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1449,7 +1442,6 @@ async function performAsyncOperation(data) {
         f"Expected at least 3 comprehensive error calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all error handling components
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     comprehensive_nodes = [

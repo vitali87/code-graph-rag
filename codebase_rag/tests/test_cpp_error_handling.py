@@ -389,7 +389,6 @@ void demonstrateBasicExceptionHandling() {
 
     project_name = cpp_error_handling_project.name
 
-    # Expected classes with exception handling
     expected_classes = [
         f"{project_name}.basic_exceptions.FileProcessingError",
         f"{project_name}.basic_exceptions.NetworkException",
@@ -414,7 +413,6 @@ void demonstrateBasicExceptionHandling() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -797,7 +795,6 @@ void demonstrateRAIIPatterns() {
 
     project_name = cpp_error_handling_project.name
 
-    # Expected classes with RAII patterns
     expected_classes = [
         f"{project_name}.raii_patterns.FileHandle",
         f"{project_name}.raii_patterns.MemoryBuffer",
@@ -897,7 +894,6 @@ void demonstrateComprehensiveErrorHandling() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive error handling coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -908,5 +904,4 @@ void demonstrateComprehensiveErrorHandling() {
         f"Expected at least 2 comprehensive error handling calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that error handling parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -12,7 +12,6 @@ def cpp_modules_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_modules_test"
     project_path.mkdir()
 
-    # Create module structure
     (project_path / "modules").mkdir()
     (project_path / "src").mkdir()
     (project_path / "interfaces").mkdir()
@@ -25,7 +24,6 @@ def test_basic_module_interface(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test basic module interface declarations and exports."""
-    # Create module interface file
     interface_file = cpp_modules_project / "interfaces" / "math_module.ixx"
     interface_file.write_text(
         """
@@ -175,7 +173,6 @@ namespace math::internal {
 """
     )
 
-    # Create implementation file
     impl_file = cpp_modules_project / "src" / "math_module.cpp"
     impl_file.write_text(
         """
@@ -269,7 +266,6 @@ namespace math {
 
     project_name = cpp_modules_project.name
 
-    # Expected module-related classes and functions
     expected_classes = [
         f"{project_name}.math_module.Calculator",
         f"{project_name}.math_module.MathProcessor",
@@ -295,7 +291,6 @@ namespace math {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -307,7 +302,6 @@ def test_module_partitions(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test module partitions and internal module structure."""
-    # Create primary module interface
     primary_interface = cpp_modules_project / "interfaces" / "data_structures.ixx"
     primary_interface.write_text(
         """
@@ -349,7 +343,6 @@ export namespace ds {
 """
     )
 
-    # Create container partition
     container_partition = cpp_modules_project / "modules" / "containers.ixx"
     container_partition.write_text(
         """
@@ -510,7 +503,6 @@ export namespace ds::containers {
 """
     )
 
-    # Create algorithms partition
     algorithms_partition = cpp_modules_project / "modules" / "algorithms.ixx"
     algorithms_partition.write_text(
         """
@@ -600,7 +592,6 @@ export namespace ds::algorithms {
 
     project_name = cpp_modules_project.name
 
-    # Expected partition-related classes and functions
     expected_classes = [
         f"{project_name}.containers.DynamicArray",
         f"{project_name}.containers.LinkedList",
@@ -619,7 +610,6 @@ def test_module_imports_usage(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test module imports and usage patterns."""
-    # Create a file that uses the modules
     usage_file = cpp_modules_project / "src" / "module_usage.cpp"
     usage_file.write_text(
         """
@@ -796,7 +786,6 @@ void showcaseModuleFeatures() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have module import relationships
     [
         call
         for call in imports_relationships
@@ -807,7 +796,6 @@ void showcaseModuleFeatures() {
         )
     ]
 
-    # Should have calls to module functions
     module_function_calls = [
         call for call in call_relationships if "module_usage" in call.args[0][2]
     ]

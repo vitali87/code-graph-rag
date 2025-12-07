@@ -274,7 +274,6 @@ end
     safe_ops_qn = f"{project.name}.safe_ops"
     error_types_qn = f"{project.name}.error_types"
 
-    # SafeOps functions
     assert f"{safe_ops_qn}.SafeOps.safe_divide" in fn_qns
     assert f"{safe_ops_qn}.SafeOps.safe_read_file" in fn_qns
     assert f"{safe_ops_qn}.SafeOps.safe_json_decode" in fn_qns
@@ -283,7 +282,6 @@ end
     assert f"{safe_ops_qn}.SafeOps.try_multiple" in fn_qns
     assert f"{safe_ops_qn}.SafeOps.retry_with_backoff" in fn_qns
 
-    # ErrorTypes functions
     assert (
         f"{error_types_qn}.ErrorTypes.ValidationError:new" in fn_qns
         or f"{error_types_qn}.ErrorTypes.ValidationError.new" in fn_qns
@@ -645,7 +643,6 @@ end
     debugger_qn = f"{project.name}.debugger"
     validators_qn = f"{project.name}.validators"
 
-    # Verify Debugger functions
     assert f"{debugger_qn}.Debugger.print_stack" in fn_qns
     assert f"{debugger_qn}.Debugger.inspect_locals" in fn_qns
     assert f"{debugger_qn}.Debugger.inspect_upvalues" in fn_qns
@@ -655,7 +652,6 @@ end
     assert f"{debugger_qn}.Debugger.safe_require" in fn_qns
     assert f"{debugger_qn}.Debugger.create_error_boundary" in fn_qns
 
-    # Verify Validators functions
     assert f"{validators_qn}.Validators.validate_type" in fn_qns
     assert f"{validators_qn}.Validators.validate_range" in fn_qns
     assert f"{validators_qn}.Validators.validate_string_length" in fn_qns
@@ -902,7 +898,6 @@ end
 
     exceptions_qn = f"{project.name}.exceptions"
 
-    # Verify exception functions are detected
     assert (
         f"{exceptions_qn}.Exception:new" in fn_qns
         or f"{exceptions_qn}.Exception.new" in fn_qns
@@ -1152,7 +1147,6 @@ print("Degraded operation result:", result, "degraded:", degraded)
 
     resilience_qn = f"{project.name}.resilience"
 
-    # Verify resilience functions
     assert f"{resilience_qn}.Resilience.with_timeout" in fn_qns
     assert f"{resilience_qn}.Resilience.create_bulkhead" in fn_qns
     assert f"{resilience_qn}.Resilience.create_health_checker" in fn_qns

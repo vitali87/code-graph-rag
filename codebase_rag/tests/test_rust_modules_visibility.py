@@ -12,7 +12,6 @@ def rust_modules_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_modules_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure with modules
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Module system test crate")
     (project_path / "src" / "utils").mkdir()
@@ -221,7 +220,6 @@ mod windows_specific {
     run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify module structures are detected
     module_calls = [
         call
         for call in calls
@@ -512,7 +510,6 @@ mod database {
     run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify use statements and imports are detected
     import_calls = [
         call
         for call in calls
@@ -794,7 +791,6 @@ mod external_integration {
     run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify path resolution is detected
     path_calls = [
         call
         for call in calls
@@ -1144,7 +1140,6 @@ pub fn test_visibility_patterns() {
     run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify visibility patterns are detected
     visibility_calls = [
         call
         for call in calls
@@ -1477,7 +1472,6 @@ pub fn test_all_attributes() {
     run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify module attributes are detected
     attr_calls = [
         call
         for call in calls

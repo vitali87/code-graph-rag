@@ -158,15 +158,12 @@ impl Printable for Rectangle {
     run_updater(rust_traits_project, mock_ingestor, skip_if_missing="rust")
     calls = mock_ingestor.method_calls
 
-    # Verify traits are detected
     drawable_calls = [call for call in calls if "Drawable" in str(call)]
     assert len(drawable_calls) > 0, "Drawable trait should be detected"
 
     printable_calls = [call for call in calls if "Printable" in str(call)]
     assert len(printable_calls) > 0, "Printable trait should be detected"
 
-    # Verify trait implementations by checking for methods on concrete types
-    # that implement the trait methods (Circle and Rectangle implementing Drawable/Printable)
     trait_impl_calls = [
         call
         for call in calls
@@ -338,14 +335,12 @@ impl<T: std::hash::Hash + Eq> Collectable<T> for SetCollector {
     run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify generic types are detected
     pair_calls = [call for call in calls if "Pair" in str(call)]
     assert len(pair_calls) > 0, "Generic Pair struct should be detected"
 
     keyvalue_calls = [call for call in calls if "KeyValue" in str(call)]
     assert len(keyvalue_calls) > 0, "Generic KeyValue struct should be detected"
 
-    # Verify generic functions
     generic_func_calls = [
         call
         for call in calls
@@ -560,7 +555,6 @@ impl Factory for StringFactory {
     run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify traits with associated types are detected
     parser_calls = [call for call in calls if "Parser" in str(call)]
     assert len(parser_calls) > 0, (
         "Parser trait with associated types should be detected"
@@ -569,7 +563,6 @@ impl Factory for StringFactory {
     database_calls = [call for call in calls if "Database" in str(call)]
     assert len(database_calls) > 0, "Database trait should be detected"
 
-    # Verify implementations with associated types
     json_calls = [call for call in calls if "JsonParser" in str(call)]
     assert len(json_calls) > 0, "JsonParser implementation should be detected"
 
@@ -768,7 +761,6 @@ pub fn compare_drawable_areas<T: AsRef<dyn Drawable>>(a: T, b: T) -> std::cmp::O
     run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify trait objects are handled
     drawable_calls = [call for call in calls if "Drawable" in str(call)]
     assert len(drawable_calls) > 0, "Drawable trait for objects should be detected"
 
@@ -942,7 +934,6 @@ where
     run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify HRTB functions are detected
     hrtb_calls = [
         call
         for call in calls
@@ -953,7 +944,6 @@ where
     ]
     assert len(hrtb_calls) > 0, "HRTB functions should be detected"
 
-    # Verify complex generic types
     processor_calls = [call for call in calls if "Processor" in str(call)]
     assert len(processor_calls) > 0, "Processor trait with HRTB should be detected"
 

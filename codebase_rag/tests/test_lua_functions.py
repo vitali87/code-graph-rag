@@ -54,7 +54,6 @@ local r = compute(4, 2)
     )
     updater.run()
 
-    # Function nodes should be created for M.mul, M.use, compute, local_add
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -72,6 +71,5 @@ local r = compute(4, 2)
 
     assert any(qn.endswith(s) for s in expected_suffixes for qn in fn_qns), fn_qns
 
-    # Calls should include call to compute and inline anonymous function
     call_rels = get_relationships(mock_ingestor, "CALLS")
     assert len(call_rels) >= 1

@@ -227,7 +227,6 @@ void validateLambdaCaptures() {
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Get all relationships to verify parsing doesn't break other functionality
     all_relationships = [
         call for call in mock_ingestor.ensure_relationship_batch.call_args_list
     ]

@@ -237,7 +237,6 @@ void demonstrateBasicGenerators() {
 
     project_name = cpp_coroutines_project.name
 
-    # Expected coroutine-related functions and classes
     expected_classes = [
         f"{project_name}.basic_generators.Generator",
     ]
@@ -259,7 +258,6 @@ void demonstrateBasicGenerators() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -534,7 +532,6 @@ void demonstrateAsyncAwait() {
 
     project_name = cpp_coroutines_project.name
 
-    # Expected async/await functions
     expected_functions = [
         f"{project_name}.async_await.calculateAsync",
         f"{project_name}.async_await.fetchDataAsync",
@@ -546,7 +543,6 @@ void demonstrateAsyncAwait() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -886,7 +882,6 @@ void demonstrateCustomCoroutines() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive coroutine coverage
     custom_coroutine_calls = [
         call for call in call_relationships if "custom_coroutines" in call.args[0][2]
     ]
@@ -895,5 +890,4 @@ void demonstrateCustomCoroutines() {
         f"Expected at least 3 custom coroutine calls, found {len(custom_coroutine_calls)}"
     )
 
-    # Test that coroutine parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

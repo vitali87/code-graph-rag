@@ -12,15 +12,12 @@ def singleton_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "test_singleton_app"
     project_path.mkdir()
 
-    # Create package structure mirroring Java: main.Storage.Storage pattern
     (project_path / "__init__.py").touch()
 
-    # Create storage package (like main.Storage in Java)
     storage_pkg = project_path / "storage"
     storage_pkg.mkdir()
     (storage_pkg / "__init__.py").touch()
 
-    # storage/storage.py - Singleton class (like Storage.java)
     with open(storage_pkg / "storage.py", "w") as f:
         f.write("""
 class Storage:
@@ -52,12 +49,10 @@ class Storage:
         return self.data.get(key)
 """)
 
-    # Create scene_controller package (like main.SceneController in Java)
     scene_pkg = project_path / "scene_controller"
     scene_pkg.mkdir()
     (scene_pkg / "__init__.py").touch()
 
-    # scene_controller/scene_handler.py - Uses Storage singleton
     with open(scene_pkg / "scene_handler.py", "w") as f:
         f.write("""
 from storage.storage import Storage
@@ -83,7 +78,6 @@ class SceneHandler:
         return True
 """)
 
-    # Main application file (like Main.java)
     with open(project_path / "main.py", "w") as f:
         f.write("""
 from scene_controller.scene_handler import SceneHandler
@@ -124,11 +118,9 @@ def deep_hierarchy_project(temp_repo: Path) -> Path:
 
     (project_path / "__init__.py").touch()
 
-    # Create deeply nested package structure
     validators_pkg = project_path / "app" / "services" / "data" / "processors"
     validators_pkg.mkdir(parents=True)
 
-    # Create __init__.py for all levels
     for parent in [
         project_path / "app",
         project_path / "app" / "services",
@@ -182,7 +174,6 @@ class Controller:
         return is_processed and is_valid
 """)
 
-    # main.py at root
     with open(project_path / "main.py", "w") as f:
         f.write("""
 from app.controller import Controller
@@ -215,7 +206,6 @@ def test_singleton_pattern_cross_file_calls(
         caller_qn = call.args[0][2]
         callee_qn = call.args[2][2]
 
-        # Strip project name for easier comparison
         if caller_qn.startswith(f"{project_name}."):
             caller_short = caller_qn[len(project_name) + 1 :]
         else:
@@ -228,9 +218,7 @@ def test_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Expected cross-file calls (similar to Java TheNews pattern)
     expected_calls = [
-        # From SceneHandler.load_menu_scene to Storage (cross-file)
         (
             "scene_controller.scene_handler.SceneHandler.load_menu_scene",
             "storage.storage.Storage.get_instance",
@@ -247,7 +235,6 @@ def test_singleton_pattern_cross_file_calls(
             "scene_controller.scene_handler.SceneHandler.load_menu_scene",
             "storage.storage.Storage.load",
         ),  # Instance method
-        # From SceneHandler.load_game_scene to Storage
         (
             "scene_controller.scene_handler.SceneHandler.load_game_scene",
             "storage.storage.Storage.get_instance",
@@ -256,7 +243,6 @@ def test_singleton_pattern_cross_file_calls(
             "scene_controller.scene_handler.SceneHandler.load_game_scene",
             "storage.storage.Storage.save",
         ),
-        # From main.Application.start to SceneHandler (cross-file)
         (
             "main.Application.start",
             "scene_controller.scene_handler.SceneHandler.load_menu_scene",
@@ -265,20 +251,16 @@ def test_singleton_pattern_cross_file_calls(
             "main.Application.start",
             "scene_controller.scene_handler.SceneHandler.load_game_scene",
         ),
-        # From main.Application.start to Storage (cross-file)
         ("main.Application.start", "storage.storage.Storage.get_instance"),
         ("main.Application.start", "storage.storage.Storage.load"),
-        # From main.main to Application.start
         ("main.main", "main.Application.start"),
     ]
 
-    # Check for missing calls
     missing_calls = []
     for expected_caller, expected_callee in expected_calls:
         if (expected_caller, expected_callee) not in found_calls:
             missing_calls.append((expected_caller, expected_callee))
 
-    # Print detailed info if test fails
     if missing_calls:
         print(f"\n### Missing {len(missing_calls)} expected cross-file calls:")
         for caller, callee in missing_calls:
@@ -325,9 +307,7 @@ def test_deep_package_hierarchy_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Expected calls across deep hierarchies
     expected_calls = [
-        # From processor to deeply nested validator
         (
             "app.services.processor.process_data",
             "app.services.data.processors.validator.validate_input",
@@ -336,19 +316,15 @@ def test_deep_package_hierarchy_cross_file_calls(
             "app.services.processor.process_data",
             "app.services.data.processors.validator.DataValidator.validate_complex",
         ),
-        # From controller to processor (one level up)
         (
             "app.controller.Controller.handle_request",
             "app.services.processor.process_data",
         ),
-        # From controller directly to deeply nested validator
         (
             "app.controller.Controller.handle_request",
             "app.services.data.processors.validator.DataValidator.validate_complex",
         ),
-        # From main to controller
         ("main.run", "app.controller.Controller.handle_request"),
-        # Internal call within validator module
         (
             "app.services.data.processors.validator.DataValidator.validate_complex",
             "app.services.data.processors.validator.validate_input",
@@ -387,16 +363,13 @@ def test_chained_cross_file_calls(
 
     project_name = singleton_project.name
 
-    # Get all CALLS
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Build a call graph to trace the chain
     call_graph: dict[str, set[str]] = {}
     for call in actual_calls:
         caller = call.args[0][2]
         callee = call.args[2][2]
 
-        # Strip project prefix
         if caller.startswith(f"{project_name}."):
             caller = caller[len(project_name) + 1 :]
         if callee.startswith(f"{project_name}."):
@@ -406,28 +379,23 @@ def test_chained_cross_file_calls(
             call_graph[caller] = set()
         call_graph[caller].add(callee)
 
-    # Verify the chain exists
-    # main.main -> main.Application.start
     assert "main.main" in call_graph, "main.main should make calls"
     assert "main.Application.start" in call_graph["main.main"], (
         "main.main should call Application.start"
     )
 
-    # main.Application.start -> scene_controller.scene_handler.SceneHandler.load_menu_scene
     assert "main.Application.start" in call_graph, "Application.start should make calls"
     assert (
         "scene_controller.scene_handler.SceneHandler.load_menu_scene"
         in call_graph["main.Application.start"]
     ), "Application.start should call SceneHandler.load_menu_scene"
 
-    # scene_controller.scene_handler.SceneHandler.load_menu_scene -> storage.storage.Storage.get_instance
     scene_method = "scene_controller.scene_handler.SceneHandler.load_menu_scene"
     assert scene_method in call_graph, "SceneHandler.load_menu_scene should make calls"
     assert "storage.storage.Storage.get_instance" in call_graph[scene_method], (
         "SceneHandler.load_menu_scene should call Storage.get_instance"
     )
 
-    # Verify we have at least 3 levels in the chain
     chain_depth = 0
     if "main.main" in call_graph:
         chain_depth = 1

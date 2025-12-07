@@ -375,7 +375,6 @@ void demonstrateFriendFunctions() {
 
     project_name = cpp_friend_project.name
 
-    # Expected classes with friend relationships
     expected_classes = [
         f"{project_name}.friend_functions.Complex",
         f"{project_name}.friend_functions.ComplexAnalyzer",
@@ -398,7 +397,6 @@ void demonstrateFriendFunctions() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -728,7 +726,6 @@ void demonstrateTemplateFriends() {
 
     project_name = cpp_friend_project.name
 
-    # Expected template classes with friend relationships
     expected_functions = [
         f"{project_name}.friend_templates.testTemplateFriends",
         f"{project_name}.friend_templates.demonstrateTemplateFriends",
@@ -736,7 +733,6 @@ void demonstrateTemplateFriends() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     found_functions = [func for func in expected_functions if func in created_functions]
     assert len(found_functions) >= 1, (
         f"Expected at least 1 friend template function, found {len(found_functions)}: {found_functions}"
@@ -953,7 +949,6 @@ void demonstrateComprehensiveFriends() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive friend relationship coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -964,5 +959,4 @@ void demonstrateComprehensiveFriends() {
         f"Expected at least 3 comprehensive friend calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that friend parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

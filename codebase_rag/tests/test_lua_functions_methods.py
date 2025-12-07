@@ -47,6 +47,5 @@ local r = pipeline(10)
 
     run_updater(project, mock_ingestor)
 
-    # Should have CALLS relationships at least from pipeline
     calls = get_relationships(mock_ingestor, "CALLS")
     assert len(calls) >= 1, calls

@@ -18,7 +18,6 @@ def test_lua_require_imports(
     project_path = temp_repo / "lua_imports_test"
     project_path.mkdir()
 
-    # Local module that should resolve to project-local module path
     (project_path / "utils.lua").write_text(
         """
 local M = {}
@@ -35,7 +34,6 @@ return M
         else "local utils = require './utils'"
     )
 
-    # External-like module and nested package style
     require_json = (
         "local json = require('json')"
         if style == "parens"
@@ -75,16 +73,12 @@ end
     project_name = project_path.name
     module_qn = f"{project_name}.main"
 
-    # Expect mapping of locals to module paths. We'll refine impl to satisfy this.
     import_mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
 
-    # utils should resolve to project-local module
     assert "utils" in import_mapping
     assert import_mapping["utils"].endswith("utils"), import_mapping["utils"]
 
-    # json external stays as package name
     assert import_mapping.get("json") in {"json", "json.default", "json.json"}
 
-    # nested package kept
     assert "mod" in import_mapping
     assert "pkg.mod" in import_mapping["mod"]

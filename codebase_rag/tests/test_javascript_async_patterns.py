@@ -265,7 +265,6 @@ function handleProfileError(error) {
 
     project_name = javascript_async_project.name
 
-    # Expected Promise-related functions
     expected_promise_functions = [
         f"{project_name}.promise_patterns.createSimplePromise",
         f"{project_name}.promise_patterns.fetchUserData",
@@ -281,7 +280,6 @@ function handleProfileError(error) {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify Promise functions were created
     found_promise_functions = [
         func for func in expected_promise_functions if func in created_functions
     ]
@@ -289,7 +287,6 @@ function handleProfileError(error) {
         f"Expected at least 7 Promise functions, found {len(found_promise_functions)}"
     )
 
-    # Verify function calls are tracked (Promise chaining)
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     promise_calls = [
@@ -630,7 +627,6 @@ function delay(ms) {
 
     project_name = javascript_async_project.name
 
-    # Expected async/await functions
     expected_async_functions = [
         f"{project_name}.async_await_patterns.fetchUser",
         f"{project_name}.async_await_patterns.saveUser",
@@ -644,7 +640,6 @@ function delay(ms) {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify async functions were created
     found_async_functions = [
         func for func in expected_async_functions if func in created_functions
     ]
@@ -652,14 +647,12 @@ function delay(ms) {
         f"Expected at least 6 async functions, found {len(found_async_functions)}"
     )
 
-    # Expected classes with async methods
     expected_classes = [
         f"{project_name}.async_await_patterns.UserService",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify classes with async methods were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 class with async methods, found {len(found_classes)}"
@@ -998,7 +991,6 @@ fetchUserPromise(789)
 
     project_name = javascript_async_project.name
 
-    # Expected callback functions
     expected_callback_functions = [
         f"{project_name}.callback_patterns.fetchUserWithCallback",
         f"{project_name}.callback_patterns.saveUserWithCallback",
@@ -1013,7 +1005,6 @@ fetchUserPromise(789)
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify callback functions were created
     found_callback_functions = [
         func for func in expected_callback_functions if func in created_functions
     ]
@@ -1021,14 +1012,12 @@ fetchUserPromise(789)
         f"Expected at least 6 callback functions, found {len(found_callback_functions)}"
     )
 
-    # Expected classes
     expected_classes = [
         f"{project_name}.callback_patterns.EventEmitter",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify EventEmitter class was created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 callback-based class, found {len(found_classes)}"
@@ -1333,7 +1322,6 @@ consumeAsyncGenerator();
 
     project_name = javascript_async_project.name
 
-    # Expected generator functions
     expected_generator_functions = [
         f"{project_name}.generator_patterns.simpleGenerator",
         f"{project_name}.generator_patterns.rangeGenerator",
@@ -1351,7 +1339,6 @@ consumeAsyncGenerator();
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify generator functions were created
     found_generator_functions = [
         func for func in expected_generator_functions if func in created_functions
     ]
@@ -1531,7 +1518,6 @@ function delay(ms) {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive async coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_async" in call.args[0][2]
     ]
@@ -1555,5 +1541,4 @@ function delay(ms) {
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that async parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

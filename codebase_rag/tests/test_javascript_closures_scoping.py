@@ -201,7 +201,6 @@ const varResults = varFunctions.map(fn => fn());
 
     project_name = javascript_closures_project.name
 
-    # Expected functions demonstrating closures
     expected_functions = [
         f"{project_name}.basic_closures.outerFunction",
         f"{project_name}.basic_closures.createCounter",
@@ -219,13 +218,11 @@ const varResults = varFunctions.map(fn => fn());
     function_calls = get_nodes(mock_ingestor, "Function")
     created_functions = get_qualified_names(function_calls)
 
-    # Verify closure functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify nested functions are captured
     nested_functions = [
         call
         for call in function_calls
@@ -486,7 +483,6 @@ tryCatchScope();
 
     project_name = javascript_closures_project.name
 
-    # Expected functions demonstrating scoping
     expected_scoping_functions = [
         f"{project_name}.variable_scoping.functionScope",
         f"{project_name}.variable_scoping.blockScope",
@@ -500,7 +496,6 @@ tryCatchScope();
     function_calls = get_nodes(mock_ingestor, "Function")
     created_functions = get_qualified_names(function_calls)
 
-    # Verify scoping functions were created
     found_scoping_functions = [
         func for func in expected_scoping_functions if func in created_functions
     ]
@@ -508,7 +503,6 @@ tryCatchScope();
         f"Expected at least 5 scoping functions, found {len(found_scoping_functions)}"
     )
 
-    # Should have nested functions demonstrating scope chain
     nested_scoping_functions = [
         call
         for call in function_calls
@@ -762,7 +756,6 @@ const nestedResult = nested();
 
     project_name = javascript_closures_project.name
 
-    # Expected functions demonstrating hoisting
     expected_hoisting_functions = [
         f"{project_name}.hoisting_behavior.hoistedFunction",
         f"{project_name}.hoisting_behavior.temporalDeadZoneExample",
@@ -778,7 +771,6 @@ const nestedResult = nested();
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify hoisting functions were created
     found_hoisting_functions = [
         func for func in expected_hoisting_functions if func in created_functions
     ]
@@ -786,7 +778,6 @@ const nestedResult = nested();
         f"Expected at least 7 hoisting functions, found {len(found_hoisting_functions)}"
     )
 
-    # Should have classes demonstrating hoisting behavior
     class_calls = get_nodes(mock_ingestor, "Class")
 
     hoisting_classes = [
@@ -1141,7 +1132,6 @@ const allConfig = Config.getAll();
 
     run_updater(javascript_closures_project, mock_ingestor)
 
-    # Verify module patterns create proper function relationships
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     module_calls = [
@@ -1152,7 +1142,6 @@ const allConfig = Config.getAll();
         f"Expected at least 15 function calls in module patterns, found {len(module_calls)}"
     )
 
-    # Should have many functions from IIFE patterns
     function_calls = get_nodes(mock_ingestor, "Function")
 
     module_functions = [
@@ -1342,7 +1331,6 @@ const scopeResult = accessScopes();
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive closure coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1368,5 +1356,4 @@ const scopeResult = accessScopes();
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that closure parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

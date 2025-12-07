@@ -45,7 +45,6 @@ def compute_complex():
     return calculate(10, 20)
 """)
 
-    # services package
     services_dir = project_path / "services"
     services_dir.mkdir()
     (services_dir / "__init__.py").touch()
@@ -73,7 +72,6 @@ def another_func():
     return "test"
 """)
 
-    # main.py at root
     with open(project_path / "main.py", "w") as f:
         f.write("""
 from services.processor import process_request, another_func
@@ -105,31 +103,24 @@ def test_complex_cross_file_function_calls(
 
     project_name = complex_project.name
 
-    # Expected cross-file calls that should be detected
     expected_calls = [
-        # From main.main
         ("main.main", "services.processor.process_request"),
         ("main.main", "services.processor.another_func"),
         ("main.main", "utils.math_ops.compute_complex"),
-        # From services.processor.process_request
         ("services.processor.process_request", "utils.helpers.format_data"),
         ("services.processor.process_request", "utils.helpers.short"),
         ("services.processor.process_request", "utils.math_ops.calculate"),
-        # Internal call within math_ops
         ("utils.math_ops.compute_complex", "utils.math_ops.calculate"),
-        # Method call (may also be detected)
         ("utils.helpers.DataProcessor.process", "utils.helpers.format_data"),
     ]
 
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Convert to a set of (caller, callee) tuples for easier comparison
     found_calls = set()
     for call in actual_calls:
         caller_qn = call.args[0][2]  # qualified_name from (label, key, qualified_name)
         callee_qn = call.args[2][2]
 
-        # Strip project name prefix for comparison
         if caller_qn.startswith(f"{project_name}."):
             caller_short = caller_qn[len(project_name) + 1 :]
         else:
@@ -142,13 +133,11 @@ def test_complex_cross_file_function_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Check that all expected calls are found
     missing_calls = []
     for expected_caller, expected_callee in expected_calls:
         if (expected_caller, expected_callee) not in found_calls:
             missing_calls.append((expected_caller, expected_callee))
 
-    # Assert that we found all expected calls
     if missing_calls:
         found_calls_list = sorted(list(found_calls))
         pytest.fail(
@@ -157,7 +146,6 @@ def test_complex_cross_file_function_calls(
             f"Found: {found_calls_list}"
         )
 
-    # Verify we found at least the minimum expected calls
     assert len(found_calls) >= len(expected_calls), (
         f"Expected at least {len(expected_calls)} calls, but found {len(found_calls)}"
     )
@@ -174,10 +162,8 @@ def test_cross_file_calls_with_short_names(
 
     project_name = complex_project.name
 
-    # Look specifically for the call to the 'short' function
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Find calls to the 'short' function
     short_calls = [
         call
         for call in actual_calls
@@ -189,7 +175,6 @@ def test_cross_file_calls_with_short_names(
         f"This indicates the cross-file resolution for short function names is not working."
     )
 
-    # Verify the specific call we expect
     expected_caller = f"{project_name}.services.processor.process_request"
     expected_callee = f"{project_name}.utils.helpers.short"
 

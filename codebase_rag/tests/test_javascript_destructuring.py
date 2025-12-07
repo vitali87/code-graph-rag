@@ -157,7 +157,6 @@ try {
 
     project_name = javascript_destructuring_project.name
 
-    # Expected functions using destructuring
     expected_functions = [
         f"{project_name}.object_destructuring.processUser",
         f"{project_name}.object_destructuring.createReport",
@@ -168,7 +167,6 @@ try {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify functions with destructuring parameters were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -308,7 +306,6 @@ const result = processArray([10, 20, 30, 40]);
 
     project_name = javascript_destructuring_project.name
 
-    # Expected functions using array destructuring
     expected_functions = [
         f"{project_name}.array_destructuring.getCoordinates",
         f"{project_name}.array_destructuring.getMinMax",
@@ -322,7 +319,6 @@ const result = processArray([10, 20, 30, 40]);
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify functions with array destructuring were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -514,7 +510,6 @@ async function updateUser(id, data) { return { id, ...data }; }
 
     project_name = javascript_destructuring_project.name
 
-    # Expected functions with parameter destructuring
     expected_functions = [
         f"{project_name}.parameter_destructuring.createUser",
         f"{project_name}.parameter_destructuring.updateProfile",
@@ -530,20 +525,17 @@ async function updateUser(id, data) { return { id, ...data }; }
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify functions with parameter destructuring were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Expected classes
     expected_classes = [
         f"{project_name}.parameter_destructuring.DataProcessor",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify classes with destructuring methods were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 class with destructuring methods, found {len(found_classes)}"
@@ -661,7 +653,6 @@ const response = processApiResponse({
 
     run_updater(javascript_destructuring_project, mock_ingestor)
 
-    # Verify both import and destructuring patterns are captured
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     destructuring_imports = [
@@ -772,7 +763,6 @@ const formatted = formatData({
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive destructuring coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -798,5 +788,4 @@ const formatted = formatData({
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that destructuring parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

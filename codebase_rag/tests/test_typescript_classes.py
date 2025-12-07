@@ -280,7 +280,6 @@ console.log(newRepo.name); // OK
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Check for classes with access modifiers
     expected_classes = [
         f"{project_name}.access_modifiers.AccessModifierDemo",
         f"{project_name}.access_modifiers.ExtendedDemo",
@@ -293,10 +292,8 @@ console.log(newRepo.name); // OK
             f"Missing class with access modifiers: {expected}"
         )
 
-    # Check inheritance relationships
     inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have ExtendedDemo inheriting from AccessModifierDemo
     access_inheritance = [
         call
         for call in inheritance_relationships
@@ -622,7 +619,6 @@ console.log(car.start());
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Check for abstract classes and their implementations
     expected_classes = [
         f"{project_name}.abstract_classes.Animal",
         f"{project_name}.abstract_classes.Dog",
@@ -636,10 +632,8 @@ console.log(car.start());
     for expected in expected_classes:
         assert expected in created_classes, f"Missing abstract class: {expected}"
 
-    # Check inheritance from abstract classes
     inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have concrete classes inheriting from abstract classes
     abstract_inheritance = [
         call
         for call in inheritance_relationships
@@ -916,7 +910,6 @@ service.process();
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Check for classes with parameter properties
     expected_classes = [
         f"{project_name}.parameter_properties.ParameterPropertiesDemo",
         f"{project_name}.parameter_properties.ExtendedUser",
@@ -931,7 +924,6 @@ service.process();
             f"Missing parameter properties class: {expected}"
         )
 
-    # Check methods created for parameter properties classes
     method_calls = get_nodes(mock_ingestor, "Method")
 
     parameter_property_methods = [
@@ -1125,7 +1117,6 @@ console.log(userRepo.name); // users
         c for c in all_relationships if c.args[1] == "IMPLEMENTS"
     ]
 
-    # Should have comprehensive TypeScript class patterns
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1136,7 +1127,6 @@ console.log(userRepo.name); // users
         f"Expected at least 3 comprehensive class calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all classes were created
     class_calls = get_nodes(mock_ingestor, "Class")
 
     comprehensive_classes = [
@@ -1149,7 +1139,6 @@ console.log(userRepo.name); // users
         f"Expected at least 4 classes in comprehensive test, found {len(comprehensive_classes)}"
     )
 
-    # Check inheritance and implementation relationships
     ts_inheritance = [
         call
         for call in inherits_relationships

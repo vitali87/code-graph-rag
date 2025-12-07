@@ -13,14 +13,12 @@ def cpp_comprehensive_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_comprehensive_test"
     project_path.mkdir()
 
-    # Create realistic project structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
     (project_path / "include" / "core").mkdir()
     (project_path / "include" / "utils").mkdir()
     (project_path / "tests").mkdir()
 
-    # Create header files
     (project_path / "include" / "core" / "base.h").write_text(
         """
 #pragma once
@@ -591,7 +589,6 @@ void runComprehensiveTest() {
 
     run_updater(cpp_comprehensive_project, mock_ingestor)
 
-    # Verify comprehensive coverage of all major C++ features
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
@@ -601,7 +598,6 @@ void runComprehensiveTest() {
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
     imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have comprehensive feature integration
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -612,7 +608,6 @@ void runComprehensiveTest() {
         f"Expected at least 20 comprehensive calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have multiple inheritance relationships
     comprehensive_inherits = [
         call
         for call in inherits_relationships
@@ -623,7 +618,6 @@ void runComprehensiveTest() {
         f"Expected at least 8 inheritance relationships, found {len(comprehensive_inherits)}"
     )
 
-    # Should have include relationships
     comprehensive_imports = [
         call
         for call in imports_relationships
@@ -634,7 +628,6 @@ void runComprehensiveTest() {
         f"Expected at least 10 include relationships, found {len(comprehensive_imports)}"
     )
 
-    # Verify complex class hierarchy was captured
     expected_classes = [
         "DataProcessor",
         "AdvancedProcessor",
@@ -656,7 +649,6 @@ void runComprehensiveTest() {
         f"Expected at least 4 complex classes, found {len(found_complex_classes)}: {found_complex_classes}"
     )
 
-    # Verify template and modern C++ features
     expected_functions = [
         "create_filter",
         "print_all",
@@ -686,7 +678,6 @@ def test_real_world_cpp_scenario(
 ) -> None:
     """Test a real-world C++ scenario combining multiple files and advanced features."""
 
-    # Create header file
     header_file = cpp_comprehensive_project / "include" / "engine.h"
     header_file.write_text(
         """
@@ -733,7 +724,6 @@ namespace engine {
 """
     )
 
-    # Create implementation file
     impl_file = cpp_comprehensive_project / "src" / "engine.cpp"
     impl_file.write_text(
         """
@@ -858,7 +848,6 @@ void runGameEngineExample() {
 """
     )
 
-    # Create main application file
     main_file = cpp_comprehensive_project / "src" / "main.cpp"
     main_file.write_text(
         """
@@ -891,7 +880,6 @@ int main() {
     imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have header includes
     header_imports = [
         call
         for call in imports_relationships
@@ -902,7 +890,6 @@ int main() {
         f"Expected at least 2 header imports, found {len(header_imports)}"
     )
 
-    # Should have component inheritance
     component_inheritance = [
         call
         for call in inherits_relationships
@@ -914,7 +901,6 @@ int main() {
     )
 
 
-# Mark as completed
 def test_cpp_comprehensive_complete() -> None:
     """Mark comprehensive C++ testing as complete."""
     print("Coverage includes:")

@@ -210,7 +210,6 @@ macro_rules! parse_options {
     run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify macro functions are detected
     macro_calls = [
         call for call in calls if "test_macros" in str(call) or "Point" in str(call)
     ]
@@ -433,7 +432,6 @@ pub fn auto_debug_derive(input: TokenStream) -> TokenStream {
     run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify proc macro functions are detected
     proc_macro_calls = [
         call
         for call in calls
@@ -708,7 +706,6 @@ fn platform_example() {
     run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify macro usage functions are detected
     usage_calls = [
         call
         for call in calls
@@ -928,7 +925,6 @@ fn generated_function_usage() {
     run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify derive macro usage is detected
     derive_calls = [
         call
         for call in calls
@@ -1303,7 +1299,6 @@ fn event_system_example() {
     run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify advanced macro functions are detected
     advanced_calls = [
         call
         for call in calls

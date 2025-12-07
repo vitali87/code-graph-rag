@@ -24,7 +24,6 @@ def javascript_modules_project(temp_repo: Path) -> Path:
     (project_path / "node_modules").mkdir()
     (project_path / "node_modules" / "lodash").mkdir()
 
-    # Create base files for testing imports
     (project_path / "utils" / "constants.js").write_text(
         """
 module.exports.API_URL = 'https://api.example.com';
@@ -142,7 +141,6 @@ module.exports = Calculator;
 """
     )
 
-    # Create a file with exports shorthand
     exports_file = javascript_modules_project / "exports_shorthand.js"
     exports_file.write_text(
         """
@@ -181,12 +179,10 @@ exports.ExportedClass = class ExportedClass {
 
     project_name = javascript_modules_project.name
 
-    # Get all Function and Class node creation calls
     function_calls = get_nodes(mock_ingestor, "Function")
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Should create nodes for exported functions and classes
     all_nodes = function_calls + class_calls
     exported_nodes = [
         call
@@ -201,7 +197,6 @@ exports.ExportedClass = class ExportedClass {
         f"Expected at least 5 exported functions/classes, found {len(exported_nodes)}"
     )
 
-    # Check specific exports in exports_shorthand
     created_functions = get_qualified_names(function_calls)
     expected_functions = [
         f"{project_name}.exports_shorthand.utilityA",
@@ -316,7 +311,6 @@ export const UserType = {
 """
     )
 
-    # Create another file for testing re-exports
     reexport_file = javascript_modules_project / "reexports.js"
     reexport_file.write_text(
         """
@@ -352,12 +346,10 @@ export function enhancedFetch(url, options) {
 
     project_name = javascript_modules_project.name
 
-    # Get all Function and Class nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Verify ES6 exported functions and classes
     created_functions = get_qualified_names(function_calls)
     created_classes = get_qualified_names(class_calls)
 
@@ -383,7 +375,6 @@ export function enhancedFetch(url, options) {
     for expected in expected_classes:
         assert expected in created_classes, f"Missing ES6 exported class: {expected}"
 
-    # Check import relationships for re-exports
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     reexport_imports = [
@@ -474,7 +465,6 @@ export function hybridFunction() {
 """
     )
 
-    # Create a UMD pattern file
     umd_file = javascript_modules_project / "umd_module.js"
     umd_file.write_text(
         """
@@ -528,27 +518,22 @@ export function hybridFunction() {
 
     run_updater(javascript_modules_project, mock_ingestor)
 
-    # Check that mixed module imports are captured
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     mixed_imports = [
         call for call in import_relationships if "mixed_modules" in call.args[0][2]
     ]
 
-    # Should have both ES6 and CommonJS imports
     imported_modules = [call.args[2][2] for call in mixed_imports]
 
-    # Check for ES6 imports
     assert any("react" in module.lower() for module in imported_modules), (
         "Missing ES6 React import"
     )
 
-    # Check for CommonJS requires
     assert any("fs" in module for module in imported_modules), (
         "Missing CommonJS fs require"
     )
 
-    # Check that functions and classes are created
     function_calls = get_nodes(mock_ingestor, "Function")
 
     class_calls = get_nodes(mock_ingestor, "Class")
@@ -563,7 +548,6 @@ export function hybridFunction() {
         f"Expected at least 3 functions in mixed modules, found {len(mixed_functions)}"
     )
 
-    # Check UMD pattern parsing
     umd_functions = [
         call for call in function_calls if "umd_module" in call[0][1]["qualified_name"]
     ]
@@ -586,7 +570,6 @@ def test_circular_dependencies(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test circular dependency handling in modules."""
-    # Create circular dependency files
     module_a = javascript_modules_project / "circular_a.js"
     module_a.write_text(
         """
@@ -663,7 +646,6 @@ if (A) {
 """
     )
 
-    # ES6 circular dependencies
     es6_circular_a = javascript_modules_project / "es6_circular_a.js"
     es6_circular_a.write_text(
         """
@@ -732,17 +714,14 @@ export function useA() {
 
     run_updater(javascript_modules_project, mock_ingestor)
 
-    # Check that circular imports are captured
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # CommonJS circular imports
     circular_imports = [
         call
         for call in import_relationships
         if "circular_a" in call.args[0][2] or "circular_b" in call.args[0][2]
     ]
 
-    # Should have A importing B and B importing A
     a_imports_b = any(
         "circular_a" in call.args[0][2] and "circular_b" in call.args[2][2]
         for call in circular_imports
@@ -755,7 +734,6 @@ export function useA() {
     assert a_imports_b, "circular_a should import circular_b"
     assert b_imports_a, "circular_b should import circular_a"
 
-    # ES6 circular imports
     es6_circular_imports = [
         call
         for call in import_relationships
@@ -898,7 +876,6 @@ module.exports = new Proxy({
 """
     )
 
-    # Create ES6 dynamic exports
     es6_dynamic = javascript_modules_project / "es6_dynamic_exports.js"
     es6_dynamic.write_text(
         """
@@ -989,24 +966,20 @@ export const utils = new Proxy({}, {
 
     run_updater(javascript_modules_project, mock_ingestor)
 
-    # Get all Function and Class nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Check dynamic exports
     dynamic_functions = [
         call
         for call in function_calls
         if "dynamic_exports" in call[0][1]["qualified_name"]
     ]
 
-    # Should capture at least some of the dynamically created functions
     assert len(dynamic_functions) >= 2, (
         f"Expected at least 2 functions from dynamic exports, found {len(dynamic_functions)}"
     )
 
-    # Check ES6 dynamic exports
     es6_dynamic_nodes = [
         call
         for call in function_calls + class_calls
@@ -1024,7 +997,6 @@ def test_aliased_re_exports(
 ) -> None:
     """Test aliased re-export patterns to verify the fix for export { name as alias } from './module'."""
 
-    # Create source modules to re-export from
     (javascript_modules_project / "source_module.js").write_text(
         """
 export const originalName = "original value";
@@ -1050,7 +1022,6 @@ export function helperFunc() {
 """
     )
 
-    # Create re-export file with various aliased patterns
     test_file = javascript_modules_project / "aliased_re_exports.js"
     test_file.write_text(
         """
@@ -1098,24 +1069,16 @@ export { useReExports };
 
     run_updater(javascript_modules_project, mock_ingestor)
 
-    # Get all import relationships
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Filter for relationships involving our test files
     aliased_re_export_imports = [
         call for call in import_relationships if "aliased_re_exports" in call.args[0][2]
     ]
 
-    # Verify we have import relationships for the re-exports
     assert len(aliased_re_export_imports) >= 3, (
         f"Expected at least 3 aliased re-export import relationships, "
         f"found {len(aliased_re_export_imports)}"
     )
-
-    # Check that the import mappings are created correctly
-    # The fix should ensure that:
-    # - export { originalName as aliasedName } creates mapping: aliasedName -> source_module.originalName
-    # - export { anotherExport as renamedExport } creates mapping: renamedExport -> source_module.anotherExport
 
     imported_modules = [call.args[2][2] for call in aliased_re_export_imports]
     expected_modules = [
@@ -1225,7 +1188,6 @@ export function useImports() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have comprehensive module imports
     comprehensive_imports = [
         call
         for call in import_relationships
@@ -1236,14 +1198,11 @@ export function useImports() {
         f"Expected at least 6 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Check for both CommonJS and ES6 imports
     imported_modules = [call.args[2][2] for call in comprehensive_imports]
 
-    # CommonJS imports
     assert any("fs" in module for module in imported_modules), "Missing fs import"
     assert any("path" in module for module in imported_modules), "Missing path import"
 
-    # ES6 imports
     assert any("react" in module.lower() for module in imported_modules), (
         "Missing React import"
     )
@@ -1251,7 +1210,6 @@ export function useImports() {
         "Missing validators import"
     )
 
-    # Verify function exports
     function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
@@ -1275,6 +1233,5 @@ export function useImports() {
     for expected in expected_functions:
         assert expected in created_functions, f"Missing exported function: {expected}"
 
-    # Test that module parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
     assert calls_relationships, "Should still have CALLS relationships"

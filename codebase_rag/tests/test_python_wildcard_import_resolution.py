@@ -31,7 +31,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["java.util.ArrayList"] = "Class"
         mock_updater.function_registry["java.util.HashMap"] = "Class"
 
-        # Test wildcard resolution
         result = mock_updater.factory.call_processor._resolve_function_call(
             "List", module_qn
         )
@@ -46,7 +45,6 @@ class TestWildcardImportResolution:
         assert result is not None
         assert result[1] == "java.util.ArrayList"
 
-        # Test non-existent function
         result = mock_updater.factory.call_processor._resolve_function_call(
             "NonExistentClass", module_qn
         )
@@ -65,7 +63,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["std::collections::BTreeMap"] = "Function"
         mock_updater.function_registry["std::collections::VecDeque"] = "Function"
 
-        # Test wildcard resolution with :: separator
         result = mock_updater.factory.call_processor._resolve_function_call(
             "HashMap", module_qn
         )
@@ -86,8 +83,6 @@ class TestWildcardImportResolution:
         """Test that JavaScript namespace imports (import * as utils from './utils') work correctly."""
         module_qn = "src.service"
 
-        # JavaScript namespace imports are stored as exact mappings, not wildcards
-        # import * as utils from './utils' creates: utils -> src.utils
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn]["utils"] = (
             "src.utils"
@@ -95,7 +90,6 @@ class TestWildcardImportResolution:
 
         mock_updater.function_registry["src.utils"] = "Module"
 
-        # Test exact import resolution (not wildcard)
         result = mock_updater.factory.call_processor._resolve_function_call(
             "utils", module_qn
         )
@@ -109,8 +103,6 @@ class TestWildcardImportResolution:
         """Test Python wildcard imports (from module import *) when properly stored."""
         module_qn = "myproject.service"
 
-        # Python wildcard imports would be stored as: *myproject.utils -> myproject.utils
-        # Note: Current parser may not handle this, but this tests the resolution logic
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*myproject.utils"
@@ -119,7 +111,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["myproject.utils.helper_function"] = "Function"
         mock_updater.function_registry["myproject.utils.UtilityClass"] = "Class"
 
-        # Test wildcard resolution
         result = mock_updater.factory.call_processor._resolve_function_call(
             "helper_function", module_qn
         )
@@ -137,8 +128,6 @@ class TestWildcardImportResolution:
         """Test C++ using namespace directives when properly stored."""
         module_qn = "myproject.service"  # Module QNs are normalized to use dots
 
-        # C++ using namespace would be stored as: *std -> std (if parser supported it)
-        # Note: Current parser may not handle this, but this tests the resolution logic
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn]["*std"] = "std"
         mock_updater.factory.import_processor.import_mapping[module_qn][
@@ -149,7 +138,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["std::string"] = "Class"
         mock_updater.function_registry["boost::algorithm::trim"] = "Function"
 
-        # Test namespace resolution
         result = mock_updater.factory.call_processor._resolve_function_call(
             "vector", module_qn
         )
@@ -173,7 +161,6 @@ class TestWildcardImportResolution:
         """Test Scala wildcard imports (import scala.collection._) when properly stored."""
         module_qn = "com.example.service"
 
-        # Scala wildcard imports would be stored as: *scala.collection -> scala.collection
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn][
             "*scala.collection"
@@ -186,7 +173,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["scala.collection.Map"] = "Class"
         mock_updater.function_registry["scala.util.Try"] = "Class"
 
-        # Test wildcard resolution
         result = mock_updater.factory.call_processor._resolve_function_call(
             "List", module_qn
         )
@@ -210,7 +196,6 @@ class TestWildcardImportResolution:
         """Test that Go doesn't have wildcard imports (imports all public symbols by default)."""
         module_qn = "myproject/service"
 
-        # Go imports are exact: import "fmt" creates: fmt -> fmt
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
         mock_updater.factory.import_processor.import_mapping[module_qn]["fmt"] = "fmt"
         mock_updater.factory.import_processor.import_mapping[module_qn]["strings"] = (
@@ -220,7 +205,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["fmt"] = "Package"
         mock_updater.function_registry["strings"] = "Package"
 
-        # Go uses exact imports, not wildcards
         result = mock_updater.factory.call_processor._resolve_function_call(
             "fmt", module_qn
         )
@@ -245,7 +229,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["my.custom.List"] = "Class"
         mock_updater.function_registry["java.util.List"] = "Class"
 
-        # Exact import should win
         result = mock_updater.factory.call_processor._resolve_function_call(
             "List", module_qn
         )
@@ -272,7 +255,6 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["java.io.File"] = "Class"
         mock_updater.function_registry["std::collections::HashMap"] = "Function"
 
-        # Test resolution from different wildcard imports
         result = mock_updater.factory.call_processor._resolve_function_call(
             "List", module_qn
         )
@@ -304,7 +286,6 @@ class TestWildcardImportResolution:
 
         mock_updater.function_registry["java.util.List"] = "Class"
 
-        # Should not resolve non-existent function
         result = mock_updater.factory.call_processor._resolve_function_call(
             "NonExistentClass", module_qn
         )
@@ -326,7 +307,6 @@ class TestWildcardImportResolution:
             "com.example.service.LocalService"
         )
 
-        # Should fall back to Phase 3 resolution
         result = mock_updater.factory.call_processor._resolve_function_call(
             "LocalService", module_qn
         )

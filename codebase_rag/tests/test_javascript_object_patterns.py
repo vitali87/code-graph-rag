@@ -334,7 +334,6 @@ console.log(secureObject[Symbol.for('public')]); // shared
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check for functions from object literals
     expected_functions = [
         f"{project_name}.object_literals.createPoint",
     ]
@@ -344,7 +343,6 @@ console.log(secureObject[Symbol.for('public')]); // shared
             f"Missing object literal function: {expected}"
         )
 
-    # Check for objects with methods (might be captured as classes or special nodes)
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     object_like_nodes = [
@@ -760,7 +758,6 @@ console.log(users.map(u => u.getProfile()));
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check for factory functions
     expected_factories = [
         f"{project_name}.factory_functions.createUser",
         f"{project_name}.factory_functions.createCounter",
@@ -778,7 +775,6 @@ console.log(users.map(u => u.getProfile()));
         f"Expected at least 6 factory functions, found {len(found_factories)}"
     )
 
-    # Check for userFactory object methods
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     factory_object_nodes = [
@@ -1139,10 +1135,8 @@ console.log(Email.isValid('test@example.com')); // true
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes (constructors are functions)
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check for constructor functions
     expected_constructors = [
         f"{project_name}.constructor_patterns.Person",
         f"{project_name}.constructor_patterns.Vehicle",
@@ -1161,7 +1155,6 @@ console.log(Email.isValid('test@example.com')); // true
         f"Expected at least 5 constructor functions, found {len(found_constructors)}"
     )
 
-    # Check inheritance relationships
     inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     constructor_inheritance = [
@@ -1565,7 +1558,6 @@ console.log('Cloned:', cloned.toJSON());
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check for composition factory functions
     expected_composition_functions = [
         f"{project_name}.object_composition.createAnimal",
         f"{project_name}.object_composition.createHuman",
@@ -1584,7 +1576,6 @@ console.log('Cloned:', cloned.toJSON());
         f"Expected at least 5 composition functions, found {len(found_composition_functions)}"
     )
 
-    # Check for mixin objects
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     mixin_nodes = [
@@ -1697,7 +1688,6 @@ console.log(advanced.process());
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive object-related calls
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1708,7 +1698,6 @@ console.log(advanced.process());
         f"Expected at least 3 comprehensive object calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all object patterns were created
     function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [

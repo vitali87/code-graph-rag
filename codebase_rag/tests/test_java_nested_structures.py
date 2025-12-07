@@ -168,11 +168,9 @@ public class OuterClass {
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify outer class was detected (inner classes may not be fully detected by tree-sitter)
     project_name = java_nested_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # At minimum, the outer class should be detected
     expected_outer_class = {
         f"{project_name}.src.main.java.com.example.DeeplyNested.OuterClass",
     }
@@ -500,7 +498,6 @@ public class AnonymousComplex {
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the main class was detected
     project_name = java_nested_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -811,7 +808,6 @@ public class LocalClasses {
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the main class was detected
     project_name = java_nested_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -1133,7 +1129,6 @@ public class LambdaEdgeCases {
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the main class was detected
     project_name = java_nested_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -1481,7 +1476,6 @@ public class ComplexObject {
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the main class was detected
     project_name = java_nested_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -1939,7 +1933,6 @@ public abstract class Expression {
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the main class was detected
     project_name = java_nested_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 

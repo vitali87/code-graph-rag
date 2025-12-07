@@ -66,12 +66,10 @@ end
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have module defining functions
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have function calls (to user-defined functions)
     assert len(calls_rels) >= 3, (
         f"Expected at least 3 CALLS relationships, got {len(calls_rels)}"
     )
@@ -197,17 +195,14 @@ sched:run()
 
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have multiple modules defining functions
     assert len(defines_rels) >= 8, (
         f"Expected at least 8 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have scheduler method calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 2, (
         f"Expected at least 2 IMPORTS relationships, got {len(imports_rels)}"
     )
@@ -328,12 +323,10 @@ end
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have async module defining functions
     assert len(defines_rels) >= 4, (
         f"Expected at least 4 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have some function calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
@@ -442,12 +435,10 @@ print("First 10 squares of even numbers:", table.concat(results, ", "))
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have generator module defining functions
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have some generator calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
@@ -567,17 +558,14 @@ end
 
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have multiple modules defining functions
     assert len(defines_rels) >= 7, (
         f"Expected at least 7 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have some state machine calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationship between game_ai and state_machine
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )

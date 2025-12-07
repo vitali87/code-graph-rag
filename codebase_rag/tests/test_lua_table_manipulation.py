@@ -107,9 +107,6 @@ end
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have calls to iteration functions (may be 0 if calls not resolved)
-    # Note: Lua function calls may not always be detected as relationships
-
 
 def test_table_modification_functions(
     temp_repo: Path, mock_ingestor: MagicMock
@@ -167,8 +164,6 @@ local text = table.concat(data, "-")
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Note: Lua standard library calls not yet resolved by parser
-
 
 def test_table_utility_functions(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test table utility function calls."""
@@ -221,8 +216,6 @@ local max_numeric = table.maxn(test_table)
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
-
-    # Note: Lua standard library calls not yet resolved by parser
 
 
 def test_table_metatable_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -288,8 +281,6 @@ proxy.name = "test"
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Note: Lua standard library calls not yet resolved by parser
-
 
 def test_table_serialization(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test table serialization operations."""
@@ -339,5 +330,3 @@ local deserialized = deserialize_from_string(serialized)
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
-
-    # Note: Lua standard library calls not yet resolved by parser

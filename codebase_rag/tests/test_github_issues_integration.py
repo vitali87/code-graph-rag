@@ -12,7 +12,6 @@ class TestGitHubIssuesIntegration:
         Test the scenario where a user sets up .env file with Ollama configuration
         and expects it to be used instead of defaulting to other providers.
         """
-        # Simulate the .env file content that a user would create
         env_content = {
             "ORCHESTRATOR_PROVIDER": "ollama",
             "ORCHESTRATOR_MODEL": "llama3.2",
@@ -25,8 +24,6 @@ class TestGitHubIssuesIntegration:
         with patch.dict(os.environ, env_content):
             config = AppConfig()
 
-            # The bug was that this would default to Gemini despite .env config
-            # Now it should correctly use Ollama from the .env file
             orchestrator = config.active_orchestrator_config
             assert orchestrator.provider == "ollama", (
                 "Should use Ollama from .env, not default to Gemini"
@@ -48,12 +45,10 @@ class TestGitHubIssuesIntegration:
         """
         config = AppConfig()
 
-        # Test the specific model name from the GitHub issue
         provider, model = config.parse_model_string("openai:gpt-oss:20b")
         assert provider == "openai", "Should correctly identify provider"
         assert model == "gpt-oss:20b", "Should correctly preserve model name with colon"
 
-        # Test other realistic custom model names
         test_cases = [
             ("ollama:mistral:7b-instruct", "ollama", "mistral:7b-instruct"),
             ("google:custom:model:v1.2", "google", "custom:model:v1.2"),
@@ -73,8 +68,6 @@ class TestGitHubIssuesIntegration:
         """
         Test a realistic mixed provider scenario that users might want.
         """
-        # Scenario: User wants powerful Google model for orchestration,
-        # but fast local Ollama model for simple Cypher generation
         env_content = {
             "ORCHESTRATOR_PROVIDER": "google",
             "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
@@ -87,13 +80,11 @@ class TestGitHubIssuesIntegration:
         with patch.dict(os.environ, env_content):
             config = AppConfig()
 
-            # Should use Google for orchestration
             orchestrator = config.active_orchestrator_config
             assert orchestrator.provider == "google"
             assert orchestrator.model_id == "gemini-2.5-pro"
             assert orchestrator.api_key == "test-google-key"
 
-            # Should use Ollama for cypher
             cypher = config.active_cypher_config
             assert cypher.provider == "ollama"
             assert cypher.model_id == "llama3.2:8b"  # Model name with colon should work
@@ -104,7 +95,6 @@ class TestGitHubIssuesIntegration:
         Test CLI overrides work in realistic scenarios where users
         want to temporarily use different models.
         """
-        # Start with one configuration
         env_content = {
             "ORCHESTRATOR_PROVIDER": "ollama",
             "ORCHESTRATOR_MODEL": "llama3.2",
@@ -115,16 +105,12 @@ class TestGitHubIssuesIntegration:
         with patch.dict(os.environ, env_content):
             config = AppConfig()
 
-            # Verify initial config
             assert config.active_orchestrator_config.provider == "ollama"
             assert config.active_cypher_config.provider == "ollama"
 
-            # User runs CLI with different models for testing
-            # Example: --orchestrator google:gemini-2.5-pro --cypher openai:gpt-4o-mini
             config.set_orchestrator("google", "gemini-2.5-pro", api_key="temp-key")
             config.set_cypher("openai", "gpt-4o-mini", api_key="temp-openai-key")
 
-            # Should use the overridden values
             orchestrator = config.active_orchestrator_config
             assert orchestrator.provider == "google"
             assert orchestrator.model_id == "gemini-2.5-pro"
@@ -139,7 +125,6 @@ class TestGitHubIssuesIntegration:
         """
         Test that users can use OpenAI-compatible endpoints like Together AI, etc.
         """
-        # Scenario: User wants to use Together AI with custom model
         env_content = {
             "ORCHESTRATOR_PROVIDER": "openai",  # Use OpenAI provider for compatibility
             "ORCHESTRATOR_MODEL": "meta-llama/Llama-2-70b-chat-hf",  # Together AI model

@@ -131,7 +131,6 @@ public class Car {
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    # Check CALLS relationships between Car and Engine, Car and Passenger
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
@@ -261,14 +260,12 @@ class Application {
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    # Check that interface implementations are captured
     implements_relationships = get_relationships(mock_ingestor, "IMPLEMENTS")
 
     assert len(implements_relationships) > 0, (
         "No interface implementation relationships found"
     )
 
-    # Check that method calls across service boundaries are captured
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
@@ -281,7 +278,6 @@ def test_cross_package_relationships(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test that relationships across different packages are correctly captured."""
-    # Create another package
     (
         java_relationships_project
         / "src"
@@ -301,7 +297,6 @@ def test_cross_package_relationships(
         / "model"
     ).mkdir()
 
-    # Model classes in model package
     model_file = (
         java_relationships_project
         / "src"
@@ -359,7 +354,6 @@ public class User {
 """
     )
 
-    # Service classes in service package
     service_file = (
         java_relationships_project
         / "src"
@@ -445,7 +439,6 @@ public class UserRepository {
 """
     )
 
-    # Controller that uses both packages
     controller_file = (
         java_relationships_project
         / "src"
@@ -512,25 +505,21 @@ public class UserController {
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    # Check that cross-package method calls are captured
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No cross-package method call relationships found"
     )
 
-    # Verify all classes are created
     created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_relationships_project.name
 
-    # Expected classes from different packages
     expected_user_class = f"{project_name}.src.main.java.com.example.model.User.User"
     expected_repo_class = f"{project_name}.src.main.java.com.example.service.UserRepository.UserRepository"
     expected_controller_class = (
         f"{project_name}.src.main.java.com.example.UserController.UserController"
     )
 
-    # Check that classes from different packages are found
     assert any(expected_user_class in qn for qn in created_classes), (
         "User model class not found"
     )
@@ -684,12 +673,10 @@ public class ShapeCalculator {
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    # Check inheritance relationships
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     assert len(inherits_relationships) > 0, "No inheritance relationships found"
 
-    # Check method calls including polymorphic calls
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
@@ -828,7 +815,6 @@ public class StaticUsageExample {
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    # Check static method calls
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No static method call relationships found"
@@ -966,14 +952,12 @@ public class OuterClass {
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
 
-    # Check that inner class relationships are captured
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, (
         "No method call relationships found for inner classes"
     )
 
-    # Check that all class types are detected
     class_calls = get_nodes(mock_ingestor, "Class")
 
     assert len(class_calls) > 0, "No class nodes found for inner class example"

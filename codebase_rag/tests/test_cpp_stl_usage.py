@@ -380,7 +380,6 @@ void demonstrateSTLContainers() {
 
     project_name = cpp_stl_project.name
 
-    # Expected classes and functions with STL usage
     expected_classes = [
         f"{project_name}.stl_containers.STLContainerDemo",
         f"{project_name}.stl_containers.GraphStructure",
@@ -401,7 +400,6 @@ void demonstrateSTLContainers() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -719,7 +717,6 @@ void demonstrateSTLAlgorithms() {
 
     project_name = cpp_stl_project.name
 
-    # Expected classes with STL algorithms
     expected_classes = [
         f"{project_name}.stl_algorithms.STLAlgorithmsDemo",
     ]
@@ -1077,7 +1074,6 @@ void demonstrateSTLIteratorsAndFunctors() {
 
     project_name = cpp_stl_project.name
 
-    # Expected classes with iterators and functors
     expected_classes = [
         f"{project_name}.stl_iterators_functors.Multiplier",
         f"{project_name}.stl_iterators_functors.STLIteratorsFunctorsDemo",
@@ -1198,7 +1194,6 @@ void demonstrateComprehensiveSTL() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive STL coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_stl" in call.args[0][2]
     ]
@@ -1207,5 +1202,4 @@ void demonstrateComprehensiveSTL() {
         f"Expected at least 3 comprehensive STL calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that STL parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

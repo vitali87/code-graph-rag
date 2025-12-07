@@ -175,10 +175,8 @@ console.log(manager instanceof Person);    // true
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes (constructors and prototype methods)
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check constructor functions
     expected_constructors = [
         f"{project_name}.constructor_prototypes.Person",
         f"{project_name}.constructor_prototypes.Employee",
@@ -191,7 +189,6 @@ console.log(manager instanceof Person);    // true
             f"Missing constructor function: {expected}"
         )
 
-    # Check prototype methods
     expected_prototype_methods = [
         f"{project_name}.constructor_prototypes.Person.greet",
         f"{project_name}.constructor_prototypes.Person.getAge",
@@ -201,7 +198,6 @@ console.log(manager instanceof Person);    // true
         f"{project_name}.constructor_prototypes.Manager.addReport",
     ]
 
-    # Some parsers might organize prototype methods differently
     prototype_methods_found = [
         func
         for func in created_functions
@@ -215,12 +211,9 @@ console.log(manager instanceof Person);    // true
         f"Expected at least 4 prototype methods, found {len(prototype_methods_found)}"
     )
 
-    # Check inheritance relationships
     inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have Employee inheriting from Person, Manager from Employee
     len(inheritance_relationships) >= 2
-    # Note: Actual inheritance detection may vary by parser implementation
 
 
 def test_object_create_patterns(
@@ -409,7 +402,6 @@ myTask.outputTaskDetails();
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check factory functions
     expected_functions = [
         f"{project_name}.object_create_patterns.createAnimal",
     ]
@@ -417,8 +409,6 @@ myTask.outputTaskDetails();
     for expected in expected_functions:
         assert expected in created_functions, f"Missing factory function: {expected}"
 
-    # Check methods defined on prototype objects
-    # These might be captured as functions or methods depending on parser
     method_like_functions = [
         func
         for func in created_functions
@@ -441,7 +431,6 @@ myTask.outputTaskDetails();
         f"Expected at least 3 prototype methods, found {len(method_like_functions)}"
     )
 
-    # Check CALLS relationships for Object.create
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     object_create_calls = [
@@ -625,7 +614,6 @@ square.scale(2);
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check constructor hierarchy
     expected_constructors = [
         f"{project_name}.prototype_chain.Shape",
         f"{project_name}.prototype_chain.Rectangle",
@@ -638,7 +626,6 @@ square.scale(2);
             f"Missing constructor in chain: {expected}"
         )
 
-    # Check prototype methods at different levels
     method_patterns = ["move", "getArea", "setSize", "getColor", "getFullInfo"]
     methods_found = [
         func
@@ -650,10 +637,8 @@ square.scale(2);
         f"Expected at least 4 prototype methods, found {len(methods_found)}"
     )
 
-    # Check method calls through prototype chain
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have calls to parent prototype methods
     prototype_calls = [
         call
         for call in call_relationships
@@ -929,7 +914,6 @@ console.log(entity.validate());
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check mixin functions
     expected_functions = [
         f"{project_name}.prototype_mixins.mixin",
         f"{project_name}.prototype_mixins.compose",
@@ -943,7 +927,6 @@ console.log(entity.validate());
             f"Missing mixin-related function: {expected}"
         )
 
-    # Check mixin methods (might be captured as functions)
     mixin_methods = [
         "on",
         "off",
@@ -963,7 +946,6 @@ console.log(entity.validate());
         f"Expected at least 3 mixin methods, found {len(mixin_method_functions)}"
     )
 
-    # Check prototype method additions
     model_methods = [
         func
         for func in created_functions
@@ -1194,7 +1176,6 @@ for (const value of generator) {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Check edge case constructors
     expected_constructors = [
         f"{project_name}.prototype_edge_cases.WeirdConstructor",
         f"{project_name}.prototype_edge_cases.PrimitiveReturn",
@@ -1208,7 +1189,6 @@ for (const value of generator) {
             f"Missing edge case constructor: {expected}"
         )
 
-    # Check async and generator methods
     async_generator_methods = [
         func
         for func in created_functions
@@ -1327,7 +1307,6 @@ console.log(dog.eat('bone')); // Works due to prototype chain
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive prototype patterns
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1338,7 +1317,6 @@ console.log(dog.eat('bone')); // Works due to prototype chain
         f"Expected at least 5 comprehensive prototype calls, found {len(comprehensive_calls)}"
     )
 
-    # Get all nodes
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
     function_nodes = [call for call in all_nodes if call[0][0] == "Function"]
 

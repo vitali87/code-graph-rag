@@ -327,7 +327,6 @@ void demonstrateBasicMetaprogramming() {
 
     project_name = cpp_metaprogramming_project.name
 
-    # Expected classes and structures with metaprogramming
     expected_classes = [
         f"{project_name}.basic_metaprogramming.SFINAEDetector",
         f"{project_name}.basic_metaprogramming.MetaprogrammingDemo",
@@ -347,7 +346,6 @@ void demonstrateBasicMetaprogramming() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -692,7 +690,6 @@ void demonstrateAdvancedMetaprogramming() {
 
     project_name = cpp_metaprogramming_project.name
 
-    # Expected classes with advanced metaprogramming
     expected_classes = [
         f"{project_name}.advanced_metaprogramming.Point",
         f"{project_name}.advanced_metaprogramming.Circle",
@@ -787,7 +784,6 @@ void demonstrateComprehensiveMetaprogramming() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive metaprogramming coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -798,5 +794,4 @@ void demonstrateComprehensiveMetaprogramming() {
         f"Expected at least 2 comprehensive metaprogramming calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that metaprogramming parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

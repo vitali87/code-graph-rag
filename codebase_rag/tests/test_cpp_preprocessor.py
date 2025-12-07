@@ -237,7 +237,6 @@ void demonstrateDefineMacros() {
 
     project_name = cpp_preprocessor_project.name
 
-    # Expected functions with macro usage
     expected_functions = [
         f"{project_name}.define_macros.testObjectLikeMacros",
         f"{project_name}.define_macros.testFunctionLikeMacros",
@@ -247,7 +246,6 @@ void demonstrateDefineMacros() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -532,7 +530,6 @@ void demonstrateConditionalCompilation() {
 
     project_name = cpp_preprocessor_project.name
 
-    # Expected classes and functions with conditional compilation
     expected_classes = [
         f"{project_name}.conditional_compilation.ConditionalFeatures",
     ]
@@ -552,7 +549,6 @@ void demonstrateConditionalCompilation() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -819,7 +815,6 @@ void demonstratePragmaDirectives() {
 
     project_name = cpp_preprocessor_project.name
 
-    # Expected classes and functions with pragma directives
     expected_classes = [
         f"{project_name}.pragma_directives.PragmaExample",
     ]
@@ -839,7 +834,6 @@ void demonstratePragmaDirectives() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1057,7 +1051,6 @@ void demonstrateComprehensivePreprocessor() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive preprocessor coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1068,5 +1061,4 @@ void demonstrateComprehensivePreprocessor() {
         f"Expected at least 3 comprehensive preprocessor calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that preprocessor parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

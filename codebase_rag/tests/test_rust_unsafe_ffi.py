@@ -178,7 +178,6 @@ unsafe fn atomic_raw_operations() {
     run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unsafe functions are detected
     unsafe_calls = [
         call
         for call in calls
@@ -340,7 +339,6 @@ impl CComplexStruct {
     run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify extern functions are detected
     extern_calls = [
         call
         for call in calls
@@ -572,7 +570,6 @@ unsafe fn deserialize_zerocopy<T: ZeroCopy>(bytes: &[u8]) -> Option<T> {
     run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unsafe traits are detected
     unsafe_trait_calls = [
         call
         for call in calls
@@ -779,7 +776,6 @@ unsafe fn aarch64_specific() {
     run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify inline assembly functions are detected
     asm_calls = [
         call
         for call in calls
@@ -1030,7 +1026,6 @@ unsafe fn bit_field_operations() {
     run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unions and transmute functions are detected
     union_calls = [
         call
         for call in calls

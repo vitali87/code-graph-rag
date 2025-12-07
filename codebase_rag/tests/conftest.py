@@ -89,20 +89,17 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     mock.parsers = parsers
     mock.queries = queries
 
-    # Set up factory mock with processors
     mock.factory = MagicMock()
     mock.factory.definition_processor = MagicMock()
     mock.factory.structure_processor = MagicMock()
     mock.factory.structure_processor.structural_elements = {}
 
-    # Set up the process_file method to return a proper tuple
     mock_root_node = MagicMock()
     mock.factory.definition_processor.process_file.return_value = (
         mock_root_node,
         "python",
     )
 
-    # Set up ast_cache
     mock.ast_cache = {}
 
     return mock

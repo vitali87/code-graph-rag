@@ -174,7 +174,6 @@ print("Sum:", sum)
     try:
         pass  # Tests follow
 
-        # Check if functions were properly defined
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -184,7 +183,6 @@ print("Sum:", sum)
 
         attributes_qn = f"{project.name}.attributes"
 
-        # Verify function definitions were extracted despite <const>/<close> syntax
         assert f"{attributes_qn}.Attributes.safe_file_read" in fn_qns
         assert f"{attributes_qn}.Attributes.with_cleanup" in fn_qns
         assert f"{attributes_qn}.Attributes.nested_attributes" in fn_qns
@@ -192,17 +190,14 @@ print("Sum:", sum)
         assert f"{attributes_qn}.Attributes.coroutine_with_attributes" in fn_qns
         assert f"{attributes_qn}.Attributes.complex_assignments" in fn_qns
 
-        # Check if calls were properly extracted
         calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-        # Should have extracted calls like io.open, setmetatable, etc.
         assert len(calls_rels) >= 5, f"Expected at least 5 CALLS, got {len(calls_rels)}"
 
         print("✅ Lua 5.4 attributes syntax test PASSED")
 
     except Exception as e:
         print(f"❌ Lua 5.4 attributes syntax test FAILED: {e}")
-        # Re-raise for pytest to catch
         raise
 
 
@@ -391,13 +386,11 @@ print("Index results:", table.concat(index_results, ", "))
 
         metamethods_qn = f"{project.name}.metamethods"
 
-        # Verify metamethod-related functions were extracted
         assert f"{metamethods_qn}.MetaMethods.test_comparisons" in fn_qns
         assert f"{metamethods_qn}.MetaMethods.test_close_metamethod" in fn_qns
         assert f"{metamethods_qn}.MetaMethods.test_call_metamethod" in fn_qns
         assert f"{metamethods_qn}.MetaMethods.test_index_metamethod" in fn_qns
 
-        # Check calls were extracted
         calls_rels = get_relationships(mock_ingestor, "CALLS")
 
         assert len(calls_rels) >= 3, f"Expected at least 3 CALLS, got {len(calls_rels)}"
@@ -607,7 +600,6 @@ end
 
         stdlib_qn = f"{project.name}.stdlib"
 
-        # Verify enhanced stdlib functions were extracted
         expected_functions = [
             f"{stdlib_qn}.StdLib.test_enhanced_math",
             f"{stdlib_qn}.StdLib.test_enhanced_string",
@@ -621,10 +613,8 @@ end
         for expected_fn in expected_functions:
             assert expected_fn in fn_qns, f"Missing function: {expected_fn}"
 
-        # Check standard library calls were extracted
         calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-        # Should have many stdlib function calls
         assert len(calls_rels) >= 10, (
             f"Expected at least 10 CALLS, got {len(calls_rels)}"
         )
@@ -798,7 +788,6 @@ print("Control flow: break =", #control_results.break_test, "continue =", #contr
 
         for_loops_qn = f"{project.name}.for_loops"
 
-        # Verify for loop test functions were extracted
         expected_functions = [
             f"{for_loops_qn}.ForLoops.test_numerical_for",
             f"{for_loops_qn}.ForLoops.test_for_edge_cases",

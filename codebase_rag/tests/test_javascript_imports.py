@@ -21,7 +21,6 @@ def javascript_imports_project(temp_repo: Path) -> Path:
     (project_path / "node_modules" / "@babel").mkdir()
     (project_path / "node_modules" / "@babel" / "core").mkdir()
 
-    # Create module files for testing
     (project_path / "src" / "utils" / "helpers.js").write_text(
         "export const helper = () => {};"
     )
@@ -39,7 +38,6 @@ def javascript_imports_project(temp_repo: Path) -> Path:
     )
     (project_path / "shared.js").write_text("export const shared = 'data';")
 
-    # Create package.json and node_modules structure
     (project_path / "package.json").write_text(
         '{"name": "test-project", "version": "1.0.0"}'
     )
@@ -317,7 +315,6 @@ const finalUrl = apiEndpoint;
         if "commonjs_aliased_destructuring" in call.args[0][2]
     ]
 
-    # Should have at least 3 import relationships for the aliased destructuring
     assert len(aliased_imports) >= 3, (
         f"Expected at least 3 aliased destructuring imports, found {len(aliased_imports)}"
     )
@@ -340,7 +337,6 @@ def test_relative_path_resolution(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test relative import path resolution (./ and ../)."""
-    # Create a nested test file
     nested_dir = javascript_imports_project / "src" / "components" / "forms"
     nested_dir.mkdir()
     test_file = nested_dir / "Input.js"
@@ -513,14 +509,12 @@ modulePromise.then(({ shared }) => {
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    # Dynamic imports might be tracked as function calls to import()
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     dynamic_calls = [
         call for call in call_relationships if "dynamic_imports" in call.args[0][2]
     ]
 
-    # Should have some calls tracked (at minimum, the import() calls)
     assert len(dynamic_calls) >= 1, (
         f"Expected at least 1 dynamic import call, found {len(dynamic_calls)}"
     )
@@ -576,7 +570,6 @@ const url = API_URL;
 
     imported_modules = [call.args[2][2] for call in mixed_imports]
 
-    # Should include both ES6 and CommonJS imports
     expected_patterns = [
         "react",
         "helpers",
@@ -626,7 +619,6 @@ require('./also-side-effects');
         call for call in import_relationships if "error_imports" in call.args[0][2]
     ]
 
-    # Should still parse valid imports despite errors
     assert len(error_file_imports) >= 3, (
         f"Expected at least 3 valid imports despite errors, found {len(error_file_imports)}"
     )
@@ -663,7 +655,6 @@ export const EMPTY_STRING = '';
 """
     )
 
-    # Create a re-export file with aliased exports - this would trigger the bug before fix
     re_export_file = javascript_imports_project / "utils_index.js"
     re_export_file.write_text(
         """
@@ -679,7 +670,6 @@ export { capitalize } from './string_utils';  // normal re-export
 """
     )
 
-    # Create a consumer file that imports the aliased re-exports
     consumer_file = javascript_imports_project / "consumer.js"
     consumer_file.write_text(
         """
@@ -711,10 +701,8 @@ export { useUtils };
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    # Get all import relationships
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Test consumer imports (should work correctly with our fix)
     consumer_imports = [
         call for call in import_relationships if "consumer" in call.args[0][2]
     ]
@@ -723,7 +711,6 @@ export { useUtils };
         f"Expected at least 2 consumer import relationships, found {len(consumer_imports)}"
     )
 
-    # Test re-export module imports (the core fix)
     re_export_imports = [
         call for call in import_relationships if "utils_index" in call.args[0][2]
     ]
@@ -732,7 +719,6 @@ export { useUtils };
         f"Expected at least 2 re-export import relationships, found {len(re_export_imports)}"
     )
 
-    # Verify that we import from the correct source modules
     re_export_targets = [call.args[2][2] for call in re_export_imports]
 
     expected_targets = ["math_utils", "string_utils"]
@@ -788,7 +774,6 @@ const url = API_URL;
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive import coverage
     comprehensive_imports = [
         call
         for call in import_relationships
@@ -810,12 +795,10 @@ const url = API_URL;
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name
         assert isinstance(target_module, str) and target_module, (
             f"Target module should be non-empty string: {target_module}"
         )
 
-    # Test that import parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
 
@@ -892,14 +875,11 @@ const area = multiply(PI, 2);
         if "regression_multiple_destructured" in call.args[0][2]
     ]
 
-    # Should handle all the destructuring patterns without IndexError
-    # We expect multiple imports from the destructuring patterns
     assert len(regression_imports) >= 7, (
         f"Expected at least 7 imports from multiple destructuring patterns, "
         f"found {len(regression_imports)}. This suggests the regression fix may not be working."
     )
 
-    # Verify specific modules are imported
     imported_modules = [call.args[2][2] for call in regression_imports]
 
     expected_patterns = [
@@ -917,7 +897,6 @@ const area = multiply(PI, 2);
         if any(pattern in module for module in imported_modules):
             found_patterns.append(pattern)
 
-    # Should find most of the expected patterns
     assert len(found_patterns) >= 5, (
         f"Expected to find at least 5 module patterns {expected_patterns}, "
         f"but only found {len(found_patterns)}: {found_patterns}\n"

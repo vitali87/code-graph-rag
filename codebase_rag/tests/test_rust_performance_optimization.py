@@ -307,7 +307,6 @@ fn memory_usage_tracking() {
     run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify benchmarking functions are detected
     benchmark_calls = [
         call
         for call in calls
@@ -574,7 +573,6 @@ mod fastrand {
     run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify SIMD functions are detected
     simd_calls = [
         call
         for call in calls
@@ -884,7 +882,6 @@ mod fastrand {
     run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify parallel processing functions are detected
     parallel_calls = [
         call
         for call in calls
@@ -1214,7 +1211,6 @@ fn memory_mapped_files() {
     run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify memory optimization functions are detected
     memory_calls = [
         call
         for call in calls
@@ -1627,7 +1623,6 @@ fn hotspot_detection() {
     run_updater(rust_performance_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify profiling functions are detected
     profiling_calls = [
         call
         for call in calls

@@ -492,7 +492,6 @@ public class StructuredConcurrencyExamples {
 
     run_updater(java_loom_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the classes were detected
     project_name = java_loom_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -747,7 +746,6 @@ public class ScopedValuesExamples {
 
     run_updater(java_loom_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the classes were detected
     project_name = java_loom_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 

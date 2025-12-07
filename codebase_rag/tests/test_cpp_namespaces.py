@@ -192,7 +192,6 @@ void demonstrateBasicNamespaces() {
 
     project_name = cpp_namespaces_project.name
 
-    # Expected namespaced classes
     expected_classes = [
         f"{project_name}.basic_namespaces.utils.Logger",
         f"{project_name}.basic_namespaces.graphics.Point",
@@ -203,13 +202,11 @@ void demonstrateBasicNamespaces() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify at least some namespaced classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Expected namespaced functions
     expected_functions = [
         f"{project_name}.basic_namespaces.globalFunction",
         f"{project_name}.basic_namespaces.utils.printMessage",
@@ -220,7 +217,6 @@ void demonstrateBasicNamespaces() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify namespaced functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -408,7 +404,6 @@ void demonstrateTemplateUsing() {
 
     project_name = cpp_namespaces_project.name
 
-    # Verify deeply nested namespace classes
     expected_nested_classes = [
         f"{project_name}.using_directives.company.project.module.DataProcessor",
         f"{project_name}.using_directives.utils.StringUtils",
@@ -418,7 +413,6 @@ void demonstrateTemplateUsing() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify nested namespace classes
     found_nested_classes = [
         cls for cls in expected_nested_classes if cls in created_classes
     ]
@@ -426,7 +420,6 @@ void demonstrateTemplateUsing() {
         f"Expected at least 2 nested namespace classes, found {len(found_nested_classes)}: {found_nested_classes}"
     )
 
-    # Verify function calls that use qualified names
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     namespace_calls = [
@@ -597,7 +590,6 @@ void compareLinkageStyles() {
 
     run_updater(cpp_namespaces_project, mock_ingestor)
 
-    # Expected anonymous namespace classes (may have unique qualified names)
     expected_internal_classes = [
         "InternalClass",
         "OuterInternalClass",
@@ -607,7 +599,6 @@ void compareLinkageStyles() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify anonymous namespace classes were created (they might have special naming)
     found_internal_classes = [
         cls
         for cls in created_classes
@@ -618,7 +609,6 @@ void compareLinkageStyles() {
         f"Expected at least 2 anonymous namespace classes, found {len(found_internal_classes)}: {found_internal_classes}"
     )
 
-    # Expected internal functions
     expected_internal_functions = [
         "internal_function",
         "deeply_internal",
@@ -630,7 +620,6 @@ void compareLinkageStyles() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify internal functions were created
     found_internal_functions = [
         func
         for func in created_functions
@@ -804,7 +793,6 @@ void testNamespaceFeatures() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive namespace coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -815,7 +803,6 @@ void testNamespaceFeatures() {
         f"Expected at least 12 comprehensive namespace calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify cross-namespace calls
     cross_namespace_calls = [
         call
         for call in comprehensive_calls
@@ -834,5 +821,4 @@ void testNamespaceFeatures() {
         f"Expected at least 4 cross-namespace calls, found {len(cross_namespace_calls)}"
     )
 
-    # Test that namespace parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

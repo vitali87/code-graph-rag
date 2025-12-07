@@ -331,7 +331,6 @@ void demonstrateBasicConstexpr() {
 
     project_name = cpp_constexpr_project.name
 
-    # Expected classes and functions with constexpr usage
     expected_classes = [
         f"{project_name}.basic_constexpr.MathUtilities",
         f"{project_name}.basic_constexpr.ConstexprDemo",
@@ -354,7 +353,6 @@ void demonstrateBasicConstexpr() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -646,7 +644,6 @@ void demonstrateConstexprIfAndTemplates() {
 
     project_name = cpp_constexpr_project.name
 
-    # Expected classes with constexpr if and templates
     expected_classes = [
         f"{project_name}.constexpr_if_templates.ConstexprIfDemo",
     ]
@@ -775,7 +772,6 @@ void demonstrateComprehensiveConstexpr() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive constexpr coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -786,7 +782,6 @@ void demonstrateComprehensiveConstexpr() {
         f"Expected at least 2 comprehensive constexpr calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that constexpr parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
     print(

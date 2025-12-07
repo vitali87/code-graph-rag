@@ -86,14 +86,12 @@ impl<T> Point<T> {
     run_updater(rust_structs_project, mock_ingestor, skip_if_missing="rust")
     calls = mock_ingestor.method_calls
 
-    # Verify structs are detected
     struct_calls = [call for call in calls if "Person" in str(call)]
     assert len(struct_calls) > 0, "Person struct should be detected"
 
     point_calls = [call for call in calls if "Point" in str(call)]
     assert len(point_calls) > 0, "Generic Point struct should be detected"
 
-    # Verify methods are associated with structs
     method_calls = [
         call for call in calls if ("new" in str(call) or "set_email" in str(call))
     ]
@@ -179,14 +177,12 @@ pub fn process_message(msg: Message) -> String {
     run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify enums are detected
     direction_calls = [call for call in calls if "Direction" in str(call)]
     assert len(direction_calls) > 0, "Direction enum should be detected"
 
     message_calls = [call for call in calls if "Message" in str(call)]
     assert len(message_calls) > 0, "Message enum should be detected"
 
-    # Verify enum methods
     method_calls = [
         call for call in calls if ("opposite" in str(call) or "call" in str(call))
     ]
@@ -299,7 +295,6 @@ fn calculate(x: i32) -> Result<i32, String> {
     run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify pattern matching functions are detected
     pattern_calls = [
         call
         for call in calls
@@ -452,14 +447,12 @@ impl<T> Node<T> {
     run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify complex structs are detected
     db_calls = [call for call in calls if "Database" in str(call)]
     assert len(db_calls) > 0, "Database struct should be detected"
 
     node_calls = [call for call in calls if "Node" in str(call)]
     assert len(node_calls) > 0, "Generic Node struct should be detected"
 
-    # Verify nested type relationships
     table_calls = [call for call in calls if "Table" in str(call)]
     assert len(table_calls) > 0, "Table struct should be detected"
 
@@ -571,14 +564,12 @@ use std::collections::HashMap;
     run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify structs with attributes are detected
     product_calls = [call for call in calls if "Product" in str(call)]
     assert len(product_calls) > 0, "Product struct with derives should be detected"
 
     secret_calls = [call for call in calls if "SecretData" in str(call)]
     assert len(secret_calls) > 0, "SecretData struct should be detected"
 
-    # Verify custom trait implementations
     impl_calls = [
         call
         for call in calls
@@ -769,14 +760,12 @@ pub fn classify_expression(expr: &Expr) -> &'static str {
     run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify complex enums are detected
     event_calls = [call for call in calls if "Event" in str(call)]
     assert len(event_calls) > 0, "Event enum should be detected"
 
     expr_calls = [call for call in calls if "Expr" in str(call)]
     assert len(expr_calls) > 0, "Expr enum should be detected"
 
-    # Verify enum methods and pattern matching functions
     method_calls = [
         call
         for call in calls

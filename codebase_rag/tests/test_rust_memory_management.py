@@ -67,7 +67,6 @@ fn main() {
     run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify functions are detected
     function_calls = [
         call
         for call in calls
@@ -126,7 +125,6 @@ impl<'a> ImportantExcerpt<'a> {
     run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify lifetime functions and structs are detected
     lifetime_calls = [
         call
         for call in calls
@@ -187,7 +185,6 @@ fn create_list() -> List {
     run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify smart pointer functions are detected
     smart_pointer_calls = [
         call
         for call in calls
@@ -246,7 +243,6 @@ fn create_tree_with_cycles() {
     run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify reference counting functions are detected
     rc_calls = [
         call
         for call in calls
@@ -297,7 +293,6 @@ fn early_drop() {
     run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Drop trait implementation is detected
     drop_calls = [
         call
         for call in calls
@@ -371,7 +366,6 @@ unsafe impl Foo for Bar {
     run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unsafe functions and traits are detected
     unsafe_calls = [
         call
         for call in calls
@@ -444,7 +438,6 @@ fn union_example() {
     run_updater(rust_memory_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify memory layout functions are detected
     memory_calls = [
         call
         for call in calls

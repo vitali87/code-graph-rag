@@ -105,17 +105,14 @@ app:start()
 
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have web framework function definitions
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have framework method calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -230,17 +227,14 @@ db:close()
 
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have database ORM function definitions
     assert len(defines_rels) >= 4, (
         f"Expected at least 4 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have database method calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -358,12 +352,10 @@ Game:init()
 
     calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have game engine function definitions
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have game engine calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
@@ -528,17 +520,14 @@ local api_key = config_mgr:get("api", "key")
 
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have configuration manager function definitions
     assert len(defines_rels) >= 6, (
         f"Expected at least 6 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have config manager calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -702,17 +691,14 @@ pipeline:export_results(csv_data)
 
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have data pipeline function definitions
     assert len(defines_rels) >= 8, (
         f"Expected at least 8 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have pipeline method calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )
@@ -890,17 +876,14 @@ local user_data = mesh:call_service("user-service", "/users/123", "GET")
 
     imports_rels = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Should have service mesh function definitions
     assert len(defines_rels) >= 6, (
         f"Expected at least 6 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have service mesh calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
 
-    # Should have import relationships
     assert len(imports_rels) >= 1, (
         f"Expected at least 1 IMPORTS relationship, got {len(imports_rels)}"
     )

@@ -218,12 +218,10 @@ bound(); // preserved this
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    # Get all Function and Method nodes
     function_calls = get_nodes(mock_ingestor, "Function")
 
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Should create various functions and methods
     all_callables = function_calls + method_calls
     this_context_callables = [
         call
@@ -235,7 +233,6 @@ bound(); // preserved this
         f"Expected at least 10 functions/methods with this context, found {len(this_context_callables)}"
     )
 
-    # Check for arrow functions (might have special property)
     created_functions = get_qualified_names(function_calls)
     arrow_patterns = ["arrowMethod", "innerArrow", "arrowProperty"]
 
@@ -418,7 +415,6 @@ console.log(result2); // [15, 20]
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    # Check CALLS relationships for bind/call/apply
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     bind_call_apply_calls = [
@@ -675,7 +671,6 @@ regularFunction(10, 20, 30);
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Check for arrow functions
     arrow_functions = [
         call
         for call in function_calls
@@ -690,7 +685,6 @@ regularFunction(10, 20, 30);
         f"Expected at least 5 arrow functions, found {len(arrow_functions)}"
     )
 
-    # Check classes with arrow function properties
     class_calls = get_nodes(mock_ingestor, "Class")
 
     classes_with_arrows = [
@@ -983,7 +977,6 @@ searchHandler.debouncedSearch('test query');
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    # Check for various callback patterns
     function_calls = get_nodes(mock_ingestor, "Function")
 
     callback_functions = [
@@ -996,7 +989,6 @@ searchHandler.debouncedSearch('test query');
         f"Expected at least 10 callback-related functions, found {len(callback_functions)}"
     )
 
-    # Check for event handler methods
     method_calls = get_nodes(mock_ingestor, "Method")
 
     event_methods = [
@@ -1141,7 +1133,6 @@ outer.call({ context: 'custom' });
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive this-related calls
     comprehensive_calls = [
         call for call in calls_relationships if "comprehensive_this" in call.args[0][2]
     ]
@@ -1150,7 +1141,6 @@ outer.call({ context: 'custom' });
         f"Expected at least 5 comprehensive this-related calls, found {len(comprehensive_calls)}"
     )
 
-    # Check for bind/call/apply calls
     binding_calls = [
         call
         for call in comprehensive_calls

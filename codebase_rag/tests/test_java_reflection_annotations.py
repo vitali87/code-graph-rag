@@ -248,11 +248,9 @@ public class AnnotatedUser {
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify all annotations and classes were detected
     project_name = java_reflection_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Expected annotations (treated as classes by tree-sitter)
     expected_classes = {
         f"{project_name}.src.main.java.com.example.CustomAnnotations.Test",
         f"{project_name}.src.main.java.com.example.CustomAnnotations.Deprecated",
@@ -567,7 +565,6 @@ public class ReflectionExample {
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the classes were detected
     project_name = java_reflection_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -963,7 +960,6 @@ public class AnnotationProcessor {
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify all classes were detected
     project_name = java_reflection_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -1238,11 +1234,9 @@ public class MetaAnnotations {
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify all classes and annotations were detected
     project_name = java_reflection_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Expected classes include both annotations and regular classes
     expected_classes = {
         f"{project_name}.src.main.java.com.example.MetaAnnotations.UserRepository",
         f"{project_name}.src.main.java.com.example.MetaAnnotations.ConditionalUserServiceImpl",

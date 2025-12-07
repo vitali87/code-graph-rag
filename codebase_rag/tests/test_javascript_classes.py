@@ -163,7 +163,6 @@ const result = processor.processData([
 
     project_name = javascript_classes_project.name
 
-    # Expected class definitions
     expected_classes = [
         f"{project_name}.basic_classes.Person",
         f"{project_name}.basic_classes.MathUtils",
@@ -173,11 +172,9 @@ const result = processor.processData([
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify all expected classes were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
-    # Expected method definitions
     expected_methods = [
         f"{project_name}.basic_classes.Person.constructor",
         f"{project_name}.basic_classes.Person.greet",
@@ -194,7 +191,6 @@ const result = processor.processData([
 
     created_methods = get_node_names(mock_ingestor, "Method")
 
-    # Verify at least some expected methods were created
     found_methods = [method for method in expected_methods if method in created_methods]
     assert len(found_methods) >= 8, (
         f"Expected at least 8 methods, found {len(found_methods)}: {found_methods}"
@@ -353,7 +349,6 @@ const eagleHunt = eagle.hunt(); // Eagle specific
 
     project_name = javascript_classes_project.name
 
-    # Expected inheritance relationships
     expected_inherits = [
         (
             ("Class", "qualified_name", f"{project_name}.class_inheritance.Dog"),
@@ -393,14 +388,12 @@ const eagleHunt = eagle.hunt(); // Eagle specific
             f"{expected_child[2]} INHERITS {expected_parent[2]}"
         )
 
-    # Expected super() calls
     call_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "CALLS"
     ]
 
-    # Should have some super() calls tracked
     super_calls = [
         call
         for call in call_relationships
@@ -549,7 +542,6 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
 
     project_name = javascript_classes_project.name
 
-    # Expected static methods
     expected_static_methods = [
         f"{project_name}.static_features.MathHelper.add",
         f"{project_name}.static_features.MathHelper.subtract",
@@ -566,7 +558,6 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
 
     created_methods = get_node_names(mock_ingestor, "Method")
 
-    # Verify at least some static methods were created
     found_static_methods = [
         method for method in expected_static_methods if method in created_methods
     ]
@@ -574,7 +565,6 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
         f"Expected at least 6 static methods, found {len(found_static_methods)}: {found_static_methods}"
     )
 
-    # Verify static method calls are tracked
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     static_method_calls = [
@@ -753,7 +743,6 @@ const instanceCount = Counter.getInstanceCount();
 
     project_name = javascript_classes_project.name
 
-    # Expected classes with private features
     expected_classes = [
         f"{project_name}.private_features.BankAccount",
         f"{project_name}.private_features.Counter",
@@ -762,13 +751,11 @@ const instanceCount = Counter.getInstanceCount();
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify classes with private features were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, (
             f"Missing class with private features: {expected_qn}"
         )
 
-    # Expected public methods (private methods might not be captured)
     expected_methods = [
         f"{project_name}.private_features.BankAccount.deposit",
         f"{project_name}.private_features.BankAccount.withdraw",
@@ -944,7 +931,6 @@ const userInfo = user.toString();
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Should capture class expressions as classes
     class_expression_classes = [
         call
         for call in class_calls
@@ -955,7 +941,6 @@ const userInfo = user.toString();
         f"Expected at least 3 class expressions, found {len(class_expression_classes)}"
     )
 
-    # Should capture inheritance relationships from mixins
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1074,7 +1059,6 @@ const testResult = testClasses();
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have comprehensive class coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1085,7 +1069,6 @@ const testResult = testClasses();
         f"Expected at least 5 comprehensive class calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have inheritance relationships
     class_inheritance = [
         call
         for call in inherits_relationships
@@ -1107,10 +1090,8 @@ const testResult = testClasses();
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or method
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that class parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

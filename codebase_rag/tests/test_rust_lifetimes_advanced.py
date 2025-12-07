@@ -246,7 +246,6 @@ fn test_complex_lifetimes() {
     run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify complex lifetime patterns are detected
     lifetime_calls = [
         call
         for call in calls
@@ -562,7 +561,6 @@ fn test_advanced_elision() {
     run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify lifetime elision patterns are detected
     elision_calls = [
         call
         for call in calls
@@ -950,7 +948,6 @@ fn iterator_borrowing_patterns() {
     run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify borrowing edge cases are detected
     borrowing_calls = [
         call
         for call in calls
@@ -1354,7 +1351,6 @@ fn test_generic_variance() {
     run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify lifetime variance patterns are detected
     variance_calls = [
         call
         for call in calls

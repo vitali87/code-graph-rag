@@ -314,7 +314,6 @@ void demonstrateBasicConstructorsDestructors() {
 
     project_name = cpp_constructor_project.name
 
-    # Expected classes with constructors/destructors
     expected_classes = [
         f"{project_name}.basic_constructors.BasicResource",
         f"{project_name}.basic_constructors.InitializationDemo",
@@ -328,7 +327,6 @@ void demonstrateBasicConstructorsDestructors() {
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Expected function definitions (constructors, destructors, methods)
     expected_functions = [
         f"{project_name}.basic_constructors.testBasicConstructors",
         f"{project_name}.basic_constructors.testInitializationLists",
@@ -338,7 +336,6 @@ void demonstrateBasicConstructorsDestructors() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -714,7 +711,6 @@ void demonstrateRAIIPatterns() {
 
     project_name = cpp_constructor_project.name
 
-    # Expected RAII classes
     expected_classes = [
         f"{project_name}.raii_patterns.FileManager",
         f"{project_name}.raii_patterns.BufferManager",
@@ -724,7 +720,6 @@ void demonstrateRAIIPatterns() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify RAII classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -1075,7 +1070,6 @@ void demonstrateSpecialMemberFunctions() {
 
     project_name = cpp_constructor_project.name
 
-    # Expected classes demonstrating special member functions
     expected_classes = [
         f"{project_name}.special_members.RuleOfThree",
         f"{project_name}.special_members.RuleOfFive",
@@ -1086,7 +1080,6 @@ void demonstrateSpecialMemberFunctions() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify special member classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -1268,7 +1261,6 @@ void demonstrateComprehensiveConstructors() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive constructor/destructor coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1279,11 +1271,9 @@ void demonstrateComprehensiveConstructors() {
         f"Expected at least 5 comprehensive constructor calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that constructor parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
 
-# Mark the first task as completed
 def test_constructor_destructor_complete() -> None:
     """Mark the constructor/destructor task as completed."""
     pass

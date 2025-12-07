@@ -461,7 +461,6 @@ void demonstrateSmartPointers() {
 
     project_name = cpp_memory_project.name
 
-    # Expected classes with smart pointer usage
     expected_classes = [
         f"{project_name}.smart_pointers.Resource",
         f"{project_name}.smart_pointers.ResourceFactory",
@@ -486,7 +485,6 @@ void demonstrateSmartPointers() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -834,7 +832,6 @@ void demonstrateMoveSemantics() {
 
     project_name = cpp_memory_project.name
 
-    # Expected classes with move semantics
     expected_classes = [
         f"{project_name}.move_semantics.MovableResource",
         f"{project_name}.move_semantics.ResourceContainer",
@@ -910,7 +907,6 @@ void demonstrateComprehensiveMemoryManagement() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive memory management coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_memory" in call.args[0][2]
     ]
@@ -919,5 +915,4 @@ void demonstrateComprehensiveMemoryManagement() {
         f"Expected at least 2 comprehensive memory management calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that memory management parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -17,7 +17,6 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
 @pytest.fixture
 def temp_project_root(tmp_path: Path) -> Path:
     """Create a temporary project root directory."""
-    # Create a sample Python file
     sample_file = tmp_path / "sample.py"
     sample_file.write_text(
         '''def hello_world():
@@ -48,7 +47,6 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
         cypher_gen=mock_cypher_gen,
     )
 
-    # Mock the code retrieval tool
     registry._code_tool = MagicMock()
     registry._code_tool.function = AsyncMock()
 
@@ -62,7 +60,6 @@ class TestGetCodeSnippetBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving a function snippet."""
-        # Mock the response from the code tool
         mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
             model_dump=lambda: {
                 "qualified_name": "sample.hello_world",
@@ -272,10 +269,8 @@ class TestGetCodeSnippetErrorHandling:
             model_dump=lambda: None
         )
 
-        # Should handle gracefully without crashing
         result = await mcp_registry.get_code_snippet("sample.function")
 
-        # Should return an error dict
         assert isinstance(result, dict)
 
 
@@ -331,7 +326,6 @@ class TestGetCodeSnippetIntegration:
 
         await mcp_registry.get_code_snippet("test.function")
 
-        # Verify the tool was called with the correct qualified name
         mcp_registry._code_tool.function.assert_called_once_with(
             qualified_name="test.function"
         )

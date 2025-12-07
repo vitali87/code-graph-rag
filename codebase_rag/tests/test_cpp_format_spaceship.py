@@ -53,7 +53,6 @@ void testNumberFormatting() {
 """
     )
 
-    # Run graph updater
     run_updater(cpp_format_spaceship_project, mock_ingestor)
 
     function_calls = get_nodes(mock_ingestor, "Function")
@@ -130,10 +129,8 @@ void testSpaceshipOperator() {
 """
     )
 
-    # Run graph updater
     run_updater(cpp_format_spaceship_project, mock_ingestor)
 
-    # Verify classes and functions were detected
     class_calls = get_nodes(mock_ingestor, "Class")
 
     function_calls = get_nodes(mock_ingestor, "Function")
@@ -204,10 +201,8 @@ void analyzeData() {
 """
     )
 
-    # Run graph updater
     run_updater(cpp_format_spaceship_project, mock_ingestor)
 
-    # Verify structures were detected
     class_calls = get_nodes(mock_ingestor, "Class")
 
     function_calls = get_nodes(mock_ingestor, "Function")
@@ -217,7 +212,6 @@ void analyzeData() {
         f"Expected at least 1 function, found {len(function_calls)}"
     )
 
-    # Check for DataPoint struct
     class_names = {call[0][1]["name"] for call in class_calls}
     assert "DataPoint" in class_names, f"DataPoint struct not found in {class_names}"
 
@@ -227,7 +221,6 @@ def test_format_spaceship_complete(
     mock_ingestor: MagicMock,
 ) -> None:
     """Complete test demonstrating format and spaceship operator features."""
-    # This test verifies the comprehensive testing approach works
     print("=== C++20 Format and Spaceship Operator Test Suite ===")
     print("Testing comprehensive coverage of:")
     print("   - std::format library with custom formatters")
@@ -235,4 +228,3 @@ def test_format_spaceship_complete(
     print("   - Comparison categories (strong, weak, partial ordering)")
     print("   - Integration of format and spaceship for data analysis")
     print("   - Real-world usage patterns and examples")
-    # Test completed successfully

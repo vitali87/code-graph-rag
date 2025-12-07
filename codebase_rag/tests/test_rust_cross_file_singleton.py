@@ -19,7 +19,6 @@ version = "0.1.0"
 edition = "2021"
 """)
 
-    # src/storage/mod.rs - Singleton module
     src_dir = project_path / "src"
     src_dir.mkdir()
     storage_dir = src_dir / "storage"
@@ -63,7 +62,6 @@ impl Storage {
 }
 """)
 
-    # src/controllers/mod.rs - Uses Storage singleton
     controllers_dir = src_dir / "controllers"
     controllers_dir.mkdir()
 
@@ -99,7 +97,6 @@ impl SceneController {
 }
 """)
 
-    # src/main.rs - Entry point
     (src_dir / "main.rs").write_text("""
 mod storage;
 mod controllers;
@@ -168,9 +165,7 @@ def test_rust_singleton_pattern_cross_file_calls(
 
         found_calls.add((caller_short, callee_short))
 
-    # Expected cross-file calls for Rust singleton pattern
     expected_calls = [
-        # From SceneController::load_menu_scene to Storage (cross-file)
         (
             "src.controllers.SceneController.load_menu_scene",
             "src.storage.Storage.get_instance",
@@ -187,7 +182,6 @@ def test_rust_singleton_pattern_cross_file_calls(
             "src.controllers.SceneController.load_menu_scene",
             "src.storage.Storage.load",
         ),
-        # From SceneController::load_game_scene to Storage
         (
             "src.controllers.SceneController.load_game_scene",
             "src.storage.Storage.get_instance",
@@ -196,7 +190,6 @@ def test_rust_singleton_pattern_cross_file_calls(
             "src.controllers.SceneController.load_game_scene",
             "src.storage.Storage.save",
         ),
-        # From main.Application::start to SceneController (cross-file)
         (
             "src.main.Application.start",
             "src.controllers.SceneController.new",
@@ -209,21 +202,17 @@ def test_rust_singleton_pattern_cross_file_calls(
             "src.main.Application.start",
             "src.controllers.SceneController.load_game_scene",
         ),
-        # From main.Application::start to Storage (cross-file)
         ("src.main.Application.start", "src.storage.Storage.get_instance"),
         ("src.main.Application.start", "src.storage.Storage.load"),
-        # From main::main to Application
         ("src.main.main", "src.main.Application.new"),
         ("src.main.main", "src.main.Application.start"),
     ]
 
-    # Check for missing calls
     missing_calls = []
     for expected_caller, expected_callee in expected_calls:
         if (expected_caller, expected_callee) not in found_calls:
             missing_calls.append((expected_caller, expected_callee))
 
-    # Print detailed info if test fails
     if missing_calls:
         print(f"\n### Missing {len(missing_calls)} expected Rust cross-file calls:")
         for caller, callee in missing_calls:

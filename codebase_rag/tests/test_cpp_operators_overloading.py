@@ -283,7 +283,6 @@ void demonstrateArithmeticOperators() {
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with operator overloading
     expected_classes = [
         f"{project_name}.arithmetic_operators.Complex",
         f"{project_name}.arithmetic_operators.Vector3D",
@@ -571,7 +570,6 @@ void demonstrateComparisonOperators() {
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with comparison operators
     expected_classes = [
         f"{project_name}.comparison_operators.Person",
         f"{project_name}.comparison_operators.Version",
@@ -837,7 +835,6 @@ void demonstrateStreamAndFunctionOperators() {
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with stream and function call operators
     expected_classes = [
         f"{project_name}.stream_function_operators.Point",
         f"{project_name}.stream_function_operators.Adder",
@@ -1240,7 +1237,6 @@ void demonstrateSubscriptAndIncrementOperators() {
 
     project_name = cpp_operators_project.name
 
-    # Expected classes with subscript and increment operators
     expected_classes = [
         f"{project_name}.subscript_increment_operators.DynamicArray",
         f"{project_name}.subscript_increment_operators.Counter",
@@ -1395,7 +1391,6 @@ void demonstrateAllOperators() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive operator coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1406,5 +1401,4 @@ void demonstrateAllOperators() {
         f"Expected at least 5 comprehensive operator calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that operator parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

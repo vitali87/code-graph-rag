@@ -113,7 +113,6 @@ public record Employee(
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify records were detected as classes (records are special classes)
     project_name = java_modern_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -245,7 +244,6 @@ public record Multiplication(Expression left, Expression right) implements Expre
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify sealed classes were detected
     project_name = java_modern_project.name
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
@@ -404,7 +402,6 @@ enum CustomerType {
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class and enum were detected
     project_name = java_modern_project.name
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
@@ -563,7 +560,6 @@ public class TextBlocks {
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected despite text blocks
     project_name = java_modern_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 
@@ -693,7 +689,6 @@ public class VarKeyword {
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
 
-    # Verify the class was detected despite var usage
     project_name = java_modern_project.name
     created_classes = get_node_names(mock_ingestor, "Class")
 

@@ -181,7 +181,6 @@ void demonstrateAutoFeatures() {
 
     project_name = cpp_modern_project.name
 
-    # Expected function definitions with auto features
     expected_functions = [
         f"{project_name}.auto_features.testBasicAuto",
         f"{project_name}.auto_features.testContainerAuto",
@@ -193,7 +192,6 @@ void demonstrateAutoFeatures() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -443,7 +441,6 @@ void demonstrateLambdaFeatures() {
 
     project_name = cpp_modern_project.name
 
-    # Expected function definitions with lambda features
     expected_functions = [
         f"{project_name}.lambda_features.testBasicLambdas",
         f"{project_name}.lambda_features.testLambdaCaptures",
@@ -454,7 +451,6 @@ void demonstrateLambdaFeatures() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -750,7 +746,6 @@ void demonstrateSmartPointersAndMove() {
 
     project_name = cpp_modern_project.name
 
-    # Expected classes and functions
     expected_classes = [
         f"{project_name}.smart_pointers_move.Resource",
         f"{project_name}.smart_pointers_move.SmartPtrManager",
@@ -772,7 +767,6 @@ void demonstrateSmartPointersAndMove() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1017,7 +1011,6 @@ void demonstrateVariadicConstexpr() {
 
     project_name = cpp_modern_project.name
 
-    # Expected template functions and constexpr functions
     expected_functions = [
         f"{project_name}.variadic_constexpr.factorial",
         f"{project_name}.variadic_constexpr.isPrime",
@@ -1028,7 +1021,6 @@ void demonstrateVariadicConstexpr() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1294,7 +1286,6 @@ void demonstrateStructuredBindingsAndRanges() {
 
     project_name = cpp_modern_project.name
 
-    # Expected functions with structured bindings and ranges
     expected_functions = [
         f"{project_name}.structured_bindings_ranges.testStructuredBindings",
         f"{project_name}.structured_bindings_ranges.testRangeBasedFor",
@@ -1304,7 +1295,6 @@ void demonstrateStructuredBindingsAndRanges() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1488,7 +1478,6 @@ void demonstrateModernFeatures() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive modern C++ coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_modern" in call.args[0][2]
     ]
@@ -1497,5 +1486,4 @@ void demonstrateModernFeatures() {
         f"Expected at least 5 comprehensive modern calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that modern C++ parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -59,9 +59,6 @@ io.write("Processing complete\n")
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have file I/O calls (may be 0 if calls not resolved)
-    # Note: Lua function calls may not always be detected as relationships
-
 
 def test_file_reading_modes(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     """Test different file reading modes."""
@@ -122,9 +119,6 @@ end
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
-
-    # Should have file reading calls (may be 0 if calls not resolved)
-    # Note: Lua function calls may not always be detected as relationships
 
 
 def test_file_positioning_and_info(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -193,9 +187,6 @@ temp:close()
     assert len(defines_rels) >= 2, (
         f"Expected at least 2 DEFINES relationships, got {len(defines_rels)}"
     )
-
-    # Should have file positioning calls (may be 0 if calls not resolved)
-    # Note: Lua function calls may not always be detected as relationships
 
 
 def test_serialization_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -294,7 +285,6 @@ local person = deserialize_from_file("person.lua")
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
 
-    # Should have serialization calls
     assert len(calls_rels) >= 1, (
         f"Expected at least 1 CALLS relationship, got {len(calls_rels)}"
     )
@@ -367,6 +357,3 @@ write_binary_file("copy.png", binary_data.data)
     assert len(defines_rels) >= 3, (
         f"Expected at least 3 DEFINES relationships, got {len(defines_rels)}"
     )
-
-    # Should have binary file calls (may be 0 if calls not resolved)
-    # Note: Lua function calls may not always be detected as relationships

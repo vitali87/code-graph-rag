@@ -226,7 +226,6 @@ print("State machine:", table.concat(machine_results, " -> "))
 
         goto_qn = f"{project.name}.goto_labels"
 
-        # Verify goto-related functions were extracted
         expected_functions = [
             f"{goto_qn}.GotoLabels.test_basic_goto",
             f"{goto_qn}.GotoLabels.test_goto_error_handling",
@@ -439,7 +438,6 @@ print("Decomposed length:", norm_results.decomposed_len)
 
         utf8_qn = f"{project.name}.utf8_lib"
 
-        # Verify UTF-8 library functions were extracted
         expected_functions = [
             f"{utf8_qn}.UTF8Lib.test_utf8_functions",
             f"{utf8_qn}.UTF8Lib.test_utf8_validation",
@@ -451,10 +449,8 @@ print("Decomposed length:", norm_results.decomposed_len)
         for expected_fn in expected_functions:
             assert expected_fn in fn_qns, f"Missing function: {expected_fn}"
 
-        # Check UTF-8 library calls were extracted
         calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-        # Should have UTF-8 library function calls
         assert len(calls_rels) >= 5, f"Expected at least 5 CALLS, got {len(calls_rels)}"
 
         print("✅ Lua 5.4 UTF-8 library test PASSED")
@@ -694,7 +690,6 @@ end
 
         bitwise_qn = f"{project.name}.bitwise_ops"
 
-        # Verify bitwise operation functions were extracted
         expected_functions = [
             f"{bitwise_qn}.BitwiseOps.test_basic_bitwise",
             f"{bitwise_qn}.BitwiseOps.test_variable_bitwise",

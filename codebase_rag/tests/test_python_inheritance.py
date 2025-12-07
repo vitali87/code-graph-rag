@@ -13,10 +13,8 @@ def inheritance_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "inheritance_test"
     project_path.mkdir()
 
-    # Create __init__.py
     (project_path / "__init__.py").write_text("")
 
-    # Create inheritance.py with comprehensive inheritance examples
     inheritance_file = project_path / "inheritance.py"
     inheritance_file.write_text(
         '''"""Module with various inheritance patterns."""
@@ -206,9 +204,7 @@ def test_inheritance_relationships_are_created(
 
     project_name = inheritance_project.name
 
-    # Expected INHERITS relationships
     expected_inherits = [
-        # Single inheritance
         (
             ("Class", "qualified_name", f"{project_name}.inheritance.Mammal"),
             ("Class", "qualified_name", f"{project_name}.inheritance.Animal"),
@@ -233,7 +229,6 @@ def test_inheritance_relationships_are_created(
             ("Class", "qualified_name", f"{project_name}.inheritance.SmartCar"),
             ("Class", "qualified_name", f"{project_name}.inheritance.Car"),
         ),
-        # Multiple inheritance (Bat inherits from Mammal and Flyable)
         (
             ("Class", "qualified_name", f"{project_name}.inheritance.Bat"),
             ("Class", "qualified_name", f"{project_name}.inheritance.Mammal"),
@@ -277,9 +272,7 @@ def test_super_calls_are_tracked(
 
     project_name = inheritance_project.name
 
-    # Expected super() calls to track
     expected_super_calls = [
-        # Constructor super() calls
         (
             f"{project_name}.inheritance.Mammal.__init__",
             f"{project_name}.inheritance.Animal.__init__",
@@ -300,7 +293,6 @@ def test_super_calls_are_tracked(
             f"{project_name}.inheritance.SmartCar.__init__",
             f"{project_name}.inheritance.Vehicle.__init__",
         ),
-        # Method super() calls
         (
             f"{project_name}.inheritance.SmartCar.start_engine",
             f"{project_name}.inheritance.Car.start_engine",
@@ -337,9 +329,7 @@ def test_method_overrides_are_detected(
 
     project_name = inheritance_project.name
 
-    # Expected method overrides (child method overrides parent method)
     expected_overrides = [
-        # speak() method overrides
         (
             f"{project_name}.inheritance.Mammal.speak",
             f"{project_name}.inheritance.Animal.speak",
@@ -360,7 +350,6 @@ def test_method_overrides_are_detected(
             f"{project_name}.inheritance.Bat.speak",
             f"{project_name}.inheritance.Mammal.speak",
         ),
-        # start_engine() overrides
         (
             f"{project_name}.inheritance.Car.start_engine",
             f"{project_name}.inheritance.Vehicle.start_engine",
@@ -371,7 +360,6 @@ def test_method_overrides_are_detected(
         ),
     ]
 
-    # Check for OVERRIDES relationships
     override_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -404,7 +392,6 @@ def test_multiple_inheritance_is_handled(
 
     project_name = inheritance_project.name
 
-    # Bat should inherit from both Mammal and Flyable
     expected_multiple_inheritance = [
         (
             ("Class", "qualified_name", f"{project_name}.inheritance.Bat"),
@@ -449,14 +436,11 @@ def test_inherited_method_calls_are_resolved(
 
     project_name = inheritance_project.name
 
-    # Expected calls to inherited methods
     expected_inherited_calls = [
-        # dog.eat() calls Animal.eat() (inherited through Mammal)
         (
             f"{project_name}.inheritance.use_inheritance",
             f"{project_name}.inheritance.Animal.eat",
         ),
-        # poodle.give_birth() calls Mammal.give_birth() (inherited)
         (
             f"{project_name}.inheritance.use_inheritance",
             f"{project_name}.inheritance.Mammal.give_birth",
@@ -493,7 +477,6 @@ def test_deep_inheritance_chain(
 
     project_name = inheritance_project.name
 
-    # Test 3-level inheritance: Animal -> Mammal -> Dog -> Poodle
     expected_chain = [
         (
             ("Class", "qualified_name", f"{project_name}.inheritance.Mammal"),
@@ -532,10 +515,8 @@ def mro_diamond_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "mro_test"
     project_path.mkdir()
 
-    # Create __init__.py
     (project_path / "__init__.py").write_text("")
 
-    # Create diamond inheritance test file
     diamond_file = project_path / "diamond_mro.py"
     diamond_file.write_text(
         '''"""Diamond inheritance patterns for MRO testing."""
@@ -702,30 +683,22 @@ def test_diamond_inheritance_mro_basic(
 
     project_name = mro_diamond_project.name
 
-    # In diamond D(B, C) with both B and C overriding A.method():
-    # D.method should resolve to B.method (left-to-right precedence)
-    # This tests that our BFS finds the FIRST (nearest) override
-
-    # Get all OVERRIDES relationships
     override_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
     ]
 
-    # D doesn't override method, so no D.method -> * relationship should exist
     d_method_overrides = [
         call
         for call in override_relationships
         if call[0][0][2] == f"{project_name}.diamond_mro.D.method"
     ]
 
-    # D class doesn't have its own method() implementation, so should be no overrides
     assert len(d_method_overrides) == 0, (
         f"D class should not have method() overrides, but found: {d_method_overrides}"
     )
 
-    # But B.method should override A.method and C.method should override A.method
     expected_overrides = [
         (
             f"{project_name}.diamond_mro.B.method",
@@ -767,15 +740,12 @@ def test_diamond_inheritance_mro_override_at_point(
 
     project_name = mro_diamond_project.name
 
-    # E(B, C) overrides method() itself, so E.method should override B.method
-    # (the nearest method in the hierarchy)
     override_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
     ]
 
-    # E.method should override the nearest parent method (B.method due to MRO)
     e_override_found = any(
         (
             call[0][0][2] == f"{project_name}.diamond_mro.E.method"
@@ -806,18 +776,12 @@ def test_complex_multiple_inheritance_mro(
 
     project_name = mro_diamond_project.name
 
-    # Test complex inheritance I(G, H) where:
-    # G(A, F) overrides shared_method
-    # H(B, F) overrides shared_method
-    # I should not override shared_method, so no I.shared_method -> * relationship
-
     override_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
     ]
 
-    # I doesn't override shared_method, so should be no I.shared_method overrides
     i_shared_overrides = [
         call
         for call in override_relationships
@@ -828,14 +792,11 @@ def test_complex_multiple_inheritance_mro(
         f"I class should not have shared_method overrides, but found: {i_shared_overrides}"
     )
 
-    # But G and H should each override their respective parents
     expected_complex_overrides = [
-        # G(A, F) - shared_method should override F.shared_method (nearest)
         (
             f"{project_name}.diamond_mro.G.shared_method",
             f"{project_name}.diamond_mro.F.shared_method",
         ),
-        # H(B, F) - shared_method should override F.shared_method (nearest)
         (
             f"{project_name}.diamond_mro.H.shared_method",
             f"{project_name}.diamond_mro.F.shared_method",
@@ -868,32 +829,21 @@ def test_deep_diamond_chain_mro(
 
     project_name = mro_diamond_project.name
 
-    # Test M(K, L) where:
-    # A defines deep_method
-    # J(A) overrides deep_method
-    # K(J) overrides deep_method
-    # L(A) overrides deep_method
-    # M(K, L) should not override deep_method
-
     override_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
     ]
 
-    # Test the deep chain overrides
     expected_deep_overrides = [
-        # J.deep_method should override A.deep_method
         (
             f"{project_name}.diamond_mro.J.deep_method",
             f"{project_name}.diamond_mro.A.deep_method",
         ),
-        # K.deep_method should override J.deep_method (nearest parent)
         (
             f"{project_name}.diamond_mro.K.deep_method",
             f"{project_name}.diamond_mro.J.deep_method",
         ),
-        # L.deep_method should override A.deep_method
         (
             f"{project_name}.diamond_mro.L.deep_method",
             f"{project_name}.diamond_mro.A.deep_method",
@@ -909,7 +859,6 @@ def test_deep_diamond_chain_mro(
             f"Missing deep chain override: {child_method} OVERRIDES {parent_method}"
         )
 
-    # M doesn't override deep_method, so should be no M.deep_method overrides
     m_deep_overrides = [
         call
         for call in override_relationships
@@ -937,27 +886,17 @@ def test_asymmetric_diamond_mro(
 
     project_name = mro_diamond_project.name
 
-    # Test P(N, O) asymmetric diamond where:
-    # A defines asym_method
-    # N(A) overrides asym_method (1 level deep)
-    # B(A) overrides method (not asym_method)
-    # O(B) overrides asym_method (2 levels deep)
-    # P(N, O) should not override asym_method
-
     override_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
     ]
 
-    # Test asymmetric overrides - our BFS should find the nearest regardless of which branch it's in
     expected_asym_overrides = [
-        # N.asym_method should override A.asym_method (direct parent)
         (
             f"{project_name}.diamond_mro.N.asym_method",
             f"{project_name}.diamond_mro.A.asym_method",
         ),
-        # O.asym_method should override A.asym_method (skipping B which doesn't have asym_method)
         (
             f"{project_name}.diamond_mro.O.asym_method",
             f"{project_name}.diamond_mro.A.asym_method",
@@ -973,7 +912,6 @@ def test_asymmetric_diamond_mro(
             f"Missing asymmetric override: {child_method} OVERRIDES {parent_method}"
         )
 
-    # P doesn't override asym_method, so should be no P.asym_method overrides
     p_asym_overrides = [
         call
         for call in override_relationships
@@ -1007,26 +945,21 @@ def test_mro_nearest_override_selection(
         if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
     ]
 
-    # Key test: E(B, C) overrides method() - it should override B.method, not A.method
-    # because B.method is closer in the inheritance hierarchy than A.method
     e_method_overrides = [
         (call[0][0][2], call[0][2][2])
         for call in override_relationships
         if call[0][0][2] == f"{project_name}.diamond_mro.E.method"
     ]
 
-    # Should have exactly one override relationship for E.method
     assert len(e_method_overrides) == 1, (
         f"E.method should have exactly one override, but found: {e_method_overrides}"
     )
 
-    # Should override B.method (nearest), not A.method (further away)
     _, parent_method = e_method_overrides[0]
     assert parent_method == f"{project_name}.diamond_mro.B.method", (
         f"E.method should override B.method (nearest parent), but overrides {parent_method}"
     )
 
-    # Verify it does NOT create a relationship to A.method
     e_to_a_override = any(
         (
             call[0][0][2] == f"{project_name}.diamond_mro.E.method"

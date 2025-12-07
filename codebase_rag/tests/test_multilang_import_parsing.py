@@ -228,19 +228,15 @@ fn main() {
         actual_imports = updater.factory.import_processor.import_mapping[test_module]
 
         expected = {
-            # Nested groups: use std::{io::{Read, Write}, fs::{self, File}};
             "Read": "std::io::Read",
             "Write": "std::io::Write",
             "File": "std::fs::File",
-            # Aliases within groups: use std::io::{self as Sio, Read as ReadTrait};
             "Sio": "std::io",
             "ReadTrait": "std::io::Read",
-            # Complex nested paths
             "module": "super::super::module",
             "module1": "crate::module1",
             "submod1": "crate::module2::submod1",
             "submod2": "crate::module2::submod2",
-            # Self imports - the last "self" import wins
             "local_module": "self::local_module",
             "parent_module": "super::parent_module",
             "self": "super",  # Last self import: use super::{self, parent_module};

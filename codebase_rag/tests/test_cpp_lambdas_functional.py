@@ -498,7 +498,6 @@ void demonstrateLambdasAndFunctional() {
 
     project_name = cpp_lambdas_project.name
 
-    # Expected classes and functions with lambda usage
     expected_classes = [
         f"{project_name}.basic_lambdas.LambdaBasicsDemo",
         f"{project_name}.basic_lambdas.MultiplierFunctor",
@@ -522,7 +521,6 @@ void demonstrateLambdasAndFunctional() {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -757,7 +755,6 @@ void demonstrateAsyncFunctionalPatterns() {
 
     project_name = cpp_lambdas_project.name
 
-    # Expected classes with async functional patterns
     expected_classes = [
         f"{project_name}.async_functional.AsyncFunctionalDemo",
         f"{project_name}.async_functional.EventSystem",
@@ -847,7 +844,6 @@ void demonstrateComprehensiveLambdas() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive lambda coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -858,5 +854,4 @@ void demonstrateComprehensiveLambdas() {
         f"Expected at least 2 comprehensive lambda calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that lambda parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -14,10 +14,8 @@ def decorator_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "decorator_test"
     project_path.mkdir()
 
-    # Create __init__.py
     (project_path / "__init__.py").write_text("")
 
-    # Create decorators.py with comprehensive decorator examples
     decorators_file = project_path / "decorators.py"
     decorators_file.write_text(
         '''"""Module with various decorator patterns."""
@@ -175,7 +173,6 @@ def test_simple_function_decorators(
 
     project_name = decorator_project.name
 
-    # Expected functions with their decorators
     expected_decorators = {
         f"{project_name}.decorators.simple_decorated_function": ["timing_decorator"],
         f"{project_name}.decorators.multiple_decorated_function": [
@@ -191,7 +188,6 @@ def test_simple_function_decorators(
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Verify decorators are extracted for functions
     for call in function_calls:
         func_props = call[0][1]
         func_qn = func_props["qualified_name"]
@@ -223,7 +219,6 @@ def test_class_decorators(decorator_project: Path, mock_ingestor: MagicMock) -> 
 
     project_name = decorator_project.name
 
-    # Expected classes with their decorators
     expected_decorators = {
         f"{project_name}.decorators.DecoratedClass": ["dataclass"],
         f"{project_name}.decorators.ParameterizedDecoratedClass": ["dataclass"],
@@ -235,7 +230,6 @@ def test_class_decorators(decorator_project: Path, mock_ingestor: MagicMock) -> 
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Verify decorators are extracted for classes
     for call in class_calls:
         class_props = call[0][1]
         class_qn = class_props["qualified_name"]
@@ -267,8 +261,6 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
 
     project_name = decorator_project.name
 
-    # Expected methods with their decorators
-    # Note: Properties create both getter and setter methods with same name
     expected_decorators = {
         f"{project_name}.decorators.PropertyDecoratorExample.create_from_string": [
             "classmethod"
@@ -288,7 +280,6 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
         ],
     }
 
-    # Special handling for property methods (can be either getter or setter)
     property_methods = {
         f"{project_name}.decorators.PropertyDecoratorExample.value": [
             ["property"],
@@ -302,12 +293,10 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
 
     method_calls = get_nodes(mock_ingestor, "Method")
 
-    # Verify decorators are extracted for methods
     for call in method_calls:
         method_props = call[0][1]
         method_qn = method_props["qualified_name"]
 
-        # Check regular methods
         if method_qn in expected_decorators:
             assert "decorators" in method_props, (
                 f"Method {method_qn} should have decorators property"
@@ -320,7 +309,6 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
                 f"Method {method_qn}: expected decorators {expected}, got {actual}"
             )
 
-        # Check property methods (can be either getter or setter)
         elif method_qn in property_methods:
             assert "decorators" in method_props, (
                 f"Property method {method_qn} should have decorators property"
@@ -329,7 +317,6 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
             expected_variants = property_methods[method_qn]
             actual = method_props["decorators"]
 
-            # Check if actual matches any of the expected variants
             match_found = any(actual == expected for expected in expected_variants)
             assert match_found, (
                 f"Property method {method_qn}: expected one of {expected_variants}, got {actual}"
@@ -352,13 +339,11 @@ def test_nested_function_decorators(
 
     project_name = decorator_project.name
 
-    # Expected nested function with decorator
     expected_qn = f"{project_name}.decorators.outer_with_decorators.nested_decorated"
     expected_decorators = ["timing_decorator"]
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    # Find the nested decorated function
     nested_func_found = False
     for call in function_calls:
         func_props = call[0][1]
@@ -393,7 +378,6 @@ def test_decorator_with_complex_arguments(
 
     project_name = decorator_project.name
 
-    # Test functions with parameterized decorators
     test_cases = [
         {
             "qn": f"{project_name}.decorators.parameterized_decorated_function",
@@ -441,7 +425,6 @@ def test_empty_decorators_for_undecorated_functions(
 
     project_name = decorator_project.name
 
-    # Functions that should have no decorators
     undecorated_functions = [
         f"{project_name}.decorators.timing_decorator",
         f"{project_name}.decorators.retry",
@@ -467,5 +450,4 @@ def test_empty_decorators_for_undecorated_functions(
                 )
 
         if not func_found:
-            # Some functions might be nested, which is OK for this test
             pass

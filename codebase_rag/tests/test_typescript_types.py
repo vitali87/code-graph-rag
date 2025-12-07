@@ -111,7 +111,6 @@ const total = sum(1, 2, 3, 4, 5);
 
     project_name = typescript_types_project.name
 
-    # Expected function definitions with type annotations
     expected_functions = [
         f"{project_name}.basic_types.greet",
         f"{project_name}.basic_types.add",
@@ -124,7 +123,6 @@ const total = sum(1, 2, 3, 4, 5);
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify all expected functions were created
     for expected_qn in expected_functions:
         assert expected_qn in created_functions, (
             f"Missing typed function: {expected_qn}"
@@ -323,7 +321,6 @@ interface PaymentMethod {
 
     project_name = typescript_types_project.name
 
-    # Interfaces might be captured as Class nodes or special Interface nodes
     interface_nodes = [
         call
         for call in mock_ingestor.ensure_node_batch.call_args_list
@@ -331,12 +328,10 @@ interface PaymentMethod {
         and "interfaces_types" in call[0][1].get("qualified_name", "")
     ]
 
-    # Should have several interfaces defined
     assert len(interface_nodes) >= 3, (
         f"Expected at least 3 interface/type definitions, found {len(interface_nodes)}"
     )
 
-    # Expected functions using interfaces
     expected_functions = [
         f"{project_name}.interfaces_types.isUser",
         f"{project_name}.interfaces_types.isString",
@@ -347,13 +342,11 @@ interface PaymentMethod {
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify functions using interfaces were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Should have inheritance relationships for interfaces
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -364,7 +357,6 @@ interface PaymentMethod {
         call for call in relationship_calls if "interfaces_types" in call[0][0][2]
     ]
 
-    # Should have some interface inheritance
     assert len(interface_inheritance) >= 1, (
         f"Expected at least 1 interface inheritance relationship, found {len(interface_inheritance)}"
     )
@@ -599,7 +591,6 @@ const errorResult = createError(new Error("Failed"));
 
     project_name = typescript_types_project.name
 
-    # Expected generic functions
     expected_generic_functions = [
         f"{project_name}.generics.identity",
         f"{project_name}.generics.createArray",
@@ -613,7 +604,6 @@ const errorResult = createError(new Error("Failed"));
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify generic functions were created
     found_generic_functions = [
         func for func in expected_generic_functions if func in created_functions
     ]
@@ -621,7 +611,6 @@ const errorResult = createError(new Error("Failed"));
         f"Expected at least 5 generic functions, found {len(found_generic_functions)}"
     )
 
-    # Expected generic classes
     expected_generic_classes = [
         f"{project_name}.generics.GenericContainer",
         f"{project_name}.generics.Cache",
@@ -631,7 +620,6 @@ const errorResult = createError(new Error("Failed"));
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify generic classes were created
     found_generic_classes = [
         cls for cls in expected_generic_classes if cls in created_classes
     ]
@@ -844,7 +832,6 @@ const partial = deepPartial(requiredUser);
 
     project_name = typescript_types_project.name
 
-    # Expected functions using utility types
     expected_utility_functions = [
         f"{project_name}.utility_types.updateUser",
         f"{project_name}.utility_types.createUser",
@@ -858,7 +845,6 @@ const partial = deepPartial(requiredUser);
 
     created_functions = get_node_names(mock_ingestor, "Function")
 
-    # Verify utility type functions were created
     found_utility_functions = [
         func for func in expected_utility_functions if func in created_functions
     ]
@@ -866,14 +852,12 @@ const partial = deepPartial(requiredUser);
         f"Expected at least 5 utility type functions, found {len(found_utility_functions)}"
     )
 
-    # Expected class using utility types
     expected_utility_classes = [
         f"{project_name}.utility_types.UserService",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    # Verify utility type classes were created
     found_utility_classes = [
         cls for cls in expected_utility_classes if cls in created_classes
     ]
@@ -999,7 +983,6 @@ addEventListener('click', (event) => {
         c for c in all_relationships if c.args[1] == "IMPLEMENTS"
     ]
 
-    # Should have comprehensive type coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_types" in call.args[0][2]
     ]
@@ -1008,14 +991,12 @@ addEventListener('click', (event) => {
         f"Expected at least 5 comprehensive type calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have implementation relationships
     [
         call
         for call in implements_relationships
         if "comprehensive_types" in call.args[0][2]
     ]
 
-    # Verify relationship structure for type-related calls
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1031,5 +1012,4 @@ addEventListener('click', (event) => {
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that type parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

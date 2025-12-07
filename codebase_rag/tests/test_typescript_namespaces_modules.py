@@ -370,7 +370,6 @@ console.log(merged.size()); // 2
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # TypeScript namespaces might be captured as special namespace nodes or as modules
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     namespace_like_nodes = [
@@ -388,7 +387,6 @@ console.log(merged.size()); // 2
         f"Expected at least 3 namespace-like nodes, found {len(namespace_like_nodes)}"
     )
 
-    # Check for functions within namespaces
     function_calls = [
         call
         for call in mock_ingestor.ensure_node_batch.call_args_list
@@ -415,7 +413,6 @@ console.log(merged.size()); // 2
         f"Expected at least 3 namespace functions, found {len(namespace_functions)}"
     )
 
-    # Check for classes within namespaces
     class_calls = get_nodes(mock_ingestor, "Class")
 
     namespace_classes = [
@@ -771,7 +768,6 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # Check for merged namespace functionality
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     merged_namespace_nodes = [
@@ -788,7 +784,6 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
         f"Expected at least 4 merged namespace-related nodes, found {len(merged_namespace_nodes)}"
     )
 
-    # Check for merged functions
     function_calls = get_nodes(mock_ingestor, "Function")
 
     merged_functions = [
@@ -810,7 +805,6 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
         f"Expected at least 3 functions from merged namespaces, found {len(merged_functions)}"
     )
 
-    # Check for interface/enum/class merging
     interface_calls = [
         call
         for call in all_nodes
@@ -1195,7 +1189,6 @@ if (ConditionalModule.IS_NODE) {
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    # Check for module patterns
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     module_pattern_nodes = [
@@ -1217,7 +1210,6 @@ if (ConditionalModule.IS_NODE) {
         f"Expected at least 3 module pattern nodes, found {len(module_pattern_nodes)}"
     )
 
-    # Check for exported classes and interfaces
     class_calls = [
         call
         for call in all_nodes
@@ -1238,7 +1230,6 @@ if (ConditionalModule.IS_NODE) {
         f"Expected at least 2 classes/interfaces in modules, found {module_classes_interfaces}"
     )
 
-    # Check for utility functions
     function_calls = get_nodes(mock_ingestor, "Function")
 
     module_functions = [
@@ -1356,7 +1347,6 @@ Conditional.log('Debug message');
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive namespace-related calls
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1367,7 +1357,6 @@ Conditional.log('Debug message');
         f"Expected at least 5 comprehensive namespace calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all namespace patterns were created
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     comprehensive_namespaces = [

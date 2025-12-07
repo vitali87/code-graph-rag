@@ -318,7 +318,6 @@ void demonstrateStringMoveSemantics() {
 
     project_name = cpp_move_semantics_project.name
 
-    # Expected move semantics classes and functions
     expected_entities = [
         f"{project_name}.basic_move_semantics.MoveableResource",
         f"{project_name}.basic_move_semantics.MyString",
@@ -327,7 +326,6 @@ void demonstrateStringMoveSemantics() {
         f"{project_name}.basic_move_semantics.demonstrateBasicMoveSemantics",
     ]
 
-    # Get all node creation calls
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     function_calls = [call for call in all_calls if call[0][0] == "Function"]
@@ -336,7 +334,6 @@ void demonstrateStringMoveSemantics() {
         call[0][1]["qualified_name"] for call in class_calls + function_calls
     }
 
-    # Verify expected entities were created
     found_entities = [
         entity for entity in expected_entities if entity in created_entities
     ]
@@ -593,7 +590,6 @@ void testReferenceCollapsing() {
 
     project_name = cpp_move_semantics_project.name
 
-    # Expected perfect forwarding classes and functions
     expected_classes = [
         f"{project_name}.perfect_forwarding.ForwardingTarget",
         f"{project_name}.perfect_forwarding.Wrapper",
@@ -995,7 +991,6 @@ void demonstrateAlgorithmOptimizations() {
 
     project_name = cpp_move_semantics_project.name
 
-    # Expected move optimization classes
     expected_classes = [
         f"{project_name}.move_optimization.OptimizedVector",
         f"{project_name}.move_optimization.MoveOnlyResource",
@@ -1405,7 +1400,6 @@ void comprehensiveMoveDemo() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    # Should have comprehensive move semantics coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1416,5 +1410,4 @@ void comprehensiveMoveDemo() {
         f"Expected at least 8 comprehensive move semantics calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that move semantics parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

@@ -180,7 +180,6 @@ fn tree_depth(node: &TreeNode) -> usize {
     run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify pattern matching functions are detected
     pattern_calls = [
         call
         for call in calls
@@ -457,7 +456,6 @@ fn string_pattern_matching() {
     run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify destructuring functions are detected
     destructure_calls = [
         call
         for call in calls
@@ -662,7 +660,6 @@ fn classify_float(f: f64) -> &'static str {
     run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify guard functions are detected
     guard_calls = [
         call
         for call in calls
@@ -933,7 +930,6 @@ fn process_string_refs() {
     run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify if let and while let functions are detected
     let_calls = [
         call
         for call in calls
@@ -1221,7 +1217,6 @@ fn test_advanced_macro_patterns() {
     run_updater(rust_pattern_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify macro pattern functions are detected
     macro_calls = [
         call
         for call in calls

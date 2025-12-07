@@ -13,10 +13,8 @@ def return_type_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "return_type_test"
     project_path.mkdir()
 
-    # Create __init__.py
     (project_path / "__init__.py").write_text("")
 
-    # Create models/base.py with return type patterns
     models_dir = project_path / "models"
     models_dir.mkdir()
     (models_dir / "__init__.py").write_text("")
@@ -152,7 +150,6 @@ class UserService:
         return None
 ''')
 
-    # Create services/processor.py that uses the models
     services_dir = project_path / "services"
     services_dir.mkdir()
     (services_dir / "__init__.py").write_text("")
@@ -246,28 +243,23 @@ def test_basic_return_type_inference(
         if len(c[0]) >= 3 and c[0][1] == "CALLS"
     ]
 
-    # Filter for method calls only
     method_calls = [
         call
         for call in actual_calls
         if call[0][2][0] == "Method"  # callee label is "Method"
     ]
 
-    # Convert to callable format
     found_method_calls = set()
     for call in method_calls:
         caller_qn = call[0][0][2]
         callee_qn = call[0][2][2]
         found_method_calls.add((caller_qn, callee_qn))
 
-    # Expected method calls from factory pattern
     expected_basic_calls = [
-        # UserFactory.create_admin_user() returns AdminUser, then admin.get_role()
         (
             f"{project_name}.services.processor.UserProcessor.complex_processing",
             f"{project_name}.models.base.AdminUser.get_role",
         ),
-        # AdminUser.create_regular_user() returns User, then user.get_name()
         (
             f"{project_name}.services.processor.UserProcessor.complex_processing",
             f"{project_name}.models.base.User.get_name",
@@ -304,7 +296,6 @@ def test_fluent_interface_return_types(
 
     project_name = return_type_project.name
 
-    # Get method calls
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -317,8 +308,6 @@ def test_fluent_interface_return_types(
         callee_qn = call[0][2][2]
         found_method_calls.add((caller_qn, callee_qn))
 
-    # Expected fluent interface calls
-    # processed_user.update_name("Updated") returns User (self), then .clone()
     expected_fluent_calls = [
         (
             f"{project_name}.services.processor.UserProcessor.complex_processing",
@@ -355,7 +344,6 @@ def test_nested_return_type_inference(
 
     project_name = return_type_project.name
 
-    # Get method calls
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -368,9 +356,6 @@ def test_nested_return_type_inference(
         callee_qn = call[0][2][2]
         found_method_calls.add((caller_qn, callee_qn))
 
-    # Expected nested calls:
-    # user.get_profile() returns Profile, then profile.get_display_name()
-    # profile.to_user() returns User, then user.get_name()
     expected_nested_calls = [
         (
             f"{project_name}.services.processor.UserProcessor.complex_processing",
@@ -411,7 +396,6 @@ def test_service_method_return_types(
 
     project_name = return_type_project.name
 
-    # Get method calls
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -424,9 +408,6 @@ def test_service_method_return_types(
         callee_qn = call[0][2][2]
         found_method_calls.add((caller_qn, callee_qn))
 
-    # Expected service calls:
-    # self.service.process_user_creation() returns User, then user.get_name()
-    # self.service.find_or_create_user() returns User, then user.get_profile()
     expected_service_calls = [
         (
             f"{project_name}.services.processor.UserProcessor.complex_processing",
@@ -463,7 +444,6 @@ def test_loop_variable_return_types(
 
     project_name = return_type_project.name
 
-    # Get method calls
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -476,9 +456,6 @@ def test_loop_variable_return_types(
         callee_qn = call[0][2][2]
         found_method_calls.add((caller_qn, callee_qn))
 
-    # Expected loop calls:
-    # In loop: user = service.find_or_create_user(), then user.get_profile()
-    # Then: profile.get_display_name()
     expected_loop_calls = [
         (
             f"{project_name}.services.processor.BatchProcessor.process_batch",

@@ -15,11 +15,9 @@ class TestStandardLibraryImports:
         """Create a GraphUpdater instance with mock dependencies for testing."""
         mock_ingestor = MagicMock()
 
-        # Create a real temporary directory structure for testing
         test_repo = Path("/tmp/test_repo")
         test_repo.mkdir(exist_ok=True)
 
-        # Create some local modules
         (test_repo / "utils").mkdir(exist_ok=True)
         (test_repo / "config.py").touch()
         (test_repo / "src").mkdir(exist_ok=True)
@@ -41,7 +39,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: from os import path
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
@@ -64,7 +61,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # Should NOT have project prefix
         expected_mapping = {"path": "os.path"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -76,7 +72,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.analysis"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: from numpy import array
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
@@ -99,7 +94,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # Should NOT have project prefix
         expected_mapping = {"array": "numpy.array"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -113,7 +107,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: from utils import helper
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
@@ -136,7 +129,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # SHOULD have project prefix because utils/ exists in repo
         expected_mapping = {"helper": "myproject.utils.helper"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -148,7 +140,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: from config import settings
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
@@ -171,7 +162,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # SHOULD have project prefix because config.py exists in repo
         expected_mapping = {"settings": "myproject.config.settings"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -185,7 +175,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: from myproject.utils import helper
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
@@ -208,7 +197,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # Should stay the same (no double prefix)
         expected_mapping = {"helper": "myproject.utils.helper"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -220,7 +208,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: from src.helpers import database
         mock_import_node = MagicMock()
         mock_module_name_node = MagicMock()
         mock_module_name_node.type = "dotted_name"
@@ -243,7 +230,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # SHOULD have project prefix because src/ exists in repo
         expected_mapping = {"database": "myproject.src.helpers.database"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -255,7 +241,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: import os
         mock_import_node = MagicMock()
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
@@ -268,7 +253,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # Should NOT have project prefix
         expected_mapping = {"os": "os"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -280,7 +264,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: import utils
         mock_import_node = MagicMock()
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
@@ -293,7 +276,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # SHOULD have project prefix because utils/ exists in repo
         expected_mapping = {"utils": "myproject.utils"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -307,7 +289,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: import src.helpers
         mock_import_node = MagicMock()
         mock_dotted_name = MagicMock()
         mock_dotted_name.type = "dotted_name"
@@ -320,7 +301,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # SHOULD have project prefix, local name should be 'src'
         expected_mapping = {"src": "myproject.src.helpers"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -332,7 +312,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: import os as operating_system
         mock_import_node = MagicMock()
         mock_aliased_import = MagicMock()
         mock_aliased_import.type = "aliased_import"
@@ -354,7 +333,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # Should NOT have project prefix
         expected_mapping = {"operating_system": "os"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
@@ -366,7 +344,6 @@ class TestStandardLibraryImports:
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
 
-        # Simulate parsing: import utils as helpers
         mock_import_node = MagicMock()
         mock_aliased_import = MagicMock()
         mock_aliased_import.type = "aliased_import"
@@ -388,7 +365,6 @@ class TestStandardLibraryImports:
             module_qn,
         )
 
-        # SHOULD have project prefix because utils/ exists in repo
         expected_mapping = {"helpers": "myproject.utils"}
         assert (
             mock_updater.factory.import_processor.import_mapping[module_qn]
