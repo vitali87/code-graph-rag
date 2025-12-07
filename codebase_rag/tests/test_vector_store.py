@@ -59,7 +59,7 @@ def integration_client(
     )
     vs._CLIENT = client  # ty: ignore[invalid-assignment]
 
-    yield client  # ty: ignore[misc]
+    yield client
 
     vs._CLIENT = None  # ty: ignore[invalid-assignment]
 

@@ -257,7 +257,7 @@ class TestGetCodeSnippetErrorHandling:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test handling of exceptions during retrieval."""
-        mcp_registry._code_tool.function.side_effect = Exception  # ty: ignore[invalid-assignment]("Database error")
+        mcp_registry._code_tool.function.side_effect = Exception("Database error")  # ty: ignore[invalid-assignment]
 
         result = await mcp_registry.get_code_snippet("sample.function")
 
