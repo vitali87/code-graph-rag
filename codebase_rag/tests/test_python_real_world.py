@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -898,11 +898,7 @@ def test_flask_model_calls(
     run_updater(todo_app_project, mock_ingestor)
 
     # Get all function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Test TaskController -> TaskModel usage
     model_usage_calls = [
@@ -925,11 +921,7 @@ def test_flask_controller_imports(
     run_updater(todo_app_project, mock_ingestor)
 
     # Get import calls
-    import_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_calls = get_relationships(mock_ingestor, "IMPORTS")
 
     # Test AuthController imports - after fix, imports point to modules not classes/functions
     auth_controller_imports = [
@@ -955,11 +947,7 @@ def test_flask_route_controller_calls(
     run_updater(todo_app_project, mock_ingestor)
 
     # Get function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Test route calling controller
     route_controller_calls = [
@@ -1011,11 +999,7 @@ def test_typescript_hook_usage(
     run_updater(todo_app_project, mock_ingestor)
 
     # Get function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Debug: Check what function calls are being detected in TypeScript
     ts_function_calls = [
@@ -1057,11 +1041,7 @@ def test_api_service_calls(
     run_updater(todo_app_project, mock_ingestor)
 
     # Get function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Debug: Check what API-related calls are being detected
     api_related_calls = [
@@ -1148,11 +1128,7 @@ def test_schema_inheritance_detection(
     run_updater(todo_app_project, mock_ingestor)
 
     # Get inheritance calls
-    inheritance_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_calls = get_relationships(mock_ingestor, "INHERITS")
 
     # Test schema inheritance
     schema_inheritance = [

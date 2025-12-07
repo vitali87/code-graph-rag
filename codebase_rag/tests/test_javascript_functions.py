@@ -8,6 +8,7 @@ from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
     get_qualified_names,
+    get_relationships,
     run_updater,
 )
 
@@ -124,11 +125,7 @@ const total = sum(1, 2, 3, 4, 5);
         assert expected_qn in created_functions, f"Missing function: {expected_qn}"
 
     # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Should have calls between functions
     function_to_function_calls = [
@@ -377,11 +374,7 @@ async function orchestrate() {
         )
 
     # Verify function calls between async functions
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     async_to_async_calls = [
         call
@@ -512,11 +505,7 @@ const configValue = Config.get('apiUrl');
     )
 
     # Should also capture function calls (the invocations)
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     iife_calls = [
         call for call in call_relationships if "iife_patterns" in call.args[0][2]
@@ -852,11 +841,7 @@ const isValid = Person.isValidAge(30);
     )
 
     # Verify method calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     method_calls = [
         call for call in call_relationships if "method_definitions" in call.args[0][2]

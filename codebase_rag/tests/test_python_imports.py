@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -67,11 +67,7 @@ from http.server import HTTPServer
 
     run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -156,11 +152,7 @@ from ...models import User
 
     run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     # Test relative imports from different levels
     relative_imports = [
@@ -255,11 +247,7 @@ class DataProcessor:
 
     run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     complex_imports = [
         call for call in import_relationships if "complex_imports" in call.args[0][2]
@@ -325,7 +313,7 @@ import seaborn as sns
 # Testing imports
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 from unittest.mock import MagicMock, patch, Mock
 from pytest import fixture, raises
 
@@ -345,11 +333,7 @@ from marshmallow import Schema, fields, validate, post_load, pre_dump
 
     run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     framework_imports = [
         call for call in import_relationships if "framework_imports" in call.args[0][2]
@@ -427,11 +411,7 @@ from yaml import load as yaml_load
 
     run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     alias_imports = [
         call for call in import_relationships if "alias_imports" in call.args[0][2]
@@ -499,11 +479,7 @@ import sys, json  # trailing comma handled gracefully
 
     run_updater(python_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     error_file_imports = [
         call for call in import_relationships if "error_imports" in call.args[0][2]

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -81,11 +81,7 @@ const data = shared;
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     default_imports = [
         call
@@ -143,11 +139,7 @@ useEffect(() => {});
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     named_imports = [
         call for call in import_relationships if "es6_named_imports" in call.args[0][2]
@@ -195,11 +187,7 @@ const url = constants.API_URL;
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     namespace_imports = [
         call
@@ -270,11 +258,7 @@ const sum = mathAdd(1, 2);
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     commonjs_imports = [
         call for call in import_relationships if "commonjs_imports" in call.args[0][2]
@@ -327,11 +311,7 @@ const finalUrl = apiEndpoint;
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     aliased_imports = [
         call
@@ -393,11 +373,7 @@ const url = constants.API_URL;
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     relative_imports = [
         call for call in import_relationships if "Input" in call.args[0][2]
@@ -461,11 +437,7 @@ const debounced = debounce(() => {});
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     package_imports = [
         call for call in import_relationships if "package_imports" in call.args[0][2]
@@ -544,11 +516,7 @@ modulePromise.then(({ shared }) => {
     run_updater(javascript_imports_project, mock_ingestor)
 
     # Dynamic imports might be tracked as function calls to import()
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     dynamic_calls = [
         call for call in call_relationships if "dynamic_imports" in call.args[0][2]
@@ -598,11 +566,7 @@ const url = API_URL;
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     mixed_imports = [
         call for call in import_relationships if "mixed_imports" in call.args[0][2]
@@ -658,11 +622,7 @@ require('./also-side-effects');
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     error_file_imports = [
         call for call in import_relationships if "error_imports" in call.args[0][2]
@@ -755,11 +715,7 @@ export { useUtils };
     run_updater(javascript_imports_project, mock_ingestor)
 
     # Get all import relationships
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     # Test consumer imports (should work correctly with our fix)
     consumer_imports = [
@@ -938,11 +894,7 @@ const area = multiply(PI, 2);
 
     run_updater(javascript_imports_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     regression_imports = [
         call

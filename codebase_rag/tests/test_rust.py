@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_node_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -142,11 +142,7 @@ fn demonstrate_functions() {
     )
 
     # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_call_relationships = [
         call
@@ -1120,11 +1116,7 @@ fn demonstrate_patterns() {
     )
 
     # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     pattern_call_relationships = [
         call
@@ -1340,11 +1332,7 @@ fn demonstrate_function_usage() {
     )
 
     # Verify function calls are tracked (closures calling other functions)
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     closure_call_relationships = [
         call
@@ -1779,11 +1767,7 @@ impl Debug for CustomStruct {
     run_updater(rust_project, mock_ingestor)
 
     # Get all import relationships
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     rust_imports = [
         call for call in import_relationships if "imports" in call.args[0][2]
@@ -2118,11 +2102,7 @@ fn demonstrate_error_handling() {
     )
 
     # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     error_call_relationships = [
         call
@@ -3272,11 +3252,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
     )
 
     # Verify complex relationships are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     edge_case_calls = [
         call for call in call_relationships if "advanced_edge_cases" in call.args[0][2]
@@ -3288,11 +3264,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
     )
 
     # Verify import relationships for advanced features
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     edge_case_imports = [
         call

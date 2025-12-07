@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -381,11 +386,7 @@ export function enhancedFetch(url, options) {
         assert expected in created_classes, f"Missing ES6 exported class: {expected}"
 
     # Check import relationships for re-exports
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     reexport_imports = [
         call for call in import_relationships if "reexports" in call.args[0][2]
@@ -530,11 +531,7 @@ export function hybridFunction() {
     run_updater(javascript_modules_project, mock_ingestor)
 
     # Check that mixed module imports are captured
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     mixed_imports = [
         call for call in import_relationships if "mixed_modules" in call.args[0][2]
@@ -738,11 +735,7 @@ export function useA() {
     run_updater(javascript_modules_project, mock_ingestor)
 
     # Check that circular imports are captured
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     # CommonJS circular imports
     circular_imports = [
@@ -1108,11 +1101,7 @@ export { useReExports };
     run_updater(javascript_modules_project, mock_ingestor)
 
     # Get all import relationships
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     # Filter for relationships involving our test files
     aliased_re_export_imports = [

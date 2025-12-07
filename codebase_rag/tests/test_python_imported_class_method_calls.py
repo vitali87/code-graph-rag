@@ -1,10 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -126,11 +125,7 @@ def test_imported_class_method_calls_are_detected(
     project_name = class_method_project.name
 
     # Get all CALLS relationships
-    actual_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    actual_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Filter for method calls only
     method_calls = [
@@ -209,11 +204,7 @@ def test_cross_file_object_method_chaining(
     project_name = class_method_project.name
 
     # Get all CALLS relationships
-    actual_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    actual_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Look for calls from UserService.batch_process to User.get_name
     # This tests list comprehension method calls: [user.get_name() for user in users]

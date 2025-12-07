@@ -7,6 +7,7 @@ import pytest
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
+    get_relationships,
     run_updater,
 )
 
@@ -808,11 +809,7 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
     )
 
     # Check inheritance relationships for error classes
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     error_inheritance = [
         call

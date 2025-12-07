@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -361,11 +361,7 @@ console.log((user as any).getValidationErrors()); // []
     )
 
     # Check inheritance relationships (from decorator extensions)
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     decorator_inheritance = [
         call

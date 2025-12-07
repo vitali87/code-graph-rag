@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_node_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -134,11 +134,7 @@ const total = sum(1, 2, 3, 4, 5);
         )
 
     # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_calls_found = [
         call for call in call_relationships if "basic_types" in call.args[0][2]

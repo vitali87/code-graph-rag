@@ -1,8 +1,7 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_lua_function_and_method_calls(
@@ -49,9 +48,5 @@ local r = pipeline(10)
     run_updater(project, mock_ingestor)
 
     # Should have CALLS relationships at least from pipeline
-    calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls = get_relationships(mock_ingestor, "CALLS")
     assert len(calls) >= 1, calls

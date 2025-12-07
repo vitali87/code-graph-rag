@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -148,11 +148,7 @@ void demonstrateStdLibrary() {
 
     run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
         call for call in import_relationships if "stdlib_includes" in call.args[0][2]
@@ -266,11 +262,7 @@ void useLocalHeaders();
 
     run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     local_imports = [
         call for call in import_relationships if "local_includes" in call.args[0][2]
@@ -433,11 +425,7 @@ void demonstrateConditionalIncludes() {
 
     run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     conditional_imports = [
         call
@@ -564,11 +552,7 @@ void demonstrateIncludeTypes() {
 
     run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     include_type_imports = [
         call for call in import_relationships if "include_types" in call.args[0][2]
@@ -702,11 +686,7 @@ std::vector<int> PragmaClass::getItems() const {
 
     run_updater(cpp_includes_project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     guard_test_imports = [
         call

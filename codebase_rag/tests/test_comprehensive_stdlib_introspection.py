@@ -1,8 +1,7 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_python_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -31,11 +30,7 @@ import xml.etree.ElementTree
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -110,11 +105,7 @@ http.createServer();
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     js_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -194,11 +185,7 @@ const hasher = crypto.createHash('sha256');
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     ts_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -299,11 +286,7 @@ func main() {
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     go_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -413,11 +396,7 @@ fn main() {
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     rust_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -522,11 +501,7 @@ int main() {
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     cpp_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -628,11 +603,7 @@ public class StdlibImports {
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     java_imports = [
         call for call in import_relationships if "StdlibImports" in call.args[0][2]
@@ -731,11 +702,7 @@ return {
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     lua_imports = [
         call for call in import_relationships if "stdlib_usage" in call.args[0][2]
@@ -826,11 +793,7 @@ def test_all_languages_stdlib_consistency(
 
     run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     # Verify we have imports from multiple languages
     assert len(import_relationships) >= 8, (

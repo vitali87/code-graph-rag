@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -309,11 +309,7 @@ void demonstrateSingleInheritance() {
         )
 
     # Verify virtual function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     virtual_calls = [
         call
@@ -1081,11 +1077,7 @@ void testAbstractDestructors() {
     )
 
     # Verify virtual function calls
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     virtual_interface_calls = [
         call
@@ -1662,11 +1654,7 @@ void demonstrateEdgeCases() {
     )
 
     # Test that complex parsing doesn't break function calls
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     edge_case_calls = [
         call

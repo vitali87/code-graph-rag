@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_node_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -218,11 +218,7 @@ console.log(manager instanceof Person);    // true
     )
 
     # Check inheritance relationships
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     # Should have Employee inheriting from Person, Manager from Employee
     len(inheritance_relationships) >= 2
@@ -449,11 +445,7 @@ myTask.outputTaskDetails();
     )
 
     # Check CALLS relationships for Object.create
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     object_create_calls = [
         call for call in call_relationships if "Object.create" in str(call.args[2][2])
@@ -663,11 +655,7 @@ square.scale(2);
     )
 
     # Check method calls through prototype chain
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     # Should have calls to parent prototype methods
     prototype_calls = [

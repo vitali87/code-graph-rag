@@ -7,6 +7,7 @@ import pytest
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
+    get_relationships,
     run_updater,
 )
 
@@ -581,11 +582,7 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
     )
 
     # Verify static method calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     static_method_calls = [
         call

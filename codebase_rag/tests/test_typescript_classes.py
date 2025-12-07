@@ -7,6 +7,7 @@ import pytest
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
+    get_relationships,
     run_updater,
 )
 
@@ -296,11 +297,7 @@ console.log(newRepo.name); // OK
         )
 
     # Check inheritance relationships
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     # Should have ExtendedDemo inheriting from AccessModifierDemo
     access_inheritance = [
@@ -644,11 +641,7 @@ console.log(car.start());
         assert expected in created_classes, f"Missing abstract class: {expected}"
 
     # Check inheritance from abstract classes
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     # Should have concrete classes inheriting from abstract classes
     abstract_inheritance = [

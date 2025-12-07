@@ -1,11 +1,10 @@
 import os
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock, call
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -51,11 +50,7 @@ def test_function_call_relationships_are_created(
         ),
     ]
 
-    actual_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    actual_calls = get_relationships(mock_ingestor, "CALLS")
 
     # Check that we have at least the expected calls (we may have additional module-level calls)
     assert len(actual_calls) >= len(expected_calls)

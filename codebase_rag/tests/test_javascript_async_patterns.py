@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_node_names, run_updater
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -293,11 +293,7 @@ function handleProfileError(error) {
     )
 
     # Verify function calls are tracked (Promise chaining)
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     promise_calls = [
         call for call in call_relationships if "promise_patterns" in call.args[0][2]
@@ -1367,11 +1363,7 @@ consumeAsyncGenerator();
     )
 
     # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     generator_calls = [
         call for call in call_relationships if "generator_patterns" in call.args[0][2]

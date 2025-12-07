@@ -8,6 +8,7 @@ from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
     get_qualified_names,
+    get_relationships,
     run_updater,
 )
 
@@ -242,11 +243,7 @@ const varResults = varFunctions.map(fn => fn());
     )
 
     # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     closure_calls = [
         call for call in call_relationships if "basic_closures" in call.args[0][2]
@@ -1150,11 +1147,7 @@ const allConfig = Config.getAll();
     run_updater(javascript_closures_project, mock_ingestor)
 
     # Verify module patterns create proper function relationships
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     module_calls = [
         call for call in call_relationships if "module_patterns" in call.args[0][2]
