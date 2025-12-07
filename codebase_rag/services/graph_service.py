@@ -172,7 +172,6 @@ class MemgraphIngestor:
                 "Relationship buffer reached batch size ({}). Performing incremental flush.",
                 self.batch_size,
             )
-            # Ensure all pending nodes exist before we flush relationships
             self.flush_nodes()
             self.flush_relationships()
 
@@ -262,14 +261,12 @@ class MemgraphIngestor:
             )
             total_successful += batch_successful
 
-            # Log failures for CALLS relationships
             if rel_type == "CALLS":
                 failed = len(params_list) - batch_successful
                 if failed > 0:
                     logger.warning(
                         f"Failed to create {failed} CALLS relationships - nodes may not exist"
                     )
-                    # Log first 3 samples
                     for i, sample in enumerate(params_list[:3]):
                         logger.warning(
                             f"  Sample {i + 1}: {from_label}.{sample['from_val']} -> {to_label}.{sample['to_val']}"
@@ -300,14 +297,12 @@ class MemgraphIngestor:
         """Export the entire graph as a dictionary with nodes and relationships."""
         logger.info("Exporting graph data...")
 
-        # Get all nodes with their labels and properties
         nodes_query = """
         MATCH (n)
         RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
         """
         nodes_data = self.fetch_all(nodes_query)
 
-        # Get all relationships with their types and properties
         relationships_query = """
         MATCH (a)-[r]->(b)
         RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties

@@ -140,7 +140,6 @@ class OllamaProvider(ModelProvider):
         return "ollama"
 
     def validate_config(self) -> None:
-        # Remove /v1 from endpoint for health check
         base_url = self.endpoint.rstrip("/v1").rstrip("/")
 
         if not check_ollama_running(base_url):
@@ -156,7 +155,6 @@ class OllamaProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider, **kwargs)
 
 
-# Provider registry
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "google": GoogleProvider,
     "openai": OpenAIProvider,

@@ -48,10 +48,8 @@ from .tools.semantic_search import (
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
-# Style constants
 confirm_edits_globally = True
 
-# Pre-compile regex patterns
 _FILE_MODIFICATION_PATTERNS = [
     re.compile(
         r"(modified|updated|created|edited):\s*[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)"
@@ -61,7 +59,6 @@ _FILE_MODIFICATION_PATTERNS = [
     ),
     re.compile(r"writing\s+to\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)"),
 ]
-
 
 app = typer.Typer(
     name="graph-code",
@@ -75,11 +72,8 @@ app = typer.Typer(
 
 console = Console(width=None, force_terminal=True)
 
-# Session logging
 session_log_file = None
 session_cancelled = False
-# # Global flag to control edit confirmation
-# confirm_edits = True
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -148,15 +142,12 @@ def is_edit_operation_response(response_text: str) -> bool:
     """Enhanced check if the response contains edit operations that need confirmation."""
     response_lower = response_text.lower()
 
-    # Check for tool usage
     tool_usage = any(tool in response_lower for tool in EDIT_TOOLS)
 
-    # Check for content indicators
     content_indicators = any(
         indicator in response_lower for indicator in EDIT_INDICATORS
     )
 
-    # Check for regex patterns
     pattern_match = any(
         pattern.search(response_lower) for pattern in _FILE_MODIFICATION_PATTERNS
     )
@@ -166,11 +157,9 @@ def is_edit_operation_response(response_text: str) -> bool:
 
 def _setup_common_initialization(repo_path: str) -> Path:
     """Common setup logic for both main and optimize functions."""
-    # Logger initialization
     logger.remove()
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
-    # Temporary directory cleanup
     project_root = Path(repo_path).resolve()
     tmp_dir = project_root / ".tmp"
     if tmp_dir.exists():
@@ -193,7 +182,6 @@ def _create_configuration_table(
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
 
-    # Add language row if provided (for optimization sessions)
     if language:
         table.add_row("Target Language", language)
 
@@ -208,7 +196,6 @@ def _create_configuration_table(
         "Cypher Model", f"{cypher_config.model_id} ({cypher_config.provider})"
     )
 
-    # Show endpoint for Ollama providers
     orch_endpoint = (
         orchestrator_config.endpoint
         if orchestrator_config.provider == "ollama"
@@ -226,7 +213,6 @@ def _create_configuration_table(
         if cypher_endpoint:
             table.add_row("Ollama Endpoint (Cypher)", cypher_endpoint)
 
-    # Show edit confirmation status
     confirmation_status = (
         "Enabled" if confirm_edits_globally else "Disabled (YOLO Mode)"
     )
@@ -246,7 +232,6 @@ async def run_optimization_loop(
     """Runs the optimization loop with proper confirmation handling."""
     global session_cancelled
 
-    # Initialize session logging
     init_session_log(project_root)
     console.print(
         f"[bold green]Starting {language} optimization session...[/bold green]"
@@ -265,7 +250,6 @@ async def run_optimization_loop(
         )
     )
 
-    # Initial optimization analysis
     instructions = [
         "Use your code retrieval and graph querying tools to understand the codebase structure",
         "Read relevant source files to identify optimization opportunities",
@@ -304,7 +288,6 @@ Remember: Propose changes first, wait for my approval, then implement.
     while True:
         try:
             if not first_run:
-                # Ask for user input on subsequent iterations
                 question = await asyncio.to_thread(
                     get_multiline_input, "[bold cyan]Your response[/bold cyan]"
                 )
@@ -314,17 +297,14 @@ Remember: Propose changes first, wait for my approval, then implement.
             if not question.strip():
                 continue
 
-            # Log user question
             log_session_event(f"USER: {question}")
 
-            # If previous thinking was cancelled, add session context
             if session_cancelled:
                 question_with_context = question + get_session_context()
                 session_cancelled = False
             else:
                 question_with_context = question
 
-            # Handle images in the question
             question_with_context = _handle_chat_images(
                 question_with_context, project_root
             )
@@ -344,7 +324,6 @@ Remember: Propose changes first, wait for my approval, then implement.
                     session_cancelled = True
                     continue
 
-            # Display the response
             markdown_response = Markdown(response.output)
             console.print(
                 Panel(
@@ -354,7 +333,6 @@ Remember: Propose changes first, wait for my approval, then implement.
                 )
             )
 
-            # Check if confirmation is needed for edit operations
             if confirm_edits_globally and is_edit_operation_response(response.output):
                 console.print(
                     "\n[bold yellow]⚠️  This optimization has performed file modifications.[/bold yellow]"
@@ -374,10 +352,8 @@ Remember: Propose changes first, wait for my approval, then implement.
                         "[bold green]✅ Optimizations approved by user.[/bold green]"
                     )
 
-            # Log assistant response
             log_session_event(f"ASSISTANT: {response.output}")
 
-            # Add the original response to message history only if not rejected
             message_history.extend(response.new_messages())
             first_run = False
 
@@ -422,14 +398,11 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     Checks for image file paths in the question, copies them to a temporary
     directory, and replaces the path in the question.
     """
-    # Use shlex to properly parse the question and handle escaped spaces
     try:
         tokens = shlex.split(question)
     except ValueError:
-        # Fallback to simple split if shlex fails
         tokens = question.split()
 
-    # Find image files in tokens
     image_extensions = (".png", ".jpg", ".jpeg", ".gif")
     image_files = [
         token
@@ -456,20 +429,13 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             shutil.copy(original_path, new_path)
             new_relative_path = new_path.relative_to(project_root)
 
-            # Find and replace all possible quoted/escaped versions of this path
-            # Try different forms the path might appear in the original question
             path_variants = [
-                # Backslash-escaped spaces: /path/with\ spaces.png
                 original_path_str.replace(" ", r"\ "),
-                # Single quoted: '/path/with spaces.png'
                 f"'{original_path_str}'",
-                # Double quoted: "/path/with spaces.png"
                 f'"{original_path_str}"',
-                # Unquoted: /path/with spaces.png
                 original_path_str,
             ]
 
-            # Try each variant and replace if found
             replaced = False
             for variant in path_variants:
                 if variant in updated_question:
@@ -510,17 +476,14 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
         """Handle Ctrl+C."""
         event.app.exit(exception=KeyboardInterrupt)
 
-    # Convert Rich markup to plain text using Rich's parser
     clean_prompt = Text.from_markup(prompt_text).plain
 
-    # Display the colored prompt first
     print_formatted_text(
         HTML(
             f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
         )
     )
 
-    # Use simple prompt without formatting to avoid alignment issues
     result = prompt(
         "",
         multiline=True,
@@ -539,12 +502,10 @@ async def run_chat_loop(
     """Runs the main chat loop with proper edit confirmation."""
     global session_cancelled
 
-    # Initialize session logging
     init_session_log(project_root)
 
     while True:
         try:
-            # Get user input
             question = await asyncio.to_thread(
                 get_multiline_input, "[bold cyan]Ask a question[/bold cyan]"
             )
@@ -554,22 +515,18 @@ async def run_chat_loop(
             if not question.strip():
                 continue
 
-            # Log user question
             log_session_event(f"USER: {question}")
 
-            # If previous thinking was cancelled, add session context
             if session_cancelled:
                 question_with_context = question + get_session_context()
                 session_cancelled = False
             else:
                 question_with_context = question
 
-            # Handle images in the question
             question_with_context = _handle_chat_images(
                 question_with_context, project_root
             )
 
-            # Check if this might be an edit operation and warn user upfront
             might_edit = is_edit_operation_request(question)
             if confirm_edits_globally and might_edit:
                 console.print(
@@ -596,7 +553,6 @@ async def run_chat_loop(
                     session_cancelled = True
                     continue
 
-            # Display the response
             markdown_response = Markdown(response.output)
             console.print(
                 Panel(
@@ -606,7 +562,6 @@ async def run_chat_loop(
                 )
             )
 
-            # Check if the response actually contains edit operations
             if confirm_edits_globally and is_edit_operation_response(response.output):
                 console.print(
                     "\n[bold yellow]⚠️  The assistant has performed file modifications.[/bold yellow]"
@@ -623,10 +578,8 @@ async def run_chat_loop(
                         "[bold green]✅ Changes accepted by user.[/bold green]"
                     )
 
-            # Log assistant response
             log_session_event(f"ASSISTANT: {response.output}")
 
-            # Add the response to message history only if it wasn't rejected
             message_history.extend(response.new_messages())
 
         except KeyboardInterrupt:
@@ -640,7 +593,6 @@ def _update_single_model_setting(role: str, model_string: str) -> None:
     """Update a single model setting (orchestrator or cypher)."""
     provider, model = settings.parse_model_string(model_string)
 
-    # Get current config to preserve existing values like API keys from env vars
     if role == "orchestrator":
         current_config = settings.active_orchestrator_config
         set_method = settings.set_orchestrator
@@ -658,7 +610,6 @@ def _update_single_model_setting(role: str, model_string: str) -> None:
         "service_account_file": current_config.service_account_file,
     }
 
-    # Override with provider-specific defaults only if not already set
     if provider == "ollama" and not kwargs["endpoint"]:
         kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
         kwargs["api_key"] = "ollama"
@@ -693,10 +644,8 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         graph_data = ingestor.export_graph_to_dict()
         output_path = Path(output)
 
-        # Ensure the output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write JSON with proper formatting
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(graph_data, f, indent=2, ensure_ascii=False)
 
@@ -716,7 +665,6 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
 def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> Any:
     """Initializes all services and creates the RAG agent."""
-    # Validate provider configurations before initializing any LLM services
     from .providers.base import get_provider
 
     def _validate_provider_config(role: str, config: Any) -> None:
@@ -736,7 +684,6 @@ def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> A
         except Exception as e:
             raise ValueError(f"{role.title()} configuration error: {e}") from e
 
-    # Validate both provider configurations
     _validate_provider_config("orchestrator", settings.active_orchestrator_config)
     _validate_provider_config("cypher", settings.active_cypher_config)
 
@@ -849,12 +796,10 @@ def start(
     """Starts the Codebase RAG CLI."""
     global confirm_edits_globally
 
-    # Set confirmation mode based on flag
     confirm_edits_globally = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
-    # Validate output option usage
     if output and not update_graph:
         console.print(
             "[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]"
@@ -881,13 +826,11 @@ def start(
                 ingestor.clean_database()
             ingestor.ensure_constraints()
 
-            # Load parsers and queries
             parsers, queries = load_parsers()
 
             updater = GraphUpdater(ingestor, repo_to_update, parsers, queries)
             updater.run()
 
-            # Export graph if output file specified
             if output:
                 console.print(f"[bold cyan]Exporting graph to: {output}[/bold cyan]")
                 if not _export_graph_to_file(ingestor, output):
@@ -931,7 +874,6 @@ def index(
     )
 
     try:
-        # This command ONLY ever uses the ProtobufFileIngestor.
         ingestor = ProtobufFileIngestor(
             output_path=output_proto_dir, split_index=split_index
         )
@@ -1008,7 +950,6 @@ async def main_optimize_async(
         f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
     )
 
-    # Display configuration with language included
     table = _create_configuration_table(
         str(project_root), "Optimization Session Configuration", language
     )
@@ -1068,7 +1009,6 @@ def optimize(
     """Optimize a codebase for a specific programming language."""
     global confirm_edits_globally
 
-    # Set confirmation mode based on flag
     confirm_edits_globally = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
@@ -1161,7 +1101,6 @@ def language_command(ctx: typer.Context) -> None:
         cgr language list-languages
         cgr language remove-language python
     """
-    # Delegate to the click-based language CLI
     language_cli(ctx.args, standalone_mode=False)
 
 

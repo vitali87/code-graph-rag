@@ -25,7 +25,6 @@ COMMAND_ALLOWLIST = {
     "uv",
     "find",
     "pre-commit",
-    # FS Modifying commands - Agent MUST ask for confirmation before using.
     "rm",
     "cp",
     "mv",
@@ -33,7 +32,6 @@ COMMAND_ALLOWLIST = {
     "rmdir",
 }
 
-# Git commands that require user confirmation
 GIT_CONFIRMATION_COMMANDS = {
     "add",
     "commit",
@@ -67,15 +65,12 @@ def _requires_confirmation(cmd_parts: list[str]) -> tuple[bool, str]:
 
     command = cmd_parts[0]
 
-    # File system modification commands
     if command in {"rm", "cp", "mv", "mkdir", "rmdir"}:
         return True, f"filesystem modification command '{command}'"
 
-    # Package management commands
     if command == "uv":
         return True, "package management command 'uv'"
 
-    # Git commands that modify state
     if command == "git" and len(cmd_parts) > 1:
         git_subcommand = cmd_parts[1]
         if git_subcommand in GIT_CONFIRMATION_COMMANDS:
@@ -127,7 +122,6 @@ class ShellCommander:
                     return_code=-1, stdout="", stderr="Empty command provided."
                 )
 
-            # Security: Check if the command is in the allowlist
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
                 available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
                 suggestion = ""
@@ -138,16 +132,13 @@ class ShellCommander:
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
-            # Security: Check for dangerous argument combinations
             if _is_dangerous_command(cmd_parts):
                 err_msg = f"Rejected dangerous command: {' '.join(cmd_parts)}"
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
-            # Check if command requires confirmation but wasn't pre-approved
             requires_confirmation, reason = _requires_confirmation(cmd_parts)
             if requires_confirmation and not confirmed:
-                # Return a special message that tells the agent to ask for confirmation
                 command_str = " ".join(cmd_parts)
                 confirmation_msg = f"I will run `{command_str}`. Do you approve? [y/n]"
                 logger.info(f"Command requires confirmation: {command_str}")

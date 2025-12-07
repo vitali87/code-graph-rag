@@ -63,7 +63,6 @@ def extract_java_package_name(package_node: Node) -> str | None:
     if package_node.type != "package_declaration":
         return None
 
-    # Look for scoped_identifier containing the package path
     for child in package_node.children:
         if child.type == "scoped_identifier":
             return safe_decode_text(child)
@@ -95,7 +94,6 @@ def extract_java_import_path(import_node: Node) -> dict[str, str]:
     imported_path = None
     is_wildcard = False
 
-    # Parse import declaration
     for child in import_node.children:
         if child.type == "static":
             pass
@@ -110,11 +108,9 @@ def extract_java_import_path(import_node: Node) -> dict[str, str]:
         return imports
 
     if is_wildcard:
-        # Wildcard import: import java.util.*; or import static java.util.Collections.*;
         wildcard_key = f"*{imported_path}"
         imports[wildcard_key] = imported_path
     else:
-        # Regular import: import java.util.List; or import static java.lang.Math.PI;
         parts = imported_path.split(".")
         if parts:
             imported_name = parts[-1]  # Last part is class/method name
@@ -164,27 +160,22 @@ def extract_java_class_info(class_node: Node) -> JavaClassInfo:
         "type_parameters": [],
     }
 
-    # Extract class name
     name_node = class_node.child_by_field_name("name")
     if name_node:
         info["name"] = safe_decode_text(name_node)
 
-    # Extract superclass and interfaces
     superclass_node = class_node.child_by_field_name("superclass")
     if superclass_node:
         if superclass_node.type == "type_identifier":
             info["superclass"] = safe_decode_text(superclass_node)
         elif superclass_node.type == "generic_type":
-            # Handle generic superclass like Class<T>
             for child in superclass_node.children:
                 if child.type == "type_identifier":
                     info["superclass"] = safe_decode_text(child)
                     break
 
-    # Extract interfaces (interfaces field contains the super_interfaces node)
     interfaces_node = class_node.child_by_field_name("interfaces")
     if interfaces_node:
-        # Look for type_list containing the interface types
         for child in interfaces_node.children:
             if child.type == "type_list":
                 for type_child in child.children:
@@ -192,7 +183,6 @@ def extract_java_class_info(class_node: Node) -> JavaClassInfo:
                     if type_child.type == "type_identifier":
                         interface_name = safe_decode_text(type_child)
                     elif type_child.type == "generic_type":
-                        # Handle generic interfaces like Comparable<T>
                         for sub_child in type_child.children:
                             if sub_child.type == "type_identifier":
                                 interface_name = safe_decode_text(sub_child)
@@ -200,7 +190,6 @@ def extract_java_class_info(class_node: Node) -> JavaClassInfo:
                     if interface_name:
                         info["interfaces"].append(interface_name)
 
-    # Extract type parameters
     type_params_node = class_node.child_by_field_name("type_parameters")
     if type_params_node:
         for child in type_params_node.children:
@@ -209,10 +198,8 @@ def extract_java_class_info(class_node: Node) -> JavaClassInfo:
                 if param_name:
                     info["type_parameters"].append(param_name)
 
-    # Extract modifiers using correct tree-sitter traversal
     for child in class_node.children:
         if child.type == "modifiers":
-            # Look inside the modifiers node for actual modifier tokens
             for modifier_child in child.children:
                 if modifier_child.type in [
                     "public",
@@ -268,18 +255,15 @@ def extract_java_method_info(method_node: Node) -> JavaMethodInfo:
         "annotations": [],
     }
 
-    # Extract method name
     name_node = method_node.child_by_field_name("name")
     if name_node:
         info["name"] = safe_decode_text(name_node)
 
-    # Extract return type (for methods)
     if method_node.type == "method_declaration":
         type_node = method_node.child_by_field_name("type")
         if type_node:
             info["return_type"] = safe_decode_text(type_node)
 
-    # Extract parameters using tree-sitter field access
     params_node = method_node.child_by_field_name("parameters")
     if params_node:
         for child in params_node.children:
@@ -290,7 +274,6 @@ def extract_java_method_info(method_node: Node) -> JavaMethodInfo:
                     if param_type:
                         info["parameters"].append(param_type)
             elif child.type == "spread_parameter":
-                # Handle varargs (String... args) using tree-sitter traversal
                 for subchild in child.children:
                     if subchild.type == "type_identifier":
                         param_type_text = safe_decode_text(subchild)
@@ -299,10 +282,8 @@ def extract_java_method_info(method_node: Node) -> JavaMethodInfo:
                             info["parameters"].append(param_type)
                         break
 
-    # Extract modifiers and annotations using correct tree-sitter traversal
     for child in method_node.children:
         if child.type == "modifiers":
-            # Look inside the modifiers node for actual modifier tokens
             for modifier_child in child.children:
                 if modifier_child.type in [
                     "public",
@@ -352,22 +333,18 @@ def extract_java_field_info(field_node: Node) -> JavaFieldInfo:
         "annotations": [],
     }
 
-    # Extract field type
     type_node = field_node.child_by_field_name("type")
     if type_node:
         info["type"] = safe_decode_text(type_node)
 
-    # Extract field name from variable declarator
     declarator_node = field_node.child_by_field_name("declarator")
     if declarator_node and declarator_node.type == "variable_declarator":
         name_node = declarator_node.child_by_field_name("name")
         if name_node:
             info["name"] = safe_decode_text(name_node)
 
-    # Extract modifiers and annotations using correct tree-sitter traversal
     for child in field_node.children:
         if child.type == "modifiers":
-            # Look inside the modifiers node for actual modifier tokens
             for modifier_child in child.children:
                 if modifier_child.type in [
                     "public",
@@ -413,12 +390,10 @@ def extract_java_method_call_info(call_node: Node) -> dict[str, str | int | None
 
     info: dict[str, str | int | None] = {"name": None, "object": None, "arguments": 0}
 
-    # Extract method name
     name_node = call_node.child_by_field_name("name")
     if name_node:
         info["name"] = safe_decode_text(name_node)
 
-    # Extract object/class name
     object_node = call_node.child_by_field_name("object")
     if object_node:
         if object_node.type == "identifier":
@@ -428,10 +403,8 @@ def extract_java_method_call_info(call_node: Node) -> dict[str, str | int | None
         elif object_node.type == "super":
             info["object"] = "super"
         elif object_node.type == "field_access":
-            # Handle chained method calls like obj.field.method()
             info["object"] = safe_decode_text(object_node)
 
-    # Count arguments
     args_node = call_node.child_by_field_name("arguments")
     if args_node:
         argument_count = 0
@@ -458,23 +431,19 @@ def is_java_main_method(method_node: Node) -> bool:
     if method_node.type != "method_declaration":
         return False
 
-    # Check method name using correct tree-sitter field access
     name_node = method_node.child_by_field_name("name")
     if not name_node or safe_decode_text(name_node) != "main":
         return False
 
-    # Check return type using correct tree-sitter field access
     type_node = method_node.child_by_field_name("type")
     if not type_node or type_node.type != "void_type":
         return False
 
-    # Check modifiers using tree-sitter AST traversal
     has_public = False
     has_static = False
 
     for child in method_node.children:
         if child.type == "modifiers":
-            # Look inside the modifiers node using tree-sitter traversal
             for modifier_child in child.children:
                 if modifier_child.type == "public":
                     has_public = True
@@ -484,12 +453,10 @@ def is_java_main_method(method_node: Node) -> bool:
     if not (has_public and has_static):
         return False
 
-    # Check parameter signature using correct tree-sitter field access
     parameters_node = method_node.child_by_field_name("parameters")
     if not parameters_node:
         return False
 
-    # Should have exactly one parameter: String[] args (or String... args)
     param_count = 0
     valid_param = False
 
@@ -497,11 +464,9 @@ def is_java_main_method(method_node: Node) -> bool:
         if child.type == "formal_parameter":
             param_count += 1
 
-            # Use tree-sitter field access to get parameter type
             type_node = child.child_by_field_name("type")
             if type_node:
                 type_text = safe_decode_text(type_node)
-                # Accept String[], String..., or variations like java.lang.String[]
                 if type_text and (
                     "String[]" in type_text
                     or "String..." in type_text
@@ -511,10 +476,8 @@ def is_java_main_method(method_node: Node) -> bool:
                     valid_param = True
 
         elif child.type == "spread_parameter":
-            # Handle varargs (String... args) using tree-sitter traversal
             param_count += 1
 
-            # Check if it contains String type
             for subchild in child.children:
                 if subchild.type == "type_identifier":
                     type_text = safe_decode_text(subchild)
@@ -623,12 +586,10 @@ def extract_java_annotation_info(
 
     info: JavaAnnotationInfo = {"name": None, "arguments": []}
 
-    # Extract annotation name
     name_node = annotation_node.child_by_field_name("name")
     if name_node:
         info["name"] = safe_decode_text(name_node)
 
-    # Extract arguments
     args_node = annotation_node.child_by_field_name("arguments")
     if args_node:
         for child in args_node.children:
@@ -660,19 +621,15 @@ def find_java_package_start_index(parts: list[str]) -> int | None:
         ["project", "src", "com", "example", "Helper"] -> 2 (com.example.Helper)
     """
     for i, part in enumerate(parts):
-        # Standard: after java/kotlin/scala folder
         if part in ("java", "kotlin", "scala") and i > 0:
             return i + 1
 
-        # Non-standard structures after "src"
         if part == "src" and i + 1 < len(parts):
             next_part = parts[i + 1]
 
-            # src/package (no main/test/java)
             if next_part not in ("java", "kotlin", "scala", "main", "test"):
                 return i + 1
 
-            # src/main or src/test without java folder
             if _is_non_standard_java_src_layout(parts, i):
                 return i + 1
 

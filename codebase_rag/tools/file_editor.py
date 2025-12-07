@@ -51,7 +51,6 @@ class FileEditor:
     def __init__(self, project_root: str = ".") -> None:
         self.project_root = Path(project_root).resolve()
         self.dmp = diff_match_patch.diff_match_patch()
-        # Load parsers using the shared parser loader
         self.parsers, _ = load_parsers()
         logger.info(f"FileEditor initialized with root: {self.project_root}")
 
@@ -59,7 +58,6 @@ class FileEditor:
         """Gets the file extension, looking past a .tmp suffix if present."""
         extension = file_path_obj.suffix
         if extension == ".tmp":
-            # Get the extension before .tmp (e.g., test_file.py.tmp -> .py)
             base_name = file_path_obj.stem
             if "." in base_name:
                 return "." + base_name.split(".")[-1]
@@ -93,7 +91,6 @@ class FileEditor:
         if not root_node:
             return None
 
-        # Get language config for this file
         file_path_obj = Path(file_path)
         extension = self._get_real_extension(file_path_obj)
 
@@ -102,22 +99,18 @@ class FileEditor:
             logger.warning(f"No language config found for extension {extension}")
             return None
 
-        # Find all matching functions with their context
         matching_functions: list[FunctionMatch] = []
 
         def find_function_nodes(node: Node, parent_class: str | None = None) -> None:
             if node.type in lang_config.function_node_types:
-                # Get the function name node using the 'name' field
                 name_node = node.child_by_field_name("name")
                 if name_node and name_node.text:
                     func_name = name_node.text.decode("utf-8")
 
-                    # Check if this matches our target function
                     qualified_name = (
                         f"{parent_class}.{func_name}" if parent_class else func_name
                     )
 
-                    # Match either simple name or qualified name
                     if func_name == function_name or qualified_name == function_name:
                         matching_functions.append(
                             {
@@ -130,23 +123,19 @@ class FileEditor:
                             }
                         )
 
-                    # Don't recurse into function bodies for nested functions
                     return
 
-            # Check if this is a class node to track context
             current_class = parent_class
             if node.type in lang_config.class_node_types:
                 name_node = node.child_by_field_name("name")
                 if name_node and name_node.text:
                     current_class = name_node.text.decode("utf-8")
 
-            # Recursively search children
             for child in node.children:
                 find_function_nodes(child, current_class)
 
         find_function_nodes(root_node)
 
-        # Handle different matching scenarios
         if not matching_functions:
             return None
         elif len(matching_functions) == 1:
@@ -155,9 +144,6 @@ class FileEditor:
                 return None
             return str(node_text.decode("utf-8"))
         else:
-            # Multiple functions found - try different disambiguation strategies
-
-            # Strategy 1: Match by line number if provided
             if line_number is not None:
                 for func in matching_functions:
                     if func["line_number"] == line_number:
@@ -170,7 +156,6 @@ class FileEditor:
                 )
                 return None
 
-            # Strategy 2: Match by qualified name if function_name contains dot
             if "." in function_name:
                 for func in matching_functions:
                     if func["qualified_name"] == function_name:
@@ -183,7 +168,6 @@ class FileEditor:
                 )
                 return None
 
-            # Strategy 3: Log ambiguity warning with details and return first match
             function_details = []
             for func in matching_functions:
                 details = f"'{func['qualified_name']}' at line {func['line_number']}"
@@ -196,7 +180,6 @@ class FileEditor:
                 f"or specify line number for precise targeting."
             )
 
-            # Return the first match but warn the user
             node_text = matching_functions[0]["node"].text
             if node_text is None:
                 return None
@@ -219,13 +202,10 @@ class FileEditor:
         with open(file_path, encoding="utf-8") as f:
             original_content = f.read()
 
-        # Create patches using diff-match-patch
         patches = self.dmp.patch_make(original_code, new_code)
 
-        # Apply patches to the original content
         new_content, results = self.dmp.patch_apply(patches, original_content)
 
-        # Check if all patches were applied successfully
         if not all(results):
             logger.warning(
                 f"Patches for function '{function_name}' did not apply cleanly."
@@ -257,11 +237,9 @@ class FileEditor:
         if not original_code:
             return None
 
-        # Use diff-match-patch for more sophisticated diff generation
         diffs = self.dmp.diff_main(original_code, new_code)
         self.dmp.diff_cleanupSemantic(diffs)
 
-        # Convert to unified diff format for readability
         diff = difflib.unified_diff(
             original_code.splitlines(keepends=True),
             new_code.splitlines(keepends=True),
@@ -276,18 +254,14 @@ class FileEditor:
             with open(file_path, encoding="utf-8") as f:
                 original_content = f.read()
 
-            # Parse the patch
             patches = self.dmp.patch_fromText(patch_text)
 
-            # Apply the patch
             new_content, results = self.dmp.patch_apply(patches, original_content)
 
-            # Check if all patches were applied successfully
             if not all(results):
                 logger.warning(f"Some patches failed to apply cleanly to {file_path}")
                 return False
 
-            # Write the updated content
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
 
@@ -302,11 +276,9 @@ class FileEditor:
         self, original_content: str, new_content: str, file_path: str
     ) -> None:
         """Display a concise colored diff with limited context."""
-        # Generate diffs using diff-match-patch
         diffs = self.dmp.diff_main(original_content, new_content)
         self.dmp.diff_cleanupSemantic(diffs)
 
-        # ANSI color codes
         RED = "\033[31m"
         GREEN = "\033[32m"
         CYAN = "\033[36m"
@@ -317,35 +289,27 @@ class FileEditor:
 
         CONTEXT_LINES = 5  # Show 5 lines before/after changes
 
-        # Process diffs to show limited context
         for op, text in diffs:
-            # Use keepends=True to preserve newlines for accurate rendering
             lines = text.splitlines(keepends=True)
 
             if op == self.dmp.DIFF_DELETE:
                 for line in lines:
-                    # rstrip to remove the trailing newline for cleaner printing
                     print(f"{RED}- {line.rstrip()}{RESET}")
             elif op == self.dmp.DIFF_INSERT:
                 for line in lines:
                     print(f"{GREEN}+ {line.rstrip()}{RESET}")
             elif op == self.dmp.DIFF_EQUAL:
-                # For unchanged sections, show limited context
                 if len(lines) > CONTEXT_LINES * 2:
-                    # Show first few lines
                     for line in lines[:CONTEXT_LINES]:
                         print(f"  {line.rstrip()}")
 
-                    # Show truncation indicator if there are many lines
                     omitted_count = len(lines) - (CONTEXT_LINES * 2)
                     if omitted_count > 0:
                         print(f"{GRAY}  ... ({omitted_count} lines omitted) ...{RESET}")
 
-                    # Show last few lines
                     for line in lines[-CONTEXT_LINES:]:
                         print(f"  {line.rstrip()}")
                 else:
-                    # Show all lines if not too many
                     for line in lines:
                         print(f"  {line.rstrip()}")
 
@@ -366,22 +330,18 @@ class FileEditor:
                 logger.error(f"File not found: {file_path}")
                 return False
 
-            # Read original content
             with open(full_path, encoding="utf-8") as f:
                 original_content = f.read()
 
-            # Find the target block in the file
             if target_block not in original_content:
                 logger.error(f"Target block not found in {file_path}")
                 logger.debug(f"Looking for: {repr(target_block)}")
                 return False
 
-            # Create surgical patch - replace only the target block
             modified_content = original_content.replace(
                 target_block, replacement_block, 1
             )
 
-            # Verify only one replacement was made
             if original_content.count(target_block) > 1:
                 logger.warning(
                     "Multiple occurrences of target block found. Only replacing first occurrence."
@@ -393,10 +353,8 @@ class FileEditor:
                 )
                 return False
 
-            # Display the surgical diff
             self._display_colored_diff(original_content, modified_content, file_path)
 
-            # Create and apply surgical patches
             patches = self.dmp.patch_make(original_content, modified_content)
             patched_content, results = self.dmp.patch_apply(patches, original_content)
 
@@ -404,7 +362,6 @@ class FileEditor:
                 logger.error("Surgical patches failed to apply cleanly")
                 return False
 
-            # Write the surgically modified content
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(patched_content)
 
@@ -429,7 +386,6 @@ class FileEditor:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)  # Security check
 
-            # Check if the file exists and is a file before proceeding
             if not full_path.is_file():
                 error_msg = f"File not found or is a directory: {file_path}"
                 logger.warning(f"[FileEditor] {error_msg}")
@@ -437,15 +393,12 @@ class FileEditor:
                     file_path=file_path, success=False, error_message=error_msg
                 )
 
-            # Read original content to show diff
             with open(full_path, encoding="utf-8") as f:
                 original_content = f.read()
 
-            # Display colored diff
             if original_content != new_content:
                 self._display_colored_diff(original_content, new_content, file_path)
 
-            # Write new content (full replacement)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
 

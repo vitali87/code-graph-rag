@@ -24,10 +24,8 @@ class FileWriter:
         """Creates or overwrites a file with the given content."""
         logger.info(f"[FileWriter] Creating file: {file_path}")
         try:
-            # Resolve the path to prevent traversal attacks
             full_path = (self.project_root / file_path).resolve()
 
-            # Security check: Ensure the resolved path is within the project root
             full_path.relative_to(self.project_root)
 
             full_path.parent.mkdir(parents=True, exist_ok=True)

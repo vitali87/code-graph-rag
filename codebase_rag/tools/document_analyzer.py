@@ -30,16 +30,11 @@ class DocumentAnalyzer:
     def __init__(self, project_root: str) -> None:
         self.project_root = Path(project_root).resolve()
 
-        # Initialize client based on the orchestrator model's provider
-        # Note: Document analysis uses the orchestrator model since it's the main reasoning model
         orchestrator_config = settings.active_orchestrator_config
         orchestrator_provider = orchestrator_config.provider
 
         if orchestrator_provider == "google":
             if orchestrator_config.provider_type == "vertex":
-                # For Vertex AI, use service account authentication
-                # Note: credentials_path is not a valid parameter for genai.Client
-                # Vertex AI authentication should be handled via environment variables or default credentials
                 self.client = genai.Client(
                     project=orchestrator_config.project_id,
                     location=orchestrator_config.region,
@@ -47,7 +42,6 @@ class DocumentAnalyzer:
             else:  # gla provider (default)
                 self.client = genai.Client(api_key=orchestrator_config.api_key)
         else:
-            # Non-Gemini providers are not supported for document analysis yet.
             self.client = _NotSupportedClient()
 
         logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
@@ -61,55 +55,44 @@ class DocumentAnalyzer:
             f"[DocumentAnalyzer] Analyzing '{file_path}' with question: '{question}'"
         )
         try:
-            # Handle absolute paths by copying to .tmp folder
             if Path(file_path).is_absolute():
                 source_path = Path(file_path)
                 if not source_path.is_file():
                     return f"Error: File not found at '{file_path}'."
 
-                # Create .tmp folder if it doesn't exist
                 tmp_dir = self.project_root / ".tmp"
                 tmp_dir.mkdir(exist_ok=True)
 
-                # Copy file to .tmp with a unique filename to avoid collisions
                 tmp_file = tmp_dir / f"{uuid.uuid4()}-{source_path.name}"
                 shutil.copy2(source_path, tmp_file)
                 full_path = tmp_file
                 logger.info(f"Copied external file to: {full_path}")
             else:
-                # Handle relative paths as before
                 full_path = (self.project_root / file_path).resolve()
-                # Enhanced security check to prevent directory traversal attacks
                 try:
                     full_path.relative_to(self.project_root.resolve())
                 except ValueError:
                     return f"Security risk: file path {file_path} is outside the project root"
 
-                # Additional check for symlinks that might bypass relative_to
                 if not str(full_path).startswith(str(self.project_root.resolve())):
                     return f"Security risk: file path {file_path} is outside the project root"
 
             if not full_path.is_file():
                 return f"Error: File not found at '{file_path}'."
 
-            # Determine mime type dynamically
             mime_type, _ = mimetypes.guess_type(full_path)
             if not mime_type:
                 mime_type = (
                     "application/octet-stream"  # Default if type can't be guessed
                 )
 
-            # Prepare the multimodal prompt
             file_bytes = full_path.read_bytes()
 
-            # Use the simpler format that the library expects
             prompt_parts = [
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
                 f"Based on the document provided, please answer the following question: {question}",
             ]
 
-            # Call the model and get the response
-            # Use the orchestrator model ID since document analysis uses the orchestrator config
             orchestrator_config = settings.active_orchestrator_config
             response = self.client.models.generate_content(
                 model=orchestrator_config.model_id, contents=prompt_parts
@@ -117,11 +100,9 @@ class DocumentAnalyzer:
 
             logger.success(f"Successfully received analysis for '{file_path}'.")
 
-            # Check if response has text content
             if hasattr(response, "text") and response.text:
                 return str(response.text)
             elif hasattr(response, "candidates") and response.candidates:
-                # Try to get text from candidates
                 for candidate in response.candidates:
                     if hasattr(candidate, "content") and candidate.content:
                         parts = candidate.content.parts
@@ -133,17 +114,14 @@ class DocumentAnalyzer:
                 return "No text content received from the API."
 
         except ValueError as e:
-            # Check if this is a security-related ValueError (from relative_to)
             if "does not start with" in str(e):
                 err_msg = f"Security risk: Attempted to access file outside of project root: {file_path}"
                 logger.error(err_msg)
                 return f"Error: {err_msg}"
             else:
-                # API-related ValueError
                 logger.error(f"[DocumentAnalyzer] API validation error: {e}")
                 return f"Error: API validation failed: {e}"
         except ClientError as e:
-            # Handle Google GenAI specific errors
             logger.error(f"Google GenAI API error for '{file_path}': {e}")
             if "Unable to process input image" in str(e):
                 return "Error: Unable to process the image file. The image may be corrupted or in an unsupported format."

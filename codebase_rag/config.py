@@ -38,14 +38,12 @@ class AppConfig(BaseSettings):
         case_sensitive=False,
     )
 
-    # Memgraph settings
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
 
-    # Provider-specific settings for orchestrator
     ORCHESTRATOR_PROVIDER: str = ""
     ORCHESTRATOR_MODEL: str = ""
     ORCHESTRATOR_API_KEY: str | None = None
@@ -56,7 +54,6 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
 
-    # Provider-specific settings for cypher
     CYPHER_PROVIDER: str = ""
     CYPHER_MODEL: str = ""
     CYPHER_API_KEY: str | None = None
@@ -67,14 +64,11 @@ class AppConfig(BaseSettings):
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
-    # Fallback endpoint for ollama
     LOCAL_MODEL_ENDPOINT: AnyHttpUrl = AnyHttpUrl("http://localhost:11434/v1")
 
-    # General settings
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
-    # Runtime overrides
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
@@ -82,11 +76,9 @@ class AppConfig(BaseSettings):
         """Determine default configuration for orchestrator or cypher."""
         role_upper = role.upper()
 
-        # Get role-specific environment variables
         provider = getattr(self, f"{role_upper}_PROVIDER", None)
         model = getattr(self, f"{role_upper}_MODEL", None)
 
-        # Check for explicit provider configuration
         if provider and model:
             return ModelConfig(
                 provider=provider.lower(),
@@ -102,7 +94,6 @@ class AppConfig(BaseSettings):
                 ),
             )
 
-        # Default to Ollama
         return ModelConfig(
             provider="ollama",
             model_id="llama3.2",
@@ -143,7 +134,6 @@ class AppConfig(BaseSettings):
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
         """Parse provider:model string format."""
         if ":" not in model_string:
-            # Default to ollama for bare model names
             return "ollama", model_string
         provider, model = model_string.split(":", 1)
         if not provider:
@@ -162,9 +152,6 @@ class AppConfig(BaseSettings):
 
 settings = AppConfig()
 
-
-# --- Global Ignore Patterns ---
-# Directories and files to ignore during codebase scanning and real-time updates.
 IGNORE_PATTERNS = {
     ".git",
     "venv",
@@ -183,9 +170,6 @@ IGNORE_PATTERNS = {
 }
 IGNORE_SUFFIXES = {".tmp", "~"}
 
-
-# --- Edit Operation Constants ---
-# Keywords that might indicate a user wants to perform an edit operation.
 EDIT_REQUEST_KEYWORDS = frozenset(
     [
         "modify",
@@ -205,7 +189,6 @@ EDIT_REQUEST_KEYWORDS = frozenset(
     ]
 )
 
-# Tool names that are considered edit operations.
 EDIT_TOOLS = frozenset(
     [
         "edit_file",
@@ -217,7 +200,6 @@ EDIT_TOOLS = frozenset(
     ]
 )
 
-# Phrases in a model's response that indicate an edit has been performed.
 EDIT_INDICATORS = frozenset(
     [
         "modifying",
@@ -240,6 +222,4 @@ EDIT_INDICATORS = frozenset(
     ]
 )
 
-# --- UI Styles ---
-# Style for user input prompts in the terminal.
 ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})

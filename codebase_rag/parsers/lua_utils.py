@@ -21,7 +21,6 @@ def extract_lua_assigned_name(
     Returns:
         The name of the variable assigned to the target node, or None if not found.
     """
-    # Look for parent assignment_statement
     current = target_node.parent
     while current and current.type != "assignment_statement":
         current = current.parent
@@ -29,7 +28,6 @@ def extract_lua_assigned_name(
     if not current:
         return None
 
-    # Find the expression_list containing our target node
     expression_list = None
     for child in current.children:
         if child.type == "expression_list":
@@ -39,13 +37,11 @@ def extract_lua_assigned_name(
     if not expression_list:
         return None
 
-    # Get all value fields from expression_list
     values = []
     for i in range(expression_list.child_count):
         if expression_list.field_name_for_child(i) == "value":
             values.append(expression_list.child(i))
 
-    # Find which value contains our target node
     target_index = -1
     for idx, value in enumerate(values):
         if value == target_node or contains_node(value, target_node):
@@ -55,7 +51,6 @@ def extract_lua_assigned_name(
     if target_index == -1:
         return None
 
-    # Find the variable_list and get the corresponding name field
     variable_list = None
     for child in current.children:
         if child.type == "variable_list":
@@ -65,13 +60,11 @@ def extract_lua_assigned_name(
     if not variable_list:
         return None
 
-    # Get all name fields from variable_list
     names = []
     for i in range(variable_list.child_count):
         if variable_list.field_name_for_child(i) == "name":
             names.append(variable_list.child(i))
 
-    # Get the corresponding variable name
     if target_index < len(names):
         var_child = names[target_index]
         if var_child.type in accepted_var_types:
@@ -114,7 +107,6 @@ def extract_lua_pcall_second_identifier(call_node: Node) -> str | None:
     if not stmt:
         return None
 
-    # Look for variable_list node which contains the identifiers
     variable_list = None
     for child in stmt.children:
         if child.type == "variable_list":
@@ -124,7 +116,6 @@ def extract_lua_pcall_second_identifier(call_node: Node) -> str | None:
     if not variable_list:
         return None
 
-    # Get all name fields from variable_list
     names = []
     for i in range(variable_list.child_count):
         if variable_list.field_name_for_child(i) == "name":
@@ -134,7 +125,6 @@ def extract_lua_pcall_second_identifier(call_node: Node) -> str | None:
                 if decoded:
                     names.append(decoded)
 
-    # Return the second identifier if it exists (first is typically 'ok' or error status)
     if len(names) >= 2:
         return names[1]
 
