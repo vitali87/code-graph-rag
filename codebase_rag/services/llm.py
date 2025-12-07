@@ -9,7 +9,7 @@ from ..prompts import (
 )
 from ..providers.base import get_provider
 
-AGENT_RETRIES = 3
+AGENT_RETRIES = getattr(settings, "AGENT_RETRIES", 3)
 
 
 class LLMGenerationError(Exception):
