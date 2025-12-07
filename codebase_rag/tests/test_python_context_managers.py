@@ -6,6 +6,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes
 
 
 @pytest.fixture
@@ -22,7 +23,6 @@ def context_manager_project(temp_repo: Path) -> Path:
 from contextlib import contextmanager
 from typing import Iterator
 
-
 def file_operations():
     """Function demonstrating file context managers."""
 
@@ -37,7 +37,6 @@ def file_operations():
 
     return content
 
-
 def custom_context_managers():
     """Function using custom context managers."""
 
@@ -48,7 +47,6 @@ def custom_context_managers():
     with lock_manager() as lock:
         with database_connection() as db:
             db.execute("SELECT * FROM table")
-
 
 def exception_handling_context():
     """Function with context managers and exception handling."""
@@ -62,7 +60,6 @@ def exception_handling_context():
     finally:
         cleanup()
 
-
 @contextmanager
 def custom_context_decorator() -> Iterator[str]:
     """Custom context manager using decorator."""
@@ -72,7 +69,6 @@ def custom_context_decorator() -> Iterator[str]:
         yield "context_value"
     finally:
         print("Exiting context")
-
 
 class CustomContextManager:
     """Custom context manager class."""
@@ -89,13 +85,11 @@ class CustomContextManager:
         """Process method."""
         pass
 
-
 def using_custom_class_context():
     """Function using custom class context manager."""
 
     with CustomContextManager() as manager:
         manager.process()
-
 
 def nested_with_statements():
     """Function with deeply nested with statements."""
@@ -107,7 +101,6 @@ def nested_with_statements():
                     data = f1.read()
                     tx.save(data)
                     f2.write(data)
-
 
 def context_in_loops_and_conditions():
     """Function with context managers in control structures."""
@@ -121,7 +114,6 @@ def context_in_loops_and_conditions():
     if condition_check():
         with special_resource() as resource:
             resource.special_operation()
-
 
 def async_context_managers():
     """Function demonstrating async context managers."""
@@ -137,7 +129,6 @@ def async_context_managers():
             result = await db.query()
             await cache.store(result)
 
-
 def context_manager_with_calls():
     """Function showing context managers calling other functions."""
 
@@ -149,92 +140,74 @@ def context_manager_with_calls():
         data = json_parser(fm.read())
         validator(data)
 
-
 # Helper functions referenced in context managers
 def some_resource():
     """Mock resource function."""
     pass
 
-
 def lock_manager():
     """Mock lock manager."""
     pass
-
 
 def database_connection():
     """Mock database connection."""
     pass
 
-
 def process_data(data):
     """Mock data processor."""
     pass
-
 
 def cleanup():
     """Mock cleanup function."""
     pass
 
-
 def database_transaction():
     """Mock database transaction."""
     pass
-
 
 def condition_check():
     """Mock condition check."""
     return True
 
-
 def special_resource():
     """Mock special resource."""
     pass
-
 
 def process_file(file):
     """Mock file processor."""
     pass
 
-
 def async_resource():
     """Mock async resource."""
     pass
-
 
 def async_db():
     """Mock async database."""
     pass
 
-
 def async_cache():
     """Mock async cache."""
     pass
-
 
 def get_database_connection():
     """Mock database connection getter."""
     pass
 
-
 def query_helper(db, query):
     """Mock query helper."""
     pass
-
 
 def process_results(result):
     """Mock result processor."""
     pass
 
-
 def file_manager(filename):
     """Mock file manager."""
     pass
 
-
 def json_parser(content):
     """Mock JSON parser."""
     pass
-
 
 def validator(data):
     """Mock validator."""
@@ -275,11 +248,7 @@ def test_context_manager_function_definitions(
     ]
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -411,21 +380,13 @@ def test_custom_context_manager_class(
     ]
 
     # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
     assert expected_class in created_classes, f"Missing class: {expected_class}"
 
     # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     created_methods = {call[0][1]["qualified_name"] for call in method_calls}
 
@@ -454,11 +415,7 @@ def test_context_manager_in_control_structures(
     function_qn = f"{project_name}.context_managers.context_in_loops_and_conditions"
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
     assert function_qn in created_functions, f"Missing function: {function_qn}"
@@ -504,11 +461,7 @@ def test_async_context_manager_parsing(
     ]
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -539,11 +492,7 @@ def test_decorated_context_manager_function(
     expected_function = f"{project_name}.context_managers.custom_context_decorator"
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
     assert expected_function in created_functions, (

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -178,11 +178,7 @@ console.log(manager instanceof Person);    // true
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes (constructors and prototype methods)
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -420,11 +416,7 @@ myTask.outputTaskDetails();
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -647,11 +639,7 @@ square.scale(2);
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -962,11 +950,7 @@ console.log(entity.validate());
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -1234,11 +1218,7 @@ for (const value of generator) {
     project_name = javascript_prototypes_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 

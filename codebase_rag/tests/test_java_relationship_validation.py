@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -516,11 +516,7 @@ public class UserController {
     )
 
     # Verify all classes are created
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
     project_name = java_relationships_project.name
@@ -976,10 +972,6 @@ public class OuterClass {
     )
 
     # Check that all class types are detected
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     assert len(class_calls) > 0, "No class nodes found for inner class example"

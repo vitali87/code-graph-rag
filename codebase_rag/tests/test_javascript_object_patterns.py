@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -330,11 +330,7 @@ console.log(secureObject[Symbol.for('public')]); // shared
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -763,11 +759,7 @@ console.log(users.map(u => u.getProfile()));
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -1151,11 +1143,7 @@ console.log(Email.isValid('test@example.com')); // true
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes (constructors are functions)
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -1585,11 +1573,7 @@ console.log('Cloned:', cloned.toJSON());
     project_name = javascript_object_patterns_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -1738,11 +1722,7 @@ console.log(advanced.process());
     )
 
     # Check all object patterns were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
         call

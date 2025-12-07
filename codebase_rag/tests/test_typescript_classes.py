@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -276,11 +276,7 @@ console.log(newRepo.name); // OK
     project_name = typescript_classes_project.name
 
     # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
@@ -629,11 +625,7 @@ console.log(car.start());
     project_name = typescript_classes_project.name
 
     # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
@@ -934,11 +926,7 @@ service.process();
     project_name = typescript_classes_project.name
 
     # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
@@ -958,11 +946,7 @@ service.process();
         )
 
     # Check methods created for parameter properties classes
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     parameter_property_methods = [
         call
@@ -1168,11 +1152,7 @@ console.log(userRepo.name); // users
     )
 
     # Check all classes were created
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     comprehensive_classes = [
         call

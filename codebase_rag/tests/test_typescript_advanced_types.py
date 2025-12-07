@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -398,11 +398,7 @@ console.log(container.getValue());
     run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for generic classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     generic_classes = [
         call
@@ -425,11 +421,7 @@ console.log(container.getValue());
     )
 
     # Check for generic functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     generic_functions = [
         call
@@ -446,11 +438,7 @@ console.log(container.getValue());
     )
 
     # Check for interfaces with generics
-    interface_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_calls = get_nodes(mock_ingestor, "Interface")
 
     generic_interfaces = [
         call
@@ -826,11 +814,7 @@ console.log('API routes:', apiRoutes);
     run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for utility type classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     utility_classes = [
         call
@@ -852,11 +836,7 @@ console.log('API routes:', apiRoutes);
     )
 
     # Check for interfaces with utility types
-    interface_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_calls = get_nodes(mock_ingestor, "Interface")
 
     utility_interfaces = [
         call
@@ -1235,11 +1215,7 @@ console.log('Route parsing and conditional types working correctly');
     run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for conditional type classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     conditional_classes = [
         call
@@ -1261,11 +1237,7 @@ console.log('Route parsing and conditional types working correctly');
     )
 
     # Check for conditional type functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     conditional_functions = [
         call
@@ -1666,11 +1638,7 @@ console.log('Template literal types are working correctly');
     run_updater(typescript_advanced_types_project, mock_ingestor)
 
     # Check for template literal type classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     template_literal_classes = [
         call
@@ -1817,11 +1785,7 @@ console.log('All advanced type patterns working correctly');
     )
 
     # Check all advanced type patterns were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
         call
@@ -1835,11 +1799,7 @@ console.log('All advanced type patterns working correctly');
     )
 
     # Check comprehensive classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     comprehensive_classes = [
         call

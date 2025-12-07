@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -57,11 +57,7 @@ void testNumberFormatting() {
     run_updater(cpp_format_spaceship_project, mock_ingestor)
 
     # Verify functions were detected
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     assert len(function_calls) >= 2, (
         f"Expected at least 2 functions, found {len(function_calls)}"
@@ -139,17 +135,9 @@ void testSpaceshipOperator() {
     run_updater(cpp_format_spaceship_project, mock_ingestor)
 
     # Verify classes and functions were detected
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     assert len(class_calls) >= 2, (
         f"Expected at least 2 classes, found {len(class_calls)}"
@@ -221,17 +209,9 @@ void analyzeData() {
     run_updater(cpp_format_spaceship_project, mock_ingestor)
 
     # Verify structures were detected
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     assert len(class_calls) >= 1, f"Expected at least 1 class, found {len(class_calls)}"
     assert len(function_calls) >= 1, (

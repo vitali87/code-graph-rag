@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -418,11 +418,7 @@ console.log(merged.size()); // 2
     )
 
     # Check for classes within namespaces
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     namespace_classes = [
         call
@@ -795,11 +791,7 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
     )
 
     # Check for merged functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     merged_functions = [
         call
@@ -1249,11 +1241,7 @@ if (ConditionalModule.IS_NODE) {
     )
 
     # Check for utility functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     module_functions = [
         call

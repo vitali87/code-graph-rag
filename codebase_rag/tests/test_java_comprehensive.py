@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -113,18 +113,10 @@ public abstract class Shape {
     project_name = java_project.name
 
     # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     # Get all Interface node creation calls (Java interfaces are processed separately)
-    interface_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_calls = get_nodes(mock_ingestor, "Interface")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
     created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
@@ -153,11 +145,7 @@ public abstract class Shape {
     )
 
     # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     created_methods = {call[0][1]["qualified_name"] for call in method_calls}
 
@@ -475,11 +463,7 @@ public abstract class AbstractService {
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
@@ -577,11 +561,7 @@ public class OuterClass {
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
@@ -831,11 +811,7 @@ public class ExceptionHandler {
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
     # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 

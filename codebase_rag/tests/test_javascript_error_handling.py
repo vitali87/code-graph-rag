@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -371,11 +371,7 @@ function cleanup() {
     run_updater(javascript_error_handling_project, mock_ingestor)
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -400,11 +396,7 @@ function cleanup() {
     )
 
     # Check for DataProcessor class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     data_processor_class = [
         call for call in class_calls if "DataProcessor" in call[0][1]["qualified_name"]
@@ -789,11 +781,7 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
     run_updater(javascript_error_handling_project, mock_ingestor)
 
     # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 
@@ -1284,11 +1272,7 @@ testGracefulDegradation();
     run_updater(javascript_error_handling_project, mock_ingestor)
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     # Check for async error handling functions
     async_error_functions = [
@@ -1306,11 +1290,7 @@ testGracefulDegradation();
     )
 
     # Check for error handling classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     async_error_classes = [
         call

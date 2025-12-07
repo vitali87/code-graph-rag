@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -112,11 +112,7 @@ const total = sum(1, 2, 3, 4, 5);
     ]
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -218,11 +214,7 @@ const quadrupled = doubler(8);
     project_name = javascript_functions_project.name
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     # Arrow functions should be captured
     arrow_functions = [
@@ -373,11 +365,7 @@ async function orchestrate() {
     ]
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -509,11 +497,7 @@ const configValue = Config.get('apiUrl');
     run_updater(javascript_functions_project, mock_ingestor)
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     # IIFEs should be captured as functions
     iife_functions = [
@@ -677,11 +661,7 @@ const memoizedAdd = memoize(add5);
     ]
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -854,18 +834,10 @@ const isValid = Person.isValidAge(30);
     run_updater(javascript_functions_project, mock_ingestor)
 
     # Get all Method node creation calls (methods are often parsed as Method nodes)
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     # Also get Function nodes that might represent methods
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     # Combine both types
     all_methods = method_calls + function_calls

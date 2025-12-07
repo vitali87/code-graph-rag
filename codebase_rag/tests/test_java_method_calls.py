@@ -5,7 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_relationships
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 
 @pytest.fixture
@@ -244,11 +244,7 @@ public class InheritanceExample {
     updater.run()
 
     # Check class definitions
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     created_classes = {call[0][1]["qualified_name"] for call in class_calls}
 

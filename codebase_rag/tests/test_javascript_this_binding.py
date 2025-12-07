@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -215,17 +215,9 @@ bound(); // preserved this
     run_updater(javascript_this_project, mock_ingestor)
 
     # Get all Function and Method nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     # Should create various functions and methods
     all_callables = function_calls + method_calls
@@ -443,11 +435,7 @@ console.log(result2); // [15, 20]
     )
 
     # Check function definitions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
     project_name = javascript_this_project.name
@@ -689,11 +677,7 @@ regularFunction(10, 20, 30);
     run_updater(javascript_this_project, mock_ingestor)
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     # Check for arrow functions
     arrow_functions = [
@@ -711,11 +695,7 @@ regularFunction(10, 20, 30);
     )
 
     # Check classes with arrow function properties
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     classes_with_arrows = [
         call
@@ -1008,11 +988,7 @@ searchHandler.debouncedSearch('test query');
     run_updater(javascript_this_project, mock_ingestor)
 
     # Check for various callback patterns
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     callback_functions = [
         call
@@ -1025,11 +1001,7 @@ searchHandler.debouncedSearch('test query');
     )
 
     # Check for event handler methods
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     event_methods = [
         call

@@ -6,6 +6,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes
 
 
 @pytest.fixture
@@ -36,7 +37,6 @@ def nested_functions_project(temp_repo: Path) -> Path:
 
     return inner_function(), another_inner()
 
-
 def standalone_function():
     """Top-level function for comparison."""
 
@@ -45,7 +45,6 @@ def standalone_function():
         pass
 
     local_helper()
-
 
 class OuterClass:
     """Class with nested functions in methods."""
@@ -59,7 +58,6 @@ class OuterClass:
 
         return nested_in_method()
 
-
 def closure_example():
     """Function demonstrating closure behavior."""
     x = 10
@@ -69,7 +67,6 @@ def closure_example():
         return x * 2
 
     return closure_function
-
 
 def decorator_factory():
     """Function that returns a decorator."""
@@ -124,11 +121,7 @@ def test_nested_function_definitions_are_created(
     ]
 
     # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -276,11 +269,9 @@ def test_function_calls_are_tracked(
     other_result = helper_function()
     return result + other_result
 
-
 def helper_function():
     """Helper function."""
     return " helper"
-
 
 def main():
     """Main function that calls parent_function."""
@@ -368,11 +359,7 @@ def test_function_in_class_method(
     expected_method_qn = f"{project_name}.nested_functions.OuterClass.nested_in_method"
 
     # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     created_methods = {call[0][1]["qualified_name"] for call in method_calls}
 

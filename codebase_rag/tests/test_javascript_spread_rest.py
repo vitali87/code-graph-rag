@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -162,11 +162,7 @@ console.log(max);           // 10
     project_name = javascript_spread_rest_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -186,11 +182,7 @@ console.log(max);           // 10
         )
 
     # Check for class with spread patterns
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     array_processor_class = [
         call for call in class_calls if "ArrayProcessor" in call[0][1]["qualified_name"]
@@ -396,11 +388,7 @@ console.log(apiConfig);    // Environment-specific config
     project_name = javascript_spread_rest_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -420,11 +408,7 @@ console.log(apiConfig);    // Environment-specific config
         )
 
     # Check for ConfigManager class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     config_manager_class = [
         call for call in class_calls if "ConfigManager" in call[0][1]["qualified_name"]
@@ -645,11 +629,7 @@ for (const value of combined) {
     project_name = javascript_spread_rest_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -676,11 +656,7 @@ for (const value of combined) {
     )
 
     # Check for Calculator class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     calculator_class = [
         call for call in class_calls if "Calculator" in call[0][1]["qualified_name"]
@@ -936,11 +912,7 @@ console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50]
     project_name = javascript_spread_rest_project.name
 
     # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     created_functions = {call[0][1]["qualified_name"] for call in function_calls}
 
@@ -965,11 +937,7 @@ console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50]
     )
 
     # Check for DataProcessor class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     data_processor_class = [
         call for call in class_calls if "DataProcessor" in call[0][1]["qualified_name"]
@@ -1114,11 +1082,7 @@ console.log(complex);
     )
 
     # Check all functions were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
         call

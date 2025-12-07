@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -321,11 +321,7 @@ console.log((user as any).getValidationErrors()); // []
     run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     decorator_functions = [
         call
@@ -342,11 +338,7 @@ console.log((user as any).getValidationErrors()); // []
     )
 
     # Check for decorated classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     decorated_classes = [
         call
@@ -731,11 +723,7 @@ processor.saveToDatabase({ important: 'data' })
     run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for method decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     method_decorators = [
         call
@@ -752,11 +740,7 @@ processor.saveToDatabase({ important: 'data' })
     )
 
     # Check for classes with decorated methods
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     decorated_method_classes = [
         call
@@ -773,11 +757,7 @@ processor.saveToDatabase({ important: 'data' })
     )
 
     # Check for method nodes within decorated classes
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     decorated_methods = [
         call
@@ -1186,11 +1166,7 @@ console.log(product.timestamps); // Should initialize on first access
     run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for property decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     property_decorators = [
         call
@@ -1214,11 +1190,7 @@ console.log(product.timestamps); // Should initialize on first access
     )
 
     # Check for classes with decorated properties
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     decorated_property_classes = [
         call
@@ -1570,11 +1542,7 @@ try {
     run_updater(typescript_decorators_project, mock_ingestor)
 
     # Check for parameter decorator functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     parameter_decorators = [
         call
@@ -1598,11 +1566,7 @@ try {
     )
 
     # Check for classes using parameter decorators
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     parameter_decorated_classes = [
         call
@@ -1619,11 +1583,7 @@ try {
     )
 
     # Check for methods with decorated parameters
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     decorated_parameter_methods = [
         call
@@ -1738,11 +1698,7 @@ console.log((example as any).tableName); // 'comprehensive_items'
     )
 
     # Check all decorator patterns were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_decorators = [
         call
@@ -1759,11 +1715,7 @@ console.log((example as any).tableName); // 'comprehensive_items'
     )
 
     # Check comprehensive decorated class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     comprehensive_class = [
         call

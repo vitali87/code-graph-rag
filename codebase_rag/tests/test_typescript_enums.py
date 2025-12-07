@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 @pytest.fixture
@@ -233,11 +233,7 @@ movePlayer(Direction.Right);
     # Instead, we verify that functions and classes that use enums are properly parsed
 
     # Check functions that use enums
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     enum_using_functions = [
         call
@@ -258,11 +254,7 @@ movePlayer(Direction.Right);
     )
 
     # Check class using enums
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     task_class = [
         call for call in class_calls if "Task" in call[0][1]["qualified_name"]
@@ -511,11 +503,7 @@ function createMessage(level: LogLevel, text: string): string {
     # Instead, we verify that functions and classes that use string enums are properly parsed
 
     # Check classes using string enums
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     string_enum_classes = [
         call
@@ -532,11 +520,7 @@ function createMessage(level: LogLevel, text: string): string {
     )
 
     # Check functions using string enums
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     string_enum_functions = [
         call
@@ -798,11 +782,7 @@ methodHandlers[HttpMethod.GET]('/api/data');
     # Instead, we verify that functions and classes that use const enums are properly parsed
 
     # Check ApiClient class using const enums
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     api_client_class = [
         call for call in class_calls if "ApiClient" in call[0][1]["qualified_name"]
@@ -813,11 +793,7 @@ methodHandlers[HttpMethod.GET]('/api/data');
     )
 
     # Check functions using const enums
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     const_enum_functions = [
         call
@@ -978,11 +954,7 @@ console.log(demo.getColor());
     # Set comprehensive_enums to empty list since enums aren't detected as separate nodes
 
     # Check EnumDemo class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     enum_demo_class = [
         call for call in class_calls if "EnumDemo" in call[0][1]["qualified_name"]

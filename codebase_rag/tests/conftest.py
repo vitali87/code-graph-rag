@@ -60,6 +60,15 @@ def get_relationships(mock_ingestor: MagicMock, rel_type: str) -> list:
     ]
 
 
+def get_nodes(mock_ingestor: MagicMock, node_type: str) -> list:
+    """Extract nodes of a specific type from mock_ingestor calls."""
+    return [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == node_type
+    ]
+
+
 @pytest.fixture
 def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     """Provides a mocked GraphUpdater instance with necessary dependencies."""
