@@ -271,49 +271,6 @@ class FileEditor:
             logger.error(f"Error applying patch to {file_path}: {e}")
             return False
 
-    def _display_colored_diff(
-        self, original_content: str, new_content: str, file_path: str
-    ) -> None:
-        """Display a concise colored diff with limited context."""
-        diffs = self.dmp.diff_main(original_content, new_content)
-        self.dmp.diff_cleanupSemantic(diffs)
-
-        RED = "\033[31m"
-        GREEN = "\033[32m"
-        CYAN = "\033[36m"
-        GRAY = "\033[90m"
-        RESET = "\033[0m"
-
-        print(f"\n{CYAN}Changes to {file_path}:{RESET}")
-
-        CONTEXT_LINES = 5
-
-        for op, text in diffs:
-            lines = text.splitlines(keepends=True)
-
-            if op == self.dmp.DIFF_DELETE:
-                for line in lines:
-                    print(f"{RED}- {line.rstrip()}{RESET}")
-            elif op == self.dmp.DIFF_INSERT:
-                for line in lines:
-                    print(f"{GREEN}+ {line.rstrip()}{RESET}")
-            elif op == self.dmp.DIFF_EQUAL:
-                if len(lines) > CONTEXT_LINES * 2:
-                    for line in lines[:CONTEXT_LINES]:
-                        print(f"  {line.rstrip()}")
-
-                    omitted_count = len(lines) - (CONTEXT_LINES * 2)
-                    if omitted_count > 0:
-                        print(f"{GRAY}  ... ({omitted_count} lines omitted) ...{RESET}")
-
-                    for line in lines[-CONTEXT_LINES:]:
-                        print(f"  {line.rstrip()}")
-                else:
-                    for line in lines:
-                        print(f"  {line.rstrip()}")
-
-        print()
-
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> bool:
@@ -352,8 +309,6 @@ class FileEditor:
                 )
                 return False
 
-            self._display_colored_diff(original_content, modified_content, file_path)
-
             patches = self.dmp.patch_make(original_content, modified_content)
             patched_content, results = self.dmp.patch_apply(patches, original_content)
 
@@ -391,12 +346,6 @@ class FileEditor:
                 return EditResult(
                     file_path=file_path, success=False, error_message=error_msg
                 )
-
-            with open(full_path, encoding="utf-8") as f:
-                original_content = f.read()
-
-            if original_content != new_content:
-                self._display_colored_diff(original_content, new_content, file_path)
 
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
@@ -450,4 +399,5 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
     return Tool(
         function=replace_code_surgically,
         description="Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.",
+        requires_approval=True,
     )

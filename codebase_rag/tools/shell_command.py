@@ -232,4 +232,5 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         function=run_shell_command,
         name="execute_shell_command",
         description="Executes shell commands from allowlist. For dangerous commands, call twice: first to check if confirmation needed, then with user_confirmed=True after getting approval.",
+        requires_approval=True,
     )

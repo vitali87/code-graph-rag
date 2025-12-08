@@ -1,6 +1,6 @@
 import asyncio
+import difflib
 import json
-import re
 import shlex
 import shutil
 import sys
@@ -14,17 +14,15 @@ from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
 from .config import (
-    EDIT_INDICATORS,
-    EDIT_REQUEST_KEYWORDS,
-    EDIT_TOOLS,
     ORANGE_STYLE,
     settings,
 )
@@ -49,16 +47,6 @@ from .tools.semantic_search import (
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
 confirm_edits_globally = True
-
-_FILE_MODIFICATION_PATTERNS = [
-    re.compile(
-        r"(modified|updated|created|edited):\s*[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)"
-    ),
-    re.compile(
-        r"file\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)\s+(modified|updated|created|edited)"
-    ),
-    re.compile(r"writing\s+to\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)"),
-]
 
 app = typer.Typer(
     name="graph-code",
@@ -104,55 +92,59 @@ def get_session_context() -> str:
     return ""
 
 
-def is_edit_operation_request(question: str) -> bool:
-    """Check if the user's question/request would likely result in edit operations."""
-    question_lower = question.lower()
-    return any(keyword in question_lower for keyword in EDIT_REQUEST_KEYWORDS)
+def _display_tool_call_diff(
+    tool_name: str, tool_args: dict[str, Any], file_path: str | None = None
+) -> None:
+    if tool_name == "replace_code_surgically":
+        target = tool_args.get("target_code", "")
+        replacement = tool_args.get("replacement_code", "")
+        path = tool_args.get("file_path", file_path or "file")
 
+        console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
-async def _handle_rejection(
-    rag_agent: Any, message_history: list[Any], console: Console
-) -> Any:
-    """Handle user rejection of edits with agent acknowledgment."""
-    rejection_message = "The user has rejected the changes that were made. Please acknowledge this and consider if any changes need to be reverted."
-
-    with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
-        rejection_response = await run_with_cancellation(
-            console,
-            rag_agent.run(rejection_message, message_history=message_history),
+        diff = difflib.unified_diff(
+            target.splitlines(keepends=True),
+            replacement.splitlines(keepends=True),
+            fromfile="before",
+            tofile="after",
+            lineterm="",
         )
 
-    if not (
-        isinstance(rejection_response, dict) and rejection_response.get("cancelled")
-    ):
-        rejection_markdown = Markdown(rejection_response.output)
-        console.print(
-            Panel(
-                rejection_markdown,
-                title="[bold yellow]Response to Rejection[/bold yellow]",
-                border_style="yellow",
-            )
-        )
-        message_history.extend(rejection_response.new_messages())
+        for line in diff:
+            line = line.rstrip("\n")
+            if line.startswith("+++") or line.startswith("---"):
+                console.print(f"[dim]{line}[/dim]")
+            elif line.startswith("@@"):
+                console.print(f"[cyan]{line}[/cyan]")
+            elif line.startswith("+"):
+                console.print(f"[green]{line}[/green]")
+            elif line.startswith("-"):
+                console.print(f"[red]{line}[/red]")
+            else:
+                console.print(line)
 
-    return rejection_response
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
+    elif tool_name == "create_new_file":
+        path = tool_args.get("file_path", "")
+        content = tool_args.get("content", "")
 
-def is_edit_operation_response(response_text: str) -> bool:
-    """Enhanced check if the response contains edit operations that need confirmation."""
-    response_lower = response_text.lower()
+        console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
-    tool_usage = any(tool in response_lower for tool in EDIT_TOOLS)
+        for line in content.splitlines():
+            console.print(f"[green]+ {line}[/green]")
 
-    content_indicators = any(
-        indicator in response_lower for indicator in EDIT_INDICATORS
-    )
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
-    pattern_match = any(
-        pattern.search(response_lower) for pattern in _FILE_MODIFICATION_PATTERNS
-    )
+    elif tool_name == "execute_shell_command":
+        command = tool_args.get("command", "")
+        console.print("\n[bold cyan]Shell command:[/bold cyan]")
+        console.print(f"[yellow]$ {command}[/yellow]")
 
-    return tool_usage or content_indicators or pattern_match
+    else:
+        console.print(f"    Arguments: {json.dumps(tool_args, indent=2)}")
 
 
 def _setup_common_initialization(repo_path: str) -> Path:
@@ -309,52 +301,74 @@ Remember: Propose changes first, wait for my approval, then implement.
                 question_with_context, project_root
             )
 
-            with console.status(
-                "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
-            ):
-                response = await run_with_cancellation(
-                    console,
-                    rag_agent.run(
-                        question_with_context, message_history=message_history
-                    ),
-                )
+            deferred_results: DeferredToolResults | None = None
 
-                if isinstance(response, dict) and response.get("cancelled"):
-                    log_session_event("ASSISTANT: [Analysis was cancelled]")
-                    session_cancelled = True
-                    continue
-
-            markdown_response = Markdown(response.output)
-            console.print(
-                Panel(
-                    markdown_response,
-                    title="[bold green]Optimization Agent[/bold green]",
-                    border_style="green",
-                )
-            )
-
-            if confirm_edits_globally and is_edit_operation_response(response.output):
-                console.print(
-                    "\n[bold yellow]⚠️  This optimization has performed file modifications.[/bold yellow]"
-                )
-
-                if not Confirm.ask(
-                    "[bold cyan]Do you want to keep these optimizations?[/bold cyan]"
+            while True:
+                with console.status(
+                    "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
                 ):
-                    console.print(
-                        "[bold red]❌ Optimizations rejected by user.[/bold red]"
+                    response = await run_with_cancellation(
+                        console,
+                        rag_agent.run(
+                            question_with_context,
+                            message_history=message_history,
+                            deferred_tool_results=deferred_results,
+                        ),
                     )
-                    await _handle_rejection(rag_agent, message_history, console)
-                    first_run = False
+
+                    if isinstance(response, dict) and response.get("cancelled"):
+                        log_session_event("ASSISTANT: [Analysis was cancelled]")
+                        session_cancelled = True
+                        break
+
+                if isinstance(response.output, DeferredToolRequests):
+                    requests = response.output
+                    deferred_results = DeferredToolResults()
+
+                    for call in requests.approvals:
+                        tool_args = call.args_as_dict()
+                        console.print(
+                            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
+                        )
+                        _display_tool_call_diff(call.tool_name, tool_args)
+
+                        if confirm_edits_globally:
+                            if Confirm.ask(
+                                "[bold cyan]Do you approve this optimization?[/bold cyan]"
+                            ):
+                                deferred_results.approvals[call.tool_call_id] = True
+                            else:
+                                feedback = Prompt.ask(
+                                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
+                                    default="",
+                                )
+                                denial_msg = (
+                                    feedback.strip()
+                                    if feedback.strip()
+                                    else "User rejected this optimization without feedback"
+                                )
+                                deferred_results.approvals[call.tool_call_id] = (
+                                    ToolDenied(denial_msg)
+                                )
+                        else:
+                            deferred_results.approvals[call.tool_call_id] = True
+
+                    message_history.extend(response.new_messages())
                     continue
-                else:
-                    console.print(
-                        "[bold green]✅ Optimizations approved by user.[/bold green]"
+
+                markdown_response = Markdown(response.output)
+                console.print(
+                    Panel(
+                        markdown_response,
+                        title="[bold green]Optimization Agent[/bold green]",
+                        border_style="green",
                     )
+                )
 
-            log_session_event(f"ASSISTANT: {response.output}")
+                log_session_event(f"ASSISTANT: {response.output}")
+                message_history.extend(response.new_messages())
+                break
 
-            message_history.extend(response.new_messages())
             first_run = False
 
         except KeyboardInterrupt:
@@ -499,7 +513,6 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
 async def run_chat_loop(
     rag_agent: Any, message_history: list[Any], project_root: Path
 ) -> None:
-    """Runs the main chat loop with proper edit confirmation."""
     global session_cancelled
 
     init_session_log(project_root)
@@ -527,60 +540,73 @@ async def run_chat_loop(
                 question_with_context, project_root
             )
 
-            might_edit = is_edit_operation_request(question)
-            if confirm_edits_globally and might_edit:
-                console.print(
-                    "\n[bold yellow]⚠️  This request might result in file modifications.[/bold yellow]"
-                )
-                if not Confirm.ask(
-                    "[bold cyan]Do you want to proceed with this request?[/bold cyan]"
+            deferred_results: DeferredToolResults | None = None
+
+            while True:
+                with console.status(
+                    "[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]"
                 ):
-                    console.print("[bold red]❌ Request cancelled by user.[/bold red]")
-                    continue
-
-            with console.status(
-                "[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]"
-            ):
-                response = await run_with_cancellation(
-                    console,
-                    rag_agent.run(
-                        question_with_context, message_history=message_history
-                    ),
-                )
-
-                if isinstance(response, dict) and response.get("cancelled"):
-                    log_session_event("ASSISTANT: [Thinking was cancelled]")
-                    session_cancelled = True
-                    continue
-
-            markdown_response = Markdown(response.output)
-            console.print(
-                Panel(
-                    markdown_response,
-                    title="[bold green]Assistant[/bold green]",
-                    border_style="green",
-                )
-            )
-
-            if confirm_edits_globally and is_edit_operation_response(response.output):
-                console.print(
-                    "\n[bold yellow]⚠️  The assistant has performed file modifications.[/bold yellow]"
-                )
-
-                if not Confirm.ask(
-                    "[bold cyan]Do you want to keep these changes?[/bold cyan]"
-                ):
-                    console.print("[bold red]❌ User rejected the changes.[/bold red]")
-                    await _handle_rejection(rag_agent, message_history, console)
-                    continue
-                else:
-                    console.print(
-                        "[bold green]✅ Changes accepted by user.[/bold green]"
+                    response = await run_with_cancellation(
+                        console,
+                        rag_agent.run(
+                            question_with_context,
+                            message_history=message_history,
+                            deferred_tool_results=deferred_results,
+                        ),
                     )
 
-            log_session_event(f"ASSISTANT: {response.output}")
+                    if isinstance(response, dict) and response.get("cancelled"):
+                        log_session_event("ASSISTANT: [Thinking was cancelled]")
+                        session_cancelled = True
+                        break
 
-            message_history.extend(response.new_messages())
+                if isinstance(response.output, DeferredToolRequests):
+                    requests = response.output
+                    deferred_results = DeferredToolResults()
+
+                    for call in requests.approvals:
+                        tool_args = call.args_as_dict()
+                        console.print(
+                            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
+                        )
+                        _display_tool_call_diff(call.tool_name, tool_args)
+
+                        if confirm_edits_globally:
+                            if Confirm.ask(
+                                "[bold cyan]Do you approve this change?[/bold cyan]"
+                            ):
+                                deferred_results.approvals[call.tool_call_id] = True
+                            else:
+                                feedback = Prompt.ask(
+                                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
+                                    default="",
+                                )
+                                denial_msg = (
+                                    feedback.strip()
+                                    if feedback.strip()
+                                    else "User rejected this change without feedback"
+                                )
+                                deferred_results.approvals[call.tool_call_id] = (
+                                    ToolDenied(denial_msg)
+                                )
+                        else:
+                            deferred_results.approvals[call.tool_call_id] = True
+
+                    message_history.extend(response.new_messages())
+                    continue
+
+                markdown_response = Markdown(response.output)
+                console.print(
+                    Panel(
+                        markdown_response,
+                        title="[bold green]Assistant[/bold green]",
+                        border_style="green",
+                    )
+                )
+
+                log_session_event(f"ASSISTANT: {response.output}")
+                message_history.extend(response.new_messages())
+                break
 
         except KeyboardInterrupt:
             break
