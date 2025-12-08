@@ -7,10 +7,46 @@ import subprocess
 
 import click
 import diff_match_patch as dmp
+import tree_sitter_python as python_language
 from rich.console import Console
 from rich.table import Table
+from tree_sitter import Language, Parser, Query, QueryCursor
 
 from ..language_config import LANGUAGE_CONFIGS, LanguageConfig
+
+
+def find_language_configs_end(config_content: str) -> int:
+    """
+    Find the end position of the LANGUAGE_CONFIGS dictionary in the given config content.
+    Handles trailing white space in tree-sitter captures and returns the end brace position.
+    """
+    language = Language(python_language.language())
+    parser = Parser(language)
+    tree = parser.parse(config_content.encode("utf-8"))
+
+    # wrap query clause and predicate in brackets to filter var names.
+    query = Query(
+        language,
+        """
+        ((assignment
+            left: (identifier) @name
+            right: (dictionary) @dict
+        ) (#eq? @name "LANGUAGE_CONFIGS"))
+    """,
+    )
+    query_cursor = QueryCursor(query)
+    captures = query_cursor.captures(tree.root_node)
+
+    name_caps, dict_caps = captures["name"], captures["dict"]
+    for name_cap, dict_cap in zip(name_caps, dict_caps):
+        if name_cap.text.decode("utf-8") == "LANGUAGE_CONFIGS":
+            end_pos = dict_cap.end_byte
+            # end_pos may point to whitespace after closing brace
+            while end_pos > 0 and config_content[end_pos - 1].isspace():
+                end_pos -= 1
+            return end_pos
+
+    raise ValueError("Could not find LANGUAGE_CONFIGS dictionary")
 
 
 @click.group()
@@ -427,49 +463,47 @@ def add_grammar(
     ),"""
 
         # Find the end of the LANGUAGE_CONFIGS dictionary
-        closing_brace_pos = config_content.rfind("}")
-        if closing_brace_pos != -1:
-            # Insert the new config before the closing brace
-            new_content = (
-                config_content[:closing_brace_pos]
-                + config_entry
-                + "\n"
-                + config_content[closing_brace_pos:]
-            )
+        closing_brace_pos = find_language_configs_end(config_content) - 1
 
-            with open(config_file_path, "w") as f:
-                f.write(new_content)
+        # Insert the new config before the closing brace
+        new_content = (
+            config_content[:closing_brace_pos]
+            + config_entry
+            + "\n"
+            + config_content[closing_brace_pos:]
+        )
 
-            click.echo(
-                f"\n✅ Language '{language_name}' has been added to the configuration!"
-            )
-            click.echo(f"📝 Updated {config_file_path}")
+        with open(config_file_path, "w") as f:
+            f.write(new_content)
 
-            # User verification note
-            click.echo()
-            click.echo(
-                click.style(
-                    "📋 Please review the detected node types:", bold=True, fg="yellow"
-                )
+        click.echo(
+            f"\n✅ Language '{language_name}' has been added to the configuration!"
+        )
+        click.echo(f"📝 Updated {config_file_path}")
+
+        # User verification note
+        click.echo()
+        click.echo(
+            click.style(
+                "📋 Please review the detected node types:", bold=True, fg="yellow"
             )
-            click.echo("   The auto-detection is good but may need manual adjustments.")
-            click.echo(f"   Edit the configuration in: {config_file_path}")
-            click.echo()
-            click.echo("🎯 Look for these common issues:")
-            click.echo(
-                "   • Remove misclassified types (e.g., table_constructor in functions)"
-            )
-            click.echo("   • Add missing types that should be included")
-            click.echo(
-                "   • Verify class_node_types includes all relevant class-like constructs"
-            )
-            click.echo("   • Check call_node_types covers all function call patterns")
-            click.echo()
-            click.echo(
-                "💡 You can run 'python -m codebase_rag.tools.language list-languages' to see the current config."
-            )
-        else:
-            raise ValueError("Could not find LANGUAGE_CONFIGS dictionary end")
+        )
+        click.echo("   The auto-detection is good but may need manual adjustments.")
+        click.echo(f"   Edit the configuration in: {config_file_path}")
+        click.echo()
+        click.echo("🎯 Look for these common issues:")
+        click.echo(
+            "   • Remove misclassified types (e.g., table_constructor in functions)"
+        )
+        click.echo("   • Add missing types that should be included")
+        click.echo(
+            "   • Verify class_node_types includes all relevant class-like constructs"
+        )
+        click.echo("   • Check call_node_types covers all function call patterns")
+        click.echo()
+        click.echo(
+            "💡 You can run 'python -m codebase_rag.tools.language list-languages' to see the current config."
+        )
 
     except Exception as e:
         click.echo(f"❌ Error updating config file: {e}")
