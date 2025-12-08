@@ -15,6 +15,9 @@
   <a href="https://github.com/vitali87/code-graph-rag/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/vitali87/code-graph-rag" alt="License" />
   </a>
+  <a href="https://mseep.ai/app/vitali87-code-graph-rag">
+    <img src="https://mseep.net/pr/vitali87-code-graph-rag-badge.png" alt="MseeP.ai Security Assessment" />
+  </a>
 </p>
 </div>
 
