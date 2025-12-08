@@ -84,28 +84,29 @@ The system consists of two main components:
 - Python 3.12+
 - Docker & Docker Compose (for Memgraph)
 - **cmake** (required for building pymgclient dependency)
+- **ripgrep** (`rg`) (required for shell command text searching)
 - **For cloud models**: Google Gemini API key
 - **For local models**: Ollama installed and running
 - `uv` package manager
 
-### Installing cmake
+### Installing cmake and ripgrep
 
 On macOS:
 ```bash
-brew install cmake
+brew install cmake ripgrep
 ```
 
 On Linux (Ubuntu/Debian):
 ```bash
 sudo apt-get update
-sudo apt-get install cmake
+sudo apt-get install cmake ripgrep
 ```
 
 On Linux (CentOS/RHEL):
 ```bash
 sudo yum install cmake
-# or on newer versions:
-sudo dnf install cmake
+sudo dnf install ripgrep
+# Note: ripgrep may need to be installed from EPEL or via cargo
 ```
 
 ## 🛠️ Installation

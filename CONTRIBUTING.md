@@ -66,6 +66,7 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 - **ruff**: Code linting and formatting (replaces flake8, black, isort)
 - **mypy**: Static type checking
 - **pytest**: Testing framework
+- **ripgrep** (`rg`): Required for shell command text searching (install via `brew install ripgrep` on macOS or `apt install ripgrep` on Linux)
 
 ### Pre-commit Hooks
 This project uses `pre-commit` to automatically run checks before each commit, ensuring code quality and consistency.
