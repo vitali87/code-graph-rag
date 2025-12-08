@@ -1,15 +1,9 @@
-"""
-Comprehensive Rust macros and metaprogramming testing.
-Tests declarative macros, procedural macros, derive macros, and code generation.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -18,7 +12,6 @@ def rust_macros_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_macros_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_macros_test"
@@ -35,7 +28,6 @@ proc-macro2 = "1.0"
 proc-macro = true
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Macros test crate")
 
@@ -215,18 +207,9 @@ macro_rules! parse_options {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_macros_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify macro functions are detected
     macro_calls = [
         call for call in calls if "test_macros" in str(call) or "Point" in str(call)
     ]
@@ -446,18 +429,9 @@ pub fn auto_debug_derive(input: TokenStream) -> TokenStream {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_macros_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify proc macro functions are detected
     proc_macro_calls = [
         call
         for call in calls
@@ -729,18 +703,9 @@ fn platform_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_macros_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify macro usage functions are detected
     usage_calls = [
         call
         for call in calls
@@ -957,18 +922,9 @@ fn generated_function_usage() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_macros_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify derive macro usage is detected
     derive_calls = [
         call
         for call in calls
@@ -1340,18 +1296,9 @@ fn event_system_example() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_macros_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_macros_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify advanced macro functions are detected
     advanced_calls = [
         call
         for call in calls

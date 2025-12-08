@@ -1,16 +1,9 @@
-"""
-Comprehensive Rust traits and generics parsing and relationship testing.
-Tests trait definitions, implementations, generic parameters, associated types,
-lifetime parameters, and complex generic constraints.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def rust_traits_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_traits_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Library root")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_traits_test"
 version = "0.1.0"
@@ -164,28 +155,15 @@ impl Printable for Rectangle {
 """
     )
 
-    parsers, queries = load_parsers()
-    assert "rust" in parsers, "Rust parser should be available"
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor, skip_if_missing="rust")
     calls = mock_ingestor.method_calls
 
-    # Verify traits are detected
     drawable_calls = [call for call in calls if "Drawable" in str(call)]
     assert len(drawable_calls) > 0, "Drawable trait should be detected"
 
     printable_calls = [call for call in calls if "Printable" in str(call)]
     assert len(printable_calls) > 0, "Printable trait should be detected"
 
-    # Verify trait implementations by checking for methods on concrete types
-    # that implement the trait methods (Circle and Rectangle implementing Drawable/Printable)
     trait_impl_calls = [
         call
         for call in calls
@@ -354,25 +332,15 @@ impl<T: std::hash::Hash + Eq> Collectable<T> for SetCollector {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify generic types are detected
     pair_calls = [call for call in calls if "Pair" in str(call)]
     assert len(pair_calls) > 0, "Generic Pair struct should be detected"
 
     keyvalue_calls = [call for call in calls if "KeyValue" in str(call)]
     assert len(keyvalue_calls) > 0, "Generic KeyValue struct should be detected"
 
-    # Verify generic functions
     generic_func_calls = [
         call
         for call in calls
@@ -584,18 +552,9 @@ impl Factory for StringFactory {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify traits with associated types are detected
     parser_calls = [call for call in calls if "Parser" in str(call)]
     assert len(parser_calls) > 0, (
         "Parser trait with associated types should be detected"
@@ -604,7 +563,6 @@ impl Factory for StringFactory {
     database_calls = [call for call in calls if "Database" in str(call)]
     assert len(database_calls) > 0, "Database trait should be detected"
 
-    # Verify implementations with associated types
     json_calls = [call for call in calls if "JsonParser" in str(call)]
     assert len(json_calls) > 0, "JsonParser implementation should be detected"
 
@@ -800,18 +758,9 @@ pub fn compare_drawable_areas<T: AsRef<dyn Drawable>>(a: T, b: T) -> std::cmp::O
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify trait objects are handled
     drawable_calls = [call for call in calls if "Drawable" in str(call)]
     assert len(drawable_calls) > 0, "Drawable trait for objects should be detected"
 
@@ -982,18 +931,9 @@ where
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_traits_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_traits_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify HRTB functions are detected
     hrtb_calls = [
         call
         for call in calls
@@ -1004,7 +944,6 @@ where
     ]
     assert len(hrtb_calls) > 0, "HRTB functions should be detected"
 
-    # Verify complex generic types
     processor_calls = [call for call in calls if "Processor" in str(call)]
     assert len(processor_calls) > 0, "Processor trait with HRTB should be detected"
 

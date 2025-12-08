@@ -1,5 +1,3 @@
-"""Tests for nested function parsing and relationship creation."""
-
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -8,6 +6,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names
 
 
 @pytest.fixture
@@ -17,7 +16,6 @@ def nested_functions_project(temp_repo: Path) -> Path:
     os.makedirs(project_path)
     (project_path / "__init__.py").touch()
 
-    # Test file with various nested function patterns
     with open(project_path / "nested_functions.py", "w") as f:
         f.write(
             '''def outer_function():
@@ -38,7 +36,6 @@ def nested_functions_project(temp_repo: Path) -> Path:
 
     return inner_function(), another_inner()
 
-
 def standalone_function():
     """Top-level function for comparison."""
 
@@ -47,7 +44,6 @@ def standalone_function():
         pass
 
     local_helper()
-
 
 class OuterClass:
     """Class with nested functions in methods."""
@@ -61,7 +57,6 @@ class OuterClass:
 
         return nested_in_method()
 
-
 def closure_example():
     """Function demonstrating closure behavior."""
     x = 10
@@ -71,7 +66,6 @@ def closure_example():
         return x * 2
 
     return closure_function
-
 
 def decorator_factory():
     """Function that returns a decorator."""
@@ -108,14 +102,11 @@ def test_nested_function_definitions_are_created(
 
     project_name = nested_functions_project.name
 
-    # Expected nested function qualified names (proper nesting structure)
     expected_functions = [
-        # Top-level functions
         f"{project_name}.nested_functions.outer_function",
         f"{project_name}.nested_functions.standalone_function",
         f"{project_name}.nested_functions.closure_example",
         f"{project_name}.nested_functions.decorator_factory",
-        # Nested functions with proper hierarchy
         f"{project_name}.nested_functions.outer_function.inner_function",
         f"{project_name}.nested_functions.outer_function.another_inner",
         f"{project_name}.nested_functions.outer_function.another_inner.deeply_nested",
@@ -125,16 +116,8 @@ def test_nested_function_definitions_are_created(
         f"{project_name}.nested_functions.decorator_factory.decorator.wrapper",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify all expected nested functions were created
     for expected_qn in expected_functions:
         assert expected_qn in created_functions, f"Missing function: {expected_qn}"
 
@@ -155,9 +138,7 @@ def test_nested_function_parent_child_relationships(
 
     project_name = nested_functions_project.name
 
-    # Expected parent-child relationships for nested functions
     expected_relationships = [
-        # Module -> top-level functions
         (
             ("Module", f"{project_name}.nested_functions"),
             ("Function", f"{project_name}.nested_functions.outer_function"),
@@ -174,7 +155,6 @@ def test_nested_function_parent_child_relationships(
             ("Module", f"{project_name}.nested_functions"),
             ("Function", f"{project_name}.nested_functions.decorator_factory"),
         ),
-        # Function -> nested functions (proper parent-child relationships)
         (
             ("Function", f"{project_name}.nested_functions.outer_function"),
             (
@@ -232,14 +212,12 @@ def test_nested_function_parent_child_relationships(
         ),
     ]
 
-    # Get all DEFINES relationship calls
     defines_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if call[0][1] == "DEFINES"
     ]
 
-    # Extract relationship tuples for comparison
     actual_relationships = set()
     for call in defines_calls:
         parent_info = call[0][0]
@@ -249,7 +227,6 @@ def test_nested_function_parent_child_relationships(
         child_tuple = (child_info[0], child_info[2])
         actual_relationships.add((parent_tuple, child_tuple))
 
-    # Verify all expected relationships exist
     for parent, child in expected_relationships:
         relationship = (parent, child)
         assert relationship in actual_relationships, (
@@ -261,7 +238,6 @@ def test_function_calls_are_tracked(
     nested_functions_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """Test that function calls are properly tracked, including calls between functions."""
-    # Add a file with function calls
     with open(nested_functions_project / "function_calls.py", "w") as f:
         f.write(
             '''def parent_function():
@@ -278,11 +254,9 @@ def test_function_calls_are_tracked(
     other_result = helper_function()
     return result + other_result
 
-
 def helper_function():
     """Helper function."""
     return " helper"
-
 
 def main():
     """Main function that calls parent_function."""
@@ -302,31 +276,27 @@ def main():
 
     project_name = nested_functions_project.name
 
-    # Expected function calls with proper nested qualified names
     expected_calls = [
-        # Calls that should be tracked
         (
             f"{project_name}.function_calls.parent_function",
             f"{project_name}.function_calls.parent_function.child_function",
-        ),  # Local nested function call
+        ),
         (
             f"{project_name}.function_calls.parent_function",
             f"{project_name}.function_calls.helper_function",
-        ),  # Cross-function call
+        ),
         (
             f"{project_name}.function_calls.main",
             f"{project_name}.function_calls.parent_function",
-        ),  # Function call
+        ),
     ]
 
-    # Get all CALLS relationship calls
     calls_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if call[0][1] == "CALLS"
     ]
 
-    # Extract call tuples
     actual_calls = set()
     for call in calls_relationships:
         caller_info = call[0][0]
@@ -336,14 +306,12 @@ def main():
         callee_qn = callee_info[2]
         actual_calls.add((caller_qn, callee_qn))
 
-    # Verify that at least some function calls are tracked
     tracked_calls = [
         (caller_qn, callee_qn)
         for caller_qn, callee_qn in expected_calls
         if (caller_qn, callee_qn) in actual_calls
     ]
 
-    # We should have tracked at least some of the calls
     assert tracked_calls, "No function calls were tracked between functions"
 
 
@@ -366,23 +334,14 @@ def test_function_in_class_method(
 
     project_name = nested_functions_project.name
 
-    # In current implementation, nested_in_method is treated as a method, not a nested function
     expected_method_qn = f"{project_name}.nested_functions.OuterClass.nested_in_method"
 
-    # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
-
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
+    created_methods = get_node_names(mock_ingestor, "Method")
 
     assert expected_method_qn in created_methods, (
         f"Function in method not found as method: {expected_method_qn}"
     )
 
-    # Verify the class has the expected methods
     expected_class_methods = [
         f"{project_name}.nested_functions.OuterClass.method_with_nested",
         f"{project_name}.nested_functions.OuterClass.nested_in_method",

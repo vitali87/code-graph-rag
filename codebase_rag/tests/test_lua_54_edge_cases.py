@@ -1,10 +1,7 @@
-"""Tests for Lua 5.4 edge cases and advanced syntax features."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_lua_54_goto_labels(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -215,15 +212,11 @@ print("State machine:", table.concat(machine_results, " -> "))
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -233,7 +226,6 @@ print("State machine:", table.concat(machine_results, " -> "))
 
         goto_qn = f"{project.name}.goto_labels"
 
-        # Verify goto-related functions were extracted
         expected_functions = [
             f"{goto_qn}.GotoLabels.test_basic_goto",
             f"{goto_qn}.GotoLabels.test_goto_error_handling",
@@ -432,15 +424,11 @@ print("Decomposed length:", norm_results.decomposed_len)
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -450,7 +438,6 @@ print("Decomposed length:", norm_results.decomposed_len)
 
         utf8_qn = f"{project.name}.utf8_lib"
 
-        # Verify UTF-8 library functions were extracted
         expected_functions = [
             f"{utf8_qn}.UTF8Lib.test_utf8_functions",
             f"{utf8_qn}.UTF8Lib.test_utf8_validation",
@@ -462,14 +449,8 @@ print("Decomposed length:", norm_results.decomposed_len)
         for expected_fn in expected_functions:
             assert expected_fn in fn_qns, f"Missing function: {expected_fn}"
 
-        # Check UTF-8 library calls were extracted
-        calls_rels = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == "CALLS"
-        ]
+        calls_rels = get_relationships(mock_ingestor, "CALLS")
 
-        # Should have UTF-8 library function calls
         assert len(calls_rels) >= 5, f"Expected at least 5 CALLS, got {len(calls_rels)}"
 
         print("✅ Lua 5.4 UTF-8 library test PASSED")
@@ -695,15 +676,11 @@ end
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
+    run_updater(project, mock_ingestor)
 
     try:
-        updater.run()
+        pass
 
-        # Check function definitions
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -713,7 +690,6 @@ end
 
         bitwise_qn = f"{project.name}.bitwise_ops"
 
-        # Verify bitwise operation functions were extracted
         expected_functions = [
             f"{bitwise_qn}.BitwiseOps.test_basic_bitwise",
             f"{bitwise_qn}.BitwiseOps.test_variable_bitwise",

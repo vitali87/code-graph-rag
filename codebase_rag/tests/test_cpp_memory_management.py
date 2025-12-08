@@ -1,17 +1,9 @@
-"""
-Comprehensive C++ memory management testing.
-Tests smart pointers (unique_ptr, shared_ptr, weak_ptr), RAII patterns, move semantics,
-custom allocators, and memory safety patterns for graph building applications.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -20,7 +12,6 @@ def cpp_memory_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_memory_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -466,18 +457,10 @@ void demonstrateSmartPointers() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_memory_project, mock_ingestor)
 
     project_name = cpp_memory_project.name
 
-    # Expected classes with smart pointer usage
     expected_classes = [
         f"{project_name}.smart_pointers.Resource",
         f"{project_name}.smart_pointers.ResourceFactory",
@@ -493,31 +476,15 @@ void demonstrateSmartPointers() {
         f"{project_name}.smart_pointers.demonstrateSmartPointers",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -861,34 +828,18 @@ void demonstrateMoveSemantics() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_memory_project, mock_ingestor)
 
     project_name = cpp_memory_project.name
 
-    # Expected classes with move semantics
     expected_classes = [
         f"{project_name}.move_semantics.MovableResource",
         f"{project_name}.move_semantics.ResourceContainer",
         f"{project_name}.move_semantics.ResourceFactory",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -951,24 +902,11 @@ void demonstrateComprehensiveMemoryManagement() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_memory_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_memory_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive memory management coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_memory" in call.args[0][2]
     ]
@@ -977,5 +915,4 @@ void demonstrateComprehensiveMemoryManagement() {
         f"Expected at least 2 comprehensive memory management calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that memory management parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

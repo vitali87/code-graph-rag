@@ -14,7 +14,6 @@ from .language_config import LANGUAGE_CONFIGS
 logger.remove()
 logger.add(sys.stderr, level="INFO")
 
-# Define a type for the language library loaders
 LanguageLoader = Callable[[], object] | None
 
 
@@ -27,15 +26,12 @@ def _try_load_from_submodule(lang_name: str) -> LanguageLoader:
         return None
 
     try:
-        # Add the Python bindings to path
         if python_bindings_path not in sys.path:
             sys.path.insert(0, python_bindings_path)
 
         try:
-            # Check if we need to build the binding
             module_name = f"tree_sitter_{lang_name.replace('-', '_')}"
 
-            # Try to build and install the Python binding
             setup_py = os.path.join(submodule_path, "setup.py")
             if os.path.exists(setup_py):
                 logger.debug(f"Building Python bindings for {lang_name}...")
@@ -53,11 +49,9 @@ def _try_load_from_submodule(lang_name: str) -> LanguageLoader:
                     return None
                 logger.debug(f"Successfully built {lang_name} bindings")
 
-            # Now try to import the module
             logger.debug(f"Attempting to import module: {module_name}")
             module = importlib.import_module(module_name)
 
-            # Try different possible language attribute names
             language_attrs = [
                 "language",
                 f"language_{lang_name}",
@@ -76,7 +70,6 @@ def _try_load_from_submodule(lang_name: str) -> LanguageLoader:
             )
 
         finally:
-            # Clean up path
             if python_bindings_path in sys.path:
                 sys.path.remove(python_bindings_path)
 
@@ -86,7 +79,6 @@ def _try_load_from_submodule(lang_name: str) -> LanguageLoader:
     return None
 
 
-# Import available Tree-sitter languages and correctly type them as Optional
 def _import_language_loaders() -> dict[str, LanguageLoader]:
     """Import language loaders with proper error handling and typing."""
     loaders: dict[str, LanguageLoader] = {}
@@ -147,7 +139,6 @@ def _import_language_loaders() -> dict[str, LanguageLoader]:
     except ImportError:
         loaders["cpp"] = _try_load_from_submodule("cpp")
 
-    # Lua support
     try:
         from tree_sitter_lua import language as lua_language_so
 
@@ -155,7 +146,6 @@ def _import_language_loaders() -> dict[str, LanguageLoader]:
     except ImportError:
         loaders["lua"] = _try_load_from_submodule("lua")
 
-    # Automatically try submodule loading for any language not already loaded
     for lang_name in LANGUAGE_CONFIGS.keys():
         if lang_name not in loaders or loaders[lang_name] is None:
             loaders[lang_name] = _try_load_from_submodule(lang_name)
@@ -164,7 +154,6 @@ def _import_language_loaders() -> dict[str, LanguageLoader]:
 
 
 _language_loaders = _import_language_loaders()
-
 
 LANGUAGE_LIBRARIES: dict[str, LanguageLoader | None] = _language_loaders
 
@@ -175,7 +164,6 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
     queries: dict[str, Any] = {}
     available_languages = []
 
-    # Deepcopy to avoid modifying the original configs
     configs = deepcopy(LANGUAGE_CONFIGS)
 
     for lang_name, lang_config in configs.items():
@@ -186,7 +174,6 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
 
                 parsers[lang_name] = parser
 
-                # Create Tree-sitter queries - use pre-formatted queries if available, otherwise generate from node types
                 function_patterns = (
                     lang_config.function_query
                     if lang_config.function_query
@@ -218,7 +205,6 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                     )
                 )
 
-                # Create import query patterns
                 import_patterns = " ".join(
                     [
                         f"({node_type}) @import"
@@ -232,7 +218,6 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                     ]
                 )
 
-                # Combine import patterns (remove duplicates)
                 all_import_patterns = []
                 if import_patterns.strip():
                     all_import_patterns.append(import_patterns)
@@ -243,10 +228,8 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                     all_import_patterns.append(import_from_patterns)
                 combined_import_patterns = " ".join(all_import_patterns)
 
-                # Create locals query for variable tracking
                 locals_query = None
                 if lang_name in ("javascript", "typescript"):
-                    # Create language-specific locals patterns
                     if lang_name == "javascript":
                         locals_patterns = """
                         ; Variable definitions
@@ -257,8 +240,7 @@ def load_parsers() -> tuple[dict[str, Parser], dict[str, Any]]:
                         ; Variable references
                         (identifier) @local.reference
                         """
-                    else:  # typescript
-                        # TypeScript-specific patterns (comprehensive like JavaScript)
+                    else:
                         locals_patterns = """
                         ; Variable definitions (TypeScript has multiple declaration types)
                         (variable_declarator name: (identifier) @local.definition)

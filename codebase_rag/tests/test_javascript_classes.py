@@ -1,16 +1,14 @@
-"""
-Comprehensive JavaScript class parsing and relationship testing.
-Tests all possible JavaScript class patterns and verifies class definitions, inheritance, and method relationships.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -19,12 +17,10 @@ def javascript_classes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_classes_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
     (project_path / "models").mkdir()
 
-    # Create base files
     (project_path / "src" / "base.js").write_text("export class BaseClass {}")
     (project_path / "utils" / "helpers.js").write_text(
         "export function validateId(id) { return id > 0; }"
@@ -163,18 +159,10 @@ const result = processor.processData([
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
-    # Expected class definitions
     expected_classes = [
         f"{project_name}.basic_classes.Person",
         f"{project_name}.basic_classes.MathUtils",
@@ -182,20 +170,11 @@ const result = processor.processData([
         f"{project_name}.basic_classes.DataProcessor",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify all expected classes were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
-    # Expected method definitions
     expected_methods = [
         f"{project_name}.basic_classes.Person.constructor",
         f"{project_name}.basic_classes.Person.greet",
@@ -210,16 +189,8 @@ const result = processor.processData([
         f"{project_name}.basic_classes.DataProcessor.validate",
     ]
 
-    # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    created_methods = get_node_names(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-
-    # Verify at least some expected methods were created
     found_methods = [method for method in expected_methods if method in created_methods]
     assert len(found_methods) >= 8, (
         f"Expected at least 8 methods, found {len(found_methods)}: {found_methods}"
@@ -374,18 +345,10 @@ const eagleHunt = eagle.hunt(); // Eagle specific
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
-    # Expected inheritance relationships
     expected_inherits = [
         (
             ("Class", "qualified_name", f"{project_name}.class_inheritance.Dog"),
@@ -409,7 +372,6 @@ const eagleHunt = eagle.hunt(); // Eagle specific
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -426,14 +388,12 @@ const eagleHunt = eagle.hunt(); // Eagle specific
             f"{expected_child[2]} INHERITS {expected_parent[2]}"
         )
 
-    # Expected super() calls
     call_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "CALLS"
     ]
 
-    # Should have some super() calls tracked
     super_calls = [
         call
         for call in call_relationships
@@ -578,18 +538,10 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
-    # Expected static methods
     expected_static_methods = [
         f"{project_name}.static_features.MathHelper.add",
         f"{project_name}.static_features.MathHelper.subtract",
@@ -604,16 +556,8 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
         f"{project_name}.static_features.PowerUser.createWithPermissions",
     ]
 
-    # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    created_methods = get_node_names(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-
-    # Verify at least some static methods were created
     found_static_methods = [
         method for method in expected_static_methods if method in created_methods
     ]
@@ -621,12 +565,7 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
         f"Expected at least 6 static methods, found {len(found_static_methods)}: {found_static_methods}"
     )
 
-    # Verify static method calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     static_method_calls = [
         call
@@ -800,40 +739,23 @@ const instanceCount = Counter.getInstanceCount();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
     project_name = javascript_classes_project.name
 
-    # Expected classes with private features
     expected_classes = [
         f"{project_name}.private_features.BankAccount",
         f"{project_name}.private_features.Counter",
         f"{project_name}.private_features.SavingsAccount",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify classes with private features were created
     for expected_qn in expected_classes:
         assert expected_qn in created_classes, (
             f"Missing class with private features: {expected_qn}"
         )
 
-    # Expected public methods (private methods might not be captured)
     expected_methods = [
         f"{project_name}.private_features.BankAccount.deposit",
         f"{project_name}.private_features.BankAccount.withdraw",
@@ -843,16 +765,8 @@ const instanceCount = Counter.getInstanceCount();
         f"{project_name}.private_features.SavingsAccount.addInterest",
     ]
 
-    # Get all Method node creation calls
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    created_methods = get_node_names(mock_ingestor, "Method")
 
-    created_methods = {call[0][1]["qualified_name"] for call in method_calls}
-
-    # Verify at least some methods were created
     found_methods = [method for method in expected_methods if method in created_methods]
     assert len(found_methods) >= 4, (
         f"Expected at least 4 methods in classes with private features, found {len(found_methods)}"
@@ -1013,23 +927,10 @@ const userInfo = user.toString();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Should capture class expressions as classes
     class_expression_classes = [
         call
         for call in class_calls
@@ -1040,7 +941,6 @@ const userInfo = user.toString();
         f"Expected at least 3 class expressions, found {len(class_expression_classes)}"
     )
 
-    # Should capture inheritance relationships from mixins
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1153,25 +1053,12 @@ const testResult = testClasses();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_classes_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
-
-    # Should have comprehensive class coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1182,7 +1069,6 @@ const testResult = testClasses();
         f"Expected at least 5 comprehensive class calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have inheritance relationships
     class_inheritance = [
         call
         for call in inherits_relationships
@@ -1193,7 +1079,6 @@ const testResult = testClasses();
         f"Expected at least 1 inheritance relationship, found {len(class_inheritance)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1201,15 +1086,12 @@ const testResult = testClasses();
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_classes" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or method
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that class parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

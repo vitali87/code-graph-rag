@@ -1,16 +1,15 @@
-"""
-Comprehensive JavaScript spread and rest operators parsing and testing.
-Tests spread in arrays/objects/calls, rest parameters, destructuring with spread/rest.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -19,10 +18,8 @@ def javascript_spread_rest_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_spread_rest_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "utils" / "arrays.js").write_text(
         """
 export function mergeArrays(arr1, arr2) {
@@ -163,27 +160,12 @@ console.log(max);           // 10
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_spread_rest_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_spread_rest_project, mock_ingestor)
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for functions using array spread
     expected_functions = [
         f"{project_name}.array_spread.mergeArrays",
         f"{project_name}.array_spread.createRange",
@@ -198,12 +180,7 @@ console.log(max);           // 10
             f"Missing array spread function: {expected}"
         )
 
-    # Check for class with spread patterns
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     array_processor_class = [
         call for call in class_calls if "ArrayProcessor" in call[0][1]["qualified_name"]
@@ -404,27 +381,12 @@ console.log(apiConfig);    // Environment-specific config
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_spread_rest_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_spread_rest_project, mock_ingestor)
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for functions using object spread
     expected_functions = [
         f"{project_name}.object_spread.createUser",
         f"{project_name}.object_spread.mergeConfigs",
@@ -439,12 +401,7 @@ console.log(apiConfig);    // Environment-specific config
             f"Missing object spread function: {expected}"
         )
 
-    # Check for ConfigManager class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     config_manager_class = [
         call for call in class_calls if "ConfigManager" in call[0][1]["qualified_name"]
@@ -660,27 +617,12 @@ for (const value of combined) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_spread_rest_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_spread_rest_project, mock_ingestor)
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for functions using rest parameters
     expected_rest_functions = [
         f"{project_name}.rest_parameters.sum",
         f"{project_name}.rest_parameters.multiply",
@@ -702,12 +644,7 @@ for (const value of combined) {
         f"Expected at least 7 rest parameter functions, found {len(found_rest_functions)}"
     )
 
-    # Check for Calculator class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     calculator_class = [
         call for call in class_calls if "Calculator" in call[0][1]["qualified_name"]
@@ -958,27 +895,12 @@ console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50]
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_spread_rest_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_spread_rest_project, mock_ingestor)
 
     project_name = javascript_spread_rest_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for functions using destructuring with spread/rest
     expected_destructuring_functions = [
         f"{project_name}.destructuring_spread_rest.processArray",
         f"{project_name}.destructuring_spread_rest.extractUserInfo",
@@ -998,12 +920,7 @@ console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50]
         f"Expected at least 6 destructuring functions, found {len(found_destructuring_functions)}"
     )
 
-    # Check for DataProcessor class
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     data_processor_class = [
         call for call in class_calls if "DataProcessor" in call[0][1]["qualified_name"]
@@ -1126,24 +1043,15 @@ console.log(complex);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_spread_rest_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_spread_rest_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive spread/rest patterns
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1154,12 +1062,7 @@ console.log(complex);
         f"Expected at least 5 comprehensive spread/rest calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all functions were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
         call

@@ -1,16 +1,9 @@
-"""
-Comprehensive Rust advanced type system testing.
-Tests advanced generics, associated types, phantom types, higher-ranked trait bounds,
-type projections, and complex type relationships for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def rust_advanced_types_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_advanced_types_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Advanced types test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_advanced_types_test"
 version = "0.1.0"
@@ -117,18 +108,9 @@ impl<T> Buffer<T> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify phantom type structs are detected
     struct_calls = [
         call
         for call in calls
@@ -206,18 +188,9 @@ where
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify HRTB functions are detected
     function_calls = [
         call
         for call in calls
@@ -337,18 +310,9 @@ impl DatabaseDriver for PostgresDriver {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify associated type patterns are detected
     trait_calls = [
         call
         for call in calls
@@ -499,18 +463,9 @@ fn create_factorial_array<const N: usize>() -> FactorialArray<N> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify type-level programming constructs are detected
     type_calls = [
         call
         for call in calls
@@ -707,18 +662,9 @@ impl<T, const N: usize> ConstArrayExt<T, N> for [T; N] {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_advanced_types_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify const generics are detected
     const_calls = [
         call
         for call in calls

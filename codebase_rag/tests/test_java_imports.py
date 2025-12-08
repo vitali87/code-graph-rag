@@ -1,9 +1,3 @@
-"""
-Java import parsing and resolution testing.
-Tests various Java import patterns including static imports, wildcard imports,
-and package declarations.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -11,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names
 
 
 @pytest.fixture
@@ -19,7 +14,6 @@ def java_imports_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_imports_test"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -73,18 +67,15 @@ public class BasicImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check import mapping was created
     project_name = java_imports_project.name
     module_qn = f"{project_name}.src.main.java.com.example.BasicImports"
 
@@ -94,7 +85,6 @@ public class BasicImports {
 
     imports = updater.factory.import_processor.import_mapping[module_qn]
 
-    # Check that basic imports were parsed
     expected_imports = {
         "List": "java.util.List",
         "ArrayList": "java.util.ArrayList",
@@ -157,18 +147,15 @@ public class StaticImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check static import mapping
     project_name = java_imports_project.name
     module_qn = f"{project_name}.src.main.java.com.example.StaticImports"
 
@@ -178,7 +165,6 @@ public class StaticImports {
 
     imports = updater.factory.import_processor.import_mapping[module_qn]
 
-    # Check that static imports were parsed
     expected_static_imports = {
         "PI": "java.lang.Math.PI",
         "sqrt": "java.lang.Math.sqrt",
@@ -249,18 +235,15 @@ public class WildcardImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check wildcard import mapping
     project_name = java_imports_project.name
     module_qn = f"{project_name}.src.main.java.com.example.WildcardImports"
 
@@ -270,7 +253,6 @@ public class WildcardImports {
 
     imports = updater.factory.import_processor.import_mapping[module_qn]
 
-    # Check that wildcard imports were parsed
     expected_wildcard_imports = {
         "*java.util": "java.util",
         "*java.io": "java.io",
@@ -292,7 +274,6 @@ def test_package_local_imports(
 ) -> None:
     """Test imports from the same package and local packages."""
 
-    # Create utility class in same package
     util_file = (
         java_imports_project
         / "src"
@@ -318,7 +299,6 @@ public class StringUtils {
 """
     )
 
-    # Create utility class in sub-package
     sub_util_file = (
         java_imports_project
         / "src"
@@ -350,7 +330,6 @@ public class MathUtils {
 """
     )
 
-    # Main test file using local imports
     test_file = (
         java_imports_project
         / "src"
@@ -383,18 +362,15 @@ public class LocalImports {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check import mapping for local imports
     project_name = java_imports_project.name
     module_qn = f"{project_name}.src.main.java.com.example.LocalImports"
 
@@ -404,7 +380,6 @@ public class LocalImports {
 
     imports = updater.factory.import_processor.import_mapping[module_qn]
 
-    # Check that local package import was parsed
     expected_imports = {
         "MathUtils": "com.example.utils.MathUtils",
     }
@@ -468,26 +443,16 @@ public class QualifiedNames {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_imports_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # For this test, we mainly verify that parsing doesn't fail
-    # and that the class and methods are detected even without imports
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
     project_name = java_imports_project.name
     expected_class = (
         f"{project_name}.src.main.java.com.example.QualifiedNames.QualifiedNames"

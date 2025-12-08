@@ -1,9 +1,3 @@
-"""
-Java method call parsing and inheritance testing.
-Tests method invocations, inheritance patterns, polymorphism,
-and method overriding.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -11,6 +5,11 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_qualified_names,
+    get_relationships,
+)
 
 
 @pytest.fixture
@@ -19,7 +18,6 @@ def java_methods_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_methods_test"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -107,23 +105,16 @@ public class BasicMethodCalls {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check that method calls were detected by looking at CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No method call relationships found"
 
@@ -245,27 +236,17 @@ public class InheritanceExample {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check class definitions
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Expected class qualified names
     project_name = java_methods_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.InheritanceExample.Animal",
@@ -274,18 +255,12 @@ public class InheritanceExample {
         f"{project_name}.src.main.java.com.example.InheritanceExample.InheritanceExample",
     }
 
-    # Verify all expected classes were created
     missing_classes = expected_classes - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Check method calls via CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No method call relationships found"
 
@@ -430,27 +405,23 @@ public class InterfaceExample {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check interface and class definitions
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-    created_interfaces = {call[0][1]["qualified_name"] for call in interface_calls}
+    created_classes = get_qualified_names(class_calls)
+    created_interfaces = get_qualified_names(interface_calls)
 
-    # Expected type qualified names
     project_name = java_methods_project.name
     expected_classes = {
         f"{project_name}.src.main.java.com.example.InterfaceExample.Rectangle",
@@ -463,7 +434,6 @@ public class InterfaceExample {
         f"{project_name}.src.main.java.com.example.InterfaceExample.Resizable",
     }
 
-    # Verify all expected types were created
     missing_classes = expected_classes - created_classes
     missing_interfaces = expected_interfaces - created_interfaces
 
@@ -474,12 +444,7 @@ public class InterfaceExample {
         f"Missing expected interfaces: {sorted(list(missing_interfaces))}"
     )
 
-    # Check interface method calls via CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No method call relationships found"
 
@@ -573,23 +538,16 @@ public class GenericMethods {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check generic method calls via CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No generic method call relationships found"
 
@@ -662,23 +620,16 @@ public class StaticMethodCalls {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
-    # Check that fully qualified static method calls were detected by looking at CALLS relationships
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     assert len(call_relationships) > 0, "No static method call relationships found"
 
@@ -695,7 +646,6 @@ def test_cross_file_method_calls_with_imports(
     - Proper handling of already-qualified type names in import resolution
     - Method calls on imported class instances
     """
-    # Create a utility class in a separate file
     utils_dir = (
         java_methods_project / "src" / "main" / "java" / "com" / "example" / "utils"
     )
@@ -728,7 +678,6 @@ public class Helper {
 """
     )
 
-    # Create main class that imports and uses Helper
     main_file = (
         java_methods_project
         / "src"
@@ -778,52 +727,37 @@ public class MainClass {
 
     parsers, queries = load_parsers()
     if "java" not in parsers:
-        pytest.skip("Java parser not available")
-
+        pytest.skip("java parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=java_methods_project,
         parsers=parsers,
         queries=queries,
     )
-
     updater.run()
 
     project_name = java_methods_project.name
 
-    # Check import mapping
     main_module_qn = f"{project_name}.src.main.java.com.example.MainClass"
     assert main_module_qn in updater.factory.import_processor.import_mapping
     imports = updater.factory.import_processor.import_mapping[main_module_qn]
     assert "Helper" in imports
     assert imports["Helper"] == "com.example.utils.Helper"
 
-    # Check that CALLS relationships were created for cross-file method calls
-    # The format is: ensure_relationship_batch((from_type, from_property, from_qn), "CALLS")
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Count cross-file calls from MainClass methods to Helper methods
     helper_calls_count = 0
     for call in call_relationships:
         if len(call.args) > 2:
             from_tuple = call.args[0]
             to_tuple = call.args[2]
-            # Format: (entity_type, property_name, qualified_name)
             if isinstance(from_tuple, tuple) and len(from_tuple) >= 3:
                 from_qn = from_tuple[2]
-                # Verify the call is FROM MainClass AND TO Helper
                 if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
                     to_qn = to_tuple[2]
-                    # Check: source contains MainClass, destination contains Helper
                     if "MainClass" in from_qn and "Helper" in to_qn:
                         helper_calls_count += 1
 
-    # We created 5 method calls from MainClass to Helper methods
-    # If cross-file resolution works, we should have at least 3 CALLS relationships
     assert helper_calls_count >= 3, (
         f"Expected at least 3 cross-file CALLS relationships from MainClass to Helper methods, "
         f"found {helper_calls_count} total CALLS from MainClass methods. "

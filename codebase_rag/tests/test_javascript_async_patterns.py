@@ -1,16 +1,9 @@
-"""
-Comprehensive JavaScript async patterns parsing and relationship testing.
-Tests all possible async JavaScript patterns including Promises, async/await, callbacks, and generators.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,12 +12,10 @@ def javascript_async_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_async_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
     (project_path / "api").mkdir()
 
-    # Create helper files
     (project_path / "src" / "helpers.js").write_text(
         "export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));"
     )
@@ -270,18 +261,10 @@ function handleProfileError(error) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
-    # Expected Promise-related functions
     expected_promise_functions = [
         f"{project_name}.promise_patterns.createSimplePromise",
         f"{project_name}.promise_patterns.fetchUserData",
@@ -295,15 +278,8 @@ function handleProfileError(error) {
         f"{project_name}.promise_patterns.retry",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify Promise functions were created
     found_promise_functions = [
         func for func in expected_promise_functions if func in created_functions
     ]
@@ -311,12 +287,7 @@ function handleProfileError(error) {
         f"Expected at least 7 Promise functions, found {len(found_promise_functions)}"
     )
 
-    # Verify function calls are tracked (Promise chaining)
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     promise_calls = [
         call for call in call_relationships if "promise_patterns" in call.args[0][2]
@@ -652,18 +623,10 @@ function delay(ms) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
-    # Expected async/await functions
     expected_async_functions = [
         f"{project_name}.async_await_patterns.fetchUser",
         f"{project_name}.async_await_patterns.saveUser",
@@ -675,15 +638,8 @@ function delay(ms) {
         f"{project_name}.async_await_patterns.robustApiCall",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify async functions were created
     found_async_functions = [
         func for func in expected_async_functions if func in created_functions
     ]
@@ -691,20 +647,12 @@ function delay(ms) {
         f"Expected at least 6 async functions, found {len(found_async_functions)}"
     )
 
-    # Expected classes with async methods
     expected_classes = [
         f"{project_name}.async_await_patterns.UserService",
     ]
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify classes with async methods were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 class with async methods, found {len(found_classes)}"
@@ -1039,18 +987,10 @@ fetchUserPromise(789)
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
-    # Expected callback functions
     expected_callback_functions = [
         f"{project_name}.callback_patterns.fetchUserWithCallback",
         f"{project_name}.callback_patterns.saveUserWithCallback",
@@ -1063,15 +1003,8 @@ fetchUserPromise(789)
         f"{project_name}.callback_patterns.mapWithCallback",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify callback functions were created
     found_callback_functions = [
         func for func in expected_callback_functions if func in created_functions
     ]
@@ -1079,20 +1012,12 @@ fetchUserPromise(789)
         f"Expected at least 6 callback functions, found {len(found_callback_functions)}"
     )
 
-    # Expected classes
     expected_classes = [
         f"{project_name}.callback_patterns.EventEmitter",
     ]
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify EventEmitter class was created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 callback-based class, found {len(found_classes)}"
@@ -1393,18 +1318,10 @@ consumeAsyncGenerator();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
     project_name = javascript_async_project.name
 
-    # Expected generator functions
     expected_generator_functions = [
         f"{project_name}.generator_patterns.simpleGenerator",
         f"{project_name}.generator_patterns.rangeGenerator",
@@ -1420,15 +1337,8 @@ consumeAsyncGenerator();
         f"{project_name}.generator_patterns.depthFirstTraversal",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify generator functions were created
     found_generator_functions = [
         func for func in expected_generator_functions if func in created_functions
     ]
@@ -1436,12 +1346,7 @@ consumeAsyncGenerator();
         f"Expected at least 8 generator functions, found {len(found_generator_functions)}"
     )
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     generator_calls = [
         call for call in call_relationships if "generator_patterns" in call.args[0][2]
@@ -1608,24 +1513,11 @@ function delay(ms) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_async_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_async_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive async coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_async" in call.args[0][2]
     ]
@@ -1634,7 +1526,6 @@ function delay(ms) {
         f"Expected at least 5 comprehensive async calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -1642,15 +1533,12 @@ function delay(ms) {
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_async" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that async parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

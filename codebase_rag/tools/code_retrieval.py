@@ -1,16 +1,16 @@
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 
-from ..graph_updater import MemgraphIngestor
 from ..schemas import CodeSnippet
+from ..services import QueryProtocol
 
 
 class CodeRetriever:
     """Service to retrieve code snippets using the graph and filesystem."""
 
-    def __init__(self, project_root: str, ingestor: MemgraphIngestor):
+    def __init__(self, project_root: str, ingestor: QueryProtocol):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
         logger.info(f"CodeRetriever initialized with root: {self.project_root}")
@@ -27,7 +27,6 @@ class CodeRetriever:
         """
         params = {"qn": qualified_name}
         try:
-            # Use the ingestor's public interface
             results = self.ingestor.fetch_all(query, params)
 
             if not results:
@@ -88,7 +87,7 @@ class CodeRetriever:
 def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
     """Factory function to create the code snippet retrieval tool."""
 
-    async def get_code_snippet(ctx: RunContext, qualified_name: str) -> CodeSnippet:
+    async def get_code_snippet(qualified_name: str) -> CodeSnippet:
         """Retrieves the source code for a given qualified name."""
         logger.info(f"[Tool:GetCode] Retrieving code for: {qualified_name}")
         return await code_retriever.find_code_snippet(qualified_name)

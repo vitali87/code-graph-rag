@@ -1,16 +1,9 @@
-"""
-Comprehensive Rust struct and enum parsing and relationship testing.
-Tests struct definitions, tuple structs, unit structs, enum variants, pattern matching,
-and destructuring patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def rust_structs_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_structs_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Library root")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_structs_test"
 version = "0.1.0"
@@ -92,27 +83,15 @@ impl<T> Point<T> {
 """
     )
 
-    parsers, queries = load_parsers()
-    assert "rust" in parsers, "Rust parser should be available"
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor, skip_if_missing="rust")
     calls = mock_ingestor.method_calls
 
-    # Verify structs are detected
     struct_calls = [call for call in calls if "Person" in str(call)]
     assert len(struct_calls) > 0, "Person struct should be detected"
 
     point_calls = [call for call in calls if "Point" in str(call)]
     assert len(point_calls) > 0, "Generic Point struct should be detected"
 
-    # Verify methods are associated with structs
     method_calls = [
         call for call in calls if ("new" in str(call) or "set_email" in str(call))
     ]
@@ -195,25 +174,15 @@ pub fn process_message(msg: Message) -> String {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify enums are detected
     direction_calls = [call for call in calls if "Direction" in str(call)]
     assert len(direction_calls) > 0, "Direction enum should be detected"
 
     message_calls = [call for call in calls if "Message" in str(call)]
     assert len(message_calls) > 0, "Message enum should be detected"
 
-    # Verify enum methods
     method_calls = [
         call for call in calls if ("opposite" in str(call) or "call" in str(call))
     ]
@@ -323,18 +292,9 @@ fn calculate(x: i32) -> Result<i32, String> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify pattern matching functions are detected
     pattern_calls = [
         call
         for call in calls
@@ -484,25 +444,15 @@ impl<T> Node<T> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify complex structs are detected
     db_calls = [call for call in calls if "Database" in str(call)]
     assert len(db_calls) > 0, "Database struct should be detected"
 
     node_calls = [call for call in calls if "Node" in str(call)]
     assert len(node_calls) > 0, "Generic Node struct should be detected"
 
-    # Verify nested type relationships
     table_calls = [call for call in calls if "Table" in str(call)]
     assert len(table_calls) > 0, "Table struct should be detected"
 
@@ -611,25 +561,15 @@ use std::collections::HashMap;
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify structs with attributes are detected
     product_calls = [call for call in calls if "Product" in str(call)]
     assert len(product_calls) > 0, "Product struct with derives should be detected"
 
     secret_calls = [call for call in calls if "SecretData" in str(call)]
     assert len(secret_calls) > 0, "SecretData struct should be detected"
 
-    # Verify custom trait implementations
     impl_calls = [
         call
         for call in calls
@@ -817,25 +757,15 @@ pub fn classify_expression(expr: &Expr) -> &'static str {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_structs_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_structs_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify complex enums are detected
     event_calls = [call for call in calls if "Event" in str(call)]
     assert len(event_calls) > 0, "Event enum should be detected"
 
     expr_calls = [call for call in calls if "Expr" in str(call)]
     assert len(expr_calls) > 0, "Expr enum should be detected"
 
-    # Verify enum methods and pattern matching functions
     method_calls = [
         call
         for call in calls

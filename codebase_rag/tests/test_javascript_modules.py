@@ -1,16 +1,14 @@
-"""
-Comprehensive JavaScript module system parsing and relationship testing.
-Tests CommonJS and ES6 module patterns, exports, and module resolution.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -19,7 +17,6 @@ def javascript_modules_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_modules_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "src").mkdir()
     (project_path / "lib").mkdir()
     (project_path / "utils").mkdir()
@@ -27,7 +24,6 @@ def javascript_modules_project(temp_repo: Path) -> Path:
     (project_path / "node_modules").mkdir()
     (project_path / "node_modules" / "lodash").mkdir()
 
-    # Create base files for testing imports
     (project_path / "utils" / "constants.js").write_text(
         """
 module.exports.API_URL = 'https://api.example.com';
@@ -145,7 +141,6 @@ module.exports = Calculator;
 """
     )
 
-    # Create a file with exports shorthand
     exports_file = javascript_modules_project / "exports_shorthand.js"
     exports_file.write_text(
         """
@@ -180,31 +175,14 @@ exports.ExportedClass = class ExportedClass {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     project_name = javascript_modules_project.name
 
-    # Get all Function and Class node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Should create nodes for exported functions and classes
     all_nodes = function_calls + class_calls
     exported_nodes = [
         call
@@ -219,8 +197,7 @@ exports.ExportedClass = class ExportedClass {
         f"Expected at least 5 exported functions/classes, found {len(exported_nodes)}"
     )
 
-    # Check specific exports in exports_shorthand
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
+    created_functions = get_qualified_names(function_calls)
     expected_functions = [
         f"{project_name}.exports_shorthand.utilityA",
         f"{project_name}.exports_shorthand.utilityB",
@@ -334,7 +311,6 @@ export const UserType = {
 """
     )
 
-    # Create another file for testing re-exports
     reexport_file = javascript_modules_project / "reexports.js"
     reexport_file.write_text(
         """
@@ -366,39 +342,22 @@ export function enhancedFetch(url, options) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
     project_name = javascript_modules_project.name
 
-    # Get all Function and Class nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Verify ES6 exported functions and classes
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_functions = get_qualified_names(function_calls)
+    created_classes = get_qualified_names(class_calls)
 
     expected_functions = [
         f"{project_name}.es6_exports.fetchData",
         f"{project_name}.es6_exports.fetchDataAsync",
         f"{project_name}.es6_exports.arrowFunction",
-        f"{project_name}.es6_exports.processData",  # default export
+        f"{project_name}.es6_exports.processData",
         f"{project_name}.es6_exports.generatorFunction",
         f"{project_name}.es6_exports.asyncArrow",
         f"{project_name}.reexports.enhancedFetch",
@@ -416,12 +375,7 @@ export function enhancedFetch(url, options) {
     for expected in expected_classes:
         assert expected in created_classes, f"Missing ES6 exported class: {expected}"
 
-    # Check import relationships for re-exports
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     reexport_imports = [
         call for call in import_relationships if "reexports" in call.args[0][2]
@@ -511,7 +465,6 @@ export function hybridFunction() {
 """
     )
 
-    # Create a UMD pattern file
     umd_file = javascript_modules_project / "umd_module.js"
     umd_file.write_text(
         """
@@ -563,51 +516,27 @@ export function hybridFunction() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
-    # Check that mixed module imports are captured
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     mixed_imports = [
         call for call in import_relationships if "mixed_modules" in call.args[0][2]
     ]
 
-    # Should have both ES6 and CommonJS imports
     imported_modules = [call.args[2][2] for call in mixed_imports]
 
-    # Check for ES6 imports
     assert any("react" in module.lower() for module in imported_modules), (
         "Missing ES6 React import"
     )
 
-    # Check for CommonJS requires
     assert any("fs" in module for module in imported_modules), (
         "Missing CommonJS fs require"
     )
 
-    # Check that functions and classes are created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     mixed_functions = [
         call
@@ -619,7 +548,6 @@ export function hybridFunction() {
         f"Expected at least 3 functions in mixed modules, found {len(mixed_functions)}"
     )
 
-    # Check UMD pattern parsing
     umd_functions = [
         call for call in function_calls if "umd_module" in call[0][1]["qualified_name"]
     ]
@@ -642,7 +570,6 @@ def test_circular_dependencies(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test circular dependency handling in modules."""
-    # Create circular dependency files
     module_a = javascript_modules_project / "circular_a.js"
     module_a.write_text(
         """
@@ -719,7 +646,6 @@ if (A) {
 """
     )
 
-    # ES6 circular dependencies
     es6_circular_a = javascript_modules_project / "es6_circular_a.js"
     es6_circular_a.write_text(
         """
@@ -786,30 +712,16 @@ export function useA() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
-    # Check that circular imports are captured
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # CommonJS circular imports
     circular_imports = [
         call
         for call in import_relationships
         if "circular_a" in call.args[0][2] or "circular_b" in call.args[0][2]
     ]
 
-    # Should have A importing B and B importing A
     a_imports_b = any(
         "circular_a" in call.args[0][2] and "circular_b" in call.args[2][2]
         for call in circular_imports
@@ -822,7 +734,6 @@ export function useA() {
     assert a_imports_b, "circular_a should import circular_b"
     assert b_imports_a, "circular_b should import circular_a"
 
-    # ES6 circular imports
     es6_circular_imports = [
         call
         for call in import_relationships
@@ -965,7 +876,6 @@ module.exports = new Proxy({
 """
     )
 
-    # Create ES6 dynamic exports
     es6_dynamic = javascript_modules_project / "es6_dynamic_exports.js"
     es6_dynamic.write_text(
         """
@@ -1054,41 +964,22 @@ export const utils = new Proxy({}, {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
-    # Get all Function and Class nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
-    # Check dynamic exports
     dynamic_functions = [
         call
         for call in function_calls
         if "dynamic_exports" in call[0][1]["qualified_name"]
     ]
 
-    # Should capture at least some of the dynamically created functions
     assert len(dynamic_functions) >= 2, (
         f"Expected at least 2 functions from dynamic exports, found {len(dynamic_functions)}"
     )
 
-    # Check ES6 dynamic exports
     es6_dynamic_nodes = [
         call
         for call in function_calls + class_calls
@@ -1106,7 +997,6 @@ def test_aliased_re_exports(
 ) -> None:
     """Test aliased re-export patterns to verify the fix for export { name as alias } from './module'."""
 
-    # Create source modules to re-export from
     (javascript_modules_project / "source_module.js").write_text(
         """
 export const originalName = "original value";
@@ -1132,7 +1022,6 @@ export function helperFunc() {
 """
     )
 
-    # Create re-export file with various aliased patterns
     test_file = javascript_modules_project / "aliased_re_exports.js"
     test_file.write_text(
         """
@@ -1178,37 +1067,18 @@ export { useReExports };
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
-    # Get all import relationships
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Filter for relationships involving our test files
     aliased_re_export_imports = [
         call for call in import_relationships if "aliased_re_exports" in call.args[0][2]
     ]
 
-    # Verify we have import relationships for the re-exports
     assert len(aliased_re_export_imports) >= 3, (
         f"Expected at least 3 aliased re-export import relationships, "
         f"found {len(aliased_re_export_imports)}"
     )
-
-    # Check that the import mappings are created correctly
-    # The fix should ensure that:
-    # - export { originalName as aliasedName } creates mapping: aliasedName -> source_module.originalName
-    # - export { anotherExport as renamedExport } creates mapping: renamedExport -> source_module.anotherExport
 
     imported_modules = [call.args[2][2] for call in aliased_re_export_imports]
     expected_modules = [
@@ -1312,25 +1182,12 @@ export function useImports() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_modules_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    import_relationships = [c for c in all_relationships if c.args[1] == "IMPORTS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-
-    # Should have comprehensive module imports
     comprehensive_imports = [
         call
         for call in import_relationships
@@ -1341,14 +1198,11 @@ export function useImports() {
         f"Expected at least 6 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    # Check for both CommonJS and ES6 imports
     imported_modules = [call.args[2][2] for call in comprehensive_imports]
 
-    # CommonJS imports
     assert any("fs" in module for module in imported_modules), "Missing fs import"
     assert any("path" in module for module in imported_modules), "Missing path import"
 
-    # ES6 imports
     assert any("react" in module.lower() for module in imported_modules), (
         "Missing React import"
     )
@@ -1356,12 +1210,7 @@ export function useImports() {
         "Missing validators import"
     )
 
-    # Verify function exports
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
         call
@@ -1384,6 +1233,5 @@ export function useImports() {
     for expected in expected_functions:
         assert expected in created_functions, f"Missing exported function: {expected}"
 
-    # Test that module parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
     assert calls_relationships, "Should still have CALLS relationships"

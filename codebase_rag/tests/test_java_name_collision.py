@@ -1,16 +1,9 @@
-"""
-Java name collision resolution testing.
-Tests that when multiple classes have the same simple name in different packages,
-the type inference engine uses import distance to select the most appropriate one.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,7 +12,6 @@ def java_collision_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_collision_test"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -39,7 +31,6 @@ def test_name_collision_prefers_explicit_import(
     """
     Test that explicit imports are respected when multiple classes share a name.
     """
-    # Create Helper class in utils package
     utils_helper = (
         java_collision_project
         / "src"
@@ -62,7 +53,6 @@ public class Helper {
 """
     )
 
-    # Create Helper class in other package (name collision!)
     other_helper = (
         java_collision_project
         / "src"
@@ -85,7 +75,6 @@ public class Helper {
 """
     )
 
-    # Create Service class that explicitly imports utils.Helper
     service = (
         java_collision_project
         / "src"
@@ -112,29 +101,11 @@ public class Service {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collision_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    updater.run()
-
-    # Check that CALLS relationships were created
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
-
-    # Count calls from Service to utils.Helper (should be 1)
     utils_calls = 0
-    # Count calls from Service to other.Helper (should be 0)
     other_calls = 0
 
     for call in call_relationships:
@@ -145,9 +116,7 @@ public class Service {
                 from_qn = from_tuple[2]
                 if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
                     to_qn = to_tuple[2]
-                    # Check if call is from Service
                     if "Service" in from_qn and "processData" in from_qn:
-                        # Check which Helper it calls
                         if "utils.Helper" in to_qn and "utilsMethod" in to_qn:
                             utils_calls += 1
                         elif "other.Helper" in to_qn:
@@ -171,7 +140,6 @@ def test_name_collision_prefers_same_package(
     """
     Test that when no explicit import exists, same-package classes are preferred.
     """
-    # Create Helper in same package as Service
     app_helper = (
         java_collision_project
         / "src"
@@ -194,7 +162,6 @@ public class Helper {
 """
     )
 
-    # Create Helper in distant package
     other_helper = (
         java_collision_project
         / "src"
@@ -217,7 +184,6 @@ public class Helper {
 """
     )
 
-    # Create Service without explicit import (relies on same package)
     service = (
         java_collision_project
         / "src"
@@ -242,29 +208,11 @@ public class Service {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_collision_project,
-        parsers=parsers,
-        queries=queries,
-    )
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    updater.run()
-
-    # Check that CALLS relationships were created
-    call_relationships = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
-
-    # Count calls from Service to app.Helper (should be 1)
     app_calls = 0
-    # Count calls from Service to other.Helper (should be 0)
     other_calls = 0
 
     for call in call_relationships:
@@ -275,9 +223,7 @@ public class Service {
                 from_qn = from_tuple[2]
                 if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
                     to_qn = to_tuple[2]
-                    # Check if call is from Service
                     if "Service" in from_qn and "processData" in from_qn:
-                        # Check which Helper it calls
                         if "app.Helper" in to_qn and "appMethod" in to_qn:
                             app_calls += 1
                         elif "other.Helper" in to_qn:

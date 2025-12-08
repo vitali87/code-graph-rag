@@ -11,7 +11,6 @@ from pydantic_ai import Tool
 
 from ..schemas import ShellCommandResult
 
-# A strict list of commands the agent is allowed to execute.
 COMMAND_ALLOWLIST = {
     "ls",
     "rg",
@@ -25,7 +24,6 @@ COMMAND_ALLOWLIST = {
     "uv",
     "find",
     "pre-commit",
-    # FS Modifying commands - Agent MUST ask for confirmation before using.
     "rm",
     "cp",
     "mv",
@@ -33,7 +31,6 @@ COMMAND_ALLOWLIST = {
     "rmdir",
 }
 
-# Git commands that require user confirmation
 GIT_CONFIRMATION_COMMANDS = {
     "add",
     "commit",
@@ -67,15 +64,12 @@ def _requires_confirmation(cmd_parts: list[str]) -> tuple[bool, str]:
 
     command = cmd_parts[0]
 
-    # File system modification commands
     if command in {"rm", "cp", "mv", "mkdir", "rmdir"}:
         return True, f"filesystem modification command '{command}'"
 
-    # Package management commands
     if command == "uv":
         return True, "package management command 'uv'"
 
-    # Git commands that modify state
     if command == "git" and len(cmd_parts) > 1:
         git_subcommand = cmd_parts[1]
         if git_subcommand in GIT_CONFIRMATION_COMMANDS:
@@ -96,8 +90,9 @@ def timing_decorator(
         start_time = time.perf_counter()
         result = await func(*args, **kwargs)
         end_time = time.perf_counter()
-        execution_time = (end_time - start_time) * 1000  # Convert to milliseconds
-        logger.info(f"'{func.__qualname__}' executed in {execution_time:.2f}ms")
+        execution_time = (end_time - start_time) * 1000
+        func_name = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
+        logger.info(f"'{func_name}' executed in {execution_time:.2f}ms")
         return result
 
     return wrapper
@@ -126,7 +121,6 @@ class ShellCommander:
                     return_code=-1, stdout="", stderr="Empty command provided."
                 )
 
-            # Security: Check if the command is in the allowlist
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
                 available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
                 suggestion = ""
@@ -137,16 +131,13 @@ class ShellCommander:
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
-            # Security: Check for dangerous argument combinations
             if _is_dangerous_command(cmd_parts):
                 err_msg = f"Rejected dangerous command: {' '.join(cmd_parts)}"
                 logger.error(err_msg)
                 return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
 
-            # Check if command requires confirmation but wasn't pre-approved
             requires_confirmation, reason = _requires_confirmation(cmd_parts)
             if requires_confirmation and not confirmed:
-                # Return a special message that tells the agent to ask for confirmation
                 command_str = " ".join(cmd_parts)
                 confirmation_msg = f"I will run `{command_str}`. Do you approve? [y/n]"
                 logger.info(f"Command requires confirmation: {command_str}")

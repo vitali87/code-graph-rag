@@ -1,17 +1,9 @@
-"""
-Comprehensive C++ concurrency testing.
-Tests threads, mutexes, atomics, condition variables, futures, async operations,
-and various synchronization primitives.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -20,7 +12,6 @@ def cpp_concurrency_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_concurrency_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -245,18 +236,10 @@ void demonstrateThreadUtilities() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concurrency_project, mock_ingestor)
 
     project_name = cpp_concurrency_project.name
 
-    # Expected thread-related classes and functions
     expected_entities = [
         f"{project_name}.thread_basics.simpleThreadFunction",
         f"{project_name}.thread_basics.threadWithParameters",
@@ -265,7 +248,6 @@ void demonstrateThreadUtilities() {
         f"{project_name}.thread_basics.demonstrateThreadBasics",
     ]
 
-    # Get all node creation calls
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
     class_calls = [call for call in all_calls if call[0][0] == "Class"]
     function_calls = [call for call in all_calls if call[0][0] == "Function"]
@@ -276,7 +258,6 @@ void demonstrateThreadUtilities() {
         for call in class_calls + function_calls + method_calls
     }
 
-    # Verify expected entities were created
     found_entities = [
         entity for entity in expected_entities if entity in created_entities
     ]
@@ -595,18 +576,10 @@ void demonstrateMutexPatterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concurrency_project, mock_ingestor)
 
     project_name = cpp_concurrency_project.name
 
-    # Expected mutex-related classes
     expected_classes = [
         f"{project_name}.mutex_locks.Counter",
         f"{project_name}.mutex_locks.BankAccount",
@@ -614,16 +587,8 @@ void demonstrateMutexPatterns() {
         f"{project_name}.mutex_locks.RecursiveResource",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 mutex-related classes, found {len(found_classes)}: {found_classes}"
@@ -954,18 +919,10 @@ void compareAtomicVsMutex() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concurrency_project, mock_ingestor)
 
     project_name = cpp_concurrency_project.name
 
-    # Expected atomic-related classes
     expected_classes = [
         f"{project_name}.atomics.LockFreeCounter",
         f"{project_name}.atomics.SpinLock",
@@ -973,16 +930,8 @@ void compareAtomicVsMutex() {
         f"{project_name}.atomics.MemoryOrderingDemo",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 3, (
         f"Expected at least 3 atomic-related classes, found {len(found_classes)}: {found_classes}"
@@ -1376,18 +1325,10 @@ void demonstrateAsyncPipeline() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concurrency_project, mock_ingestor)
 
     project_name = cpp_concurrency_project.name
 
-    # Expected condition variable and future classes
     expected_classes = [
         f"{project_name}.condition_futures.ProducerConsumerQueue",
         f"{project_name}.condition_futures.Event",
@@ -1396,16 +1337,8 @@ void demonstrateAsyncPipeline() {
         f"{project_name}.condition_futures.PromiseChannel",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 4, (
         f"Expected at least 4 condition/future classes, found {len(found_classes)}: {found_classes}"
@@ -1900,24 +1833,11 @@ void runComprehensiveBenchmark() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_concurrency_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_concurrency_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive concurrency coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1928,5 +1848,4 @@ void runComprehensiveBenchmark() {
         f"Expected at least 10 comprehensive concurrency calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that concurrency parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

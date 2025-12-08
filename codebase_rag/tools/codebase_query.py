@@ -4,8 +4,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from ..graph_updater import MemgraphIngestor
 from ..schemas import GraphData
+from ..services import QueryProtocol
 from ..services.llm import CypherGenerator, LLMGenerationError
 
 
@@ -16,7 +16,7 @@ class GraphQueryError(Exception):
 
 
 def create_query_tool(
-    ingestor: MemgraphIngestor,
+    ingestor: QueryProtocol,
     cypher_gen: CypherGenerator,
     console: Console | None = None,
 ) -> Tool:
@@ -24,7 +24,6 @@ def create_query_tool(
     Factory function that creates the knowledge graph query tool,
     injecting its dependencies.
     """
-    # Use provided console or create a default one
     if console is None:
         console = Console(width=None, force_terminal=True)
 
@@ -65,10 +64,8 @@ def create_query_tool(
                         if value is None:
                             renderable_values.append("")
                         elif isinstance(value, bool):
-                            # Check bool first since bool is a subclass of int in Python
                             renderable_values.append("✓" if value else "✗")
                         elif isinstance(value, int | float):
-                            # Let Rich handle number formatting by converting to string
                             renderable_values.append(str(value))
                         else:
                             renderable_values.append(str(value))

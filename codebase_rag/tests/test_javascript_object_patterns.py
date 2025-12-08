@@ -1,16 +1,15 @@
-"""
-Comprehensive JavaScript object creation patterns and testing.
-Tests object literals, factory functions, constructors, object creation patterns, and object composition.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -19,11 +18,9 @@ def javascript_object_patterns_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_object_patterns_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "patterns").mkdir()
     (project_path / "factories").mkdir()
 
-    # Create base files
     (project_path / "patterns" / "basic.js").write_text(
         """
 export function createUser(name, email) {
@@ -331,27 +328,12 @@ console.log(secureObject[Symbol.for('public')]); // shared
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for functions from object literals
     expected_functions = [
         f"{project_name}.object_literals.createPoint",
     ]
@@ -361,7 +343,6 @@ console.log(secureObject[Symbol.for('public')]); // shared
             f"Missing object literal function: {expected}"
         )
 
-    # Check for objects with methods (might be captured as classes or special nodes)
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     object_like_nodes = [
@@ -771,27 +752,12 @@ console.log(users.map(u => u.getProfile()));
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for factory functions
     expected_factories = [
         f"{project_name}.factory_functions.createUser",
         f"{project_name}.factory_functions.createCounter",
@@ -809,7 +775,6 @@ console.log(users.map(u => u.getProfile()));
         f"Expected at least 6 factory functions, found {len(found_factories)}"
     )
 
-    # Check for userFactory object methods
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     factory_object_nodes = [
@@ -1166,27 +1131,12 @@ console.log(Email.isValid('test@example.com')); // true
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes (constructors are functions)
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for constructor functions
     expected_constructors = [
         f"{project_name}.constructor_patterns.Person",
         f"{project_name}.constructor_patterns.Vehicle",
@@ -1205,12 +1155,7 @@ console.log(Email.isValid('test@example.com')); // true
         f"Expected at least 5 constructor functions, found {len(found_constructors)}"
     )
 
-    # Check inheritance relationships
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     constructor_inheritance = [
         call
@@ -1607,27 +1552,12 @@ console.log('Cloned:', cloned.toJSON());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
     project_name = javascript_object_patterns_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check for composition factory functions
     expected_composition_functions = [
         f"{project_name}.object_composition.createAnimal",
         f"{project_name}.object_composition.createHuman",
@@ -1646,7 +1576,6 @@ console.log('Cloned:', cloned.toJSON());
         f"Expected at least 5 composition functions, found {len(found_composition_functions)}"
     )
 
-    # Check for mixin objects
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
 
     mixin_nodes = [
@@ -1750,24 +1679,15 @@ console.log(advanced.process());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_object_patterns_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_object_patterns_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive object-related calls
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1778,12 +1698,7 @@ console.log(advanced.process());
         f"Expected at least 3 comprehensive object calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all object patterns were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
         call

@@ -1,12 +1,10 @@
-"""Structure processor for identifying packages and folders."""
-
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from ..config import IGNORE_PATTERNS
-from ..services.graph_service import MemgraphIngestor
+from ..services import IngestorProtocol
 
 
 class StructureProcessor:
@@ -14,7 +12,7 @@ class StructureProcessor:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
         queries: dict[str, Any],
@@ -33,29 +31,24 @@ class StructureProcessor:
             """Check if directory should be skipped based on ignore patterns."""
             return any(part in self.ignore_dirs for part in path.parts)
 
-        # Get all directories using pathlib, which is more efficient than os.walk
-        directories = {self.repo_path}  # Start with root
+        directories = {self.repo_path}
         for path in self.repo_path.rglob("*"):
             if path.is_dir() and not should_skip_dir(path.relative_to(self.repo_path)):
                 directories.add(path)
 
-        # Process directories in a deterministic order
         for root in sorted(directories):
             relative_root = root.relative_to(self.repo_path)
 
             parent_rel_path = relative_root.parent
             parent_container_qn = self.structural_elements.get(parent_rel_path)
 
-            # Check if this directory is a package for any supported language
             is_package = False
             package_indicators = set()
 
-            # Collect package indicators from all language configs
             for lang_name, lang_queries in self.queries.items():
                 lang_config = lang_queries["config"]
                 package_indicators.update(lang_config.package_indicators)
 
-            # Check if any package indicator exists
             for indicator in package_indicators:
                 if (root / indicator).exists():
                     is_package = True
@@ -88,7 +81,7 @@ class StructureProcessor:
                     ("Package", "qualified_name", package_qn),
                 )
             elif root != self.repo_path:
-                self.structural_elements[relative_root] = None  # Mark as folder
+                self.structural_elements[relative_root] = None
                 logger.info(f"  Identified Folder: '{relative_root}'")
                 self.ingestor.ensure_node_batch(
                     "Folder", {"path": str(relative_root), "name": root.name}
@@ -113,7 +106,6 @@ class StructureProcessor:
         relative_filepath = str(file_path.relative_to(self.repo_path))
         relative_root = file_path.parent.relative_to(self.repo_path)
 
-        # Determine the parent container
         parent_container_qn = self.structural_elements.get(relative_root)
         parent_label, parent_key, parent_val = (
             ("Package", "qualified_name", parent_container_qn)
@@ -125,7 +117,6 @@ class StructureProcessor:
             )
         )
 
-        # Create File node
         self.ingestor.ensure_node_batch(
             "File",
             {
@@ -135,7 +126,6 @@ class StructureProcessor:
             },
         )
 
-        # Create relationship to parent container
         self.ingestor.ensure_relationship_batch(
             (parent_label, parent_key, parent_val),
             "CONTAINS_FILE",

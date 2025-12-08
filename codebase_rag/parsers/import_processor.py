@@ -1,26 +1,3 @@
-"""Import processor for parsing and resolving import statements.
-
-This module provides dynamic standard library introspection capabilities that can
-accurately resolve entity imports (like collections.defaultdict) to their containing
-modules (like collections) using language-native reflection mechanisms.
-
-External Dependencies (Optional - Enhanced Accuracy):
-    For enhanced standard library introspection accuracy, the following external
-    tools can be installed. If unavailable, the system gracefully falls back to
-    heuristic-based approaches:
-
-    - Node.js: For JavaScript/TypeScript stdlib introspection
-    - Go compiler: For Go package analysis
-    - Java compiler: For Java reflection-based introspection
-    - Lua interpreter: For Lua module introspection
-    - C++ compiler (g++): For C++ standard library analysis
-
-Performance Optimizations:
-    - Results are cached in memory and persistently to disk (~/.cache/codebase_rag/)
-    - External tool availability is cached to avoid repeated PATH checks
-    - Fallback heuristics ensure functionality without external dependencies
-"""
-
 import json
 import time
 from pathlib import Path
@@ -37,15 +14,12 @@ from .lua_utils import (
 from .rust_utils import extract_rust_use_imports
 from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
-# Common language constants for performance optimization
 _JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
 
-# Global cache for stdlib introspection results to avoid repeated subprocess calls
 _STDLIB_CACHE: dict[str, dict[str, str]] = {}
-_CACHE_TTL = 3600  # Cache results for 1 hour
+_CACHE_TTL = 3600
 _CACHE_TIMESTAMPS: dict[str, float] = {}
 
-# External tool availability cache
 _EXTERNAL_TOOLS: dict[str, bool] = {}
 
 
@@ -76,14 +50,11 @@ def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | 
     """Get cached stdlib introspection result if available and not expired."""
     cache_key = f"{language}:{full_qualified_name}"
 
-    # Check if we have a cached result
     if cache_key not in _STDLIB_CACHE:
         return None
 
-    # Check if cache has expired
     if cache_key in _CACHE_TIMESTAMPS:
         if time.time() - _CACHE_TIMESTAMPS[cache_key] > _CACHE_TTL:
-            # Cache expired, remove it
             del _STDLIB_CACHE[cache_key]
             del _CACHE_TIMESTAMPS[cache_key]
             return None
@@ -153,7 +124,6 @@ class ImportProcessor:
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
 
-        # Load persistent cache on initialization
         _load_persistent_cache()
 
     def __del__(self) -> None:
@@ -161,7 +131,6 @@ class ImportProcessor:
         try:
             _save_persistent_cache()
         except Exception:
-            # Ignore errors during cleanup
             pass
 
     @staticmethod
@@ -231,7 +200,6 @@ class ImportProcessor:
             cursor = get_query_cursor(imports_query)
             captures = cursor.captures(root_node)
 
-            # Handle different language import patterns
             if language == "python":
                 self._parse_python_imports(captures, module_qn)
             elif language in _JS_TYPESCRIPT_LANGUAGES:
@@ -247,18 +215,14 @@ class ImportProcessor:
             elif language == "lua":
                 self._parse_lua_imports(captures, module_qn)
             else:
-                # Generic fallback for other languages
                 self._parse_generic_imports(captures, module_qn, lang_config)
 
             logger.debug(
                 f"Parsed {len(self.import_mapping[module_qn])} imports in {module_qn}"
             )
 
-            # Create IMPORTS relationships for each parsed import
             if self.ingestor and module_qn in self.import_mapping:
                 for local_name, full_name in self.import_mapping[module_qn].items():
-                    # Extract just the module path for the IMPORTS relationship
-                    # This ensures Module -> Module relationships, not Module -> Class/Function
                     module_path = self._extract_module_path(full_name, language)
 
                     self.ingestor.ensure_relationship_batch(
@@ -288,21 +252,18 @@ class ImportProcessor:
         for child in import_node.named_children:
             if child.type == "dotted_name":
                 module_name = safe_decode_text(child) or ""
-                # For 'import a.b.c', the local name available in the scope is 'a'
                 local_name = module_name.split(".")[0]
 
-                # Check if it's a local module to prefix with project name
                 if (self.repo_path / local_name).is_dir() or (
                     self.repo_path / f"{local_name}.py"
                 ).is_file():
                     full_name = f"{self.project_name}.{module_name}"
                 else:
-                    full_name = module_name  # For stdlib or third-party
+                    full_name = module_name
 
                 self.import_mapping[module_qn][local_name] = full_name
                 logger.debug(f"  Import: {local_name} -> {full_name}")
             elif child.type == "aliased_import":
-                # Handle 'import module as alias'
                 module_name_node = child.child_by_field_name("name")
                 alias_node = child.child_by_field_name("alias")
 
@@ -314,7 +275,6 @@ class ImportProcessor:
                     module_name = decoded_module_name
                     alias = decoded_alias
 
-                    # Determine the fully qualified name of the imported module
                     top_level_module = module_name.split(".")[0]
                     if (self.repo_path / top_level_module).is_dir() or (
                         self.repo_path / f"{top_level_module}.py"
@@ -334,7 +294,6 @@ class ImportProcessor:
         if not module_name_node:
             return
 
-        # Extract module name
         if module_name_node.type == "dotted_name":
             decoded_name = safe_decode_text(module_name_node)
             if not decoded_name:
@@ -345,21 +304,17 @@ class ImportProcessor:
         else:
             return
 
-        # Extract imported items - check both field names and direct children
         imported_items = []
         is_wildcard = False
 
-        # First check field-named children (regular imports)
         for name_node in import_node.children_by_field_name("name"):
             if name_node.type == "dotted_name":
-                # Simple import: from module import name
                 decoded_name = safe_decode_text(name_node)
                 if not decoded_name:
                     continue
                 name = decoded_name
                 imported_items.append((name, name))
             elif name_node.type == "aliased_import":
-                # Aliased import: from module import name as alias
                 original_name_node = name_node.child_by_field_name("name")
                 alias_node = name_node.child_by_field_name("alias")
                 if original_name_node and alias_node:
@@ -369,15 +324,12 @@ class ImportProcessor:
                         continue
                     imported_items.append((alias, original_name))
 
-        # Check for wildcard imports (direct children, not in "name" field)
         for child in import_node.children:
             if child.type == "wildcard_import":
-                # Wildcard import: from module import *
                 is_wildcard = True
                 break
 
         if module_name and (imported_items or is_wildcard):
-            # Only prepend project name for local modules
             if module_name.startswith(self.project_name):
                 base_module = module_name
             else:
@@ -390,12 +342,10 @@ class ImportProcessor:
                     base_module = module_name
 
             if is_wildcard:
-                # Handle wildcard import: from module import *
                 wildcard_key = f"*{base_module}"
                 self.import_mapping[module_qn][wildcard_key] = base_module
                 logger.debug(f"  Wildcard import: * -> {base_module}")
             else:
-                # Handle regular imports
                 for local_name, original_name in imported_items:
                     full_name = f"{base_module}.{original_name}"
                     self.import_mapping[module_qn][local_name] = full_name
@@ -403,9 +353,8 @@ class ImportProcessor:
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         """Resolve relative imports like '.module' or '..parent.module'."""
-        module_parts = module_qn.split(".")[1:]  # Remove project name
+        module_parts = module_qn.split(".")[1:]
 
-        # Count the dots to determine how many levels to go up
         dots = 0
         module_name = ""
 
@@ -421,7 +370,6 @@ class ImportProcessor:
                     continue
                 module_name = decoded_name
 
-        # Calculate the target module - dots corresponds to levels to go up
         target_parts = module_parts[:-dots] if dots > 0 else module_parts
 
         if module_name:
@@ -434,11 +382,9 @@ class ImportProcessor:
 
         for import_node in captures.get("import", []):
             if import_node.type == "import_statement":
-                # Find the source module
                 source_module = None
                 for child in import_node.children:
                     if child.type == "string":
-                        # Extract module path from string (remove quotes)
                         source_text = safe_decode_with_fallback(child).strip("'\"")
                         source_module = self._resolve_js_module_path(
                             source_text, module_qn
@@ -448,37 +394,30 @@ class ImportProcessor:
                 if not source_module:
                     continue
 
-                # Parse import clause to extract imported names
                 for child in import_node.children:
                     if child.type == "import_clause":
                         self._parse_js_import_clause(child, source_module, module_qn)
 
             elif import_node.type == "lexical_declaration":
-                # Handle CommonJS require() statements
                 self._parse_js_require(import_node, module_qn)
 
             elif import_node.type == "export_statement":
-                # Handle re-export statements like: export { name } from './module'
                 self._parse_js_reexport(import_node, module_qn)
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         """Resolve JavaScript module path to qualified name."""
         if not import_path.startswith("."):
-            # Absolute import (package)
             return import_path.replace("/", ".")
 
-        # Relative import - resolve relative to current module
-        current_parts = current_module.split(".")[
-            :-1
-        ]  # Start from the current directory
+        current_parts = current_module.split(".")[:-1]
         import_parts = import_path.split("/")
 
         for part in import_parts:
             if part == ".":
-                continue  # Stays in the current directory
+                continue
             if part == "..":
                 if current_parts:
-                    current_parts.pop()  # Go up one level
+                    current_parts.pop()
             elif part:
                 current_parts.append(part)
 
@@ -490,7 +429,6 @@ class ImportProcessor:
         """Parse JavaScript import clause (named, default, namespace imports)."""
         for child in clause_node.children:
             if child.type == "identifier":
-                # Default import: import React from 'react'
                 imported_name = safe_decode_with_fallback(child)
                 self.import_mapping[current_module][imported_name] = (
                     f"{source_module}.default"
@@ -500,13 +438,8 @@ class ImportProcessor:
                 )
 
             elif child.type == "named_imports":
-                # Named imports: import { func1, func2 } from './module'
                 for grandchild in child.children:
                     if grandchild.type == "import_specifier":
-                        # Handle both simple imports and aliased imports
-                        # Simple: import { name } from 'module'
-                        # Aliased: import { name as alias } from 'module'
-
                         name_node = grandchild.child_by_field_name("name")
                         alias_node = grandchild.child_by_field_name("alias")
                         if name_node:
@@ -525,7 +458,6 @@ class ImportProcessor:
                             )
 
             elif child.type == "namespace_import":
-                # Namespace import: import * as utils from './utils'
                 for grandchild in child.children:
                     if grandchild.type == "identifier":
                         namespace_name = safe_decode_with_fallback(grandchild)
@@ -539,10 +471,8 @@ class ImportProcessor:
 
     def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
         """Parse CommonJS require() statements using field-based access."""
-        # Look for: const/let/var name = require('module')
         for declarator in decl_node.children:
             if declarator.type == "variable_declarator":
-                # Use field-based access for robustness
                 name_node = declarator.child_by_field_name("name")
                 value_node = declarator.child_by_field_name("value")
 
@@ -552,7 +482,6 @@ class ImportProcessor:
                     and name_node.type == "identifier"
                     and value_node.type == "call_expression"
                 ):
-                    # Check if it's require()
                     func_node = value_node.child_by_field_name("function")
                     args_node = value_node.child_by_field_name("arguments")
 
@@ -562,7 +491,6 @@ class ImportProcessor:
                         and func_node.type == "identifier"
                         and safe_decode_text(func_node) == "require"
                     ):
-                        # Extract module path from first argument
                         for arg in args_node.children:
                             if arg.type == "string":
                                 var_name = safe_decode_with_fallback(name_node)
@@ -583,7 +511,6 @@ class ImportProcessor:
 
     def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
         """Parse JavaScript re-export statements like 'export { name } from './module'."""
-        # Find the source module in export statement
         source_module = None
         for child in export_node.children:
             if child.type == "string":
@@ -596,10 +523,8 @@ class ImportProcessor:
         if not source_module:
             return
 
-        # Parse export clause to extract re-exported names
         for child in export_node.children:
             if child.type == "export_clause":
-                # Handle named re-exports: export { name1, name2 } from './module'
                 for grandchild in child.children:
                     if grandchild.type == "export_specifier":
                         name_node = grandchild.child_by_field_name("name")
@@ -619,7 +544,6 @@ class ImportProcessor:
                                 f"{source_module}.{original_name}"
                             )
             elif child.type == "*":
-                # Handle namespace re-exports: export * from './module'
                 wildcard_key = f"*{source_module}"
                 self.import_mapping[current_module][wildcard_key] = source_module
                 logger.debug(f"JS namespace re-export: * -> {source_module}")
@@ -633,7 +557,6 @@ class ImportProcessor:
                 imported_path = None
                 is_wildcard = False
 
-                # Parse import declaration
                 for child in import_node.children:
                     if child.type == "static":
                         is_static = True
@@ -646,17 +569,13 @@ class ImportProcessor:
                     continue
 
                 if is_wildcard:
-                    # import java.util.*; - wildcard import
                     logger.debug(f"Java wildcard import: {imported_path}.*")
-                    # Store wildcard import for potential future use
                     self.import_mapping[module_qn][f"*{imported_path}"] = imported_path
                 else:
-                    # import java.util.List; or import static java.lang.Math.PI;
                     parts = imported_path.split(".")
                     if parts:
-                        imported_name = parts[-1]  # Last part is class/method name
+                        imported_name = parts[-1]
                         if is_static:
-                            # Static import - method/field can be used directly
                             self.import_mapping[module_qn][imported_name] = (
                                 imported_path
                             )
@@ -665,7 +584,6 @@ class ImportProcessor:
                                 f"{imported_path}"
                             )
                         else:
-                            # Regular class import
                             self.import_mapping[module_qn][imported_name] = (
                                 imported_path
                             )
@@ -682,10 +600,8 @@ class ImportProcessor:
 
     def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
         """Parse a single Rust use declaration using tree-sitter field access."""
-        # Use the improved tree-sitter-based function to extract imports
         imports = extract_rust_use_imports(use_node)
 
-        # Add all extracted imports to the import mapping
         for imported_name, full_path in imports.items():
             self.import_mapping[module_qn][imported_name] = full_path
             logger.debug(f"Rust import: {imported_name} -> {full_path}")
@@ -695,17 +611,14 @@ class ImportProcessor:
 
         for import_node in captures.get("import", []):
             if import_node.type == "import_declaration":
-                # Handle both single and multiple imports
                 self._parse_go_import_declaration(import_node, module_qn)
 
     def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:
         """Parse a Go import declaration."""
         for child in import_node.children:
             if child.type == "import_spec":
-                # Single import or import in a list
                 self._parse_go_import_spec(child, module_qn)
             elif child.type == "import_spec_list":
-                # Multiple imports in parentheses
                 for grandchild in child.children:
                     if grandchild.type == "import_spec":
                         self._parse_go_import_spec(grandchild, module_qn)
@@ -717,37 +630,28 @@ class ImportProcessor:
 
         for child in spec_node.children:
             if child.type == "package_identifier":
-                # Aliased import: import f "fmt"
                 alias_name = safe_decode_with_fallback(child)
             elif child.type == "interpreted_string_literal":
-                # Extract import path from string literal
                 import_path = safe_decode_with_fallback(child).strip('"')
 
         if import_path:
-            # Determine the package name
             if alias_name:
-                # Explicit alias
                 package_name = alias_name
             else:
-                # Use last part of path as package name
                 parts = import_path.split("/")
                 package_name = parts[-1] if parts else import_path
 
-            # Map package name to full import path
             self.import_mapping[module_qn][package_name] = import_path
             logger.debug(f"Go import: {package_name} -> {import_path}")
 
     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
         """Parse C++ #include statements and C++20 module imports."""
-        # Parse traditional #include statements
         for import_node in captures.get("import", []):
             if import_node.type == "preproc_include":
                 self._parse_cpp_include(import_node, module_qn)
             elif import_node.type == "template_function":
-                # Handle "import <header>;" syntax
                 self._parse_cpp_module_import(import_node, module_qn)
             elif import_node.type == "declaration":
-                # Handle "module math_operations;" declarations and "export import :partition;"
                 self._parse_cpp_module_declaration(import_node, module_qn)
 
     def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
@@ -757,33 +661,26 @@ class ImportProcessor:
 
         for child in include_node.children:
             if child.type == "string_literal":
-                # Local include: #include "header.h"
                 include_path = safe_decode_with_fallback(child).strip('"')
                 is_system_include = False
             elif child.type == "system_lib_string":
-                # System include: #include <iostream>
                 include_path = safe_decode_with_fallback(child).strip("<>")
                 is_system_include = True
 
         if include_path:
-            # Extract the header name for the local mapping
             header_name = include_path.split("/")[-1]
             if header_name.endswith(".h") or header_name.endswith(".hpp"):
                 local_name = header_name.split(".")[0]
             else:
                 local_name = header_name
 
-            # Build full qualified name
             if is_system_include:
-                # System includes map to external libraries
                 full_name = (
                     f"std.{include_path}"
                     if not include_path.startswith("std")
                     else include_path
                 )
             else:
-                # Local includes map to project modules
-                # Convert path/to/header.h to project.path.to.header
                 path_parts = (
                     include_path.replace("/", ".").replace(".h", "").replace(".hpp", "")
                 )
@@ -796,7 +693,6 @@ class ImportProcessor:
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
         """Parse C++20 module import statements like 'import <iostream>;'."""
-        # Check if this is actually an import statement
         identifier_child = None
         template_args_child = None
 
@@ -806,10 +702,8 @@ class ImportProcessor:
             elif child.type == "template_argument_list":
                 template_args_child = child
 
-        # Only process if the identifier is "import"
         if identifier_child and safe_decode_text(identifier_child) == "import":
             if template_args_child:
-                # Extract the module/header name from <...>
                 module_name = None
                 for child in template_args_child.children:
                     if child.type == "type_descriptor":
@@ -821,7 +715,6 @@ class ImportProcessor:
                         module_name = safe_decode_with_fallback(child)
 
                 if module_name:
-                    # This is a standard library module import like "import <iostream>;"
                     local_name = module_name
                     full_name = f"std.{module_name}"
 
@@ -830,42 +723,34 @@ class ImportProcessor:
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
         """Parse C++20 module declarations and partition imports."""
-        # Extract text to analyze the declaration
         decoded_text = safe_decode_text(decl_node)
         if not decoded_text:
             return
         decl_text = decoded_text.strip()
 
         if decl_text.startswith("module ") and not decl_text.startswith("module ;"):
-            # Parse "module math_operations;" - this is a module implementation file
             parts = decl_text.split()
             if len(parts) >= 2:
                 module_name = parts[1].rstrip(";")
-                # Record that this file implements the specified module
                 self.import_mapping[module_qn][module_name] = (
                     f"{self.project_name}.{module_name}"
                 )
                 logger.debug(f"C++20 module implementation: {module_name}")
 
         elif decl_text.startswith("export module "):
-            # Parse "export module math_operations;" - this is a module interface
             parts = decl_text.split()
             if len(parts) >= 3:
                 module_name = parts[2].rstrip(";")
-                # Record that this file exports the specified module
                 self.import_mapping[module_qn][module_name] = (
                     f"{self.project_name}.{module_name}"
                 )
                 logger.debug(f"C++20 module interface: {module_name}")
 
         elif "import :" in decl_text:
-            # Parse "export import :partition_name;" - this is a partition import
-            # Extract partition name
             colon_pos = decl_text.find(":")
             if colon_pos != -1:
                 partition_part = decl_text[colon_pos + 1 :].split(";")[0].strip()
                 if partition_part:
-                    # Create mapping for the partition
                     partition_name = f"partition_{partition_part}"
                     full_name = f"{self.project_name}.{partition_part}"
                     self.import_mapping[module_qn][partition_name] = full_name
@@ -883,11 +768,9 @@ class ImportProcessor:
                 f"Generic import parsing for {lang_config.name}: {import_node.type}"
             )
 
-    # ============================= Lua support ==============================
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         """Parse Lua require-based imports from function_call captures."""
         for call_node in captures.get("import", []):
-            # Check for regular require() calls
             if self._lua_is_require_call(call_node):
                 module_path = self._lua_extract_require_arg(call_node)
                 if module_path:
@@ -897,11 +780,9 @@ class ImportProcessor:
                     )
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
-            # Check for pcall(require, 'module') pattern
             elif self._lua_is_pcall_require(call_node):
                 module_path = self._lua_extract_pcall_require_arg(call_node)
                 if module_path:
-                    # For pcall, get the second variable in assignment (first is ok/err)
                     local_name = (
                         self._lua_extract_pcall_assignment_lhs(call_node)
                         or module_path.split(".")[-1]
@@ -909,16 +790,13 @@ class ImportProcessor:
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
 
-            # Check for standard library function calls (e.g., string.upper, math.floor)
             elif self._lua_is_stdlib_call(call_node):
                 stdlib_module = self._lua_extract_stdlib_module(call_node)
                 if stdlib_module:
-                    # Create implicit import relationship for stdlib module
                     self.import_mapping[module_qn][stdlib_module] = stdlib_module
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
         """Return True if function_call represents require(...) or require 'x'."""
-        # In Lua tree-sitter, function calls have the function name as the first child
         first_child = call_node.children[0] if call_node.children else None
         if first_child and first_child.type == "identifier":
             return safe_decode_text(first_child) == "require"
@@ -926,7 +804,6 @@ class ImportProcessor:
 
     def _lua_is_pcall_require(self, call_node: Node) -> bool:
         """Return True if function_call represents pcall(require, 'module')."""
-        # Check if first child is 'pcall'
         first_child = call_node.children[0] if call_node.children else None
         if not (
             first_child
@@ -935,12 +812,10 @@ class ImportProcessor:
         ):
             return False
 
-        # Check if first argument is 'require' identifier
         args = call_node.child_by_field_name("arguments")
         if not args:
             return False
 
-        # Find the first expression node in the arguments
         first_arg_node = next(
             (child for child in args.children if child.type not in ["(", ")", ","]),
             None,
@@ -954,7 +829,6 @@ class ImportProcessor:
 
     def _lua_extract_require_arg(self, call_node: Node) -> str | None:
         """Extract first string-like argument from a require call."""
-        # Look under arguments node if present
         args = call_node.child_by_field_name("arguments")
         candidates = []
         if args:
@@ -973,7 +847,6 @@ class ImportProcessor:
         args = call_node.child_by_field_name("arguments")
         if not args:
             return None
-        # Look for string after 'require' identifier
         found_require = False
         for child in args.children:
             if found_require and child.type in ("string", "string_literal"):
@@ -987,7 +860,6 @@ class ImportProcessor:
 
     def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
         """Find identifier assigned from the require call (local or global)."""
-        # Use shared utility to extract the assigned name (only identifiers for require)
         return extract_lua_assigned_name(call_node, accepted_var_types=("identifier",))
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
@@ -996,7 +868,6 @@ class ImportProcessor:
         In patterns like: local ok, json = pcall(require, 'json')
         We want to extract 'json' (the second identifier).
         """
-        # Use shared utility to extract the second identifier from pcall pattern
         return extract_lua_pcall_second_identifier(call_node)
 
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
@@ -1013,17 +884,12 @@ class ImportProcessor:
                 elif p:
                     parts.append(p)
             return ".".join(parts)
-        # Dotted or bare names: determine if they exist locally to prefix with project
-        # Convert any remaining path separators to dots
         dotted = import_path.replace("/", ".")
 
-        # Try to detect local file presence
         try:
-            # For dotted path like pkg.mod -> pkg/mod.lua
             relative_file = dotted.replace(".", "/") + ".lua"
             if (self.repo_path / relative_file).is_file():
                 return f"{self.project_name}.{dotted}"
-            # For bare name like mod -> mod.lua
             if (self.repo_path / f"{dotted}.lua").is_file():
                 return f"{self.project_name}.{dotted}"
         except OSError:
@@ -1035,17 +901,13 @@ class ImportProcessor:
         """Return True if function_call represents a Lua standard library call (e.g., string.upper, math.floor)."""
         from .lua_utils import safe_decode_text
 
-        # Check if this is a method call (module.function format)
         if not call_node.children:
             return False
 
-        # Look for dot_index_expression pattern: module.function
         first_child = call_node.children[0]
         if first_child.type == "dot_index_expression":
-            # Get the module name (left side of the dot)
             if first_child.children and first_child.children[0].type == "identifier":
                 module_name = safe_decode_text(first_child.children[0])
-                # Check if it's a known Lua standard library module
                 return module_name in {
                     "string",
                     "math",
@@ -1070,7 +932,6 @@ class ImportProcessor:
 
         first_child = call_node.children[0]
         if first_child.type == "dot_index_expression":
-            # Get the module name (left side of the dot)
             if first_child.children and first_child.children[0].type == "identifier":
                 return safe_decode_text(first_child.children[0])
 
@@ -1098,22 +959,13 @@ class ImportProcessor:
             "project.my_app.db.base.BaseRepo" -> "project.my_app.db.base" (BaseRepo is a Class)
             "project.my_app.db.base" -> "project.my_app.db.base" (base is the module file)
         """
-        # Primary strategy: Use function_registry populated by tree-sitter parsing
         if self.function_registry and full_qualified_name in self.function_registry:
             entity_type = self.function_registry[full_qualified_name]
             if entity_type in ("Class", "Function", "Method"):
-                # Tree-sitter identified this as a class/function/method defined within a module
-                # Extract the module path by removing the entity name
                 parts = full_qualified_name.rsplit(".", 1)
                 if len(parts) == 2:
-                    return parts[0]  # Return the module path
+                    return parts[0]
 
-        # If not in function_registry, it's either:
-        # 1. A module file itself (correct as-is)
-        # 2. An external/standard library entity we didn't parse
-        # 3. A misclassified entity (rare)
-
-        # Language-specific standard library introspection using native reflection
         if language == "python":
             return self._extract_python_stdlib_path(full_qualified_name)
         elif language in ["javascript", "typescript"]:
@@ -1133,7 +985,6 @@ class ImportProcessor:
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Python stdlib module path using runtime introspection."""
-        # Check cache first to avoid expensive importlib calls
         cached_result = _get_cached_stdlib_result("python", full_qualified_name)
         if cached_result is not None:
             return cached_result
@@ -1162,7 +1013,6 @@ class ImportProcessor:
             except (ImportError, AttributeError):
                 pass
 
-            # Fallback heuristic
             if entity_name[0].isupper():
                 result = ".".join(parts[:-1])
             else:
@@ -1175,7 +1025,6 @@ class ImportProcessor:
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract JavaScript/Node.js stdlib module path using runtime introspection."""
-        # Check cache first to avoid expensive subprocess calls
         cached_result = _get_cached_stdlib_result("javascript", full_qualified_name)
         if cached_result is not None:
             return cached_result
@@ -1185,14 +1034,12 @@ class ImportProcessor:
             module_name = parts[0]
             entity_name = parts[-1]
 
-            # Try dynamic introspection only if Node.js is available
             if _is_tool_available("node"):
                 try:
                     import json
                     import os
                     import subprocess
 
-                    # Safe Node.js script that reads module/entity names from environment variables
                     node_script = """
                     const moduleName = process.env.MODULE_NAME;
                     const entityName = process.env.ENTITY_NAME;
@@ -1212,7 +1059,6 @@ class ImportProcessor:
                     }
                     """
 
-                    # Create environment with module and entity names
                     env = os.environ.copy()
                     env["MODULE_NAME"] = module_name
                     env["ENTITY_NAME"] = entity_name
@@ -1244,13 +1090,11 @@ class ImportProcessor:
                 ):
                     pass
 
-            # Fallback to heuristic approach when Node.js unavailable or introspection fails
             if entity_name[0].isupper():
                 result = ".".join(parts[:-1])
             else:
                 result = full_qualified_name
 
-            # Cache the result to avoid repeated heuristic calculations
             _cache_stdlib_result("javascript", full_qualified_name, result)
             return result
 
@@ -1258,9 +1102,8 @@ class ImportProcessor:
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Go stdlib module path using compile-time analysis."""
-        parts = full_qualified_name.split("/")  # Go uses / for package paths
+        parts = full_qualified_name.split("/")
         if len(parts) >= 2:
-            # Use go/doc to analyze package documentation and exports
             try:
                 import json
                 import os
@@ -1269,7 +1112,6 @@ class ImportProcessor:
                 package_path = "/".join(parts[:-1])
                 entity_name = parts[-1]
 
-                # First, resolve the package import path to its filesystem directory
                 resolve_result = subprocess.run(
                     ["go", "list", "-f", "{{.Dir}}", package_path],
                     capture_output=True,
@@ -1278,7 +1120,6 @@ class ImportProcessor:
                 )
 
                 if resolve_result.returncode != 0:
-                    # If we can't resolve the package path, fall back to heuristics
                     raise subprocess.CalledProcessError(
                         resolve_result.returncode, resolve_result.args
                     )
@@ -1287,7 +1128,6 @@ class ImportProcessor:
                 if not package_dir:
                     raise subprocess.CalledProcessError(1, ["go", "list"])
 
-                # Safe Go script that reads package/entity names from environment variables
                 go_script = """
 package main
 
@@ -1359,12 +1199,10 @@ func main() {
 }
                 """
 
-                # Create environment with resolved package directory and entity names
                 env = os.environ.copy()
-                env["PACKAGE_PATH"] = package_dir  # Use resolved directory path
+                env["PACKAGE_PATH"] = package_dir
                 env["ENTITY_NAME"] = entity_name
 
-                # Write temporary Go file and execute
                 with subprocess.Popen(
                     ["go", "run", "-"],
                     stdin=subprocess.PIPE,
@@ -1388,7 +1226,6 @@ func main() {
             ):
                 pass
 
-            # Fallback heuristic for Go (functions/types usually start with uppercase)
             entity_name = parts[-1]
             if entity_name[0].isupper():
                 return "/".join(parts[:-1])
@@ -1397,44 +1234,33 @@ func main() {
 
     def _extract_rust_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Rust stdlib module path using compile-time analysis."""
-        parts = full_qualified_name.split("::")  # Rust uses :: for namespacing
+        parts = full_qualified_name.split("::")
         if len(parts) >= 2:
-            # Rust doesn't have runtime reflection, but we can use compile-time tools
-            # For now, use naming conventions until we implement proc-macro analysis
-
             entity_name = parts[-1]
 
-            # Rust naming conventions are very consistent:
-            # Types (structs, enums, traits) use PascalCase
-            # Functions, variables, modules use snake_case
-            # Constants use SCREAMING_SNAKE_CASE
-
             if (
-                entity_name[0].isupper()  # PascalCase (types)
-                or entity_name.isupper()  # SCREAMING_SNAKE_CASE (constants)
+                entity_name[0].isupper()
+                or entity_name.isupper()
                 or "_" not in entity_name
                 and entity_name.islower()
-            ):  # Simple functions
+            ):
                 return "::".join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_cpp_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract C++ stdlib module path using header analysis."""
-        parts = full_qualified_name.split("::")  # C++ uses :: for namespacing
+        parts = full_qualified_name.split("::")
         if len(parts) >= 2:
-            # C++ standard library namespace and common components
             namespace = parts[0]
             if namespace == "std":
                 entity_name = parts[-1]
 
-                # C++ standard library introspection via compile-time analysis
                 try:
                     import os
                     import subprocess
                     import tempfile
 
-                    # Safe approach: write entity name to a temporary file and include it
                     with tempfile.NamedTemporaryFile(
                         mode="w", suffix=".txt", delete=False
                     ) as f:
@@ -1442,7 +1268,6 @@ func main() {
                         entity_file = f.name
 
                     try:
-                        # Strategy 1: Try as template with int parameter using file input
                         cpp_template_program = f"""
 #include <iostream>
 #include <fstream>
@@ -1469,9 +1294,6 @@ int main() {{
                             timeout=5,
                         )
 
-                        # For C++, we'll primarily rely on heuristics due to complexity
-                        # of safe dynamic compilation without code injection risks
-
                     finally:
                         os.unlink(entity_file)
 
@@ -1483,14 +1305,13 @@ int main() {{
                 ):
                     pass
 
-                # Fallback using C++ naming conventions (safer approach)
                 entity_name = parts[-1]
                 if (
-                    entity_name[0].isupper()  # Types usually start with uppercase
+                    entity_name[0].isupper()
                     or entity_name.startswith("is_")
                     or entity_name.startswith("has_")
                     or entity_name
-                    in {  # Common std library types/functions
+                    in {
                         "vector",
                         "string",
                         "map",
@@ -1511,7 +1332,7 @@ int main() {{
                         "transform",
                         "accumulate",
                     }
-                ):  # Type traits and common stdlib entities
+                ):
                     return "::".join(parts[:-1])
 
         return full_qualified_name
@@ -1520,7 +1341,6 @@ int main() {{
         """Extract Java stdlib module path using reflection."""
         parts = full_qualified_name.split(".")
         if len(parts) >= 2:
-            # Use Java reflection via subprocess to avoid direct Java dependency
             try:
                 import json
                 import os
@@ -1530,7 +1350,6 @@ int main() {{
                 package_name = ".".join(parts[:-1])
                 entity_name = parts[-1]
 
-                # Safe Java program using command line arguments
                 java_program = """
 import java.lang.reflect.*;
 
@@ -1583,7 +1402,6 @@ public class StdlibCheck {
 }
                 """
 
-                # Write Java program to temporary file and compile/run it
                 with tempfile.NamedTemporaryFile(
                     mode="w", suffix=".java", delete=False
                 ) as f:
@@ -1591,7 +1409,6 @@ public class StdlibCheck {
                     java_file = f.name
 
                 try:
-                    # Compile the Java program
                     compile_result = subprocess.run(
                         ["javac", java_file],
                         capture_output=True,
@@ -1600,7 +1417,6 @@ public class StdlibCheck {
                     )
 
                     if compile_result.returncode == 0:
-                        # Run the compiled program with safe arguments
                         class_name = os.path.splitext(os.path.basename(java_file))[0]
                         run_result = subprocess.run(
                             [
@@ -1622,7 +1438,6 @@ public class StdlibCheck {
                                 return ".".join(parts[:-1])
 
                 finally:
-                    # Clean up temporary files
                     for ext in [".java", ".class"]:
                         temp_file = os.path.splitext(java_file)[0] + ext
                         try:
@@ -1639,16 +1454,15 @@ public class StdlibCheck {
             ):
                 pass
 
-            # Fallback using Java naming conventions
             entity_name = parts[-1]
             if (
-                entity_name[0].isupper()  # Classes start with uppercase
+                entity_name[0].isupper()
                 or entity_name.endswith("Exception")
                 or entity_name.endswith("Error")
                 or entity_name.endswith("Interface")
                 or entity_name.endswith("Builder")
                 or entity_name
-                in {  # Common Java stdlib classes
+                in {
                     "String",
                     "Object",
                     "Integer",
@@ -1676,12 +1490,10 @@ public class StdlibCheck {
             module_name = parts[0]
             entity_name = parts[-1]
 
-            # Use Lua introspection via subprocess
             try:
                 import os
                 import subprocess
 
-                # Safe Lua script that reads module/entity names from environment variables
                 lua_script = """
 -- Get module and entity names from environment
 local module_name = os.getenv("MODULE_NAME")
@@ -1717,7 +1529,6 @@ else
 end
                 """
 
-                # Create environment with module and entity names
                 env = os.environ.copy()
                 env["MODULE_NAME"] = module_name
                 env["ENTITY_NAME"] = entity_name
@@ -1731,7 +1542,6 @@ end
                 )
 
                 if result.returncode == 0:
-                    # Parse output - look for our simple format
                     output = result.stdout.strip()
                     if "hasEntity=true" in output:
                         return ".".join(parts[:-1])
@@ -1743,13 +1553,15 @@ end
             ):
                 pass
 
-            # Fallback using Lua conventions
-            # Lua functions are typically lowercase, tables/modules can be mixed case
             entity_name = parts[-1]
-            if (
-                entity_name[0].isupper()  # Modules/tables often start uppercase
-                or entity_name in {"string", "table", "math", "io", "os", "debug"}
-            ):  # Standard modules
+            if entity_name[0].isupper() or entity_name in {
+                "string",
+                "table",
+                "math",
+                "io",
+                "os",
+                "debug",
+            }:
                 return ".".join(parts[:-1])
 
         return full_qualified_name

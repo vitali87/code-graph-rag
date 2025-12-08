@@ -1,17 +1,9 @@
-"""
-Comprehensive C++ preprocessor testing.
-Tests preprocessor directives including #define macros, conditional compilation,
-#pragma directives, macro expansion, and include guards.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -20,7 +12,6 @@ def cpp_preprocessor_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_preprocessor_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -242,18 +233,10 @@ void demonstrateDefineMacros() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_preprocessor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_preprocessor_project, mock_ingestor)
 
     project_name = cpp_preprocessor_project.name
 
-    # Expected functions with macro usage
     expected_functions = [
         f"{project_name}.define_macros.testObjectLikeMacros",
         f"{project_name}.define_macros.testFunctionLikeMacros",
@@ -261,16 +244,8 @@ void demonstrateDefineMacros() {
         f"{project_name}.define_macros.demonstrateDefineMacros",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -551,18 +526,10 @@ void demonstrateConditionalCompilation() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_preprocessor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_preprocessor_project, mock_ingestor)
 
     project_name = cpp_preprocessor_project.name
 
-    # Expected classes and functions with conditional compilation
     expected_classes = [
         f"{project_name}.conditional_compilation.ConditionalFeatures",
     ]
@@ -573,31 +540,15 @@ void demonstrateConditionalCompilation() {
         f"{project_name}.conditional_compilation.demonstrateConditionalCompilation",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 conditional compilation class, found {len(found_classes)}: {found_classes}"
     )
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -860,18 +811,10 @@ void demonstratePragmaDirectives() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_preprocessor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_preprocessor_project, mock_ingestor)
 
     project_name = cpp_preprocessor_project.name
 
-    # Expected classes and functions with pragma directives
     expected_classes = [
         f"{project_name}.pragma_directives.PragmaExample",
     ]
@@ -882,31 +825,15 @@ void demonstratePragmaDirectives() {
         f"{project_name}.pragma_directives.demonstratePragmaDirectives",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 pragma directive class, found {len(found_classes)}: {found_classes}"
     )
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1119,24 +1046,11 @@ void demonstrateComprehensivePreprocessor() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_preprocessor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_preprocessor_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive preprocessor coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1147,5 +1061,4 @@ void demonstrateComprehensivePreprocessor() {
         f"Expected at least 3 comprehensive preprocessor calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that preprocessor parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

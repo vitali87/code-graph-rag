@@ -1,16 +1,15 @@
-"""
-Comprehensive TypeScript class features parsing and relationship testing.
-Tests access modifiers, abstract classes, parameter properties, decorators, and advanced class patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -19,12 +18,10 @@ def typescript_classes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_classes_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "models").mkdir()
     (project_path / "services").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "models" / "base.ts").write_text(
         """
 export abstract class BaseModel {
@@ -277,27 +274,12 @@ console.log(newRepo.name); // OK
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
     project_name = typescript_classes_project.name
 
-    # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Check for classes with access modifiers
     expected_classes = [
         f"{project_name}.access_modifiers.AccessModifierDemo",
         f"{project_name}.access_modifiers.ExtendedDemo",
@@ -310,14 +292,8 @@ console.log(newRepo.name); // OK
             f"Missing class with access modifiers: {expected}"
         )
 
-    # Check inheritance relationships
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have ExtendedDemo inheriting from AccessModifierDemo
     access_inheritance = [
         call
         for call in inheritance_relationships
@@ -637,27 +613,12 @@ console.log(car.start());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
     project_name = typescript_classes_project.name
 
-    # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Check for abstract classes and their implementations
     expected_classes = [
         f"{project_name}.abstract_classes.Animal",
         f"{project_name}.abstract_classes.Dog",
@@ -671,14 +632,8 @@ console.log(car.start());
     for expected in expected_classes:
         assert expected in created_classes, f"Missing abstract class: {expected}"
 
-    # Check inheritance from abstract classes
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have concrete classes inheriting from abstract classes
     abstract_inheritance = [
         call
         for call in inheritance_relationships
@@ -949,27 +904,12 @@ service.process();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
     project_name = typescript_classes_project.name
 
-    # Get all Class nodes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Check for classes with parameter properties
     expected_classes = [
         f"{project_name}.parameter_properties.ParameterPropertiesDemo",
         f"{project_name}.parameter_properties.ExtendedUser",
@@ -984,12 +924,7 @@ service.process();
             f"Missing parameter properties class: {expected}"
         )
 
-    # Check methods created for parameter properties classes
-    method_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_calls = get_nodes(mock_ingestor, "Method")
 
     parameter_property_methods = [
         call
@@ -1169,28 +1104,19 @@ console.log(userRepo.name); // users
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_classes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_classes_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
     implements_relationships = [
         c for c in all_relationships if c.args[1] == "IMPLEMENTS"
     ]
 
-    # Should have comprehensive TypeScript class patterns
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1201,12 +1127,7 @@ console.log(userRepo.name); // users
         f"Expected at least 3 comprehensive class calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all classes were created
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     comprehensive_classes = [
         call
@@ -1218,7 +1139,6 @@ console.log(userRepo.name); // users
         f"Expected at least 4 classes in comprehensive test, found {len(comprehensive_classes)}"
     )
 
-    # Check inheritance and implementation relationships
     ts_inheritance = [
         call
         for call in inherits_relationships

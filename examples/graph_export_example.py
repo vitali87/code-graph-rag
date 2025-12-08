@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
-"""
-Example script demonstrating how to export and load graph data programmatically.
-
-This script shows:
-1. How to export a graph during repo analysis
-2. How to load and work with exported graph data
-3. How to perform basic queries on the exported data
-"""
 
 import argparse
 import sys
 from pathlib import Path
 
-# Add the parent directory to Python path so we can import codebase_rag
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from codebase_rag.graph_loader import GraphLoader, load_graph
@@ -80,9 +71,9 @@ def main() -> None:
         description="Analyze an exported codebase graph.",
         epilog="""
 To create an exported graph file, run:
-  python -m codebase_rag.main start --repo-path /path/to/repo --update-graph -o graph.json
+  cgr start --repo-path /path/to/repo --update-graph -o graph.json
 Or to export an existing graph:
-  python -m codebase_rag.main export -o graph.json
+  cgr export -o graph.json
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )

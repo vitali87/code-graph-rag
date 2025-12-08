@@ -1,15 +1,12 @@
-"""Base provider interface and registry for LLM providers."""
-
 from abc import ABC, abstractmethod
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
 from loguru import logger
-from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
-from pydantic_ai.models.openai import OpenAIModel, OpenAIResponsesModel
-from pydantic_ai.providers.google_gla import GoogleGLAProvider
-from pydantic_ai.providers.google_vertex import GoogleVertexProvider, VertexAiRegion
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
 
@@ -41,7 +38,7 @@ class GoogleProvider(ModelProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        provider_type: str = "gla",  # "gla" or "vertex"
+        provider_type: str = "gla",
         project_id: str | None = None,
         region: str = "us-central1",
         service_account_file: str | None = None,
@@ -72,25 +69,35 @@ class GoogleProvider(ModelProvider):
                 "Set ORCHESTRATOR_PROJECT_ID or CYPHER_PROJECT_ID in .env file."
             )
 
-    def create_model(self, model_id: str, **kwargs: Any) -> GeminiModel:
+    def create_model(self, model_id: str, **kwargs: Any) -> GoogleModel:
         self.validate_config()
 
         if self.provider_type == "vertex":
-            provider = GoogleVertexProvider(
-                project_id=self.project_id,
-                region=cast(VertexAiRegion, self.region),
-                service_account_file=self.service_account_file,
+            credentials = None
+            if self.service_account_file:
+                # (H) Convert service account file to credentials object for pydantic-ai
+                from google.oauth2 import service_account
+
+                credentials = service_account.Credentials.from_service_account_file(
+                    self.service_account_file,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+            provider = PydanticGoogleProvider(
+                project=self.project_id,
+                location=self.region,
+                credentials=credentials,
             )
         else:
-            provider = GoogleGLAProvider(api_key=self.api_key)
+            # (H) api_key is guaranteed to be set by validate_config for gla type
+            provider = PydanticGoogleProvider(api_key=self.api_key)  # type: ignore[arg-type]
 
         if self.thinking_budget is None:
-            return GeminiModel(model_id, provider=provider, **kwargs)
-        model_settings = GeminiModelSettings(
-            gemini_thinking_config={"thinking_budget": int(self.thinking_budget)}
+            return GoogleModel(model_id, provider=provider, **kwargs)
+        model_settings = GoogleModelSettings(
+            google_thinking_config={"thinking_budget": int(self.thinking_budget)}
         )
-        return GeminiModel(
-            model_id, provider=provider, model_settings=model_settings, **kwargs
+        return GoogleModel(
+            model_id, provider=provider, settings=model_settings, **kwargs
         )
 
 
@@ -143,7 +150,6 @@ class OllamaProvider(ModelProvider):
         return "ollama"
 
     def validate_config(self) -> None:
-        # Remove /v1 from endpoint for health check
         base_url = self.endpoint.rstrip("/v1").rstrip("/")
 
         if not check_ollama_running(base_url):
@@ -152,14 +158,13 @@ class OllamaProvider(ModelProvider):
                 f"Make sure Ollama is running: ollama serve"
             )
 
-    def create_model(self, model_id: str, **kwargs: Any) -> OpenAIModel:
+    def create_model(self, model_id: str, **kwargs: Any) -> OpenAIChatModel:
         self.validate_config()
 
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
-        return OpenAIModel(model_id, provider=provider, **kwargs)  # type: ignore
+        return OpenAIChatModel(model_id, provider=provider, **kwargs)
 
 
-# Provider registry
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "google": GoogleProvider,
     "openai": OpenAIProvider,

@@ -1,16 +1,9 @@
-"""
-Comprehensive C++ constructor and destructor testing.
-Tests all constructor types, destructor patterns, RAII, move semantics, and object lifetime management.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,7 +12,6 @@ def cpp_constructor_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_constructor_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -318,40 +310,23 @@ void demonstrateBasicConstructorsDestructors() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constructor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constructor_project, mock_ingestor)
 
     project_name = cpp_constructor_project.name
 
-    # Expected classes with constructors/destructors
     expected_classes = [
         f"{project_name}.basic_constructors.BasicResource",
         f"{project_name}.basic_constructors.InitializationDemo",
         f"{project_name}.basic_constructors.ExplicitDemo",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Expected function definitions (constructors, destructors, methods)
     expected_functions = [
         f"{project_name}.basic_constructors.testBasicConstructors",
         f"{project_name}.basic_constructors.testInitializationLists",
@@ -359,16 +334,8 @@ void demonstrateBasicConstructorsDestructors() {
         f"{project_name}.basic_constructors.demonstrateBasicConstructorsDestructors",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -740,18 +707,10 @@ void demonstrateRAIIPatterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constructor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constructor_project, mock_ingestor)
 
     project_name = cpp_constructor_project.name
 
-    # Expected RAII classes
     expected_classes = [
         f"{project_name}.raii_patterns.FileManager",
         f"{project_name}.raii_patterns.BufferManager",
@@ -759,16 +718,8 @@ void demonstrateRAIIPatterns() {
         f"{project_name}.raii_patterns.ExceptionSafeResource",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify RAII classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -1115,18 +1066,10 @@ void demonstrateSpecialMemberFunctions() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constructor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constructor_project, mock_ingestor)
 
     project_name = cpp_constructor_project.name
 
-    # Expected classes demonstrating special member functions
     expected_classes = [
         f"{project_name}.special_members.RuleOfThree",
         f"{project_name}.special_members.RuleOfFive",
@@ -1135,16 +1078,8 @@ void demonstrateSpecialMemberFunctions() {
         f"{project_name}.special_members.DefaultedMembers",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify special member classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -1321,24 +1256,11 @@ void demonstrateComprehensiveConstructors() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constructor_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constructor_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive constructor/destructor coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1349,11 +1271,9 @@ void demonstrateComprehensiveConstructors() {
         f"Expected at least 5 comprehensive constructor calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that constructor parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
 
-# Mark the first task as completed
 def test_constructor_destructor_complete() -> None:
     """Mark the constructor/destructor task as completed."""
     pass

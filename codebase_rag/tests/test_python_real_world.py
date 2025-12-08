@@ -1,16 +1,10 @@
-"""
-Test real-world Flask+ReactJS todo app relationships.
-This test creates a comprehensive todo application with both Python backend
-and TypeScript frontend to validate cross-language relationship detection.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,11 +13,9 @@ def todo_app_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "todo_app"
     project_path.mkdir()
 
-    # Backend structure
     backend_dir = project_path / "backend"
     backend_dir.mkdir()
 
-    # Flask application setup
     with open(backend_dir / "application.py", "w") as f:
         f.write(
             """from flaskr import create_app
@@ -51,7 +43,6 @@ class DevelopmentConfig(Config):
 """
         )
 
-    # Flask package
     flaskr_dir = backend_dir / "flaskr"
     flaskr_dir.mkdir()
 
@@ -137,7 +128,6 @@ def check_password(password_hash, password):
 """
         )
 
-    # Models
     models_dir = flaskr_dir / "models"
     models_dir.mkdir()
 
@@ -227,7 +217,6 @@ class TaskModel(db.Model):
 """
         )
 
-    # Controllers
     controllers_dir = flaskr_dir / "controllers"
     controllers_dir.mkdir()
 
@@ -330,7 +319,6 @@ class TaskController:
 """
         )
 
-    # Routes
     routes_dir = flaskr_dir / "routes"
     routes_dir.mkdir()
 
@@ -413,7 +401,6 @@ class Users(MethodView):
 """
         )
 
-    # Schemas
     schemas_dir = flaskr_dir / "schemas"
     schemas_dir.mkdir()
 
@@ -467,11 +454,9 @@ class PlainTaskSchema(Schema):
 """
         )
 
-    # Frontend structure
     frontend_dir = project_path / "frontend"
     frontend_dir.mkdir()
 
-    # Package.json
     with open(frontend_dir / "package.json", "w") as f:
         f.write(
             """{
@@ -496,7 +481,6 @@ class PlainTaskSchema(Schema):
 }"""
         )
 
-    # TypeScript config
     with open(frontend_dir / "tsconfig.json", "w") as f:
         f.write(
             """{
@@ -522,7 +506,6 @@ class PlainTaskSchema(Schema):
 }"""
         )
 
-    # Frontend src
     src_dir = frontend_dir / "src"
     src_dir.mkdir()
 
@@ -547,7 +530,6 @@ createRoot(document.getElementById("root")!).render(
 """
         )
 
-    # Types
     types_dir = src_dir / "types"
     types_dir.mkdir()
 
@@ -580,7 +562,6 @@ export type User = {
 """
         )
 
-    # Stores
     stores_dir = src_dir / "stores"
     stores_dir.mkdir()
 
@@ -617,7 +598,6 @@ export const useAuthStore = create<State & Action>()(
 """
         )
 
-    # Services
     services_dir = src_dir / "services"
     services_dir.mkdir()
 
@@ -748,7 +728,6 @@ export const useDeleteTaskMutation = () => {
 """
         )
 
-    # Components
     components_dir = src_dir / "components"
     components_dir.mkdir()
 
@@ -817,7 +796,6 @@ export const TaskList = () => {
 """
         )
 
-    # Routes
     routes_dir = src_dir / "routes"
     routes_dir.mkdir()
 
@@ -901,26 +879,10 @@ def test_flask_model_calls(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of model usage in controllers."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Get all function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
-    # Test TaskController -> TaskModel usage
     model_usage_calls = [
         call
         for call in function_calls
@@ -938,33 +900,15 @@ def test_flask_controller_imports(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of Flask controller imports and dependencies."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
+    import_calls = get_relationships(mock_ingestor, "IMPORTS")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Get import calls
-    import_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
-
-    # Test AuthController imports - after fix, imports point to modules not classes/functions
     auth_controller_imports = [
         call
         for call in import_calls
         if "auth_controller" in call.args[0][2]
-        and (
-            "models" in call.args[2][2] or "utils" in call.args[2][2]
-        )  # Look for module names
+        and ("models" in call.args[2][2] or "utils" in call.args[2][2])
     ]
 
     assert len(auth_controller_imports) >= 2, (
@@ -978,26 +922,10 @@ def test_flask_route_controller_calls(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of Flask route calling controller methods."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Get function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
-    # Test route calling controller
     route_controller_calls = [
         call
         for call in function_calls
@@ -1016,22 +944,10 @@ def test_typescript_structure_detection(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of TypeScript project structure."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Get all relationship calls
     all_calls = cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
-    # Test that TypeScript modules are detected
     module_relationships = [
         call
         for call in all_calls
@@ -1054,26 +970,10 @@ def test_typescript_hook_usage(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of React hook usage and store calls."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Get function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
-    # Debug: Check what function calls are being detected in TypeScript
     ts_function_calls = [
         call
         for call in function_calls
@@ -1083,10 +983,9 @@ def test_typescript_hook_usage(
     ]
 
     print(f"TypeScript function calls found: {len(ts_function_calls)}")
-    for call in ts_function_calls[:10]:  # Show first 10
+    for call in ts_function_calls[:10]:
         print(f"  {call.args[0][2]} -> {call.args[2][2]}")
 
-    # Test hook usage in components
     hook_calls = [
         call
         for call in function_calls
@@ -1098,7 +997,6 @@ def test_typescript_hook_usage(
         )
     ]
 
-    # Adjust expectation based on what's actually working
     assert len(hook_calls) >= 0, (
         f"Expected components to use React hooks, found: "
         f"{[(c.args[0][2], c.args[2][2]) for c in hook_calls]}"
@@ -1110,26 +1008,10 @@ def test_api_service_calls(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of API service function calls."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
+    function_calls = get_relationships(mock_ingestor, "CALLS")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Get function calls
-    function_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
-
-    # Debug: Check what API-related calls are being detected
     api_related_calls = [
         call
         for call in function_calls
@@ -1138,10 +1020,9 @@ def test_api_service_calls(
     ]
 
     print(f"API-related function calls found: {len(api_related_calls)}")
-    for call in api_related_calls[:10]:  # Show first 10
+    for call in api_related_calls[:10]:
         print(f"  {call.args[0][2]} -> {call.args[2][2]}")
 
-    # Test queries calling API services
     api_service_calls = [
         call
         for call in function_calls
@@ -1155,7 +1036,6 @@ def test_api_service_calls(
         )
     ]
 
-    # Adjust expectation based on what's actually working
     assert len(api_service_calls) >= 0, (
         f"Expected queries to call API services, found: "
         f"{[(c.args[0][2], c.args[2][2]) for c in api_service_calls]}"
@@ -1167,19 +1047,8 @@ def test_cross_language_api_structure(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test overall structure detection across Python and TypeScript."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Verify we processed both Python and TypeScript files
     all_calls = cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
 
     python_files = [
@@ -1221,26 +1090,10 @@ def test_schema_inheritance_detection(
     mock_ingestor: MagicMock,
 ) -> None:
     """Test detection of schema inheritance patterns."""
-    from codebase_rag.parser_loader import load_parsers
+    run_updater(todo_app_project, mock_ingestor)
 
-    parsers, queries = load_parsers()
+    inheritance_calls = get_relationships(mock_ingestor, "INHERITS")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=todo_app_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
-    # Get inheritance calls
-    inheritance_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
-
-    # Test schema inheritance
     schema_inheritance = [
         call
         for call in inheritance_calls

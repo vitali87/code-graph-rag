@@ -1,18 +1,9 @@
-"""
-Test imported class method call resolution.
-This test ensures that method calls on instantiated objects from imported classes
-are properly detected across files, which is crucial for understanding object-oriented
-code relationships in the codebase.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -21,10 +12,8 @@ def class_method_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "test_class_methods"
     project_path.mkdir()
 
-    # Create package structure
     (project_path / "__init__.py").touch()
 
-    # models/user.py
     models_dir = project_path / "models"
     models_dir.mkdir()
     (models_dir / "__init__.py").touch()
@@ -60,7 +49,6 @@ class UserManager:
         return None
 """)
 
-    # services/user_service.py
     services_dir = project_path / "services"
     services_dir.mkdir()
     (services_dir / "__init__.py").touch()
@@ -95,7 +83,6 @@ class UserService:
         return [user.get_name() for user in users]  # List comprehension method calls
 """)
 
-    # main.py
     with open(project_path / "main.py", "w") as f:
         f.write("""
 from services.user_service import UserService
@@ -123,43 +110,21 @@ if __name__ == "__main__":
 
 
 def test_imported_class_method_calls_are_detected(
-    class_method_project: Path, mock_ingestor: MemgraphIngestor
+    class_method_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that GraphUpdater correctly identifies method calls on imported class instances
     across different files and modules.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=class_method_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(class_method_project, mock_ingestor)
 
     project_name = class_method_project.name
 
-    # Get all CALLS relationships
-    actual_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Filter for method calls only
-    method_calls = [
-        call
-        for call in actual_calls
-        if call.args[2][0] == "Method"  # callee label is "Method"
-    ]
+    method_calls = [call for call in actual_calls if call.args[2][0] == "Method"]
 
-    # Expected method calls on imported class instances
     expected_method_calls = [
-        # From UserService.handle_user_creation to imported User methods
         (
             f"{project_name}.services.user_service.UserService.handle_user_creation",
             f"{project_name}.models.user.User.get_name",
@@ -172,10 +137,8 @@ def test_imported_class_method_calls_are_detected(
             f"{project_name}.services.user_service.UserService.handle_user_creation",
             f"{project_name}.models.user.User.validate",
         ),
-        # From main.main to imported class methods
         (f"{project_name}.main.main", f"{project_name}.models.user.User.get_name"),
         (f"{project_name}.main.main", f"{project_name}.models.user.User.set_name"),
-        # Internal method calls (UserManager methods calling User methods)
         (
             f"{project_name}.models.user.UserManager.process_user",
             f"{project_name}.models.user.User.validate",
@@ -186,20 +149,17 @@ def test_imported_class_method_calls_are_detected(
         ),
     ]
 
-    # Convert actual calls to comparable format
     found_method_calls = set()
     for call in method_calls:
-        caller_qn = call.args[0][2]  # qualified_name from (label, key, qualified_name)
+        caller_qn = call.args[0][2]
         callee_qn = call.args[2][2]
         found_method_calls.add((caller_qn, callee_qn))
 
-    # Check that all expected method calls are found
     missing_calls = []
     for expected_caller, expected_callee in expected_method_calls:
         if (expected_caller, expected_callee) not in found_method_calls:
             missing_calls.append((expected_caller, expected_callee))
 
-    # Assert that we found all expected method calls
     if missing_calls:
         found_calls_list = sorted(list(found_method_calls))
         pytest.fail(
@@ -208,7 +168,6 @@ def test_imported_class_method_calls_are_detected(
             f"Found: {found_calls_list}"
         )
 
-    # Verify we found at least the expected number of method calls
     assert len(found_method_calls) >= len(expected_method_calls), (
         f"Expected at least {len(expected_method_calls)} method calls, "
         f"but found {len(found_method_calls)}"
@@ -216,35 +175,18 @@ def test_imported_class_method_calls_are_detected(
 
 
 def test_cross_file_object_method_chaining(
-    class_method_project: Path, mock_ingestor: MemgraphIngestor
+    class_method_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that method calls on objects created from imported classes are detected,
     including chained method calls and method calls in complex expressions.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=class_method_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(class_method_project, mock_ingestor)
 
     project_name = class_method_project.name
 
-    # Get all CALLS relationships
-    actual_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Look for calls from UserService.batch_process to User.get_name
-    # This tests list comprehension method calls: [user.get_name() for user in users]
     batch_process_calls = [
         call
         for call in actual_calls
@@ -260,7 +202,6 @@ def test_cross_file_object_method_chaining(
         "indicating that method calls in list comprehensions are detected"
     )
 
-    # Look for chained method calls: user2.set_name() after user2 = self.manager.create_user()
     set_name_calls = [
         call
         for call in actual_calls

@@ -1,16 +1,9 @@
-"""
-Comprehensive Rust unsafe code and FFI testing.
-Tests unsafe blocks, raw pointers, extern functions, C interop,
-and memory safety edge cases for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def rust_unsafe_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_unsafe_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Unsafe and FFI test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_unsafe_test"
 version = "0.1.0"
@@ -184,18 +175,9 @@ unsafe fn atomic_raw_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unsafe functions are detected
     unsafe_calls = [
         call
         for call in calls
@@ -354,18 +336,9 @@ impl CComplexStruct {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify extern functions are detected
     extern_calls = [
         call
         for call in calls
@@ -594,18 +567,9 @@ unsafe fn deserialize_zerocopy<T: ZeroCopy>(bytes: &[u8]) -> Option<T> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unsafe traits are detected
     unsafe_trait_calls = [
         call
         for call in calls
@@ -809,18 +773,9 @@ unsafe fn aarch64_specific() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify inline assembly functions are detected
     asm_calls = [
         call
         for call in calls
@@ -1068,18 +1023,9 @@ unsafe fn bit_field_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_unsafe_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_unsafe_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify unions and transmute functions are detected
     union_calls = [
         call
         for call in calls

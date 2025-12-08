@@ -1,5 +1,3 @@
-"""Common utility functions for all parser components."""
-
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
@@ -7,7 +5,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 if TYPE_CHECKING:
-    from ..services.graph_service import MemgraphIngestor
+    from ..services import IngestorProtocol
 
 
 @lru_cache(maxsize=10000)
@@ -86,7 +84,7 @@ def ingest_method(
     method_node: Node,
     container_qn: str,
     container_type: str,
-    ingestor: "MemgraphIngestor",
+    ingestor: "IngestorProtocol",
     function_registry: dict[str, str],
     simple_name_lookup: dict[str, set[str]],
     get_docstring_func: Any,
@@ -108,7 +106,6 @@ def ingest_method(
         extract_decorators_func: Optional function to extract decorators.
         method_qualified_name: Optional pre-computed qualified name to use instead of generating one.
     """
-    # Extract method name based on language
     if language == "cpp":
         from .cpp_utils import extract_cpp_function_name
 
@@ -124,20 +121,15 @@ def ingest_method(
             return
         method_name = text.decode("utf8")
 
-    # Build qualified name
     if method_qualified_name is not None:
-        # Use pre-computed qualified name (for language-specific handling)
         method_qn = method_qualified_name
     else:
-        # Default qualified name construction
         method_qn = f"{container_qn}.{method_name}"
 
-    # Extract decorators if function provided
     decorators = []
     if extract_decorators_func:
         decorators = extract_decorators_func(method_node)
 
-    # Create method properties
     method_props: dict[str, Any] = {
         "qualified_name": method_qn,
         "name": method_name,
@@ -152,7 +144,6 @@ def ingest_method(
     function_registry[method_qn] = "Method"
     simple_name_lookup[method_name].add(method_qn)
 
-    # Create relationship between container and method
     ingestor.ensure_relationship_batch(
         (container_type, "qualified_name", container_qn),
         "DEFINES_METHOD",
@@ -165,7 +156,7 @@ def ingest_exported_function(
     function_name: str,
     module_qn: str,
     export_type: str,
-    ingestor: "MemgraphIngestor",
+    ingestor: "IngestorProtocol",
     function_registry: dict[str, str],
     simple_name_lookup: dict[str, set[str]],
     get_docstring_func: Any,
@@ -186,7 +177,6 @@ def ingest_exported_function(
         get_docstring_func: Function to extract docstring from a node.
         is_export_inside_function_func: Function to check if export is inside a function.
     """
-    # Skip if this export is inside a function (let regular processing handle it)
     if is_export_inside_function_func(function_node):
         return
 
