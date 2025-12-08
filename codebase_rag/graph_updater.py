@@ -133,8 +133,21 @@ class FunctionRegistryTrie:
         return results
 
     def find_ending_with(self, suffix: str) -> list[str]:
-        """Find all qualified names ending with the given suffix."""
-        return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
+        """Find all qualified names ending with the given suffix using DFS on the trie."""
+        results: list[str] = []
+
+        def dfs(node: dict[str, Any]) -> None:
+            if "__qn__" in node:
+                qn = node["__qn__"]
+                if qn.endswith(f".{suffix}"):
+                    results.append(qn)
+
+            for key, child in node.items():
+                if not key.startswith("__"):
+                    dfs(child)
+
+        dfs(self.root)
+        return results
 
     def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
         """Find all qualified names that start with the given prefix.
