@@ -22,6 +22,7 @@ class FunctionRegistryTrie:
     def __init__(self) -> None:
         self.root: dict[str, Any] = {}
         self._entries: dict[str, str] = {}
+        self._suffix_index: dict[str, set[str]] = defaultdict(set)
 
     def insert(self, qualified_name: str, func_type: str) -> None:
         """Insert a function into the trie."""
@@ -37,6 +38,10 @@ class FunctionRegistryTrie:
 
         current["__type__"] = func_type
         current["__qn__"] = qualified_name
+
+        if parts:
+            suffix = parts[-1]
+            self._suffix_index[suffix].add(qualified_name)
 
     def get(self, qualified_name: str, default: str | None = None) -> str | None:
         """Get function type by exact qualified name."""
@@ -67,6 +72,15 @@ class FunctionRegistryTrie:
 
         parts = qualified_name.split(".")
         self._cleanup_trie_path(parts, self.root)
+
+        # clean up suffix_index
+        if parts:
+            suffix = parts[-1]
+            if suffix in self._suffix_index:
+                self._suffix_index[suffix].discard(qualified_name)
+                if not self._suffix_index[suffix]:
+                    del self._suffix_index[suffix]
+        
 
     def _cleanup_trie_path(self, parts: list[str], node: dict[str, Any]) -> bool:
         """Recursively clean up empty trie nodes.
@@ -133,8 +147,12 @@ class FunctionRegistryTrie:
         return results
 
     def find_ending_with(self, suffix: str) -> list[str]:
-        """Find all qualified names ending with the given suffix using DFS on the trie."""
-        return self.find_with_prefix_and_suffix("", suffix)
+        """Find all qualified names ending with the given suffix."""
+        last_part = suffix.split(".")[-1]
+        candidates = self._suffix_index.get(last_part, set())
+        if "." not in suffix:
+            return list(candidates)
+        return [qn for qn in candidates if qn.endswith(f".{suffix}")]
 
     def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
         """Find all qualified names that start with the given prefix.
