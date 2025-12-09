@@ -68,4 +68,5 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
     return Tool(
         function=create_new_file,
         description="Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications.",
+        requires_approval=True,
     )

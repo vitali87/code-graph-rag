@@ -1,5 +1,5 @@
 from loguru import logger
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent, DeferredToolRequests, Tool
 
 from ..config import settings
 from ..prompts import (
@@ -106,6 +106,8 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
             retries=settings.AGENT_RETRIES,
+            output_retries=100,
+            output_type=[str, DeferredToolRequests],
         )
     except Exception as e:
         raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e
