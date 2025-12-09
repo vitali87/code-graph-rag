@@ -2,22 +2,26 @@ from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 
 from ..config import settings
+from ..deps import RAGDeps
+from ..exceptions import LLMGenerationError
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
     RAG_ORCHESTRATOR_SYSTEM_PROMPT,
 )
 from ..providers.base import get_provider
-
-
-class LLMGenerationError(Exception):
-    """Custom exception for LLM generation failures."""
-
-    pass
+from ..tools.code_retrieval import get_code_snippet
+from ..tools.codebase_query import query_codebase_knowledge_graph
+from ..tools.directory_lister import list_directory
+from ..tools.document_analyzer import analyze_document
+from ..tools.file_editor import replace_code_surgically
+from ..tools.file_reader import read_file_content
+from ..tools.file_writer import create_new_file
+from ..tools.semantic_search import get_function_source_by_id, semantic_search_functions
+from ..tools.shell_command import run_shell_command
 
 
 def _clean_cypher_response(response_text: str) -> str:
-    """Utility to clean up common LLM formatting artifacts from a Cypher query."""
     query = response_text.strip().replace("`", "")
     if query.startswith("cypher"):
         query = query[6:].strip()
@@ -27,8 +31,6 @@ def _clean_cypher_response(response_text: str) -> str:
 
 
 class CypherGenerator:
-    """Generates Cypher queries from natural language."""
-
     def __init__(self) -> None:
         try:
             config = settings.active_cypher_config
@@ -84,8 +86,7 @@ class CypherGenerator:
             raise LLMGenerationError(f"Cypher generation failed: {e}") from e
 
 
-def create_rag_orchestrator(tools: list[Tool]) -> Agent:
-    """Factory function to create the main RAG orchestrator agent."""
+def create_rag_orchestrator() -> Agent[RAGDeps, str | DeferredToolRequests]:
     try:
         config = settings.active_orchestrator_config
 
@@ -103,8 +104,20 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
 
         return Agent(
             model=llm,
+            deps_type=RAGDeps,
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
-            tools=tools,
+            tools=[
+                query_codebase_knowledge_graph,
+                get_code_snippet,
+                read_file_content,
+                Tool(create_new_file, requires_approval=True),
+                Tool(replace_code_surgically, requires_approval=True),
+                Tool(run_shell_command, requires_approval=True),
+                list_directory,
+                analyze_document,
+                semantic_search_functions,
+                get_function_source_by_id,
+            ],
             retries=settings.AGENT_RETRIES,
             output_retries=100,
             output_type=[str, DeferredToolRequests],

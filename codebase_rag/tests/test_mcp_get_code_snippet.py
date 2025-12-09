@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -47,9 +47,6 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
         cypher_gen=mock_cypher_gen,
     )
 
-    registry._code_tool = MagicMock()
-    registry._code_tool.function = AsyncMock()
-
     return registry
 
 
@@ -60,17 +57,15 @@ class TestGetCodeSnippetBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving a function snippet."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "sample.hello_world",
-                "source_code": 'def hello_world():\n    """Say hello to the world."""\n    print("Hello, World!")\n',
-                "file_path": "sample.py",
-                "line_start": 1,
-                "line_end": 3,
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {
+                "name": "hello_world",
+                "start": 1,
+                "end": 3,
+                "path": "sample.py",
                 "docstring": "Say hello to the world.",
-                "found": True,
             }
-        )
+        ]
 
         result = await mcp_registry.get_code_snippet("sample.hello_world")
 
@@ -86,17 +81,15 @@ class TestGetCodeSnippetBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving a class method snippet."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "sample.Calculator.add",
-                "source_code": '    def add(self, a: int, b: int) -> int:\n        """Add two numbers."""\n        return a + b\n',
-                "file_path": "sample.py",
-                "line_start": 8,
-                "line_end": 10,
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {
+                "name": "add",
+                "start": 8,
+                "end": 10,
+                "path": "sample.py",
                 "docstring": "Add two numbers.",
-                "found": True,
             }
-        )
+        ]
 
         result = await mcp_registry.get_code_snippet("sample.Calculator.add")
 
@@ -109,17 +102,15 @@ class TestGetCodeSnippetBasic:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving a class snippet."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "sample.Calculator",
-                "source_code": 'class Calculator:\n    """Simple calculator class."""\n\n    def add(self, a: int, b: int) -> int:\n        """Add two numbers."""\n        return a + b\n',
-                "file_path": "sample.py",
-                "line_start": 5,
-                "line_end": 10,
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {
+                "name": "Calculator",
+                "start": 5,
+                "end": 10,
+                "path": "sample.py",
                 "docstring": "Simple calculator class.",
-                "found": True,
             }
-        )
+        ]
 
         result = await mcp_registry.get_code_snippet("sample.Calculator")
 
@@ -136,17 +127,7 @@ class TestGetCodeSnippetNotFound:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test retrieving a nonexistent function."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "nonexistent.function",
-                "source_code": "",
-                "file_path": "",
-                "line_start": 0,
-                "line_end": 0,
-                "found": False,
-                "error_message": "Entity not found in graph.",
-            }
-        )
+        mcp_registry.ingestor.fetch_all.return_value = []  # type: ignore[attr-defined]
 
         result = await mcp_registry.get_code_snippet("nonexistent.function")
 
@@ -158,17 +139,7 @@ class TestGetCodeSnippetNotFound:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test retrieving with malformed qualified name."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "..invalid..",
-                "source_code": "",
-                "file_path": "",
-                "line_start": 0,
-                "line_end": 0,
-                "found": False,
-                "error_message": "Invalid qualified name format.",
-            }
-        )
+        mcp_registry.ingestor.fetch_all.return_value = []  # type: ignore[attr-defined]
 
         result = await mcp_registry.get_code_snippet("..invalid..")
 
@@ -180,20 +151,22 @@ class TestGetCodeSnippetEdgeCases:
     """Test edge cases and special scenarios."""
 
     async def test_get_snippet_with_no_docstring(
-        self, mcp_registry: MCPToolsRegistry
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving code with no docstring."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "sample.no_docstring",
-                "source_code": "def no_docstring():\n    pass\n",
-                "file_path": "sample.py",
-                "line_start": 12,
-                "line_end": 13,
+        # (H) Add a file with no docstring function
+        nodoc_file = temp_project_root / "nodoc.py"
+        nodoc_file.write_text("def no_docstring():\n    pass\n", encoding="utf-8")
+
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {
+                "name": "no_docstring",
+                "start": 1,
+                "end": 2,
+                "path": "nodoc.py",
                 "docstring": None,
-                "found": True,
             }
-        )
+        ]
 
         result = await mcp_registry.get_code_snippet("sample.no_docstring")
 
@@ -201,20 +174,27 @@ class TestGetCodeSnippetEdgeCases:
         assert result["docstring"] is None
 
     async def test_get_snippet_from_nested_module(
-        self, mcp_registry: MCPToolsRegistry
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving code from deeply nested module."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "pkg.subpkg.module.ClassName.method",
-                "source_code": "    def method(self):\n        return True\n",
-                "file_path": "pkg/subpkg/module.py",
-                "line_start": 10,
-                "line_end": 11,
-                "docstring": None,
-                "found": True,
-            }
+        # (H) Create nested directory and file
+        nested_dir = temp_project_root / "pkg" / "subpkg"
+        nested_dir.mkdir(parents=True)
+        nested_file = nested_dir / "module.py"
+        nested_file.write_text(
+            "class ClassName:\n    def method(self):\n        return True\n",
+            encoding="utf-8",
         )
+
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {
+                "name": "method",
+                "start": 2,
+                "end": 3,
+                "path": "pkg/subpkg/module.py",
+                "docstring": None,
+            }
+        ]
 
         result = await mcp_registry.get_code_snippet(
             "pkg.subpkg.module.ClassName.method"
@@ -225,20 +205,25 @@ class TestGetCodeSnippetEdgeCases:
         assert result["file_path"] == "pkg/subpkg/module.py"
 
     async def test_get_snippet_with_unicode(
-        self, mcp_registry: MCPToolsRegistry
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving code with unicode characters."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "sample.unicode_func",
-                "source_code": 'def unicode_func():\n    """返回 Unicode 字符串。"""\n    return "Hello 世界"\n',
-                "file_path": "sample.py",
-                "line_start": 15,
-                "line_end": 17,
-                "docstring": "返回 Unicode 字符串。",
-                "found": True,
-            }
+        # (H) Create file with unicode content
+        unicode_file = temp_project_root / "unicode.py"
+        unicode_file.write_text(
+            'def unicode_func():\n    """返回 Unicode 字符串。"""\n    return "Hello 世界"\n',
+            encoding="utf-8",
         )
+
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {
+                "name": "unicode_func",
+                "start": 1,
+                "end": 3,
+                "path": "unicode.py",
+                "docstring": "返回 Unicode 字符串。",
+            }
+        ]
 
         result = await mcp_registry.get_code_snippet("sample.unicode_func")
 
@@ -254,78 +239,87 @@ class TestGetCodeSnippetErrorHandling:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test handling of exceptions during retrieval."""
-        mcp_registry._code_tool.function.side_effect = Exception("Database error")  # ty: ignore[invalid-assignment]
+        mcp_registry.ingestor.fetch_all.side_effect = Exception("Database error")  # type: ignore[attr-defined]
 
         result = await mcp_registry.get_code_snippet("sample.function")
 
         assert result["found"] is False
         assert "error" in result or "error_message" in result
 
-    async def test_get_snippet_tool_returns_none(
+    async def test_get_snippet_returns_empty_results(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        """Test handling when tool returns None."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: None
-        )
+        """Test handling when ingestor returns empty results."""
+        mcp_registry.ingestor.fetch_all.return_value = []  # type: ignore[attr-defined]
 
         result = await mcp_registry.get_code_snippet("sample.function")
 
         assert isinstance(result, dict)
+        assert result["found"] is False
 
 
 class TestGetCodeSnippetIntegration:
     """Test integration scenarios."""
 
     async def test_get_multiple_snippets_sequentially(
-        self, mcp_registry: MCPToolsRegistry
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test retrieving multiple snippets in sequence."""
+        # (H) Create a module file with multiple functions
+        module_file = temp_project_root / "module.py"
+        module_file.write_text(
+            "def func1(): pass\n\ndef func2(): pass\n", encoding="utf-8"
+        )
+
         snippets = [
             {
                 "qualified_name": "module.func1",
-                "source_code": "def func1(): pass",
-                "file_path": "module.py",
-                "line_start": 1,
-                "line_end": 1,
-                "found": True,
+                "name": "func1",
+                "start": 1,
+                "end": 1,
+                "path": "module.py",
             },
             {
                 "qualified_name": "module.func2",
-                "source_code": "def func2(): pass",
-                "file_path": "module.py",
-                "line_start": 3,
-                "line_end": 3,
-                "found": True,
+                "name": "func2",
+                "start": 3,
+                "end": 3,
+                "path": "module.py",
             },
         ]
 
         for snippet_data in snippets:
-            mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-                model_dump=lambda s=snippet_data: s
-            )
-            qualified_name: str = snippet_data["qualified_name"]  # type: ignore[assignment]
+            mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+                {
+                    "name": snippet_data["name"],
+                    "start": snippet_data["start"],
+                    "end": snippet_data["end"],
+                    "path": snippet_data["path"],
+                }
+            ]
+            qualified_name = str(snippet_data["qualified_name"])
             result = await mcp_registry.get_code_snippet(qualified_name)
             assert result["found"] is True
             assert result["qualified_name"] == snippet_data["qualified_name"]
 
     async def test_get_snippet_verifies_qualified_name_passed(
-        self, mcp_registry: MCPToolsRegistry
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that qualified name is correctly passed to underlying tool."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "qualified_name": "test.function",
-                "source_code": "def function(): pass",
-                "file_path": "test.py",
-                "line_start": 1,
-                "line_end": 1,
-                "found": True,
+        """Test that qualified name is correctly passed to underlying retriever."""
+        test_file = temp_project_root / "test.py"
+        test_file.write_text("def function(): pass\n", encoding="utf-8")
+
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {
+                "name": "function",
+                "start": 1,
+                "end": 1,
+                "path": "test.py",
             }
-        )
+        ]
 
         await mcp_registry.get_code_snippet("test.function")
 
-        mcp_registry._code_tool.function.assert_called_once_with(
-            qualified_name="test.function"
-        )
+        mcp_registry.ingestor.fetch_all.assert_called_once()  # type: ignore[attr-defined]
+        call_args = mcp_registry.ingestor.fetch_all.call_args  # type: ignore[attr-defined]
+        assert "test.function" in str(call_args)

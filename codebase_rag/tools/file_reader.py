@@ -2,20 +2,18 @@ from pathlib import Path
 
 from loguru import logger
 from pydantic import BaseModel
-from pydantic_ai import Tool
+from pydantic_ai import RunContext
+
+from ..deps import RAGDeps
 
 
 class FileReadResult(BaseModel):
-    """Data model for file read results."""
-
     file_path: str
     content: str | None = None
     error_message: str | None = None
 
 
 class FileReader:
-    """Service to read file content from the filesystem."""
-
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
         self.binary_extensions = {
@@ -32,7 +30,6 @@ class FileReader:
         logger.info(f"FileReader initialized with root: {self.project_root}")
 
     async def read_file(self, file_path: str) -> FileReadResult:
-        """Reads and returns the content of a text-based file."""
         logger.info(f"[FileReader] Attempting to read file: {file_path}")
         try:
             full_path = (self.project_root / file_path).resolve()
@@ -81,20 +78,12 @@ class FileReader:
             )
 
 
-def create_file_reader_tool(file_reader: FileReader) -> Tool:
-    """Factory function to create the file reader tool."""
-
-    async def read_file_content(file_path: str) -> str:
-        """
-        Reads the content of a specified text-based file (e.g., source code, README.md, config files).
-        This tool should NOT be used for binary files like PDFs or images. For those, use the 'analyze_document' tool.
-        """
-        result = await file_reader.read_file(file_path)
-        if result.error_message:
-            return f"Error: {result.error_message}"
-        return result.content or ""
-
-    return Tool(
-        function=read_file_content,
-        description="Reads the content of text-based files. For documents like PDFs or images, use the 'analyze_document' tool instead.",
-    )
+async def read_file_content(ctx: RunContext[RAGDeps], file_path: str) -> str:
+    """
+    Reads the content of a specified text-based file (e.g., source code, README.md, config files).
+    This tool should NOT be used for binary files like PDFs or images. For those, use the 'analyze_document' tool.
+    """
+    result = await ctx.deps.file_reader.read_file(file_path)
+    if result.error_message:
+        return f"Error: {result.error_message}"
+    return result.content or ""

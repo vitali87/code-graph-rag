@@ -26,25 +26,20 @@ from .config import (
     ORANGE_STYLE,
     settings,
 )
+from .deps import RAGDeps
 from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
-from .services.protobuf_service import ProtobufFileIngestor
-from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
-from .tools.codebase_query import create_query_tool
-from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
-from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_tool
-from .tools.file_editor import FileEditor, create_file_editor_tool
-from .tools.file_reader import FileReader, create_file_reader_tool
-from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.code_retrieval import CodeRetriever
+from .tools.directory_lister import DirectoryLister
+from .tools.document_analyzer import DocumentAnalyzer
+from .tools.file_editor import FileEditor
+from .tools.file_reader import FileReader
+from .tools.file_writer import FileWriter
 from .tools.language import cli as language_cli
-from .tools.semantic_search import (
-    create_get_function_source_tool,
-    create_semantic_search_tool,
-)
-from .tools.shell_command import ShellCommander, create_shell_command_tool
+from .tools.shell_command import ShellCommander
 
 confirm_edits_globally = True
 
@@ -65,7 +60,6 @@ session_cancelled = False
 
 
 def init_session_log(project_root: Path) -> Path:
-    """Initialize session log file."""
     global session_log_file
     log_dir = project_root / ".tmp"
     log_dir.mkdir(exist_ok=True)
@@ -76,7 +70,6 @@ def init_session_log(project_root: Path) -> Path:
 
 
 def log_session_event(event: str) -> None:
-    """Log an event to the session file."""
     global session_log_file
     if session_log_file:
         with open(session_log_file, "a") as f:
@@ -84,7 +77,6 @@ def log_session_event(event: str) -> None:
 
 
 def get_session_context() -> str:
-    """Get the full session context for cancelled operations."""
     global session_log_file
     if session_log_file and session_log_file.exists():
         content = Path(session_log_file).read_text()
@@ -138,7 +130,7 @@ def _display_tool_call_diff(
 
         console.print("[dim]" + "─" * 60 + "[/dim]")
 
-    elif tool_name == "execute_shell_command":
+    elif tool_name == "run_shell_command":
         command = tool_args.get("command", "")
         console.print("\n[bold cyan]Shell command:[/bold cyan]")
         console.print(f"[yellow]$ {command}[/yellow]")
@@ -148,7 +140,6 @@ def _display_tool_call_diff(
 
 
 def _setup_common_initialization(repo_path: str) -> Path:
-    """Common setup logic for both main and optimize functions."""
     logger.remove()
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
@@ -169,7 +160,6 @@ def _create_configuration_table(
     title: str = "Graph-Code Initializing...",
     language: str | None = None,
 ) -> Table:
-    """Create and return a configuration table."""
     table = Table(title=f"[bold green]{title}[/bold green]")
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
@@ -216,12 +206,12 @@ def _create_configuration_table(
 
 async def run_optimization_loop(
     rag_agent: Any,
+    deps: RAGDeps,
     message_history: list[Any],
     project_root: Path,
     language: str,
     reference_document: str | None = None,
 ) -> None:
-    """Runs the optimization loop with proper confirmation handling."""
     global session_cancelled
 
     init_session_log(project_root)
@@ -311,6 +301,7 @@ Remember: Propose changes first, wait for my approval, then implement.
                         console,
                         rag_agent.run(
                             question_with_context,
+                            deps=deps,
                             message_history=message_history,
                             deferred_tool_results=deferred_results,
                         ),
@@ -381,7 +372,6 @@ Remember: Propose changes first, wait for my approval, then implement.
 async def run_with_cancellation(
     console: Console, coro: Any, timeout: float | None = None
 ) -> Any:
-    """Run a coroutine with proper Ctrl+C cancellation that doesn't exit the program."""
     task = asyncio.create_task(coro)
 
     try:
@@ -408,10 +398,6 @@ async def run_with_cancellation(
 
 
 def _handle_chat_images(question: str, project_root: Path) -> str:
-    """
-    Checks for image file paths in the question, copies them to a temporary
-    directory, and replaces the path in the question.
-    """
     try:
         tokens = shlex.split(question)
     except ValueError:
@@ -472,22 +458,18 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
 
 
 def get_multiline_input(prompt_text: str = "Ask a question") -> str:
-    """Get multiline input from user with Ctrl+J to submit."""
     bindings = KeyBindings()
 
     @bindings.add("c-j")
     def submit(event: Any) -> None:
-        """Submit the current input."""
         event.app.exit(result=event.app.current_buffer.text)
 
     @bindings.add("enter")
     def new_line(event: Any) -> None:
-        """Insert a new line instead of submitting."""
         event.current_buffer.insert_text("\n")
 
     @bindings.add("c-c")
     def keyboard_interrupt(event: Any) -> None:
-        """Handle Ctrl+C."""
         event.app.exit(exception=KeyboardInterrupt)
 
     clean_prompt = Text.from_markup(prompt_text).plain
@@ -511,7 +493,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
 
 
 async def run_chat_loop(
-    rag_agent: Any, message_history: list[Any], project_root: Path
+    rag_agent: Any, deps: RAGDeps, message_history: list[Any], project_root: Path
 ) -> None:
     global session_cancelled
 
@@ -550,6 +532,7 @@ async def run_chat_loop(
                         console,
                         rag_agent.run(
                             question_with_context,
+                            deps=deps,
                             message_history=message_history,
                             deferred_tool_results=deferred_results,
                         ),
@@ -616,7 +599,6 @@ async def run_chat_loop(
 
 
 def _update_single_model_setting(role: str, model_string: str) -> None:
-    """Update a single model setting (orchestrator or cypher)."""
     provider, model = settings.parse_model_string(model_string)
 
     if role == "orchestrator":
@@ -647,7 +629,6 @@ def _update_model_settings(
     orchestrator: str | None,
     cypher: str | None,
 ) -> None:
-    """Update model settings based on command-line arguments."""
     if orchestrator:
         _update_single_model_setting("orchestrator", orchestrator)
     if cypher:
@@ -655,17 +636,6 @@ def _update_model_settings(
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
-    """
-    Export graph data to a JSON file.
-
-    Args:
-        ingestor: The MemgraphIngestor instance to export from
-        output: Output file path
-
-    Returns:
-        True if export was successful, False otherwise
-    """
-
     try:
         graph_data = ingestor.export_graph_to_dict()
         output_path = Path(output)
@@ -689,12 +659,39 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> Any:
-    """Initializes all services and creates the RAG agent."""
+def _create_deps(repo_path: str, ingestor: QueryProtocol) -> RAGDeps:
+    cypher_generator = CypherGenerator()
+    code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
+    file_reader = FileReader(project_root=repo_path)
+    file_writer = FileWriter(project_root=repo_path)
+    file_editor = FileEditor(project_root=repo_path)
+    shell_commander = ShellCommander(
+        project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
+    )
+    directory_lister = DirectoryLister(project_root=repo_path)
+    document_analyzer = DocumentAnalyzer(project_root=repo_path)
+
+    return RAGDeps(
+        project_root=Path(repo_path).resolve(),
+        ingestor=ingestor,
+        cypher_generator=cypher_generator,
+        code_retriever=code_retriever,
+        file_reader=file_reader,
+        file_writer=file_writer,
+        file_editor=file_editor,
+        shell_commander=shell_commander,
+        directory_lister=directory_lister,
+        document_analyzer=document_analyzer,
+        console=console,
+    )
+
+
+def _initialize_services_and_agent(
+    repo_path: str, ingestor: QueryProtocol
+) -> tuple[Any, RAGDeps]:
     from .providers.base import get_provider
 
     def _validate_provider_config(role: str, config: Any) -> None:
-        """Validate a single provider configuration."""
         try:
             provider = get_provider(
                 config.provider,
@@ -713,47 +710,13 @@ def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> A
     _validate_provider_config("orchestrator", settings.active_orchestrator_config)
     _validate_provider_config("cypher", settings.active_cypher_config)
 
-    cypher_generator = CypherGenerator()
-    code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
-    file_reader = FileReader(project_root=repo_path)
-    file_writer = FileWriter(project_root=repo_path)
-    file_editor = FileEditor(project_root=repo_path)
-    shell_commander = ShellCommander(
-        project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
-    )
-    directory_lister = DirectoryLister(project_root=repo_path)
-    document_analyzer = DocumentAnalyzer(project_root=repo_path)
+    deps = _create_deps(repo_path, ingestor)
+    rag_agent = create_rag_orchestrator()
 
-    query_tool = create_query_tool(ingestor, cypher_generator, console)
-    code_tool = create_code_retrieval_tool(code_retriever)
-    file_reader_tool = create_file_reader_tool(file_reader)
-    file_writer_tool = create_file_writer_tool(file_writer)
-    file_editor_tool = create_file_editor_tool(file_editor)
-    shell_command_tool = create_shell_command_tool(shell_commander)
-    directory_lister_tool = create_directory_lister_tool(directory_lister)
-    document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
-    semantic_search_tool = create_semantic_search_tool()
-    function_source_tool = create_get_function_source_tool()
-
-    rag_agent = create_rag_orchestrator(
-        tools=[
-            query_tool,
-            code_tool,
-            file_reader_tool,
-            file_writer_tool,
-            file_editor_tool,
-            shell_command_tool,
-            directory_lister_tool,
-            document_analyzer_tool,
-            semantic_search_tool,
-            function_source_tool,
-        ]
-    )
-    return rag_agent
+    return rag_agent, deps
 
 
 async def main_async(repo_path: str, batch_size: int) -> None:
-    """Initializes services and runs the main application loop."""
     project_root = _setup_common_initialization(repo_path)
 
     table = _create_configuration_table(repo_path)
@@ -772,8 +735,8 @@ async def main_async(repo_path: str, batch_size: int) -> None:
             )
         )
 
-        rag_agent = _initialize_services_and_agent(repo_path, ingestor)
-        await run_chat_loop(rag_agent, [], project_root)
+        rag_agent, deps = _initialize_services_and_agent(repo_path, ingestor)
+        await run_chat_loop(rag_agent, deps, [], project_root)
 
 
 @app.command()
@@ -819,7 +782,6 @@ def start(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    """Starts the Codebase RAG CLI."""
     global confirm_edits_globally
 
     confirm_edits_globally = not no_confirm
@@ -890,7 +852,6 @@ def index(
         help="Write index to separate nodes.bin and relationships.bin files.",
     ),
 ) -> None:
-    """Parses a codebase and creates a portable binary index file."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     repo_to_index = Path(target_repo_path)
 
@@ -900,6 +861,8 @@ def index(
     )
 
     try:
+        from .services.protobuf_service import ProtobufFileIngestor
+
         ingestor = ProtobufFileIngestor(
             output_path=output_proto_dir, split_index=split_index
         )
@@ -932,7 +895,6 @@ def export(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    """Export the current knowledge graph to a file."""
     if not format_json:
         console.print(
             "[bold red]Error: Currently only JSON format is supported.[/bold red]"
@@ -967,7 +929,6 @@ async def main_optimize_async(
     cypher: str | None = None,
     batch_size: int | None = None,
 ) -> None:
-    """Async wrapper for the optimization functionality."""
     project_root = _setup_common_initialization(target_repo_path)
 
     _update_model_settings(orchestrator, cypher)
@@ -990,9 +951,9 @@ async def main_optimize_async(
     ) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
 
-        rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
+        rag_agent, deps = _initialize_services_and_agent(target_repo_path, ingestor)
         await run_optimization_loop(
-            rag_agent, [], project_root, language, reference_document
+            rag_agent, deps, [], project_root, language, reference_document
         )
 
 
@@ -1032,7 +993,6 @@ def optimize(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    """Optimize a codebase for a specific programming language."""
     global confirm_edits_globally
 
     confirm_edits_globally = not no_confirm
@@ -1058,23 +1018,6 @@ def optimize(
 
 @app.command(name="mcp-server")
 def mcp_server() -> None:
-    """Start the MCP (Model Context Protocol) server.
-
-    This command starts an MCP server that exposes code-graph-rag's capabilities
-    to MCP clients like Claude Code. The server runs on stdio transport and requires
-    the TARGET_REPO_PATH environment variable to be set to the target repository.
-
-    Usage:
-        graph-code mcp-server
-
-    Environment Variables:
-        TARGET_REPO_PATH: Path to the target repository (required)
-
-    For Claude Code integration:
-        claude mcp add --transport stdio graph-code \\
-          --env TARGET_REPO_PATH=/path/to/your/project \\
-          -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
-    """
     try:
         from codebase_rag.mcp import main as mcp_main
 
@@ -1094,7 +1037,6 @@ def mcp_server() -> None:
 def graph_loader_command(
     graph_file: str = typer.Argument(..., help="Path to the exported graph JSON file"),
 ) -> None:
-    """Load and display summary of an exported graph file."""
     from .graph_loader import load_graph
 
     try:
@@ -1120,13 +1062,6 @@ def graph_loader_command(
     context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
 )
 def language_command(ctx: typer.Context) -> None:
-    """Manage language grammars (add, remove, list).
-
-    Examples:
-        cgr language add-grammar python
-        cgr language list-languages
-        cgr language remove-language python
-    """
     language_cli(ctx.args, standalone_mode=False)
 
 

@@ -6,25 +6,21 @@ from typing import Any, cast
 
 from loguru import logger
 
+from codebase_rag.exceptions import LLMGenerationError
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.schemas import CodeSnippet, GraphData
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
-from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
-from codebase_rag.tools.codebase_query import create_query_tool
-from codebase_rag.tools.directory_lister import (
-    DirectoryLister,
-    create_directory_lister_tool,
-)
-from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
-from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
-from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+from codebase_rag.tools.code_retrieval import CodeRetriever
+from codebase_rag.tools.directory_lister import DirectoryLister
+from codebase_rag.tools.file_editor import FileEditor
+from codebase_rag.tools.file_reader import FileReader
+from codebase_rag.tools.file_writer import FileWriter
 
 
 @dataclass
 class ToolMetadata:
-    """Metadata for an MCP tool including schema and handler information."""
-
     name: str
     description: str
     input_schema: dict[str, Any]
@@ -33,21 +29,12 @@ class ToolMetadata:
 
 
 class MCPToolsRegistry:
-    """Registry for all MCP tools with shared dependencies."""
-
     def __init__(
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
         cypher_gen: CypherGenerator,
     ) -> None:
-        """Initialize the MCP tools registry.
-
-        Args:
-            project_root: Path to the target repository
-            ingestor: Memgraph ingestor instance
-            cypher_gen: Cypher query generator instance
-        """
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
@@ -59,17 +46,6 @@ class MCPToolsRegistry:
         self.file_reader = FileReader(project_root=project_root)
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
-
-        self._query_tool = create_query_tool(
-            ingestor=ingestor, cypher_gen=cypher_gen, console=None
-        )
-        self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
-        self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
-        self._file_reader_tool = create_file_reader_tool(file_reader=self.file_reader)
-        self._file_writer_tool = create_file_writer_tool(file_writer=self.file_writer)
-        self._directory_lister_tool = create_directory_lister_tool(
-            directory_lister=self.directory_lister
-        )
 
         self._tools: dict[str, ToolMetadata] = {
             "index_repository": ToolMetadata(
@@ -208,18 +184,6 @@ class MCPToolsRegistry:
         }
 
     async def index_repository(self) -> str:
-        """Parse and ingest the repository into the Memgraph knowledge graph.
-
-        This tool analyzes the codebase using Tree-sitter parsers and builds
-        a comprehensive knowledge graph with functions, classes, dependencies,
-        and relationships.
-
-        Note: This clears all existing data in the database before indexing.
-        Only one repository can be indexed at a time.
-
-        Returns:
-            Success message with indexing statistics
-        """
         logger.info(f"[MCP] Indexing repository at: {self.project_root}")
 
         try:
@@ -241,57 +205,41 @@ class MCPToolsRegistry:
             return f"Error indexing repository: {str(e)}"
 
     async def query_code_graph(self, natural_language_query: str) -> dict[str, Any]:
-        """Query the codebase knowledge graph using natural language.
-
-        This tool converts your natural language question into a Cypher query,
-        executes it against the knowledge graph, and returns structured results
-        with summaries.
-
-        Args:
-            natural_language_query: Your question in plain English (e.g.,
-                "What functions call UserService.create_user?")
-
-        Returns:
-            Dictionary containing:
-                - cypher_query: The generated Cypher query
-                - results: List of result rows from the graph
-                - summary: Natural language summary of findings
-        """
         logger.info(f"[MCP] query_code_graph: {natural_language_query}")
+        cypher_query = "N/A"
         try:
-            graph_data = await self._query_tool.function(natural_language_query)  # type: ignore[arg-type]
+            cypher_query = await self.cypher_gen.generate(natural_language_query)
+            results = self.ingestor.fetch_all(cypher_query)
+            summary = f"Successfully retrieved {len(results)} item(s) from the graph."
+            graph_data = GraphData(
+                query_used=cypher_query, results=results, summary=summary
+            )
             result_dict = cast(dict[str, Any], graph_data.model_dump())
             logger.info(
                 f"[MCP] Query returned {len(result_dict.get('results', []))} results"
             )
             return result_dict
+        except LLMGenerationError as e:
+            return {
+                "query_used": "N/A",
+                "results": [],
+                "summary": f"I couldn't translate your request into a database query. Error: {e}",
+            }
         except Exception as e:
             logger.error(f"[MCP] Error querying code graph: {e}", exc_info=True)
             return {
                 "error": str(e),
-                "query_used": "N/A",
+                "query_used": cypher_query,
                 "results": [],
                 "summary": f"Error executing query: {str(e)}",
             }
 
     async def get_code_snippet(self, qualified_name: str) -> dict[str, Any]:
-        """Retrieve source code for a function, class, or method by qualified name.
-
-        Args:
-            qualified_name: Fully qualified name (e.g., "app.services.UserService.create_user")
-
-        Returns:
-            Dictionary containing:
-                - file_path: Path to the source file
-                - src: The source code
-                - line_start: Starting line number
-                - line_end: Ending line number
-                - docstring: Docstring if available
-                - found: Whether the code was found
-        """
         logger.info(f"[MCP] get_code_snippet: {qualified_name}")
         try:
-            snippet = await self._code_tool.function(qualified_name=qualified_name)
+            snippet: CodeSnippet = await self.code_retriever.find_code_snippet(
+                qualified_name
+            )
             result = snippet.model_dump()
             if result is None:
                 return {
@@ -311,27 +259,15 @@ class MCPToolsRegistry:
     async def surgical_replace_code(
         self, file_path: str, target_code: str, replacement_code: str
     ) -> str:
-        """Surgically replace an exact code block in a file.
-
-        Uses diff-match-patch algorithm to replace only the exact target block,
-        leaving the rest of the file unchanged.
-
-        Args:
-            file_path: Relative path to the file from project root
-            target_code: Exact code block to replace
-            replacement_code: New code to insert
-
-        Returns:
-            Success message or error description
-        """
         logger.info(f"[MCP] surgical_replace_code in {file_path}")
         try:
-            result = await self._file_editor_tool.function(  # type: ignore[call-arg]
-                file_path=file_path,
-                target_code=target_code,
-                replacement_code=replacement_code,
+            success = self.file_editor.replace_code_block(
+                file_path, target_code, replacement_code
             )
-            return cast(str, result)
+            if success:
+                return f"Successfully applied surgical code replacement in: {file_path}"
+            else:
+                return f"Failed to apply surgical replacement in {file_path}. Target code not found or patches failed."
         except Exception as e:
             logger.error(f"[MCP] Error replacing code: {e}")
             return f"Error: {str(e)}"
@@ -339,16 +275,6 @@ class MCPToolsRegistry:
     async def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
-        """Read the contents of a file with optional pagination.
-
-        Args:
-            file_path: Relative path to the file from project root
-            offset: Line number to start reading from (0-based, optional)
-            limit: Maximum number of lines to read (optional)
-
-        Returns:
-            File contents (paginated if offset/limit provided) or error message
-        """
         logger.info(f"[MCP] read_file: {file_path} (offset={offset}, limit={limit})")
         try:
             if offset is not None or limit is not None:
@@ -373,28 +299,19 @@ class MCPToolsRegistry:
                     header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
                     return header + paginated_content
             else:
-                result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
-                return cast(str, result)
+                result = await self.file_reader.read_file(file_path)
+                if result.error_message:
+                    return f"Error: {result.error_message}"
+                return result.content or ""
 
         except Exception as e:
             logger.error(f"[MCP] Error reading file: {e}")
             return f"Error: {str(e)}"
 
     async def write_file(self, file_path: str, content: str) -> str:
-        """Write content to a file, creating it if it doesn't exist.
-
-        Args:
-            file_path: Relative path to the file from project root
-            content: Content to write to the file
-
-        Returns:
-            Success message or error description
-        """
         logger.info(f"[MCP] write_file: {file_path}")
         try:
-            result = await self._file_writer_tool.function(  # type: ignore[call-arg]
-                file_path=file_path, content=content
-            )
+            result = await self.file_writer.create_file(file_path, content)
             if result.success:
                 return f"Successfully wrote file: {file_path}"
             else:
@@ -404,30 +321,15 @@ class MCPToolsRegistry:
             return f"Error: {str(e)}"
 
     async def list_directory(self, directory_path: str = ".") -> str:
-        """List contents of a directory.
-
-        Args:
-            directory_path: Relative path to directory from project root (default: ".")
-
-        Returns:
-            Formatted directory listing or error message
-        """
         logger.info(f"[MCP] list_directory: {directory_path}")
         try:
-            result = self._directory_lister_tool.function(  # type: ignore[call-arg]
-                directory_path=directory_path
-            )
+            result = self.directory_lister.list_directory_contents(directory_path)
             return cast(str, result)
         except Exception as e:
             logger.error(f"[MCP] Error listing directory: {e}")
             return f"Error: {str(e)}"
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Get MCP tool schemas for all registered tools.
-
-        Returns:
-            List of tool schema dictionaries suitable for MCP's list_tools()
-        """
         return [
             {
                 "name": metadata.name,
@@ -438,25 +340,12 @@ class MCPToolsRegistry:
         ]
 
     def get_tool_handler(self, name: str) -> tuple[Callable[..., Any], bool] | None:
-        """Get the handler function and return type info for a tool.
-
-        Args:
-            name: Tool name to look up
-
-        Returns:
-            Tuple of (handler_function, returns_json) or None if tool not found
-        """
         metadata = self._tools.get(name)
         if metadata is None:
             return None
         return (metadata.handler, metadata.returns_json)
 
     def list_tool_names(self) -> list[str]:
-        """Get a list of all registered tool names.
-
-        Returns:
-            List of tool names
-        """
         return list(self._tools.keys())
 
 
@@ -465,16 +354,6 @@ def create_mcp_tools_registry(
     ingestor: MemgraphIngestor,
     cypher_gen: CypherGenerator,
 ) -> MCPToolsRegistry:
-    """Factory function to create an MCP tools registry.
-
-    Args:
-        project_root: Path to the target repository
-        ingestor: Memgraph ingestor instance
-        cypher_gen: Cypher query generator instance
-
-    Returns:
-        MCPToolsRegistry instance with all tools initialized
-    """
     return MCPToolsRegistry(
         project_root=project_root,
         ingestor=ingestor,
