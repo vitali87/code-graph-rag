@@ -1,6 +1,6 @@
 import asyncio
+import difflib
 import json
-import re
 import shlex
 import shutil
 import sys
@@ -14,23 +14,24 @@ from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
 from .config import (
-    EDIT_INDICATORS,
-    EDIT_REQUEST_KEYWORDS,
-    EDIT_TOOLS,
     ORANGE_STYLE,
     settings,
 )
-from .graph_updater import GraphUpdater, MemgraphIngestor
+from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
+from .services import QueryProtocol
+from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
+from .services.protobuf_service import ProtobufFileIngestor
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
@@ -38,26 +39,14 @@ from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.language import cli as language_cli
 from .tools.semantic_search import (
     create_get_function_source_tool,
     create_semantic_search_tool,
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
-# Style constants
 confirm_edits_globally = True
-
-# Pre-compile regex patterns
-_FILE_MODIFICATION_PATTERNS = [
-    re.compile(
-        r"(modified|updated|created|edited):\s*[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)"
-    ),
-    re.compile(
-        r"file\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)\s+(modified|updated|created|edited)"
-    ),
-    re.compile(r"writing\s+to\s+[\w/\\.-]+\.(py|js|ts|java|cpp|c|h|go|rs)"),
-]
-
 
 app = typer.Typer(
     name="graph-code",
@@ -68,13 +57,11 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
 console = Console(width=None, force_terminal=True)
 
-# Session logging
 session_log_file = None
 session_cancelled = False
-# # Global flag to control edit confirmation
-# confirm_edits = True
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -105,67 +92,66 @@ def get_session_context() -> str:
     return ""
 
 
-def is_edit_operation_request(question: str) -> bool:
-    """Check if the user's question/request would likely result in edit operations."""
-    question_lower = question.lower()
-    return any(keyword in question_lower for keyword in EDIT_REQUEST_KEYWORDS)
+def _display_tool_call_diff(
+    tool_name: str, tool_args: dict[str, Any], file_path: str | None = None
+) -> None:
+    if tool_name == "replace_code_surgically":
+        target = tool_args.get("target_code", "")
+        replacement = tool_args.get("replacement_code", "")
+        path = tool_args.get("file_path", file_path or "file")
 
+        console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
-async def _handle_rejection(
-    rag_agent: Any, message_history: list[Any], console: Console
-) -> Any:
-    """Handle user rejection of edits with agent acknowledgment."""
-    rejection_message = "The user has rejected the changes that were made. Please acknowledge this and consider if any changes need to be reverted."
-
-    with console.status("[bold yellow]Processing rejection...[/bold yellow]"):
-        rejection_response = await run_with_cancellation(
-            console,
-            rag_agent.run(rejection_message, message_history=message_history),
+        diff = difflib.unified_diff(
+            target.splitlines(keepends=True),
+            replacement.splitlines(keepends=True),
+            fromfile="before",
+            tofile="after",
+            lineterm="",
         )
 
-    if not (
-        isinstance(rejection_response, dict) and rejection_response.get("cancelled")
-    ):
-        rejection_markdown = Markdown(rejection_response.output)
-        console.print(
-            Panel(
-                rejection_markdown,
-                title="[bold yellow]Response to Rejection[/bold yellow]",
-                border_style="yellow",
-            )
-        )
-        message_history.extend(rejection_response.new_messages())
+        for line in diff:
+            line = line.rstrip("\n")
+            if line.startswith("+++") or line.startswith("---"):
+                console.print(f"[dim]{line}[/dim]")
+            elif line.startswith("@@"):
+                console.print(f"[cyan]{line}[/cyan]")
+            elif line.startswith("+"):
+                console.print(f"[green]{line}[/green]")
+            elif line.startswith("-"):
+                console.print(f"[red]{line}[/red]")
+            else:
+                console.print(line)
 
-    return rejection_response
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
+    elif tool_name == "create_new_file":
+        path = tool_args.get("file_path", "")
+        content = tool_args.get("content", "")
 
-def is_edit_operation_response(response_text: str) -> bool:
-    """Enhanced check if the response contains edit operations that need confirmation."""
-    response_lower = response_text.lower()
+        console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
-    # Check for tool usage
-    tool_usage = any(tool in response_lower for tool in EDIT_TOOLS)
+        for line in content.splitlines():
+            console.print(f"[green]+ {line}[/green]")
 
-    # Check for content indicators
-    content_indicators = any(
-        indicator in response_lower for indicator in EDIT_INDICATORS
-    )
+        console.print("[dim]" + "─" * 60 + "[/dim]")
 
-    # Check for regex patterns
-    pattern_match = any(
-        pattern.search(response_lower) for pattern in _FILE_MODIFICATION_PATTERNS
-    )
+    elif tool_name == "execute_shell_command":
+        command = tool_args.get("command", "")
+        console.print("\n[bold cyan]Shell command:[/bold cyan]")
+        console.print(f"[yellow]$ {command}[/yellow]")
 
-    return tool_usage or content_indicators or pattern_match
+    else:
+        console.print(f"    Arguments: {json.dumps(tool_args, indent=2)}")
 
 
 def _setup_common_initialization(repo_path: str) -> Path:
     """Common setup logic for both main and optimize functions."""
-    # Logger initialization
     logger.remove()
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
-    # Temporary directory cleanup
     project_root = Path(repo_path).resolve()
     tmp_dir = project_root / ".tmp"
     if tmp_dir.exists():
@@ -188,7 +174,6 @@ def _create_configuration_table(
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
 
-    # Add language row if provided (for optimization sessions)
     if language:
         table.add_row("Target Language", language)
 
@@ -203,7 +188,6 @@ def _create_configuration_table(
         "Cypher Model", f"{cypher_config.model_id} ({cypher_config.provider})"
     )
 
-    # Show endpoint for Ollama providers
     orch_endpoint = (
         orchestrator_config.endpoint
         if orchestrator_config.provider == "ollama"
@@ -221,7 +205,6 @@ def _create_configuration_table(
         if cypher_endpoint:
             table.add_row("Ollama Endpoint (Cypher)", cypher_endpoint)
 
-    # Show edit confirmation status
     confirmation_status = (
         "Enabled" if confirm_edits_globally else "Disabled (YOLO Mode)"
     )
@@ -241,7 +224,6 @@ async def run_optimization_loop(
     """Runs the optimization loop with proper confirmation handling."""
     global session_cancelled
 
-    # Initialize session logging
     init_session_log(project_root)
     console.print(
         f"[bold green]Starting {language} optimization session...[/bold green]"
@@ -260,7 +242,6 @@ async def run_optimization_loop(
         )
     )
 
-    # Initial optimization analysis
     instructions = [
         "Use your code retrieval and graph querying tools to understand the codebase structure",
         "Read relevant source files to identify optimization opportunities",
@@ -299,7 +280,6 @@ Remember: Propose changes first, wait for my approval, then implement.
     while True:
         try:
             if not first_run:
-                # Ask for user input on subsequent iterations
                 question = await asyncio.to_thread(
                     get_multiline_input, "[bold cyan]Your response[/bold cyan]"
                 )
@@ -309,71 +289,86 @@ Remember: Propose changes first, wait for my approval, then implement.
             if not question.strip():
                 continue
 
-            # Log user question
             log_session_event(f"USER: {question}")
 
-            # If previous thinking was cancelled, add session context
             if session_cancelled:
                 question_with_context = question + get_session_context()
                 session_cancelled = False
             else:
                 question_with_context = question
 
-            # Handle images in the question
             question_with_context = _handle_chat_images(
                 question_with_context, project_root
             )
 
-            with console.status(
-                "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
-            ):
-                response = await run_with_cancellation(
-                    console,
-                    rag_agent.run(
-                        question_with_context, message_history=message_history
-                    ),
-                )
+            deferred_results: DeferredToolResults | None = None
 
-                if isinstance(response, dict) and response.get("cancelled"):
-                    log_session_event("ASSISTANT: [Analysis was cancelled]")
-                    session_cancelled = True
-                    continue
-
-            # Display the response
-            markdown_response = Markdown(response.output)
-            console.print(
-                Panel(
-                    markdown_response,
-                    title="[bold green]Optimization Agent[/bold green]",
-                    border_style="green",
-                )
-            )
-
-            # Check if confirmation is needed for edit operations
-            if confirm_edits_globally and is_edit_operation_response(response.output):
-                console.print(
-                    "\n[bold yellow]⚠️  This optimization has performed file modifications.[/bold yellow]"
-                )
-
-                if not Confirm.ask(
-                    "[bold cyan]Do you want to keep these optimizations?[/bold cyan]"
+            while True:
+                with console.status(
+                    "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
                 ):
-                    console.print(
-                        "[bold red]❌ Optimizations rejected by user.[/bold red]"
+                    response = await run_with_cancellation(
+                        console,
+                        rag_agent.run(
+                            question_with_context,
+                            message_history=message_history,
+                            deferred_tool_results=deferred_results,
+                        ),
                     )
-                    await _handle_rejection(rag_agent, message_history, console)
-                    first_run = False
+
+                    if isinstance(response, dict) and response.get("cancelled"):
+                        log_session_event("ASSISTANT: [Analysis was cancelled]")
+                        session_cancelled = True
+                        break
+
+                if isinstance(response.output, DeferredToolRequests):
+                    requests = response.output
+                    deferred_results = DeferredToolResults()
+
+                    for call in requests.approvals:
+                        tool_args = call.args_as_dict()
+                        console.print(
+                            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
+                        )
+                        _display_tool_call_diff(call.tool_name, tool_args)
+
+                        if confirm_edits_globally:
+                            if Confirm.ask(
+                                "[bold cyan]Do you approve this optimization?[/bold cyan]"
+                            ):
+                                deferred_results.approvals[call.tool_call_id] = True
+                            else:
+                                feedback = Prompt.ask(
+                                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
+                                    default="",
+                                )
+                                denial_msg = (
+                                    feedback.strip()
+                                    if feedback.strip()
+                                    else "User rejected this optimization without feedback"
+                                )
+                                deferred_results.approvals[call.tool_call_id] = (
+                                    ToolDenied(denial_msg)
+                                )
+                        else:
+                            deferred_results.approvals[call.tool_call_id] = True
+
+                    message_history.extend(response.new_messages())
                     continue
-                else:
-                    console.print(
-                        "[bold green]✅ Optimizations approved by user.[/bold green]"
+
+                markdown_response = Markdown(response.output)
+                console.print(
+                    Panel(
+                        markdown_response,
+                        title="[bold green]Optimization Agent[/bold green]",
+                        border_style="green",
                     )
+                )
 
-            # Log assistant response
-            log_session_event(f"ASSISTANT: {response.output}")
+                log_session_event(f"ASSISTANT: {response.output}")
+                message_history.extend(response.new_messages())
+                break
 
-            # Add the original response to message history only if not rejected
-            message_history.extend(response.new_messages())
             first_run = False
 
         except KeyboardInterrupt:
@@ -417,14 +412,11 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     Checks for image file paths in the question, copies them to a temporary
     directory, and replaces the path in the question.
     """
-    # Use shlex to properly parse the question and handle escaped spaces
     try:
         tokens = shlex.split(question)
     except ValueError:
-        # Fallback to simple split if shlex fails
         tokens = question.split()
 
-    # Find image files in tokens
     image_extensions = (".png", ".jpg", ".jpeg", ".gif")
     image_files = [
         token
@@ -451,20 +443,13 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             shutil.copy(original_path, new_path)
             new_relative_path = new_path.relative_to(project_root)
 
-            # Find and replace all possible quoted/escaped versions of this path
-            # Try different forms the path might appear in the original question
             path_variants = [
-                # Backslash-escaped spaces: /path/with\ spaces.png
                 original_path_str.replace(" ", r"\ "),
-                # Single quoted: '/path/with spaces.png'
                 f"'{original_path_str}'",
-                # Double quoted: "/path/with spaces.png"
                 f'"{original_path_str}"',
-                # Unquoted: /path/with spaces.png
                 original_path_str,
             ]
 
-            # Try each variant and replace if found
             replaced = False
             for variant in path_variants:
                 if variant in updated_question:
@@ -505,17 +490,14 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
         """Handle Ctrl+C."""
         event.app.exit(exception=KeyboardInterrupt)
 
-    # Convert Rich markup to plain text using Rich's parser
     clean_prompt = Text.from_markup(prompt_text).plain
 
-    # Display the colored prompt first
     print_formatted_text(
         HTML(
             f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
         )
     )
 
-    # Use simple prompt without formatting to avoid alignment issues
     result = prompt(
         "",
         multiline=True,
@@ -531,15 +513,12 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
 async def run_chat_loop(
     rag_agent: Any, message_history: list[Any], project_root: Path
 ) -> None:
-    """Runs the main chat loop with proper edit confirmation."""
     global session_cancelled
 
-    # Initialize session logging
     init_session_log(project_root)
 
     while True:
         try:
-            # Get user input
             question = await asyncio.to_thread(
                 get_multiline_input, "[bold cyan]Ask a question[/bold cyan]"
             )
@@ -549,80 +528,85 @@ async def run_chat_loop(
             if not question.strip():
                 continue
 
-            # Log user question
             log_session_event(f"USER: {question}")
 
-            # If previous thinking was cancelled, add session context
             if session_cancelled:
                 question_with_context = question + get_session_context()
                 session_cancelled = False
             else:
                 question_with_context = question
 
-            # Handle images in the question
             question_with_context = _handle_chat_images(
                 question_with_context, project_root
             )
 
-            # Check if this might be an edit operation and warn user upfront
-            might_edit = is_edit_operation_request(question)
-            if confirm_edits_globally and might_edit:
-                console.print(
-                    "\n[bold yellow]⚠️  This request might result in file modifications.[/bold yellow]"
-                )
-                if not Confirm.ask(
-                    "[bold cyan]Do you want to proceed with this request?[/bold cyan]"
+            deferred_results: DeferredToolResults | None = None
+
+            while True:
+                with console.status(
+                    "[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]"
                 ):
-                    console.print("[bold red]❌ Request cancelled by user.[/bold red]")
-                    continue
-
-            with console.status(
-                "[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]"
-            ):
-                response = await run_with_cancellation(
-                    console,
-                    rag_agent.run(
-                        question_with_context, message_history=message_history
-                    ),
-                )
-
-                if isinstance(response, dict) and response.get("cancelled"):
-                    log_session_event("ASSISTANT: [Thinking was cancelled]")
-                    session_cancelled = True
-                    continue
-
-            # Display the response
-            markdown_response = Markdown(response.output)
-            console.print(
-                Panel(
-                    markdown_response,
-                    title="[bold green]Assistant[/bold green]",
-                    border_style="green",
-                )
-            )
-
-            # Check if the response actually contains edit operations
-            if confirm_edits_globally and is_edit_operation_response(response.output):
-                console.print(
-                    "\n[bold yellow]⚠️  The assistant has performed file modifications.[/bold yellow]"
-                )
-
-                if not Confirm.ask(
-                    "[bold cyan]Do you want to keep these changes?[/bold cyan]"
-                ):
-                    console.print("[bold red]❌ User rejected the changes.[/bold red]")
-                    await _handle_rejection(rag_agent, message_history, console)
-                    continue
-                else:
-                    console.print(
-                        "[bold green]✅ Changes accepted by user.[/bold green]"
+                    response = await run_with_cancellation(
+                        console,
+                        rag_agent.run(
+                            question_with_context,
+                            message_history=message_history,
+                            deferred_tool_results=deferred_results,
+                        ),
                     )
 
-            # Log assistant response
-            log_session_event(f"ASSISTANT: {response.output}")
+                    if isinstance(response, dict) and response.get("cancelled"):
+                        log_session_event("ASSISTANT: [Thinking was cancelled]")
+                        session_cancelled = True
+                        break
 
-            # Add the response to message history only if it wasn't rejected
-            message_history.extend(response.new_messages())
+                if isinstance(response.output, DeferredToolRequests):
+                    requests = response.output
+                    deferred_results = DeferredToolResults()
+
+                    for call in requests.approvals:
+                        tool_args = call.args_as_dict()
+                        console.print(
+                            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
+                        )
+                        _display_tool_call_diff(call.tool_name, tool_args)
+
+                        if confirm_edits_globally:
+                            if Confirm.ask(
+                                "[bold cyan]Do you approve this change?[/bold cyan]"
+                            ):
+                                deferred_results.approvals[call.tool_call_id] = True
+                            else:
+                                feedback = Prompt.ask(
+                                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
+                                    default="",
+                                )
+                                denial_msg = (
+                                    feedback.strip()
+                                    if feedback.strip()
+                                    else "User rejected this change without feedback"
+                                )
+                                deferred_results.approvals[call.tool_call_id] = (
+                                    ToolDenied(denial_msg)
+                                )
+                        else:
+                            deferred_results.approvals[call.tool_call_id] = True
+
+                    message_history.extend(response.new_messages())
+                    continue
+
+                markdown_response = Markdown(response.output)
+                console.print(
+                    Panel(
+                        markdown_response,
+                        title="[bold green]Assistant[/bold green]",
+                        border_style="green",
+                    )
+                )
+
+                log_session_event(f"ASSISTANT: {response.output}")
+                message_history.extend(response.new_messages())
+                break
 
         except KeyboardInterrupt:
             break
@@ -635,11 +619,10 @@ def _update_single_model_setting(role: str, model_string: str) -> None:
     """Update a single model setting (orchestrator or cypher)."""
     provider, model = settings.parse_model_string(model_string)
 
-    # Get current config to preserve existing values like API keys from env vars
     if role == "orchestrator":
         current_config = settings.active_orchestrator_config
         set_method = settings.set_orchestrator
-    else:  # cypher
+    else:
         current_config = settings.active_cypher_config
         set_method = settings.set_cypher
 
@@ -653,7 +636,6 @@ def _update_single_model_setting(role: str, model_string: str) -> None:
         "service_account_file": current_config.service_account_file,
     }
 
-    # Override with provider-specific defaults only if not already set
     if provider == "ollama" and not kwargs["endpoint"]:
         kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
         kwargs["api_key"] = "ollama"
@@ -688,10 +670,8 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         graph_data = ingestor.export_graph_to_dict()
         output_path = Path(output)
 
-        # Ensure the output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write JSON with proper formatting
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(graph_data, f, indent=2, ensure_ascii=False)
 
@@ -709,9 +689,8 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -> Any:
+def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> Any:
     """Initializes all services and creates the RAG agent."""
-    # Validate provider configurations before initializing any LLM services
     from .providers.base import get_provider
 
     def _validate_provider_config(role: str, config: Any) -> None:
@@ -731,7 +710,6 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
         except Exception as e:
             raise ValueError(f"{role.title()} configuration error: {e}") from e
 
-    # Validate both provider configurations
     _validate_provider_config("orchestrator", settings.active_orchestrator_config)
     _validate_provider_config("cypher", settings.active_cypher_config)
 
@@ -844,12 +822,10 @@ def start(
     """Starts the Codebase RAG CLI."""
     global confirm_edits_globally
 
-    # Set confirmation mode based on flag
     confirm_edits_globally = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
-    # Validate output option usage
     if output and not update_graph:
         console.print(
             "[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]"
@@ -876,13 +852,11 @@ def start(
                 ingestor.clean_database()
             ingestor.ensure_constraints()
 
-            # Load parsers and queries
             parsers, queries = load_parsers()
 
             updater = GraphUpdater(ingestor, repo_to_update, parsers, queries)
             updater.run()
 
-            # Export graph if output file specified
             if output:
                 console.print(f"[bold cyan]Exporting graph to: {output}[/bold cyan]")
                 if not _export_graph_to_file(ingestor, output):
@@ -897,6 +871,50 @@ def start(
         console.print("\n[bold red]Application terminated by user.[/bold red]")
     except ValueError as e:
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
+
+
+@app.command()
+def index(
+    repo_path: str | None = typer.Option(
+        None, "--repo-path", help="Path to the target repository to index."
+    ),
+    output_proto_dir: str = typer.Option(
+        ...,
+        "-o",
+        "--output-proto-dir",
+        help="Required. Path to the output directory for the protobuf index file(s).",
+    ),
+    split_index: bool = typer.Option(
+        False,
+        "--split-index",
+        help="Write index to separate nodes.bin and relationships.bin files.",
+    ),
+) -> None:
+    """Parses a codebase and creates a portable binary index file."""
+    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    repo_to_index = Path(target_repo_path)
+
+    console.print(f"[bold green]Indexing codebase at: {repo_to_index}[/bold green]")
+    console.print(
+        f"[bold cyan]Output will be written to: {output_proto_dir}[/bold cyan]"
+    )
+
+    try:
+        ingestor = ProtobufFileIngestor(
+            output_path=output_proto_dir, split_index=split_index
+        )
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(ingestor, repo_to_index, parsers, queries)
+
+        updater.run()
+
+        console.print(
+            "[bold green]Indexing process completed successfully![/bold green]"
+        )
+    except Exception as e:
+        console.print(f"[bold red]An error occurred during indexing: {e}[/bold red]")
+        logger.error("Indexing failed", exc_info=True)
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -958,7 +976,6 @@ async def main_optimize_async(
         f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
     )
 
-    # Display configuration with language included
     table = _create_configuration_table(
         str(project_root), "Optimization Session Configuration", language
     )
@@ -1018,7 +1035,6 @@ def optimize(
     """Optimize a codebase for a specific programming language."""
     global confirm_edits_globally
 
-    # Set confirmation mode based on flag
     confirm_edits_globally = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
@@ -1072,6 +1088,46 @@ def mcp_server() -> None:
         )
     except Exception as e:
         console.print(f"[bold red]MCP Server Error: {e}[/bold red]")
+
+
+@app.command(name="graph-loader")
+def graph_loader_command(
+    graph_file: str = typer.Argument(..., help="Path to the exported graph JSON file"),
+) -> None:
+    """Load and display summary of an exported graph file."""
+    from .graph_loader import load_graph
+
+    try:
+        graph = load_graph(graph_file)
+        summary = graph.summary()
+
+        console.print("[bold green]Graph Summary:[/bold green]")
+        console.print(f"  Total nodes: {summary['total_nodes']}")
+        console.print(f"  Total relationships: {summary['total_relationships']}")
+        console.print(f"  Node types: {list(summary['node_labels'].keys())}")
+        console.print(
+            f"  Relationship types: {list(summary['relationship_types'].keys())}"
+        )
+        console.print(f"  Exported at: {summary['metadata']['exported_at']}")
+
+    except Exception as e:
+        console.print(f"[bold red]Failed to load graph: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command(
+    name="language",
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+)
+def language_command(ctx: typer.Context) -> None:
+    """Manage language grammars (add, remove, list).
+
+    Examples:
+        cgr language add-grammar python
+        cgr language list-languages
+        cgr language remove-language python
+    """
+    language_cli(ctx.args, standalone_mode=False)
 
 
 if __name__ == "__main__":

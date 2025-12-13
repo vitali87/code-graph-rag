@@ -1,16 +1,9 @@
-"""
-Comprehensive Rust smart pointers and advanced memory management testing.
-Tests Box, Rc, Arc, RefCell, Weak references, custom smart pointers,
-and complex ownership patterns for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def rust_smart_pointers_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_smart_pointers_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Smart pointers test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_smart_pointers_test"
 version = "0.1.0"
@@ -293,18 +284,9 @@ fn box_raw_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Box patterns are detected
     box_calls = [
         call
         for call in calls
@@ -698,18 +680,9 @@ fn test_rc_trait_objects() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Rc patterns are detected
     rc_calls = [
         call
         for call in calls
@@ -1156,18 +1129,9 @@ fn test_arc_trait_objects() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Arc patterns are detected
     arc_calls = [
         call
         for call in calls
@@ -1585,18 +1549,9 @@ fn test_advanced_refcell() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify RefCell patterns are detected
     refcell_calls = [
         call
         for call in calls
@@ -2070,18 +2025,9 @@ fn test_thread_safe_ptr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_smart_pointers_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_smart_pointers_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify custom smart pointer patterns are detected
     custom_calls = [
         call
         for call in calls

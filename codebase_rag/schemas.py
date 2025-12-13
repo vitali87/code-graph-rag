@@ -14,7 +14,7 @@ class GraphData(BaseModel):
     @classmethod
     def _format_results(cls, v: Any) -> list[dict[str, Any]]:
         if not isinstance(v, list):
-            return []  # Return empty list instead of v
+            return []
 
         clean_results = []
         for row in v:

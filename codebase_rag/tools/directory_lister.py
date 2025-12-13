@@ -34,15 +34,11 @@ class DirectoryLister:
         Resolves the file path relative to the root and ensures it's within
         the project directory.
         """
-        # Accommodate both relative and absolute paths from the agent
         if Path(file_path).is_absolute():
-            # If absolute, it should still be within the root path
             safe_path = Path(file_path).resolve()
         else:
-            # If relative, resolve it against the root path
             safe_path = (self.project_root / file_path).resolve()
 
-        # Enhanced security check to prevent directory traversal attacks
         try:
             safe_path.relative_to(self.project_root.resolve())
         except ValueError as e:
@@ -50,7 +46,6 @@ class DirectoryLister:
                 "Access denied: Cannot access files outside the project root."
             ) from e
 
-        # Additional check for symlinks that might bypass relative_to
         if not str(safe_path).startswith(str(self.project_root.resolve())):
             raise PermissionError(
                 "Access denied: Cannot access files outside the project root."

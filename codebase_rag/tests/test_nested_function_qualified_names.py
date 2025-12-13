@@ -1,15 +1,9 @@
-"""
-Test nested function qualified names - ensuring functions defined inside other functions
-have correct qualified names that reflect their lexical scope.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -18,7 +12,6 @@ def nested_functions_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "nested_functions_test"
     project_path.mkdir()
 
-    # Create package.json for JavaScript project
     package_json = project_path / "package.json"
     package_json.write_text(
         """
@@ -80,27 +73,12 @@ class ServiceFactory {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=nested_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(nested_functions_project, mock_ingestor)
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # These should be correctly nested object methods
     expected_nested_functions = [
         f"{project_name}.object_methods_nested.createApiClient.get",
         f"{project_name}.object_methods_nested.createApiClient.post",
@@ -109,7 +87,6 @@ class ServiceFactory {
         f"{project_name}.object_methods_nested.ServiceFactory.createService.validate",
     ]
 
-    # Verify that object methods are correctly nested
     missing_functions = []
     for expected in expected_nested_functions:
         if expected not in created_functions:
@@ -208,51 +185,30 @@ function DatabaseService(connectionString) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=nested_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(nested_functions_project, mock_ingestor)
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # These should be the CORRECT qualified names for arrow functions in constructors
-    # Note: The fix correctly nests arrow functions within their parent function/class context
     expected_nested_functions = [
-        # Arrow functions correctly nested within DatabaseService
         f"{project_name}.arrow_functions_in_constructors.DatabaseService.connect",
         f"{project_name}.arrow_functions_in_constructors.DatabaseService.query",
         f"{project_name}.arrow_functions_in_constructors.DatabaseService.createBatch",
         f"{project_name}.arrow_functions_in_constructors.DatabaseService.addToBatch",
         f"{project_name}.arrow_functions_in_constructors.DatabaseService.executeBatch",
-        # Arrow functions correctly nested within UserService.constructor
         f"{project_name}.arrow_functions_in_constructors.UserService.constructor.fetchUser",
         f"{project_name}.arrow_functions_in_constructors.UserService.constructor.processUser",
         f"{project_name}.arrow_functions_in_constructors.UserService.constructor.createValidator",
-        # Arrow functions correctly nested within UserService.initialize
         f"{project_name}.arrow_functions_in_constructors.UserService.initialize.onError",
         f"{project_name}.arrow_functions_in_constructors.UserService.initialize.retry",
     ]
 
-    # Verify that arrow functions are now correctly nested (not at module level)
     missing_functions = []
     for expected in expected_nested_functions:
         if expected not in created_functions:
             missing_functions.append(expected)
 
-    # Also verify that the old INCORRECT module-level names are NOT created
     incorrect_module_level_names = [
         f"{project_name}.arrow_functions_in_constructors.connect",
         f"{project_name}.arrow_functions_in_constructors.query",
@@ -333,27 +289,12 @@ class ServiceFactory {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=nested_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(nested_functions_project, mock_ingestor)
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify that ES6 export functions are correctly nested (not at module level)
     incorrect_module_level_names = [
         f"{project_name}.export_functions_nested.helper",
         f"{project_name}.export_functions_nested.validator",
@@ -438,50 +379,29 @@ class ModuleFactory {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=nested_functions_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(nested_functions_project, mock_ingestor)
 
     project_name = nested_functions_project.name
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # These should be the CORRECT qualified names for nested CommonJS export functions
-    # Note: The fix correctly nests CommonJS exports within their parent function context
     expected_nested_functions = [
-        # CommonJS exports inside createUtilities function (correctly nested)
         f"{project_name}.commonjs_exports_nested.createUtilities.helper",
         f"{project_name}.commonjs_exports_nested.createUtilities.formatter",
         f"{project_name}.commonjs_exports_nested.createUtilities.validator",
         f"{project_name}.commonjs_exports_nested.createUtilities.processor",
         f"{project_name}.commonjs_exports_nested.createUtilities.loader",
-        # CommonJS exports inside ModuleFactory.generateModule (correctly nested)
         f"{project_name}.commonjs_exports_nested.ModuleFactory.generateModule.generated",
         f"{project_name}.commonjs_exports_nested.ModuleFactory.generateModule.methodGenerated",
-        # IIFE exports (should be nested under the IIFE function)
         f"{project_name}.commonjs_exports_nested.iife_export",
         f"{project_name}.commonjs_exports_nested.iife_function",
     ]
 
-    # Verify that CommonJS exports are now correctly nested (not at module level)
     missing_functions = []
     for expected in expected_nested_functions:
         if expected not in created_functions:
             missing_functions.append(expected)
 
-    # Also verify that the old INCORRECT module-level names are NOT created
     incorrect_module_level_names = [
         f"{project_name}.commonjs_exports_nested.helper",
         f"{project_name}.commonjs_exports_nested.formatter",

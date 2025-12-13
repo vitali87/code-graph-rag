@@ -1,17 +1,9 @@
-"""
-Comprehensive C++ constexpr and compile-time programming testing.
-Tests constexpr functions, variables, if constexpr, consteval, template metaprogramming,
-and compile-time computation patterns for graph building applications.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -20,7 +12,6 @@ def cpp_constexpr_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_constexpr_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -336,18 +327,10 @@ void demonstrateBasicConstexpr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constexpr_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constexpr_project, mock_ingestor)
 
     project_name = cpp_constexpr_project.name
 
-    # Expected classes and functions with constexpr usage
     expected_classes = [
         f"{project_name}.basic_constexpr.MathUtilities",
         f"{project_name}.basic_constexpr.ConstexprDemo",
@@ -361,31 +344,15 @@ void demonstrateBasicConstexpr() {
         f"{project_name}.basic_constexpr.demonstrateBasicConstexpr",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -673,32 +640,16 @@ void demonstrateConstexprIfAndTemplates() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constexpr_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constexpr_project, mock_ingestor)
 
     project_name = cpp_constexpr_project.name
 
-    # Expected classes with constexpr if and templates
     expected_classes = [
         f"{project_name}.constexpr_if_templates.ConstexprIfDemo",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 constexpr if class, found {len(found_classes)}: {found_classes}"
@@ -816,24 +767,11 @@ void demonstrateComprehensiveConstexpr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_constexpr_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_constexpr_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive constexpr coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -844,7 +782,6 @@ void demonstrateComprehensiveConstexpr() {
         f"Expected at least 2 comprehensive constexpr calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that constexpr parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
     print(

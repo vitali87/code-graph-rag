@@ -1,17 +1,9 @@
-"""
-Comprehensive C++20 designated initializers and consteval testing.
-Tests designated initializers, consteval immediate functions, lambda init captures,
-and their integration for graph building applications.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -20,7 +12,6 @@ def cpp_designated_consteval_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_designated_consteval_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -308,18 +299,10 @@ void demonstrateDesignatedInitializers() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_designated_consteval_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_designated_consteval_project, mock_ingestor)
 
     project_name = cpp_designated_consteval_project.name
 
-    # Expected designated initializer functions and classes
     expected_functions = [
         f"{project_name}.designated_initializers.testBasicDesignatedInitializers",
         f"{project_name}.designated_initializers.testNestedDesignatedInitializers",
@@ -334,31 +317,15 @@ void demonstrateDesignatedInitializers() {
         f"{project_name}.designated_initializers.GraphNode",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -683,18 +650,10 @@ void demonstrateConsteval() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_designated_consteval_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_designated_consteval_project, mock_ingestor)
 
     project_name = cpp_designated_consteval_project.name
 
-    # Expected consteval functions
     expected_functions = [
         f"{project_name}.consteval_functions.square",
         f"{project_name}.consteval_functions.power_of_two",
@@ -704,16 +663,8 @@ void demonstrateConsteval() {
         f"{project_name}.consteval_functions.demonstrateConsteval",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1030,31 +981,17 @@ void demonstrateLambdaInitCaptures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_designated_consteval_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_designated_consteval_project, mock_ingestor)
 
-    # Verify comprehensive coverage
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive coverage of all advanced features
     total_calls = len(call_relationships)
 
     assert total_calls >= 15, (
         f"Expected at least 15 total calls across all tests, found {total_calls}"
     )
 
-    # Test that parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
     print(
@@ -1072,4 +1009,4 @@ def test_comprehensive_modern_cpp_complete() -> None:
     print("   - Real-world usage patterns and integration examples")
     print("   - RAII patterns with lambda captures")
     print("   - State machines and factory patterns with modern C++")
-    assert True  # Always passes to indicate completion
+    assert True

@@ -1,16 +1,10 @@
-"""
-Comprehensive TypeScript advanced types parsing and testing.
-Tests generics, utility types, conditional types, mapped types, template literal types, and advanced type patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,12 +13,10 @@ def typescript_advanced_types_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "typescript_advanced_types_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "types").mkdir()
     (project_path / "utils").mkdir()
     (project_path / "examples").mkdir()
 
-    # Create base files
     (project_path / "types" / "base.ts").write_text(
         """
 // Base types for advanced type examples
@@ -401,21 +393,9 @@ console.log(container.getValue());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
-    # Check for generic classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     generic_classes = [
         call
@@ -437,12 +417,7 @@ console.log(container.getValue());
         f"Expected at least 4 generic classes, found {len(generic_classes)}"
     )
 
-    # Check for generic functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     generic_functions = [
         call
@@ -458,12 +433,7 @@ console.log(container.getValue());
         f"Expected at least 4 generic functions, found {len(generic_functions)}"
     )
 
-    # Check for interfaces with generics
-    interface_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_calls = get_nodes(mock_ingestor, "Interface")
 
     generic_interfaces = [
         call
@@ -836,21 +806,9 @@ console.log('API routes:', apiRoutes);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
-    # Check for utility type classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     utility_classes = [
         call
@@ -871,12 +829,7 @@ console.log('API routes:', apiRoutes);
         f"Expected at least 4 utility type classes, found {len(utility_classes)}"
     )
 
-    # Check for interfaces with utility types
-    interface_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_calls = get_nodes(mock_ingestor, "Interface")
 
     utility_interfaces = [
         call
@@ -1252,21 +1205,9 @@ console.log('Route parsing and conditional types working correctly');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
-    # Check for conditional type classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     conditional_classes = [
         call
@@ -1287,12 +1228,7 @@ console.log('Route parsing and conditional types working correctly');
         f"Expected at least 4 conditional type classes, found {len(conditional_classes)}"
     )
 
-    # Check for conditional type functions
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     conditional_functions = [
         call
@@ -1690,21 +1626,9 @@ console.log('Template literal types are working correctly');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
-    # Check for template literal type classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     template_literal_classes = [
         call
@@ -1829,24 +1753,15 @@ console.log('All advanced type patterns working correctly');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=typescript_advanced_types_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(typescript_advanced_types_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive advanced type calls
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1857,12 +1772,7 @@ console.log('All advanced type patterns working correctly');
         f"Expected at least 3 comprehensive advanced type calls, found {len(comprehensive_calls)}"
     )
 
-    # Check all advanced type patterns were created
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    function_calls = get_nodes(mock_ingestor, "Function")
 
     comprehensive_functions = [
         call
@@ -1875,12 +1785,7 @@ console.log('All advanced type patterns working correctly');
         f"Expected at least 1 advanced type function, found {len(comprehensive_functions)}"
     )
 
-    # Check comprehensive classes
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_calls = get_nodes(mock_ingestor, "Class")
 
     comprehensive_classes = [
         call

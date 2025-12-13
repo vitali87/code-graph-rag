@@ -1,12 +1,10 @@
 import os
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock, call
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -27,22 +25,12 @@ def temp_project(temp_repo: Path) -> Path:
 
 
 def test_function_call_relationships_are_created(
-    temp_project: Path, mock_ingestor: MemgraphIngestor
+    temp_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """
     Tests that GraphUpdater correctly identifies and creates CALLS relationships.
     """
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=temp_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(temp_project, mock_ingestor)
 
     project_name = temp_project.name
     main_func_qn = f"{project_name}.main.main_func"
@@ -62,13 +50,8 @@ def test_function_call_relationships_are_created(
         ),
     ]
 
-    actual_calls = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    # Check that we have at least the expected calls (we may have additional module-level calls)
     assert len(actual_calls) >= len(expected_calls)
     assert expected_calls[0] in actual_calls
     assert expected_calls[1] in actual_calls

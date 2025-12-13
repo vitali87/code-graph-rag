@@ -1,8 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_math_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -51,25 +50,11 @@ local max_value = math_utils.get_max_value({10, 20, 30})
 return math_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined math functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 5, (
         f"Expected at least 5 DEFINES relationships, got {len(defines_rels)}"
@@ -133,25 +118,11 @@ local gsub_result = string_utils.replace_word("hello world", "world", "universe"
 return string_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined string functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 6, (
         f"Expected at least 6 DEFINES relationships, got {len(defines_rels)}"
@@ -218,25 +189,11 @@ table_utils.iterate_table({1, 2, 3}, print)
 return table_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined table functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 7, (
         f"Expected at least 7 DEFINES relationships, got {len(defines_rels)}"
@@ -314,25 +271,11 @@ local clock_time = os_utils.get_process_time()
 return os_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined OS functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 8, (
         f"Expected at least 8 DEFINES relationships, got {len(defines_rels)}"
@@ -421,25 +364,11 @@ local temp_file = io_utils.create_temp_file()
 return io_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined IO functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 10, (
         f"Expected at least 10 DEFINES relationships, got {len(defines_rels)}"
@@ -523,25 +452,11 @@ local upvalue = debug_utils.get_upvalue(print, 1)
 return debug_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined debug functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 9, (
         f"Expected at least 9 DEFINES relationships, got {len(defines_rels)}"
@@ -635,25 +550,11 @@ local searchpath = package_utils.search_module_path("module", package.path)
 return package_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined package functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 10, (
         f"Expected at least 10 DEFINES relationships, got {len(defines_rels)}"
@@ -801,25 +702,11 @@ local memory = builtin_utils.manage_memory("count")
 return builtin_utils
 """)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    # Verify DEFINES relationships for user-defined builtin wrapper functions
-    defines_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    ]
+    defines_rels = get_relationships(mock_ingestor, "DEFINES")
 
-    # Verify CALLS relationships for user-defined function calls
-    calls_rels = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    calls_rels = get_relationships(mock_ingestor, "CALLS")
 
     assert len(defines_rels) >= 14, (
         f"Expected at least 14 DEFINES relationships, got {len(defines_rels)}"

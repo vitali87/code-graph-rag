@@ -1,10 +1,3 @@
-"""
-Test the provider-explicit configuration system.
-This tests the fixes for GitHub issues related to:
-- Environment variables being ignored when explicit providers are configured
-- Custom model names with colons not being parsed correctly
-"""
-
 import os
 from unittest.mock import patch
 
@@ -31,13 +24,11 @@ class TestProviderConfiguration:
         ):
             config = AppConfig()
 
-            # Test orchestrator config
             orch_config = config.active_orchestrator_config
             assert orch_config.provider == "ollama"
             assert orch_config.model_id == "llama3.2"
             assert orch_config.endpoint == "http://localhost:11434/v1"
 
-            # Test cypher config
             cypher_config = config.active_cypher_config
             assert cypher_config.provider == "google"
             assert cypher_config.model_id == "gemini-2.5-flash"
@@ -61,7 +52,6 @@ class TestProviderConfiguration:
         ):
             config = AppConfig()
 
-            # Should use Ollama, not fallback to other providers
             orch_config = config.active_orchestrator_config
             assert orch_config.provider == "ollama", (
                 "Should use Ollama from env vars, not default to other providers"
@@ -80,17 +70,14 @@ class TestProviderConfiguration:
         """
         config = AppConfig()
 
-        # Test parsing custom model names that contain colons
         provider, model = config.parse_model_string("openai:gpt-oss:20b")
         assert provider == "openai"
         assert model == "gpt-oss:20b"
 
-        # Test other custom names with colons
         provider, model = config.parse_model_string("ollama:custom-model:v2.1")
         assert provider == "ollama"
         assert model == "custom-model:v2.1"
 
-        # Test names with multiple colons
         provider, model = config.parse_model_string("google:custom:model:v1.0")
         assert provider == "google"
         assert model == "custom:model:v1.0"
@@ -99,7 +86,6 @@ class TestProviderConfiguration:
         """Test that runtime provider overrides work correctly."""
         config = AppConfig()
 
-        # Set orchestrator override
         config.set_orchestrator(
             "openai", "gpt-4o", api_key="test-key", endpoint="https://api.openai.com/v1"
         )
@@ -110,7 +96,6 @@ class TestProviderConfiguration:
         assert orch_config.api_key == "test-key"
         assert orch_config.endpoint == "https://api.openai.com/v1"
 
-        # Set cypher override
         config.set_cypher(
             "google", "gemini-2.5-flash", api_key="google-key", provider_type="gla"
         )
@@ -136,13 +121,11 @@ class TestProviderConfiguration:
         ):
             config = AppConfig()
 
-            # Orchestrator should be Google
             orch_config = config.active_orchestrator_config
             assert orch_config.provider == "google"
             assert orch_config.model_id == "gemini-2.5-pro"
             assert orch_config.api_key == "google-key"
 
-            # Cypher should be Ollama
             cypher_config = config.active_cypher_config
             assert cypher_config.provider == "ollama"
             assert cypher_config.model_id == "codellama"
@@ -150,12 +133,9 @@ class TestProviderConfiguration:
 
     def test_default_fallback_behavior(self) -> None:
         """Test that defaults work when no explicit provider is configured."""
-        # Create a config that doesn't load from .env file
         with patch.dict(os.environ, {}, clear=True):
-            # Create config with empty settings (disabling .env file loading)
-            config = AppConfig(_env_file=None)
+            config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
 
-            # Should default to Ollama
             orch_config = config.active_orchestrator_config
             assert orch_config.provider == "ollama"
             assert orch_config.model_id == "llama3.2"
@@ -168,12 +148,10 @@ class TestProviderConfiguration:
         """Test that bare model names default to Ollama provider."""
         config = AppConfig()
 
-        # Bare model name should default to Ollama
         provider, model = config.parse_model_string("llama3.2")
         assert provider == "ollama"
         assert model == "llama3.2"
 
-        # Another bare model name
         provider, model = config.parse_model_string("mistral-7b")
         assert provider == "ollama"
         assert model == "mistral-7b"
@@ -182,12 +160,10 @@ class TestProviderConfiguration:
         """Test batch size validation and resolution."""
         config = AppConfig()
 
-        # Valid batch sizes
-        assert config.resolve_batch_size(None) == 1000  # Default from config
+        assert config.resolve_batch_size(None) == 1000
         assert config.resolve_batch_size(5000) == 5000
         assert config.resolve_batch_size(1) == 1
 
-        # Invalid batch sizes should raise ValueError
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
             config.resolve_batch_size(0)
 

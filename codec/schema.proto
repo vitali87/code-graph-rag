@@ -1,0 +1,234 @@
+syntax = "proto3";
+
+package graphcode.v1;
+
+import "google/protobuf/struct.proto";
+
+
+/*
+
+We are parsing the entire codebase into ASTs & putting that into a codegraph.
+This makes the Project node the top level root, and everything then will span from it.
+
+Roughly, we're going to be looking at something like this:
+
+Project
+    Folder
+        File
+        Module
+            Function
+            Class
+                Method
+    Package
+        Module
+            Function
+            Class
+                Method
+    ExternalPackage
+
+We can't build a literal nested tree like so because we would have duplicated results.
+I think the correct way to go about this would be to have IDs for each nested structure.
+Then the parents/nodes that have an outgoing connection to the child node will have a
+list of IDs of the children with which they're connected with. Flattened, this would bring
+us to something like this:
+
+Project
+    - List of Package IDs for CONTAINS_PACKAGE rels
+    - List of ExternalPackage IDs for DEPENDS_ON_EXTERNAL rels (or whatever it is; need to double check)
+    - List of Folder IDs for CONTAINS_FOLDER rels
+Folder
+    - List of File IDs for CONTAINS_FILE rels
+    - List of Module IDs for CONTAINS_MODULE rels
+File
+Module
+    - List of Function IDs for DEFINES rels
+    - List of Class IDs for DEFINES rels
+ModuleImplementation
+    - TODO: think about this
+ModuleInterface
+    - TODO: think about this
+Function
+    - List of Function IDs for CALLS rels
+    - List of Method IDs for CALLS rels
+Class
+    - List of Method IDs for DEFINES_METHOD rels
+    - List of Class IDs for INHERITS rels
+Method
+    - List of Method IDs for CALLS rels
+    - List of Method IDs for OVERRIDES rels
+    - List of Function IDs for CALLS rels
+Package
+    - List of Module IDs for CONTAINS_MODULE rels
+ExternalPackage
+
+
+And then the rest of the params are just direct translations from what's in the
+memgraph schema, nothing special. Not worth listing in the tree. Can just check the shema.
+
+So that's the structure of the schema. I guess the next thing is how do we parse it into
+that structure?
+
+Well, we want to do everything the same up to the GraphUpdate part in the system architecture.
+Beyond that, we need a new Ingestor class in the Data Layer, next to the Memgraph Ingestor.
+This new Ingestor won't be communicating to Memgraph Database but instead be outputting
+a protobuf file.
+*/
+
+// =======================================================
+// Top-Level Container Message
+// =======================================================
+
+message GraphCodeIndex {
+    repeated Node nodes = 1;
+    repeated Relationship relationships = 2;
+  }
+
+  // =======================================================
+  // Generic Node and Relationship Messages
+  // =======================================================
+
+  // A generic container for any node in the graph.
+  // The 'oneof' field holds the specific, strongly-typed payload.
+  message Node {
+    oneof payload {
+      Project project = 1;
+      Package package = 2;
+      Folder folder = 3;
+      Module module = 4;
+      Class class_node = 5;
+      Function function = 6;
+      Method method = 7;
+      File file = 8;
+      ExternalPackage external_package = 9;
+      ModuleImplementation module_implementation = 10;
+      ModuleInterface module_interface = 11;
+    }
+  }
+
+  // Represents a single, directed relationship between two nodes.
+  // The source and target IDs are the primary keys of the respective nodes.
+  message Relationship {
+    enum RelationshipType {
+      RELATIONSHIP_TYPE_UNSPECIFIED = 0;
+      CONTAINS_PACKAGE = 1;
+      CONTAINS_FOLDER = 2;
+      CONTAINS_FILE = 3;
+      CONTAINS_MODULE = 4;
+      DEFINES = 5;
+      DEFINES_METHOD = 6;
+      IMPORTS = 7;
+      INHERITS = 8;
+      OVERRIDES = 9;
+      CALLS = 10;
+      DEPENDS_ON_EXTERNAL = 11;
+      IMPLEMENTS_MODULE = 12;
+      IMPLEMENTS = 13;
+    }
+
+    RelationshipType type = 1;
+    string source_id = 2; // The Primary Key of the source node
+    string target_id = 3; // The Primary Key of the target node
+    google.protobuf.Struct properties = 4;
+    string source_label = 5; // The label of the source node
+    string target_label = 6; // The label of the target node
+  }
+
+
+  // =======================================================
+  // Specific Node Payload Messages
+  // =======================================================
+
+  message Project {
+    // Primary Key
+    string name = 1;
+  }
+
+  message Package {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+  }
+
+  message Folder {
+    // Primary Key
+    string path = 1;
+
+    string name = 2;
+  }
+
+  message File {
+    // Primary Key
+    string path = 1;
+
+    string name = 2;
+    string extension = 3;
+  }
+
+  message Module {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+  }
+
+  // C++20 only
+  message ModuleImplementation {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+    string implements_module = 4;
+  }
+
+  // C++20 only
+  message ModuleInterface {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+  }
+
+  message ExternalPackage {
+    // Primary Key
+    string name = 1;
+  }
+
+  message Function {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string docstring = 3;
+    int32 start_line = 4;
+    int32 end_line = 5;
+    repeated string decorators = 6;
+    bool is_exported = 7;
+  }
+
+  message Method {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string docstring = 3;
+    int32 start_line = 4;
+    int32 end_line = 5;
+    repeated string decorators = 6;
+  }
+
+  message Class {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string docstring = 3;
+    int32 start_line = 4;
+    int32 end_line = 5;
+    repeated string decorators = 6;
+    bool is_exported = 7;
+  }

@@ -1,5 +1,4 @@
 import json
-import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +36,6 @@ class GraphLoader:
         self._nodes: list[GraphNode] | None = None
         self._relationships: list[GraphRelationship] | None = None
 
-        # Performance indexes
         self._nodes_by_id: dict[int, GraphNode] = {}
         self._nodes_by_label: dict[str, list[GraphNode]] = defaultdict(list)
         self._outgoing_rels: dict[int, list[GraphRelationship]] = defaultdict(list)
@@ -56,7 +54,6 @@ class GraphLoader:
         if self._data is None:
             raise RuntimeError("Failed to load data from file")
 
-        # Parse nodes and build indexes
         self._nodes = []
         for node_data in self._data["nodes"]:
             node = GraphNode(
@@ -66,12 +63,10 @@ class GraphLoader:
             )
             self._nodes.append(node)
 
-            # Build indexes
             self._nodes_by_id[node.node_id] = node
             for label in node.labels:
                 self._nodes_by_label[label].append(node)
 
-        # Parse relationships and build indexes
         self._relationships = []
         for rel_data in self._data["relationships"]:
             rel = GraphRelationship(
@@ -82,7 +77,6 @@ class GraphLoader:
             )
             self._relationships.append(rel)
 
-            # Build relationship indexes
             self._outgoing_rels[rel.from_id].append(rel)
             self._incoming_rels[rel.to_id].append(rel)
 
@@ -189,27 +183,3 @@ def load_graph(file_path: str) -> GraphLoader:
     loader = GraphLoader(file_path)
     loader.load()
     return loader
-
-
-# Example usage
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python -m codebase_rag.graph_loader <graph_file.json>")
-        sys.exit(1)
-
-    graph_file = sys.argv[1]
-
-    try:
-        graph = load_graph(graph_file)
-        summary = graph.summary()
-
-        print("Graph Summary:")
-        print(f"  Total nodes: {summary['total_nodes']}")
-        print(f"  Total relationships: {summary['total_relationships']}")
-        print(f"  Node types: {list(summary['node_labels'].keys())}")
-        print(f"  Relationship types: {list(summary['relationship_types'].keys())}")
-        print(f"  Exported at: {summary['metadata']['exported_at']}")
-
-    except Exception as e:
-        logger.error(f"Failed to load graph: {e}")
-        sys.exit(1)

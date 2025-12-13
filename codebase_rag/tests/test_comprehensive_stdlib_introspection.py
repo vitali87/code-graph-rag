@@ -1,15 +1,7 @@
-"""
-COMPREHENSIVE standard library introspection testing for ALL supported languages.
-Tests that IMPORTS relationships correctly resolve to modules, not entities within modules.
-Covers: Python, JavaScript, TypeScript, Go, Rust, C++, Java, Lua
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def test_python_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -36,17 +28,9 @@ import xml.etree.ElementTree
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -119,17 +103,9 @@ http.createServer();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     js_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -207,17 +183,9 @@ const hasher = crypto.createHash('sha256');
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     ts_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -316,17 +284,9 @@ func main() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     go_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -434,17 +394,9 @@ fn main() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     rust_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -547,17 +499,9 @@ int main() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     cpp_imports = [
         call for call in import_relationships if "stdlib_imports" in call.args[0][2]
@@ -657,17 +601,9 @@ public class StdlibImports {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     java_imports = [
         call for call in import_relationships if "StdlibImports" in call.args[0][2]
@@ -764,17 +700,9 @@ return {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     lua_imports = [
         call for call in import_relationships if "stdlib_usage" in call.args[0][2]
@@ -785,7 +713,6 @@ return {
 
     imported_modules = [call.args[2][2] for call in lua_imports]
 
-    # Should have custom module imports
     assert any("my_custom_module" in module for module in imported_modules), (
         "Expected custom module import"
     )
@@ -793,8 +720,6 @@ return {
         "Expected utils.helper import"
     )
 
-    # Should have standard library module imports resolved correctly
-    # These should be resolved to their respective modules, not the full qualified names
     expected_stdlib_modules = {
         "string",
         "math",
@@ -813,7 +738,6 @@ return {
         f"found: {found_stdlib_modules}"
     )
 
-    # Verify specific expected modules are present
     assert "string" in found_stdlib_modules, (
         f"Expected 'string' module import for string.upper/lower calls, found: {found_stdlib_modules}"
     )
@@ -821,7 +745,6 @@ return {
         f"Expected 'math' module import for math.floor/ceil calls, found: {found_stdlib_modules}"
     )
 
-    # Ensure no full qualified names leak through (these should be resolved to modules)
     bad_imports = [
         module
         for module in imported_modules
@@ -848,7 +771,6 @@ def test_all_languages_stdlib_consistency(
     project = temp_repo / "all_languages_consistency_test"
     project.mkdir()
 
-    # Create files for each language with entity imports
     files_and_content = {
         "python_test.py": "from collections import defaultdict\\nfrom json import loads\\nfrom pathlib import Path",
         "javascript_test.js": "const { readFile } = require('fs');\\nconst { join } = require('path');",
@@ -863,26 +785,15 @@ def test_all_languages_stdlib_consistency(
     for filename, content in files_and_content.items():
         (project / filename).write_text(content)
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
-    )
-    updater.run()
+    run_updater(project, mock_ingestor)
 
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    # Verify we have imports from multiple languages
     assert len(import_relationships) >= 8, (
         f"Expected imports from all languages, found {len(import_relationships)}"
     )
 
-    # ALL IMPORTS should be module-to-module, NEVER module-to-entity
     forbidden_entity_endings = [
-        # Python entities
         ".defaultdict",
         ".loads",
         ".Path",
@@ -893,7 +804,6 @@ def test_all_languages_stdlib_consistency(
         ".Exception",
         ".IOException",
         ".StringBuilder",
-        # JavaScript/Node entities
         ".readFile",
         ".writeFile",
         ".join",
@@ -904,7 +814,6 @@ def test_all_languages_stdlib_consistency(
         ".EventEmitter",
         ".promisify",
         ".inspect",
-        # Go entities (these use / not . but still shouldn't appear)
         "/Print",
         "/Printf",
         "/Println",
@@ -916,7 +825,6 @@ def test_all_languages_stdlib_consistency(
         "/Post",
         "/Now",
         "/Sleep",
-        # Rust entities
         "::HashMap",
         "::HashSet",
         "::Vec",
@@ -927,7 +835,6 @@ def test_all_languages_stdlib_consistency(
         "::TcpListener",
         "::Mutex",
         "::Arc",
-        # C++ entities (these use :: but shouldn't appear in module names)
         "::vector",
         "::string",
         "::map",
@@ -937,7 +844,6 @@ def test_all_languages_stdlib_consistency(
         "::mutex",
         "::sort",
         "::find",
-        # Java entities
         ".ArrayList",
         ".HashMap",
         ".String",
@@ -953,29 +859,24 @@ def test_all_languages_stdlib_consistency(
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Check that target doesn't end with any forbidden entity names
         for forbidden_ending in forbidden_entity_endings:
             assert not target_module.endswith(forbidden_ending), (
                 f"IMPORTS relationship incorrectly points to entity, not module: "
                 f"{source_module} -> {target_module} (ends with {forbidden_ending})"
             )
 
-    # Verify specific correct resolutions for each language
     imported_modules = [call.args[2][2] for call in import_relationships]
 
-    # Python: collections.defaultdict should resolve to collections
     python_correct = any(
         "collections" in module and not module.endswith(".defaultdict")
         for module in imported_modules
     )
 
-    # Java: java.util.ArrayList should resolve to java.util
     java_correct = any(
         "java.util" in module and not module.endswith(".ArrayList")
         for module in imported_modules
     )
 
-    # Rust: std::collections::HashMap should resolve to std::collections
     rust_correct = any(
         "std::collections" in module and not module.endswith("::HashMap")
         for module in imported_modules
@@ -986,7 +887,6 @@ def test_all_languages_stdlib_consistency(
         f"Python correct: {python_correct}, Java correct: {java_correct}, Rust correct: {rust_correct}"
     )
 
-    # At least some of these should be correct (depends on which files were parsed)
     correct_count = sum([python_correct, java_correct, rust_correct])
     assert correct_count >= 1, (
         f"Expected at least 1 language to have correct stdlib introspection, "

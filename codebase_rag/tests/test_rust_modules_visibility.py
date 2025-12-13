@@ -1,16 +1,9 @@
-"""
-Comprehensive Rust module system and visibility testing.
-Tests module declarations, path resolution, visibility modifiers,
-use statements, and complex module hierarchies for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -19,7 +12,6 @@ def rust_modules_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_modules_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure with modules
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Module system test crate")
     (project_path / "src" / "utils").mkdir()
@@ -27,7 +19,6 @@ def rust_modules_project(temp_repo: Path) -> Path:
     (project_path / "src" / "network").mkdir()
     (project_path / "src" / "network" / "mod.rs").write_text("// Network module")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_modules_test"
 version = "0.1.0"
@@ -226,18 +217,9 @@ mod windows_specific {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify module structures are detected
     module_calls = [
         call
         for call in calls
@@ -525,18 +507,9 @@ mod database {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify use statements and imports are detected
     import_calls = [
         call
         for call in calls
@@ -815,18 +788,9 @@ mod external_integration {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify path resolution is detected
     path_calls = [
         call
         for call in calls
@@ -1173,18 +1137,9 @@ pub fn test_visibility_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify visibility patterns are detected
     visibility_calls = [
         call
         for call in calls
@@ -1514,18 +1469,9 @@ pub fn test_all_attributes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_modules_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_modules_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify module attributes are detected
     attr_calls = [
         call
         for call in calls

@@ -1,16 +1,10 @@
-"""
-Comprehensive JavaScript prototype-based inheritance parsing and relationship testing.
-Tests constructor functions, prototypes, prototype chains, and Object.create patterns.
-"""
-
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,11 +13,9 @@ def javascript_prototypes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_prototypes_test"
     project_path.mkdir()
 
-    # Create directory structure
     (project_path / "models").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create base files
     (project_path / "models" / "base.js").write_text(
         """
 function BaseModel(id) {
@@ -179,27 +171,12 @@ console.log(manager instanceof Person);    // true
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_prototypes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_prototypes_project, mock_ingestor)
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes (constructors and prototype methods)
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check constructor functions
     expected_constructors = [
         f"{project_name}.constructor_prototypes.Person",
         f"{project_name}.constructor_prototypes.Employee",
@@ -212,7 +189,6 @@ console.log(manager instanceof Person);    // true
             f"Missing constructor function: {expected}"
         )
 
-    # Check prototype methods
     expected_prototype_methods = [
         f"{project_name}.constructor_prototypes.Person.greet",
         f"{project_name}.constructor_prototypes.Person.getAge",
@@ -222,7 +198,6 @@ console.log(manager instanceof Person);    // true
         f"{project_name}.constructor_prototypes.Manager.addReport",
     ]
 
-    # Some parsers might organize prototype methods differently
     prototype_methods_found = [
         func
         for func in created_functions
@@ -236,16 +211,9 @@ console.log(manager instanceof Person);    // true
         f"Expected at least 4 prototype methods, found {len(prototype_methods_found)}"
     )
 
-    # Check inheritance relationships
-    inheritance_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "INHERITS"
-    ]
+    inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    # Should have Employee inheriting from Person, Manager from Employee
     len(inheritance_relationships) >= 2
-    # Note: Actual inheritance detection may vary by parser implementation
 
 
 def test_object_create_patterns(
@@ -428,27 +396,12 @@ myTask.outputTaskDetails();
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_prototypes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_prototypes_project, mock_ingestor)
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check factory functions
     expected_functions = [
         f"{project_name}.object_create_patterns.createAnimal",
     ]
@@ -456,8 +409,6 @@ myTask.outputTaskDetails();
     for expected in expected_functions:
         assert expected in created_functions, f"Missing factory function: {expected}"
 
-    # Check methods defined on prototype objects
-    # These might be captured as functions or methods depending on parser
     method_like_functions = [
         func
         for func in created_functions
@@ -480,12 +431,7 @@ myTask.outputTaskDetails();
         f"Expected at least 3 prototype methods, found {len(method_like_functions)}"
     )
 
-    # Check CALLS relationships for Object.create
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     object_create_calls = [
         call for call in call_relationships if "Object.create" in str(call.args[2][2])
@@ -662,27 +608,12 @@ square.scale(2);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_prototypes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_prototypes_project, mock_ingestor)
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check constructor hierarchy
     expected_constructors = [
         f"{project_name}.prototype_chain.Shape",
         f"{project_name}.prototype_chain.Rectangle",
@@ -695,7 +626,6 @@ square.scale(2);
             f"Missing constructor in chain: {expected}"
         )
 
-    # Check prototype methods at different levels
     method_patterns = ["move", "getArea", "setSize", "getColor", "getFullInfo"]
     methods_found = [
         func
@@ -707,14 +637,8 @@ square.scale(2);
         f"Expected at least 4 prototype methods, found {len(methods_found)}"
     )
 
-    # Check method calls through prototype chain
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # Should have calls to parent prototype methods
     prototype_calls = [
         call
         for call in call_relationships
@@ -984,27 +908,12 @@ console.log(entity.validate());
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_prototypes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_prototypes_project, mock_ingestor)
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check mixin functions
     expected_functions = [
         f"{project_name}.prototype_mixins.mixin",
         f"{project_name}.prototype_mixins.compose",
@@ -1018,7 +927,6 @@ console.log(entity.validate());
             f"Missing mixin-related function: {expected}"
         )
 
-    # Check mixin methods (might be captured as functions)
     mixin_methods = [
         "on",
         "off",
@@ -1038,7 +946,6 @@ console.log(entity.validate());
         f"Expected at least 3 mixin methods, found {len(mixin_method_functions)}"
     )
 
-    # Check prototype method additions
     model_methods = [
         func
         for func in created_functions
@@ -1263,27 +1170,12 @@ for (const value of generator) {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_prototypes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_prototypes_project, mock_ingestor)
 
     project_name = javascript_prototypes_project.name
 
-    # Get all Function nodes
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Check edge case constructors
     expected_constructors = [
         f"{project_name}.prototype_edge_cases.WeirdConstructor",
         f"{project_name}.prototype_edge_cases.PrimitiveReturn",
@@ -1297,7 +1189,6 @@ for (const value of generator) {
             f"Missing edge case constructor: {expected}"
         )
 
-    # Check async and generator methods
     async_generator_methods = [
         func
         for func in created_functions
@@ -1407,24 +1298,15 @@ console.log(dog.eat('bone')); // Works due to prototype chain
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_prototypes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_prototypes_project, mock_ingestor)
 
-    # Verify all relationship types exist
     all_relationships = cast(
         MagicMock, mock_ingestor.ensure_relationship_batch
     ).call_args_list
 
-    calls_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
+    calls_relationships = get_relationships(mock_ingestor, "CALLS")
     [c for c in all_relationships if c.args[1] == "DEFINES"]
 
-    # Should have comprehensive prototype patterns
     comprehensive_calls = [
         call
         for call in calls_relationships
@@ -1435,7 +1317,6 @@ console.log(dog.eat('bone')); // Works due to prototype chain
         f"Expected at least 5 comprehensive prototype calls, found {len(comprehensive_calls)}"
     )
 
-    # Get all nodes
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
     function_nodes = [call for call in all_nodes if call[0][0] == "Function"]
 

@@ -1,5 +1,3 @@
-"""Utilities for processing Rust code with tree-sitter."""
-
 from tree_sitter import Node
 
 from .utils import safe_decode_text
@@ -23,20 +21,18 @@ def extract_rust_impl_target(impl_node: Node) -> str | None:
     if impl_node.type != "impl_item":
         return None
 
-    # Look for the type field which contains the type being implemented
     for i in range(impl_node.child_count):
         if impl_node.field_name_for_child(i) == "type":
             type_node = impl_node.child(i)
-            # Handle generic types by extracting the base type name
+            if type_node is None:
+                continue
             if type_node.type == "generic_type":
-                # Look for the type identifier within the generic
                 for child in type_node.children:
                     if child.type == "type_identifier":
                         return safe_decode_text(child)
             elif type_node.type == "type_identifier":
                 return safe_decode_text(type_node)
             elif type_node.type == "scoped_type_identifier":
-                # For paths like std::fmt::Display, get the last component
                 for child in type_node.children:
                     if child.type == "type_identifier":
                         name = safe_decode_text(child)
@@ -62,11 +58,11 @@ def extract_rust_trait_name(impl_node: Node) -> str | None:
     if impl_node.type != "impl_item":
         return None
 
-    # Look for the trait field which contains the trait being implemented
     for i in range(impl_node.child_count):
         if impl_node.field_name_for_child(i) == "trait":
             trait_node = impl_node.child(i)
-            # Handle generic traits
+            if trait_node is None:
+                continue
             if trait_node.type == "generic_type":
                 for child in trait_node.children:
                     if child.type == "type_identifier":
@@ -74,7 +70,6 @@ def extract_rust_trait_name(impl_node: Node) -> str | None:
             elif trait_node.type == "type_identifier":
                 return safe_decode_text(trait_node)
             elif trait_node.type == "scoped_type_identifier":
-                # For paths like std::fmt::Display
                 for child in trait_node.children:
                     if child.type == "type_identifier":
                         name = safe_decode_text(child)
@@ -96,7 +91,6 @@ def is_rust_async_function(func_node: Node) -> bool:
     if func_node.type != "function_item":
         return False
 
-    # Check for async modifier
     for child in func_node.children:
         if child.type == "async" or (
             child.type == "identifier" and safe_decode_text(child) == "async"
@@ -123,14 +117,14 @@ def extract_rust_macro_name(macro_node: Node) -> str | None:
     if macro_node.type != "macro_invocation":
         return None
 
-    # Look for the macro field which contains the macro name
     for i in range(macro_node.child_count):
         if macro_node.field_name_for_child(i) == "macro":
             macro_name_node = macro_node.child(i)
+            if macro_name_node is None:
+                continue
             if macro_name_node.type == "identifier":
                 return safe_decode_text(macro_name_node)
             elif macro_name_node.type == "scoped_identifier":
-                # For macros like std::println!
                 for child in macro_name_node.children:
                     if child.type == "identifier":
                         name = safe_decode_text(child)
@@ -165,7 +159,6 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
         if node.type == "identifier" or node.type == "type_identifier":
             return safe_decode_text(node) or ""
         elif node.type in ("scoped_identifier", "scoped_type_identifier"):
-            # For scoped identifiers, we need to recursively build the path
             parts = []
 
             def collect_path_parts(n: Node) -> None:
@@ -174,7 +167,6 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
                     if part:
                         parts.append(part)
                 elif n.type in ("scoped_identifier", "scoped_type_identifier"):
-                    # Recursively process nested scoped identifiers
                     for child in n.children:
                         if child.type != "::":
                             collect_path_parts(child)
@@ -192,14 +184,12 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
     def process_use_tree(node: Node, base_path: str = "") -> None:
         """Process a use tree node and extract imports."""
         if node.type in ("identifier", "type_identifier"):
-            # Simple identifier import
             name = safe_decode_text(node)
             if name:
                 full_path = f"{base_path}::{name}" if base_path else name
                 imports[name] = full_path
 
         elif node.type in ("scoped_identifier", "scoped_type_identifier"):
-            # Scoped identifier - this is the final import
             full_path = extract_path_from_node(node)
             if full_path:
                 parts = full_path.split("::")
@@ -208,16 +198,13 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
                     imports[imported_name] = full_path
 
         elif node.type == "use_as_clause":
-            # Handle aliases: use path as alias
             original_path = ""
             alias_name = ""
 
-            # The structure is: path "as" alias
             children = [c for c in node.children if c.type != "as"]
             if len(children) == 2:
                 path_node, alias_node = children
 
-                # Handle special case of "self as Alias"
                 if path_node.type == "self":
                     original_path = base_path if base_path else "self"
                 else:
@@ -233,8 +220,6 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
                 imports[alias_name] = original_path
 
         elif node.type == "use_wildcard":
-            # Wildcard import: use path::*
-            # Extract the base path from the wildcard node
             wildcard_base = ""
             for child in node.children:
                 if child.type != "*":
@@ -249,16 +234,13 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
                 imports[wildcard_key] = base_path
 
         elif node.type == "use_list":
-            # Process items in a use list: {item1, item2, ...}
             for child in node.children:
                 if child.type not in ("{", "}", ","):
                     process_use_tree(child, base_path)
 
         elif node.type == "scoped_use_list":
-            # Handle scoped use list: path::{items}
             new_base_path = ""
 
-            # Find the base path and the use list
             for child in node.children:
                 if child.type in (
                     "identifier",
@@ -269,22 +251,18 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
                 ):
                     new_base_path = extract_path_from_node(child)
                 elif child.type == "use_list":
-                    # Process the list with the new base path
                     final_base = (
                         f"{base_path}::{new_base_path}" if base_path else new_base_path
                     )
                     process_use_tree(child, final_base)
 
         elif node.type == "self":
-            # Handle 'self' import
             imports["self"] = base_path if base_path else "self"
 
         else:
-            # Recursively process children
             for child in node.children:
                 process_use_tree(child, base_path)
 
-    # Find the argument field of the use declaration
     argument_node = use_node.child_by_field_name("argument")
     if argument_node:
         process_use_tree(argument_node)
@@ -310,7 +288,6 @@ def get_rust_visibility(node: Node) -> str:
     Returns:
         The visibility level: "public", "crate", "super", "private", or "module".
     """
-    # Check for visibility_modifier child
     for child in node.children:
         if child.type == "visibility_modifier":
             text = safe_decode_text(child)
@@ -354,19 +331,16 @@ def build_rust_module_path(
 
     while current and current.type != "source_file":
         if current.type == "mod_item":
-            # This is an inline module
             if name_node := current.child_by_field_name("name"):
                 text = name_node.text
                 if text is not None:
                     path_parts.append(text.decode("utf8"))
         elif include_impl_targets and current.type == "impl_item":
-            # This is inside an impl block - get the target type
             impl_target = extract_rust_impl_target(current)
             if impl_target:
                 path_parts.append(impl_target)
         elif include_classes and class_node_types and current.type in class_node_types:
-            # This is inside a class-like structure
-            if current.type != "impl_item":  # Skip impl_item as it's handled above
+            if current.type != "impl_item":
                 if name_node := current.child_by_field_name("name"):
                     text = name_node.text
                     if text is not None:

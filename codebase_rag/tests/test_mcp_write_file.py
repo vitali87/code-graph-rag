@@ -1,5 +1,3 @@
-"""Tests for MCP tools write_file method."""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -47,10 +45,8 @@ class TestWriteFileBasic:
         content = "Hello, World!"
         result = await mcp_registry.write_file("test.txt", content)
 
-        # Verify the result message
         assert "Error:" not in result
 
-        # Verify file was created with correct content
         file_path = temp_project_root / "test.txt"
         assert file_path.exists()
         assert file_path.read_text(encoding="utf-8") == content
@@ -62,10 +58,8 @@ class TestWriteFileBasic:
         content = "Nested content"
         result = await mcp_registry.write_file("subdir/nested/file.txt", content)
 
-        # Verify success
         assert "Error:" not in result
 
-        # Verify file and directories were created
         file_path = temp_project_root / "subdir" / "nested" / "file.txt"
         assert file_path.exists()
         assert file_path.read_text(encoding="utf-8") == content
@@ -80,10 +74,8 @@ class TestWriteFileBasic:
         new_content = "New content"
         result = await mcp_registry.write_file("existing.txt", new_content)
 
-        # Verify success
         assert "Error:" not in result
 
-        # Verify file was overwritten
         assert file_path.read_text(encoding="utf-8") == new_content
 
     async def test_write_empty_file(
@@ -92,10 +84,8 @@ class TestWriteFileBasic:
         """Test writing an empty file."""
         result = await mcp_registry.write_file("empty.txt", "")
 
-        # Verify success
         assert "Error:" not in result
 
-        # Verify empty file was created
         file_path = temp_project_root / "empty.txt"
         assert file_path.exists()
         assert file_path.read_text(encoding="utf-8") == ""
@@ -172,13 +162,10 @@ class TestWriteFilePathHandling:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test that directory traversal attacks are prevented."""
-        # Try to write outside project root
         result = await mcp_registry.write_file("../../../etc/malicious.txt", "bad")
 
-        # Should get an error
         assert "Error:" in result or "denied" in result.lower() or "Security" in result
 
-        # Verify file was NOT created outside project root
         malicious_path = (
             temp_project_root.parent.parent.parent / "etc" / "malicious.txt"
         )
@@ -212,7 +199,6 @@ class TestWriteFileErrorHandling:
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test writing to a read-only directory."""
-        # Create a read-only directory
         readonly_dir = temp_project_root / "readonly"
         readonly_dir.mkdir()
         readonly_dir.chmod(0o444)
@@ -220,17 +206,14 @@ class TestWriteFileErrorHandling:
         try:
             result = await mcp_registry.write_file("readonly/file.txt", "content")
 
-            # Should get an error
             assert "Error:" in result
         finally:
-            # Restore write permissions for cleanup
             readonly_dir.chmod(0o755)
 
     async def test_write_very_long_content(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
         """Test writing very long content."""
-        # Create a large content (1MB)
         content = "x" * (1024 * 1024)
         result = await mcp_registry.write_file("large.txt", content)
 

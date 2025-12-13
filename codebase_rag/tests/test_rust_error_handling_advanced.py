@@ -1,15 +1,9 @@
-"""
-Advanced Rust error handling testing.
-Tests Result, Option, custom error types, error propagation, and error handling patterns.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -18,7 +12,6 @@ def rust_error_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_error_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_error_test"
@@ -31,7 +24,6 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Error handling test crate")
 
@@ -120,18 +112,9 @@ fn result_combinators() -> Result<String, Box<dyn std::error::Error>> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify Result/Option functions are detected
     result_calls = [
         call for call in calls if "divide" in str(call) or "find_item" in str(call)
     ]
@@ -280,18 +263,9 @@ fn make_api_request(endpoint: &str) -> Result<String, ApiError> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify custom error types are detected
     error_calls = [
         call for call in calls if "MathError" in str(call) or "ApiError" in str(call)
     ]
@@ -445,18 +419,9 @@ fn recoverable_errors() -> Result<Vec<i32>, AppError> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify error propagation functions are detected
     propagation_calls = [
         call
         for call in calls
@@ -582,18 +547,9 @@ fn graceful_shutdown() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify panic handling functions are detected
     panic_calls = [
         call
         for call in calls
@@ -847,18 +803,9 @@ fn cached_data_source() -> Result<String> {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_error_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_error_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify error pattern functions are detected
     pattern_calls = [
         call
         for call in calls

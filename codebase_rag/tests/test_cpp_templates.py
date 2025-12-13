@@ -1,16 +1,9 @@
-"""
-Comprehensive C++ template parsing and relationship testing.
-Tests template classes, functions, specializations, and template metaprogramming patterns.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,7 +12,6 @@ def cpp_templates_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_templates_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
@@ -231,18 +223,10 @@ void demonstrateTemplateMetaprogramming() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_templates_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_templates_project, mock_ingestor)
 
     project_name = cpp_templates_project.name
 
-    # Expected template function definitions
     expected_functions = [
         f"{project_name}.function_templates.maximum",
         f"{project_name}.function_templates.add",
@@ -255,38 +239,21 @@ void demonstrateTemplateMetaprogramming() {
         f"{project_name}.function_templates.demonstrateFunctionTemplates",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some template functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Expected template class
     expected_classes = [
         f"{project_name}.function_templates.FixedArray",
         f"{project_name}.function_templates.Factorial",
         f"{project_name}.function_templates.TypeInfo",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify template classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
@@ -666,18 +633,10 @@ void demonstrateTemplateTemplateParameters() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_templates_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_templates_project, mock_ingestor)
 
     project_name = cpp_templates_project.name
 
-    # Expected template classes
     expected_classes = [
         f"{project_name}.class_templates.Container",
         f"{project_name}.class_templates.SimpleMap",
@@ -685,22 +644,13 @@ void demonstrateTemplateTemplateParameters() {
         f"{project_name}.class_templates.ContainerWrapper",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify template classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Verify inheritance relationship (Stack inherits from Container)
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1026,18 +976,10 @@ void demonstrateConcepts() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_templates_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_templates_project, mock_ingestor)
 
     project_name = cpp_templates_project.name
 
-    # Expected metaprogramming structures
     expected_classes = [
         f"{project_name}.template_metaprogramming.Fibonacci",
         f"{project_name}.template_metaprogramming.RemovePointer",
@@ -1051,22 +993,13 @@ void demonstrateConcepts() {
         f"{project_name}.template_metaprogramming.AnotherClass",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify metaprogramming classes were created
     missing_classes = set(expected_classes) - created_classes
     assert not missing_classes, (
         f"Missing expected classes: {sorted(list(missing_classes))}"
     )
 
-    # Verify CRTP inheritance relationships
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1271,25 +1204,12 @@ void demonstrateComprehensiveTemplates() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_templates_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_templates_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
-
-    # Should have comprehensive template coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1300,7 +1220,6 @@ void demonstrateComprehensiveTemplates() {
         f"Expected at least 10 comprehensive template calls, found {len(comprehensive_calls)}"
     )
 
-    # Should have template inheritance relationships
     template_inheritance = [
         call
         for call in inherits_relationships
@@ -1311,5 +1230,4 @@ void demonstrateComprehensiveTemplates() {
         f"Expected at least 2 template inheritance relationships, found {len(template_inheritance)}"
     )
 
-    # Test that template parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

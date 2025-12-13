@@ -1,16 +1,9 @@
-"""
-Comprehensive JavaScript destructuring parsing and relationship testing.
-Tests all possible JavaScript destructuring patterns and verifies proper parsing.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def javascript_destructuring_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "javascript_destructuring_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    # Create helper files
     (project_path / "src" / "data.js").write_text(
         "export const sampleData = { users: [], posts: [] };"
     )
@@ -162,18 +153,10 @@ try {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     project_name = javascript_destructuring_project.name
 
-    # Expected functions using destructuring
     expected_functions = [
         f"{project_name}.object_destructuring.processUser",
         f"{project_name}.object_destructuring.createReport",
@@ -182,27 +165,14 @@ try {
         f"{project_name}.object_destructuring.getCoordinates",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify functions with destructuring parameters were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     destructuring_calls = [
         call for call in call_relationships if "object_destructuring" in call.args[0][2]
@@ -332,18 +302,10 @@ const result = processArray([10, 20, 30, 40]);
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     project_name = javascript_destructuring_project.name
 
-    # Expected functions using array destructuring
     expected_functions = [
         f"{project_name}.array_destructuring.getCoordinates",
         f"{project_name}.array_destructuring.getMinMax",
@@ -355,26 +317,14 @@ const result = processArray([10, 20, 30, 40]);
         f"{project_name}.array_destructuring.processData",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify functions with array destructuring were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     array_destructuring_calls = [
         call for call in call_relationships if "array_destructuring" in call.args[0][2]
@@ -556,18 +506,10 @@ async function updateUser(id, data) { return { id, ...data }; }
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
     project_name = javascript_destructuring_project.name
 
-    # Expected functions with parameter destructuring
     expected_functions = [
         f"{project_name}.parameter_destructuring.createUser",
         f"{project_name}.parameter_destructuring.updateProfile",
@@ -581,34 +523,19 @@ async function updateUser(id, data) { return { id, ...data }; }
         f"{project_name}.parameter_destructuring.processFile",
     ]
 
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify functions with parameter destructuring were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
     )
 
-    # Expected classes
     expected_classes = [
         f"{project_name}.parameter_destructuring.DataProcessor",
     ]
 
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify classes with destructuring methods were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 class with destructuring methods, found {len(found_classes)}"
@@ -724,21 +651,9 @@ const response = processApiResponse({
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
-    # Verify both import and destructuring patterns are captured
-    import_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "IMPORTS"
-    ]
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     destructuring_imports = [
         call
@@ -750,12 +665,7 @@ const response = processApiResponse({
         f"Expected at least 5 destructuring imports, found {len(destructuring_imports)}"
     )
 
-    # Verify function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     destructuring_calls = [
         call
@@ -848,24 +758,11 @@ const formatted = formatData({
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=javascript_destructuring_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(javascript_destructuring_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive destructuring coverage
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -876,7 +773,6 @@ const formatted = formatData({
         f"Expected at least 3 comprehensive destructuring calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_calls:
         assert len(relationship.args) == 3, "Call relationship should have 3 args"
         assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
@@ -884,15 +780,12 @@ const formatted = formatData({
         source_module = relationship.args[0][2]
         target_module = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_destructuring" in source_module, (
             f"Source module should contain test file name: {source_module}"
         )
 
-        # Target should be a valid module name or function
         assert isinstance(target_module, str) and target_module, (
             f"Target should be non-empty string: {target_module}"
         )
 
-    # Test that destructuring parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

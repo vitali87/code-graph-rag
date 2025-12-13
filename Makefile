@@ -23,7 +23,7 @@ python: ## Install project dependencies for Python only
 	uv sync
 
 dev: ## Setup development environment (install deps + pre-commit hooks)
-	uv sync --extra treesitter-full --extra dev --extra test
+	uv sync --extra treesitter-full --extra dev --extra test --extra semantic
 	uv run pre-commit install
 	uv run pre-commit install --hook-type commit-msg
 	@echo "✅ Development environment ready!"
@@ -35,7 +35,7 @@ test-parallel: ## Run tests in parallel
 	uv run pytest -n auto
 
 clean: ## Clean up build artifacts and cache
-	rm -rf .pytest_cache/ .mypy_cache/ .ruff_cache/
+	rm -rf .pytest_cache/ .ty/ .ruff_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -name "*.pyc" -delete
 build-grammars: ## Build grammar submodules

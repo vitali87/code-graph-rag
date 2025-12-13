@@ -1,5 +1,3 @@
-"""Language-agnostic FQN (Fully Qualified Name) resolution utilities."""
-
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,6 +7,7 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
     from ..language_config import FQNConfig
+    from ..parsers.utils import safe_decode_text
 
 
 def resolve_fqn_from_ast(
@@ -33,13 +32,11 @@ def resolve_fqn_from_ast(
     try:
         parts = []
 
-        # 1. Get function name
         func_name = fqn_config.get_name(func_node)
         if not func_name:
             return None
         parts.append(func_name)
 
-        # 2. Walk up to collect enclosing scopes
         current = func_node.parent
         while current:
             if current.type in fqn_config.scope_node_types:
@@ -48,10 +45,8 @@ def resolve_fqn_from_ast(
                     parts.append(scope_name)
             current = current.parent
 
-        # 3. Reverse to get outer → inner
         parts.reverse()
 
-        # 4. Prepend module path
         module_parts = fqn_config.file_to_module_parts(file_path, repo_root)
         full_parts = [project_name] + module_parts + parts
         return ".".join(full_parts)
@@ -90,7 +85,7 @@ def find_function_source_by_fqn(
                     node, file_path, repo_root, project_name, fqn_config
                 )
                 if actual_fqn == target_fqn:
-                    return node.text.decode("utf-8") if node.text else None
+                    return safe_decode_text(node)
 
             for child in node.children:
                 result = walk(child)

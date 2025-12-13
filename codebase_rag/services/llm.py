@@ -1,5 +1,5 @@
 from loguru import logger
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent, DeferredToolRequests, Tool
 
 from ..config import settings
 from ..prompts import (
@@ -31,10 +31,8 @@ class CypherGenerator:
 
     def __init__(self) -> None:
         try:
-            # Get active cypher model configuration
             config = settings.active_cypher_config
 
-            # Create provider instance
             provider = get_provider(
                 config.provider,
                 api_key=config.api_key,
@@ -45,10 +43,8 @@ class CypherGenerator:
                 thinking_budget=config.thinking_budget,
             )
 
-            # Create model using provider
             llm = provider.create_model(config.model_id)
 
-            # Select system prompt based on provider
             system_prompt = (
                 LOCAL_CYPHER_SYSTEM_PROMPT
                 if config.provider == "ollama"
@@ -59,6 +55,7 @@ class CypherGenerator:
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
+                retries=settings.AGENT_RETRIES,
             )
         except Exception as e:
             raise LLMGenerationError(
@@ -90,10 +87,8 @@ class CypherGenerator:
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     """Factory function to create the main RAG orchestrator agent."""
     try:
-        # Get active orchestrator model configuration
         config = settings.active_orchestrator_config
 
-        # Create provider instance
         provider = get_provider(
             config.provider,
             api_key=config.api_key,
@@ -104,13 +99,15 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             thinking_budget=config.thinking_budget,
         )
 
-        # Create model using provider
         llm = provider.create_model(config.model_id)
 
         return Agent(
             model=llm,
             system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
             tools=tools,
+            retries=settings.AGENT_RETRIES,
+            output_retries=100,
+            output_type=[str, DeferredToolRequests],
         )
     except Exception as e:
         raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e

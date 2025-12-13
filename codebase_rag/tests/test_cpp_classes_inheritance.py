@@ -1,16 +1,9 @@
-"""
-Comprehensive C++ class inheritance and polymorphism testing.
-Tests complex inheritance hierarchies, virtual functions, multiple inheritance, and polymorphic relationships.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def cpp_inheritance_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_inheritance_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    # Create base files
     (project_path / "include" / "shapes.h").write_text("#pragma once\nclass Shape {};")
 
     return project_path
@@ -277,18 +268,10 @@ void demonstrateSingleInheritance() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_inheritance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_inheritance_project, mock_ingestor)
 
     project_name = cpp_inheritance_project.name
 
-    # Expected inheritance relationships
     expected_inherits = [
         (
             ("Class", "qualified_name", f"{project_name}.single_inheritance.Dog"),
@@ -304,7 +287,6 @@ void demonstrateSingleInheritance() {
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -321,12 +303,7 @@ void demonstrateSingleInheritance() {
             f"{expected_child[2]} INHERITS {expected_parent[2]}"
         )
 
-    # Verify virtual function calls are tracked
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     virtual_calls = [
         call
@@ -649,20 +626,11 @@ void testAnimalAbilities() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_inheritance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_inheritance_project, mock_ingestor)
 
     project_name = cpp_inheritance_project.name
 
-    # Expected multiple inheritance relationships
     expected_multiple_inherits = [
-        # Bird inherits from LivingBeing, Flyable, Walkable
         (
             ("Class", "qualified_name", f"{project_name}.multiple_inheritance.Bird"),
             (
@@ -675,7 +643,6 @@ void testAnimalAbilities() {
             ("Class", "qualified_name", f"{project_name}.multiple_inheritance.Bird"),
             ("Class", "qualified_name", f"{project_name}.multiple_inheritance.Flyable"),
         ),
-        # Duck inherits from Bird and Swimmable
         (
             ("Class", "qualified_name", f"{project_name}.multiple_inheritance.Duck"),
             ("Class", "qualified_name", f"{project_name}.multiple_inheritance.Bird"),
@@ -688,14 +655,12 @@ void testAnimalAbilities() {
                 f"{project_name}.multiple_inheritance.Swimmable",
             ),
         ),
-        # Pet inherits from Duck and Domesticated
         (
             ("Class", "qualified_name", f"{project_name}.multiple_inheritance.Pet"),
             ("Class", "qualified_name", f"{project_name}.multiple_inheritance.Duck"),
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1046,20 +1011,11 @@ void testAbstractDestructors() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_inheritance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_inheritance_project, mock_ingestor)
 
     project_name = cpp_inheritance_project.name
 
-    # Expected abstract class inheritance relationships
     expected_abstract_inherits = [
-        # Shape implements IDrawable and IMovable
         (
             ("Class", "qualified_name", f"{project_name}.abstract_interfaces.Shape"),
             (
@@ -1072,7 +1028,6 @@ void testAbstractDestructors() {
             ("Class", "qualified_name", f"{project_name}.abstract_interfaces.Shape"),
             ("Class", "qualified_name", f"{project_name}.abstract_interfaces.IMovable"),
         ),
-        # Circle inherits from Shape and implements IResizable
         (
             ("Class", "qualified_name", f"{project_name}.abstract_interfaces.Circle"),
             ("Class", "qualified_name", f"{project_name}.abstract_interfaces.Shape"),
@@ -1087,7 +1042,6 @@ void testAbstractDestructors() {
         ),
     ]
 
-    # Verify INHERITS relationships are created
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -1107,12 +1061,7 @@ void testAbstractDestructors() {
         f"Expected at least 3 abstract inheritance relationships, found {found_abstract_relationships}"
     )
 
-    # Verify virtual function calls
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     virtual_interface_calls = [
         call
@@ -1378,25 +1327,12 @@ void testTemplateInheritance() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_inheritance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_inheritance_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
+    inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-    inherits_relationships = [c for c in all_relationships if c.args[1] == "INHERITS"]
-
-    # Should have comprehensive inheritance coverage
     comprehensive_inherits = [
         call
         for call in inherits_relationships
@@ -1407,7 +1343,6 @@ void testTemplateInheritance() {
         f"Expected at least 6 comprehensive inheritance relationships, found {len(comprehensive_inherits)}"
     )
 
-    # Should have many virtual function calls
     comprehensive_calls = [
         call
         for call in call_relationships
@@ -1418,7 +1353,6 @@ void testTemplateInheritance() {
         f"Expected at least 15 comprehensive virtual calls, found {len(comprehensive_calls)}"
     )
 
-    # Verify relationship structure
     for relationship in comprehensive_inherits:
         assert len(relationship.args) == 3, (
             "Inheritance relationship should have 3 args"
@@ -1428,17 +1362,14 @@ void testTemplateInheritance() {
         source_class = relationship.args[0][2]
         target_class = relationship.args[2][2]
 
-        # Source should be our test module
         assert "comprehensive_inheritance" in source_class, (
             f"Source class should contain test file name: {source_class}"
         )
 
-        # Target should be a valid class name
         assert isinstance(target_class, str) and target_class, (
             f"Target should be non-empty string: {target_class}"
         )
 
-    # Test that inheritance parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"
 
 
@@ -1632,33 +1563,22 @@ void demonstrateEdgeCases() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_inheritance_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_inheritance_project, mock_ingestor)
 
-    # Verify complex template inheritance relationships are captured
     relationship_calls = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
         if len(call[0]) >= 3 and call[0][1] == "INHERITS"
     ]
 
-    # Expected complex inheritance relationships
     edge_case_inherits = [
         call for call in relationship_calls if "edge_case_inheritance" in call[0][0][2]
     ]
 
-    # Should capture at least the major inheritance relationships
     assert len(edge_case_inherits) >= 10, (
         f"Expected at least 10 edge case inheritance relationships, found {len(edge_case_inherits)}"
     )
 
-    # Verify template specialization inheritance is handled
     specialization_inherits = [
         call for call in edge_case_inherits if "std::vector<int>" in str(call[0][0])
     ]
@@ -1667,7 +1587,6 @@ void demonstrateEdgeCases() {
         f"Expected template specialization inheritance, found {len(specialization_inherits)}"
     )
 
-    # Verify CRTP inheritance pattern
     crtp_inherits = [
         call
         for call in edge_case_inherits
@@ -1678,7 +1597,6 @@ void demonstrateEdgeCases() {
         f"Expected CRTP inheritance pattern, found {len(crtp_inherits)}"
     )
 
-    # Verify diamond inheritance with virtual base classes
     diamond_inherits = [
         call
         for call in edge_case_inherits
@@ -1691,7 +1609,6 @@ void demonstrateEdgeCases() {
         f"Expected diamond inheritance with virtual bases, found {len(diamond_inherits)}"
     )
 
-    # Verify nested namespace template inheritance
     nested_ns_inherits = [
         call
         for call in edge_case_inherits
@@ -1702,12 +1619,7 @@ void demonstrateEdgeCases() {
         f"Expected nested namespace template inheritance, found {len(nested_ns_inherits)}"
     )
 
-    # Test that complex parsing doesn't break function calls
-    call_relationships = [
-        c
-        for c in cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-        if c.args[1] == "CALLS"
-    ]
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     edge_case_calls = [
         call

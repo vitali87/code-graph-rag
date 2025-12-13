@@ -1,4 +1,3 @@
-# codebase_rag/embedder.py
 import functools
 
 from .utils.dependencies import has_torch, has_transformers
@@ -44,10 +43,8 @@ if has_torch() and has_transformers():
         tokens = model.tokenize([code], max_length=max_length)
         tokens_tensor = torch.tensor(tokens).to(device)
         with torch.no_grad():
-            # Forward returns (token_embeddings, sentence_embeddings)
             _, sentence_embeddings = model(tokens_tensor)
             embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
-        # Extract 1D array and convert to list - numpy type stubs are imprecise for tolist()
         result: list[float] = embedding[0].tolist()
         return result
 

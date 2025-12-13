@@ -15,6 +15,9 @@
   <a href="https://github.com/vitali87/code-graph-rag/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/vitali87/code-graph-rag" alt="License" />
   </a>
+  <a href="https://mseep.ai/app/vitali87-code-graph-rag">
+    <img src="https://mseep.net/pr/vitali87-code-graph-rag-badge.png" alt="MseeP.ai Security Assessment" height="20" />
+  </a>
 </p>
 </div>
 
@@ -84,28 +87,29 @@ The system consists of two main components:
 - Python 3.12+
 - Docker & Docker Compose (for Memgraph)
 - **cmake** (required for building pymgclient dependency)
+- **ripgrep** (`rg`) (required for shell command text searching)
 - **For cloud models**: Google Gemini API key
 - **For local models**: Ollama installed and running
 - `uv` package manager
 
-### Installing cmake
+### Installing cmake and ripgrep
 
 On macOS:
 ```bash
-brew install cmake
+brew install cmake ripgrep
 ```
 
 On Linux (Ubuntu/Debian):
 ```bash
 sudo apt-get update
-sudo apt-get install cmake
+sudo apt-get install cmake ripgrep
 ```
 
 On Linux (CentOS/RHEL):
 ```bash
 sudo yum install cmake
-# or on newer versions:
-sudo dnf install cmake
+sudo dnf install ripgrep
+# Note: ripgrep may need to be installed from EPEL or via cargo
 ```
 
 ## 🛠️ Installation
@@ -235,19 +239,19 @@ Parse and ingest a multi-language repository into the knowledge graph:
 
 **For the first repository (clean start):**
 ```bash
-python -m codebase_rag.main start --repo-path /path/to/repo1 --update-graph --clean
+cgr start --repo-path /path/to/repo1 --update-graph --clean
 ```
 
 **For additional repositories (preserve existing data):**
 ```bash
-python -m codebase_rag.main start --repo-path /path/to/repo2 --update-graph
-python -m codebase_rag.main start --repo-path /path/to/repo3 --update-graph
+cgr start --repo-path /path/to/repo2 --update-graph
+cgr start --repo-path /path/to/repo3 --update-graph
 ```
 
 **Control Memgraph batch flushing:**
 ```bash
 # Flush every 5,000 records instead of the default from settings
-python -m codebase_rag.main start --repo-path /path/to/repo --update-graph \
+cgr start --repo-path /path/to/repo --update-graph \
   --batch-size 5000
 ```
 
@@ -258,7 +262,7 @@ The system automatically detects and processes files for all supported languages
 Start the interactive RAG CLI:
 
 ```bash
-python -m codebase_rag.main start --repo-path /path/to/your/repo
+cgr start --repo-path /path/to/your/repo
 ```
 
 ### Step 2.5: Real-Time Graph Updates (Optional)
@@ -298,7 +302,7 @@ make watch REPO_PATH=/path/to/your/repo HOST=localhost PORT=7687 BATCH_SIZE=1000
 python realtime_updater.py ~/my-project
 
 # Terminal 2: Run the AI assistant
-python -m codebase_rag.main start --repo-path ~/my-project
+cgr start --repo-path ~/my-project
 ```
 
 **Performance note:** The updater currently recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. **Note:** Optimization of this behavior is a work in progress.
@@ -312,17 +316,17 @@ python -m codebase_rag.main start --repo-path ~/my-project
 **Specify Custom Models:**
 ```bash
 # Use specific local models
-python -m codebase_rag.main start --repo-path /path/to/your/repo \
+cgr start --repo-path /path/to/your/repo \
   --orchestrator ollama:llama3.2 \
   --cypher ollama:codellama
 
 # Use specific Gemini models
-python -m codebase_rag.main start --repo-path /path/to/your/repo \
+cgr start --repo-path /path/to/your/repo \
   --orchestrator google:gemini-2.0-flash-thinking-exp-01-21 \
   --cypher google:gemini-2.5-flash-lite-preview-06-17
 
 # Use mixed providers
-python -m codebase_rag.main start --repo-path /path/to/your/repo \
+cgr start --repo-path /path/to/your/repo \
   --orchestrator google:gemini-2.0-flash-thinking-exp-01-21 \
   --cypher ollama:codellama
 ```
@@ -351,17 +355,17 @@ For programmatic access and integration with other tools, you can export the ent
 
 **Export during graph update:**
 ```bash
-python -m codebase_rag.main start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
 ```
 
 **Export existing graph without updating:**
 ```bash
-python -m codebase_rag.main export -o my_graph.json
+cgr export -o my_graph.json
 ```
 
 **Optional: adjust Memgraph batching during export:**
 ```bash
-python -m codebase_rag.main export -o my_graph.json --batch-size 5000
+cgr export -o my_graph.json --batch-size 5000
 ```
 
 **Working with exported data:**
@@ -403,24 +407,24 @@ For AI-powered codebase optimization with best practices guidance:
 
 **Basic optimization for a specific language:**
 ```bash
-python -m codebase_rag.main optimize python --repo-path /path/to/your/repo
+cgr optimize python --repo-path /path/to/your/repo
 ```
 
 **Optimization with reference documentation:**
 ```bash
-python -m codebase_rag.main optimize python \
+cgr optimize python \
   --repo-path /path/to/your/repo \
   --reference-document /path/to/best_practices.md
 ```
 
 **Using specific models for optimization:**
 ```bash
-python -m codebase_rag.main optimize javascript \
+cgr optimize javascript \
   --repo-path /path/to/frontend \
   --orchestrator google:gemini-2.0-flash-thinking-exp-01-21
 
 # Optional: override Memgraph batch flushing during optimization
-python -m codebase_rag.main optimize javascript --repo-path /path/to/frontend \
+cgr optimize javascript --repo-path /path/to/frontend \
   --batch-size 5000
 ```
 
@@ -459,15 +463,15 @@ You can provide reference documentation (like coding standards, architectural gu
 
 ```bash
 # Use company coding standards
-python -m codebase_rag.main optimize python \
+cgr optimize python \
   --reference-document ./docs/coding_standards.md
 
 # Use architectural guidelines
-python -m codebase_rag.main optimize java \
+cgr optimize java \
   --reference-document ./ARCHITECTURE.md
 
 # Use performance best practices
-python -m codebase_rag.main optimize rust \
+cgr optimize rust \
   --reference-document ./docs/performance_guide.md
 ```
 
@@ -648,13 +652,13 @@ Use the built-in language management tool to add any Tree-sitter supported langu
 
 ```bash
 # Add a language using the standard tree-sitter repository
-python -m codebase_rag.tools.language add-grammar <language-name>
+cgr language add-grammar <language-name>
 
 # Examples:
-python -m codebase_rag.tools.language add-grammar c-sharp
-python -m codebase_rag.tools.language add-grammar php
-python -m codebase_rag.tools.language add-grammar ruby
-python -m codebase_rag.tools.language add-grammar kotlin
+cgr language add-grammar c-sharp
+cgr language add-grammar php
+cgr language add-grammar ruby
+cgr language add-grammar kotlin
 ```
 
 #### Custom Grammar Repositories
@@ -663,7 +667,7 @@ For languages hosted outside the standard tree-sitter organization:
 
 ```bash
 # Add a language from a custom repository
-python -m codebase_rag.tools.language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
 ```
 
 #### What Happens Automatically
@@ -684,7 +688,7 @@ When you add a language, the tool automatically:
 #### Example: Adding C# Support
 
 ```bash
-$ python -m codebase_rag.tools.language add-grammar c-sharp
+$ cgr language add-grammar c-sharp
 🔍 Using default tree-sitter URL: https://github.com/tree-sitter/tree-sitter-c-sharp
 🔄 Adding submodule from https://github.com/tree-sitter/tree-sitter-c-sharp...
 ✅ Successfully added submodule at grammars/tree-sitter-c-sharp
@@ -704,10 +708,10 @@ Calls: ['invocation_expression']
 
 ```bash
 # List all configured languages
-python -m codebase_rag.tools.language list-languages
+cgr language list-languages
 
 # Remove a language (this also removes the git submodule unless --keep-submodule is specified)
-python -m codebase_rag.tools.language remove-language <language-name>
+cgr language remove-language <language-name>
 ```
 
 #### Language Configuration
@@ -729,7 +733,7 @@ The system uses a configuration-driven approach for language support. Each langu
 
 **Grammar not found**: If the automatic URL doesn't work, use a custom URL:
 ```bash
-python -m codebase_rag.tools.language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
 ```
 
 **Version incompatibility**: If you get "Incompatible Language version" errors, update your tree-sitter package:

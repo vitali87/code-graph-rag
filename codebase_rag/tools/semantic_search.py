@@ -1,4 +1,3 @@
-# codebase_rag/tools/semantic_search.py
 from typing import Any
 
 from loguru import logger
@@ -38,24 +37,19 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
         from ..services.graph_service import MemgraphIngestor
         from ..vector_store import search_embeddings
 
-        # Generate embedding for the query
         query_embedding = embed_code(query)
 
-        # Search for similar embeddings - returns (node_id, score) tuples
         search_results = search_embeddings(query_embedding, top_k=top_k)
 
         if not search_results:
             logger.info(f"No semantic matches found for query: {query}")
             return []
 
-        # Extract node_ids for database query
         node_ids = [node_id for node_id, _ in search_results]
 
-        # Get node details from Memgraph
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT, batch_size=100
         ) as ingestor:
-            # Query for node details
             placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
             cypher_query = f"""
             MATCH (n)
@@ -68,12 +62,10 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
             params = {str(i): node_id for i, node_id in enumerate(node_ids)}
             results = ingestor._execute_query(cypher_query, params)
 
-            # Create O(1) lookup map for graph results
             results_map = {res["node_id"]: res for res in results}
 
-            # Format results and preserve search order with real similarity scores
             formatted_results = []
-            for node_id, score in search_results:  # Preserve order from vector search
+            for node_id, score in search_results:
                 if node_id in results_map:
                     result = results_map[node_id]
                     formatted_results.append(
@@ -82,9 +74,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
                             "qualified_name": result["qualified_name"],
                             "name": result["name"],
                             "type": result["type"][0] if result["type"] else "Unknown",
-                            "score": round(
-                                score, 3
-                            ),  # Use real similarity score from Qdrant
+                            "score": round(score, 3),
                         }
                     )
 
@@ -117,7 +107,6 @@ def get_function_source_code(node_id: int) -> str | None:
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT, batch_size=100
         ) as ingestor:
-            # Get node details including file path and line numbers
             query = """
             MATCH (m:Module)-[:DEFINES]->(n)
             WHERE id(n) = $node_id
@@ -136,7 +125,6 @@ def get_function_source_code(node_id: int) -> str | None:
             start_line = result.get("start_line")
             end_line = result.get("end_line")
 
-            # Validate and extract source code using shared utility
             is_valid, file_path_obj = validate_source_location(
                 file_path, start_line, end_line
             )
@@ -183,7 +171,6 @@ def create_semantic_search_tool() -> Tool:
         if not results:
             return f"No semantic matches found for query: '{query}'. This could mean:\n1. No functions match this description\n2. Semantic search dependencies are not installed\n3. No embeddings have been generated yet"
 
-        # Format results for LLM consumption
         formatted_results = []
         for i, result in enumerate(results, 1):
             formatted_results.append(

@@ -1,8 +1,3 @@
-"""MCP tool wrappers for code-graph-rag.
-
-This module adapts pydantic-ai Tool instances to MCP-compatible functions.
-"""
-
 import itertools
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -57,17 +52,14 @@ class MCPToolsRegistry:
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
 
-        # Load parsers for repository indexing
         self.parsers, self.queries = load_parsers()
 
-        # Initialize service instances
         self.code_retriever = CodeRetriever(project_root, ingestor)
         self.file_editor = FileEditor(project_root=project_root)
         self.file_reader = FileReader(project_root=project_root)
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
 
-        # Create pydantic-ai tools - we'll call the underlying functions directly
         self._query_tool = create_query_tool(
             ingestor=ingestor, cypher_gen=cypher_gen, console=None
         )
@@ -79,7 +71,6 @@ class MCPToolsRegistry:
             directory_lister=self.directory_lister
         )
 
-        # Build tool registry - single source of truth for all tool metadata
         self._tools: dict[str, ToolMetadata] = {
             "index_repository": ToolMetadata(
                 name="index_repository",
@@ -232,7 +223,6 @@ class MCPToolsRegistry:
         logger.info(f"[MCP] Indexing repository at: {self.project_root}")
 
         try:
-            # Clear existing data to ensure clean state for the new repository
             logger.info("[MCP] Clearing existing database to avoid conflicts...")
             self.ingestor.clean_database()
             logger.info("[MCP] Database cleared. Starting fresh indexing...")
@@ -361,16 +351,13 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] read_file: {file_path} (offset={offset}, limit={limit})")
         try:
-            # If pagination is requested, use memory-efficient line-by-line reading
             if offset is not None or limit is not None:
                 full_path = Path(self.project_root) / file_path
                 start = offset if offset is not None else 0
 
                 with open(full_path, encoding="utf-8") as f:
-                    # Skip lines before the offset and count how many we actually skipped
                     skipped_count = sum(1 for _ in itertools.islice(f, start))
 
-                    # Read the desired slice of lines
                     if limit is not None:
                         sliced_lines = [line for _, line in zip(range(limit), f)]
                     else:
@@ -378,17 +365,14 @@ class MCPToolsRegistry:
 
                     paginated_content = "".join(sliced_lines)
 
-                    # Count the remaining lines to get the total without a full second pass
                     remaining_lines_count = sum(1 for _ in f)
                     total_lines = (
                         skipped_count + len(sliced_lines) + remaining_lines_count
                     )
 
-                    # Add metadata header
                     header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
                     return header + paginated_content
             else:
-                # No pagination - use the existing file reader tool
                 result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
                 return cast(str, result)
 
@@ -411,7 +395,6 @@ class MCPToolsRegistry:
             result = await self._file_writer_tool.function(  # type: ignore[call-arg]
                 file_path=file_path, content=content
             )
-            # Handle FileCreationResult object
             if result.success:
                 return f"Successfully wrote file: {file_path}"
             else:

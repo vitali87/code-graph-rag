@@ -1,6 +1,6 @@
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
     -   id: trailing-whitespace
     -   id: end-of-file-fixer
@@ -11,12 +11,32 @@ repos:
     hooks:
     -   id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        exclude: ^codec/schema_pb2\.(py|pyi)$
     -   id: ruff-format
--   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.1
+        exclude: ^codec/schema_pb2\.(py|pyi)$
+-   repo: local
     hooks:
-    -   id: mypy
-        additional_dependencies: [types-toml]
+    -   id: ty
+        name: ty check
+        entry: uv run ty check
+        language: system
+        types: [python]
+        exclude: ^codec/.*_pb2\.py$
+        pass_filenames: false
+-   repo: local
+    hooks:
+    -   id: no-module-docstrings
+        name: no module-level docstrings
+        entry: bash -c 'for f in "$@"; do head -1 "$f" | grep -q "^\"\"\"" && echo "$f starts with module docstring" && exit 1; done; exit 0' --
+        language: system
+        types: [python]
+        exclude: ^codec/schema_pb2\.py$
+    -   id: no-inline-comments
+        name: no inline comments without (H)
+        entry: uv run python scripts/check_comments.py
+        language: system
+        types: [python]
+        exclude: ^codec/schema_pb2\.py$
 -   repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.2.0
     hooks:

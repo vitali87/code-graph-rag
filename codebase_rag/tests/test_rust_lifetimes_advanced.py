@@ -1,16 +1,9 @@
-"""
-Comprehensive Rust advanced lifetime annotations and borrowing testing.
-Tests complex lifetime scenarios, borrowing edge cases, lifetime elision,
-and advanced lifetime patterns for graph building.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -19,11 +12,9 @@ def rust_lifetimes_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_lifetimes_test"
     project_path.mkdir()
 
-    # Create standard Rust project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Advanced lifetimes test crate")
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""[package]
 name = "rust_lifetimes_test"
 version = "0.1.0"
@@ -252,18 +243,9 @@ fn test_complex_lifetimes() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify complex lifetime patterns are detected
     lifetime_calls = [
         call
         for call in calls
@@ -576,18 +558,9 @@ fn test_advanced_elision() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify lifetime elision patterns are detected
     elision_calls = [
         call
         for call in calls
@@ -972,18 +945,9 @@ fn iterator_borrowing_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify borrowing edge cases are detected
     borrowing_calls = [
         call
         for call in calls
@@ -1384,18 +1348,9 @@ fn test_generic_variance() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_lifetimes_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_lifetimes_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify lifetime variance patterns are detected
     variance_calls = [
         call
         for call in calls

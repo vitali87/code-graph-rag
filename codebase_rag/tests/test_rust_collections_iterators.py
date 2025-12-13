@@ -1,15 +1,9 @@
-"""
-Comprehensive Rust collections and iterators testing.
-Tests Vec, HashMap, HashSet, BTreeMap, iterators, and collection operations.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import run_updater
 
 
 @pytest.fixture
@@ -18,7 +12,6 @@ def rust_collections_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_collections_test"
     project_path.mkdir()
 
-    # Create Cargo.toml
     (project_path / "Cargo.toml").write_text("""
 [package]
 name = "rust_collections_test"
@@ -26,7 +19,6 @@ version = "0.1.0"
 edition = "2021"
 """)
 
-    # Create src directory
     (project_path / "src").mkdir()
     (project_path / "src" / "lib.rs").write_text("// Collections test crate")
 
@@ -161,18 +153,9 @@ fn vector_binary_search() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify vector functions are detected
     vector_calls = [
         call
         for call in calls
@@ -343,18 +326,9 @@ fn hashmap_iteration_patterns() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify HashMap functions are detected
     hashmap_calls = [
         call
         for call in calls
@@ -562,18 +536,9 @@ fn custom_iterator() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify iterator functions are detected
     iterator_calls = [
         call
         for call in calls
@@ -776,18 +741,9 @@ fn collection_performance_characteristics() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify other collections functions are detected
     collections_calls = [
         call
         for call in calls
@@ -1004,18 +960,9 @@ fn monad_like_operations() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=rust_collections_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
+    run_updater(rust_collections_project, mock_ingestor)
     calls = mock_ingestor.method_calls
 
-    # Verify functional programming functions are detected
     functional_calls = [
         call
         for call in calls

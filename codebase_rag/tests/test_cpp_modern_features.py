@@ -1,17 +1,9 @@
-"""
-Comprehensive C++ modern features testing.
-Tests modern C++ features including auto keyword, lambdas, smart pointers, move semantics,
-variadic templates, constexpr functions, range-based for loops, structured bindings, concepts, and coroutines.
-"""
-
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -20,11 +12,9 @@ def cpp_modern_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "cpp_modern_test"
     project_path.mkdir()
 
-    # Create basic structure
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    # Create base files
     (project_path / "src" / "main.cpp").write_text("int main() { return 0; }")
 
     return project_path
@@ -187,18 +177,10 @@ void demonstrateAutoFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
-    # Expected function definitions with auto features
     expected_functions = [
         f"{project_name}.auto_features.testBasicAuto",
         f"{project_name}.auto_features.testContainerAuto",
@@ -208,16 +190,8 @@ void demonstrateAutoFeatures() {
         f"{project_name}.auto_features.demonstrateAutoFeatures",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -463,18 +437,10 @@ void demonstrateLambdaFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
-    # Expected function definitions with lambda features
     expected_functions = [
         f"{project_name}.lambda_features.testBasicLambdas",
         f"{project_name}.lambda_features.testLambdaCaptures",
@@ -483,16 +449,8 @@ void demonstrateLambdaFeatures() {
         f"{project_name}.lambda_features.demonstrateLambdaFeatures",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -784,18 +742,10 @@ void demonstrateSmartPointersAndMove() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
-    # Expected classes and functions
     expected_classes = [
         f"{project_name}.smart_pointers_move.Resource",
         f"{project_name}.smart_pointers_move.SmartPtrManager",
@@ -808,31 +758,15 @@ void demonstrateSmartPointersAndMove() {
         f"{project_name}.smart_pointers_move.demonstrateSmartPointersAndMove",
     ]
 
-    # Get all Class node creation calls
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Verify expected classes were created
     found_classes = [cls for cls in expected_classes if cls in created_classes]
     assert len(found_classes) >= 1, (
         f"Expected at least 1 smart pointer class, found {len(found_classes)}: {found_classes}"
     )
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1073,18 +1007,10 @@ void demonstrateVariadicConstexpr() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
-    # Expected template functions and constexpr functions
     expected_functions = [
         f"{project_name}.variadic_constexpr.factorial",
         f"{project_name}.variadic_constexpr.isPrime",
@@ -1093,16 +1019,8 @@ void demonstrateVariadicConstexpr() {
         f"{project_name}.variadic_constexpr.demonstrateVariadicConstexpr",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1364,18 +1282,10 @@ void demonstrateStructuredBindingsAndRanges() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
     project_name = cpp_modern_project.name
 
-    # Expected functions with structured bindings and ranges
     expected_functions = [
         f"{project_name}.structured_bindings_ranges.testStructuredBindings",
         f"{project_name}.structured_bindings_ranges.testRangeBasedFor",
@@ -1383,16 +1293,8 @@ void demonstrateStructuredBindingsAndRanges() {
         f"{project_name}.structured_bindings_ranges.demonstrateStructuredBindingsAndRanges",
     ]
 
-    # Get all Function node creation calls
-    function_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Function"
-    ]
+    created_functions = get_node_names(mock_ingestor, "Function")
 
-    created_functions = {call[0][1]["qualified_name"] for call in function_calls}
-
-    # Verify at least some expected functions were created
     missing_functions = set(expected_functions) - created_functions
     assert not missing_functions, (
         f"Missing expected functions: {sorted(list(missing_functions))}"
@@ -1571,24 +1473,11 @@ void demonstrateModernFeatures() {
 """
     )
 
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_modern_project,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
+    run_updater(cpp_modern_project, mock_ingestor)
 
-    # Verify all relationship types exist
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    call_relationships = get_relationships(mock_ingestor, "CALLS")
+    defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
-    call_relationships = [c for c in all_relationships if c.args[1] == "CALLS"]
-    defines_relationships = [c for c in all_relationships if c.args[1] == "DEFINES"]
-
-    # Should have comprehensive modern C++ coverage
     comprehensive_calls = [
         call for call in call_relationships if "comprehensive_modern" in call.args[0][2]
     ]
@@ -1597,5 +1486,4 @@ void demonstrateModernFeatures() {
         f"Expected at least 5 comprehensive modern calls, found {len(comprehensive_calls)}"
     )
 
-    # Test that modern C++ parsing doesn't interfere with other relationships
     assert defines_relationships, "Should still have DEFINES relationships"

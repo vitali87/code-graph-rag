@@ -1,16 +1,9 @@
-"""
-Java reflection API and annotations parsing testing.
-Tests reflection patterns, custom annotations, meta-annotations, annotation processing,
-and runtime reflection capabilities.
-"""
-
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
 @pytest.fixture
@@ -19,7 +12,6 @@ def java_reflection_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "java_reflection_test"
     project_path.mkdir()
 
-    # Create standard Java project structure
     (project_path / "src").mkdir()
     (project_path / "src" / "main").mkdir()
     (project_path / "src" / "main" / "java").mkdir()
@@ -254,30 +246,11 @@ public class AnnotatedUser {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_reflection_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify all annotations and classes were detected
     project_name = java_reflection_project.name
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Expected annotations (treated as classes by tree-sitter)
     expected_classes = {
         f"{project_name}.src.main.java.com.example.CustomAnnotations.Test",
         f"{project_name}.src.main.java.com.example.CustomAnnotations.Deprecated",
@@ -590,28 +563,10 @@ public class ReflectionExample {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_reflection_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify the classes were detected
     project_name = java_reflection_project.name
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.ReflectionExample.ReflectionExample",
@@ -1003,28 +958,10 @@ public class AnnotationProcessor {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_reflection_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify all classes were detected
     project_name = java_reflection_project.name
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
-
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
+    created_classes = get_node_names(mock_ingestor, "Class")
 
     expected_classes = {
         f"{project_name}.src.main.java.com.example.AnnotationProcessor.User",
@@ -1295,30 +1232,11 @@ public class MetaAnnotations {
 """
     )
 
-    parsers, queries = load_parsers()
-    if "java" not in parsers:
-        pytest.skip("Java parser not available")
+    run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
 
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=java_reflection_project,
-        parsers=parsers,
-        queries=queries,
-    )
-
-    updater.run()
-
-    # Verify all classes and annotations were detected
     project_name = java_reflection_project.name
-    class_calls = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    created_classes = get_node_names(mock_ingestor, "Class")
 
-    created_classes = {call[0][1]["qualified_name"] for call in class_calls}
-
-    # Expected classes include both annotations and regular classes
     expected_classes = {
         f"{project_name}.src.main.java.com.example.MetaAnnotations.UserRepository",
         f"{project_name}.src.main.java.com.example.MetaAnnotations.ConditionalUserServiceImpl",

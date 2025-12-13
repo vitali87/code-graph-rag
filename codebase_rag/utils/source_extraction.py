@@ -1,5 +1,3 @@
-"""Shared utilities for extracting source code from files."""
-
 from collections.abc import Callable
 from pathlib import Path
 
@@ -38,7 +36,6 @@ def extract_source_lines(
         with open(file_path, encoding=encoding) as f:
             lines = f.readlines()
 
-            # Validate line range against file content
             if start_line > len(lines) or end_line > len(lines):
                 logger.warning(
                     f"Line range {start_line}-{end_line} exceeds file length "
@@ -46,7 +43,6 @@ def extract_source_lines(
                 )
                 return None
 
-            # Extract lines (convert to 0-based indexing)
             extracted_lines = lines[start_line - 1 : end_line]
             return "".join(extracted_lines).strip()
 
@@ -80,7 +76,6 @@ def extract_source_with_fallback(
     Returns:
         Extracted source code as string, or None if extraction fails
     """
-    # Try AST-based extraction first (if available)
     if ast_extractor and qualified_name:
         try:
             ast_result = ast_extractor(qualified_name, file_path)
@@ -89,7 +84,6 @@ def extract_source_with_fallback(
         except Exception as e:
             logger.debug(f"AST extraction failed for {qualified_name}: {e}")
 
-    # Fallback to line-based extraction
     return extract_source_lines(file_path, start_line, end_line, encoding)
 
 
@@ -110,7 +104,6 @@ def validate_source_location(
         return False, None
 
     try:
-        # mypy: file_path is guaranteed to be str here due to the check above
         path_obj = Path(str(file_path))
         return True, path_obj
     except Exception:

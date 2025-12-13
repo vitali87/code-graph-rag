@@ -1,5 +1,3 @@
-"""Test structural relationships: CONTAINS_PACKAGE, CONTAINS_FOLDER, CONTAINS_FILE, DEPENDS_ON_EXTERNAL."""
-
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -17,37 +15,31 @@ def complex_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "complex_project"
     project_path.mkdir()
 
-    # Root level files
     (project_path / "README.md").write_text("# Complex Project")
     (project_path / ".gitignore").write_text("*.pyc\n__pycache__/")
     (project_path / "LICENSE").write_text("MIT License")
 
-    # Python package structure
     python_pkg = project_path / "mypackage"
     python_pkg.mkdir()
     (python_pkg / "__init__.py").write_text("__version__ = '1.0.0'")
     (python_pkg / "core.py").write_text("def main(): pass")
 
-    # Nested subpackage
     subpkg = python_pkg / "utils"
     subpkg.mkdir()
     (subpkg / "__init__.py").write_text("")
     (subpkg / "helpers.py").write_text("def helper(): pass")
     (subpkg / "constants.py").write_text("VERSION = '1.0'")
 
-    # Deep nested subpackage
     deep_pkg = subpkg / "deep"
     deep_pkg.mkdir()
     (deep_pkg / "__init__.py").write_text("")
     (deep_pkg / "nested.py").write_text("class NestedClass: pass")
 
-    # JavaScript/Node.js structure
     js_dir = project_path / "frontend"
     js_dir.mkdir()
     (js_dir / "package.json").write_text('{"name": "frontend", "version": "1.0.0"}')
     (js_dir / "index.js").write_text("console.log('hello');")
 
-    # JS subdirectories
     js_src = js_dir / "src"
     js_src.mkdir()
     (js_src / "app.js").write_text("function app() {}")
@@ -60,25 +52,21 @@ def complex_project(tmp_path: Path) -> Path:
         "interface Props {} export default function Modal() {}"
     )
 
-    # Regular folders (not packages)
     docs_dir = project_path / "docs"
     docs_dir.mkdir()
     (docs_dir / "api.md").write_text("# API Documentation")
     (docs_dir / "tutorial.rst").write_text("Tutorial")
 
-    # Nested regular folders
     guides_dir = docs_dir / "guides"
     guides_dir.mkdir()
     (guides_dir / "setup.md").write_text("# Setup Guide")
     (guides_dir / "advanced.md").write_text("# Advanced Guide")
 
-    # Config folder
     config_dir = project_path / "config"
     config_dir.mkdir()
     (config_dir / "settings.yaml").write_text("debug: true")
     (config_dir / "database.ini").write_text("[database]\nhost=localhost")
 
-    # Mixed content folder
     assets_dir = project_path / "assets"
     assets_dir.mkdir()
     (assets_dir / "logo.png").write_text("fake png content")
@@ -89,7 +77,6 @@ def complex_project(tmp_path: Path) -> Path:
     (assets_images / "hero.jpg").write_text("fake jpg content")
     (assets_images / "icon.svg").write_text("<svg></svg>")
 
-    # Tests folder (another Python package)
     tests_dir = project_path / "tests"
     tests_dir.mkdir()
     (tests_dir / "__init__.py").write_text("")
@@ -109,7 +96,6 @@ def dependency_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "dependency_project"
     project_path.mkdir()
 
-    # Python dependencies
     (project_path / "requirements.txt").write_text(
         "flask>=2.0.0\nrequests==2.28.1\npytest>=7.0\nblack~=22.0\nmypy>=1.0.0,<2.0.0\n"
     )
@@ -134,7 +120,6 @@ def dependency_project(tmp_path: Path) -> Path:
         )
     )
 
-    # Node.js dependencies
     (project_path / "package.json").write_text(
         json.dumps(
             {
@@ -156,7 +141,6 @@ def dependency_project(tmp_path: Path) -> Path:
         )
     )
 
-    # Rust dependencies
     (project_path / "Cargo.toml").write_text(
         toml.dumps(
             {
@@ -175,7 +159,6 @@ def dependency_project(tmp_path: Path) -> Path:
         )
     )
 
-    # Go dependencies
     (project_path / "go.mod").write_text(
         "module example.com/myapp\n\n"
         "go 1.20\n\n"
@@ -189,7 +172,6 @@ def dependency_project(tmp_path: Path) -> Path:
         ")\n"
     )
 
-    # Ruby dependencies
     (project_path / "Gemfile").write_text(
         'source "https://rubygems.org"\n\n'
         'ruby "3.2.0"\n\n'
@@ -205,7 +187,6 @@ def dependency_project(tmp_path: Path) -> Path:
         "end\n"
     )
 
-    # PHP dependencies
     (project_path / "composer.json").write_text(
         json.dumps(
             {
@@ -223,7 +204,6 @@ def dependency_project(tmp_path: Path) -> Path:
         )
     )
 
-    # .NET dependencies
     (project_path / "MyApp.csproj").write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<Project Sdk="Microsoft.NET.Sdk">\n'
@@ -262,9 +242,7 @@ def test_contains_package_relationships(
 
     project_name = complex_project.name
 
-    # Expected CONTAINS_PACKAGE relationships
     expected_package_relationships = [
-        # Root project contains top-level packages
         (
             ("Project", "name", project_name),
             ("Package", "qualified_name", f"{project_name}.mypackage"),
@@ -273,7 +251,6 @@ def test_contains_package_relationships(
             ("Project", "name", project_name),
             ("Package", "qualified_name", f"{project_name}.tests"),
         ),
-        # Package contains subpackages
         (
             ("Package", "qualified_name", f"{project_name}.mypackage"),
             ("Package", "qualified_name", f"{project_name}.mypackage.utils"),
@@ -288,7 +265,6 @@ def test_contains_package_relationships(
         ),
     ]
 
-    # Get all CONTAINS_PACKAGE relationships
     package_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -322,9 +298,7 @@ def test_contains_folder_relationships(
 
     project_name = complex_project.name
 
-    # Expected CONTAINS_FOLDER relationships (for non-package directories)
     expected_folder_relationships = [
-        # Root project contains top-level folders
         (
             ("Project", "name", project_name),
             ("Folder", "path", "frontend"),
@@ -341,7 +315,6 @@ def test_contains_folder_relationships(
             ("Project", "name", project_name),
             ("Folder", "path", "assets"),
         ),
-        # Nested folder relationships
         (
             ("Folder", "path", "frontend"),
             ("Folder", "path", "frontend/src"),
@@ -360,7 +333,6 @@ def test_contains_folder_relationships(
         ),
     ]
 
-    # Get all CONTAINS_FOLDER relationships
     folder_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -394,9 +366,7 @@ def test_contains_file_relationships(
 
     project_name = complex_project.name
 
-    # Expected CONTAINS_FILE relationships
     expected_file_relationships = [
-        # Root project contains root-level files
         (
             ("Project", "name", project_name),
             ("File", "path", "README.md"),
@@ -409,7 +379,6 @@ def test_contains_file_relationships(
             ("Project", "name", project_name),
             ("File", "path", "LICENSE"),
         ),
-        # Packages contain module files
         (
             ("Package", "qualified_name", f"{project_name}.mypackage"),
             ("File", "path", "mypackage/__init__.py"),
@@ -438,7 +407,6 @@ def test_contains_file_relationships(
             ("Package", "qualified_name", f"{project_name}.mypackage.utils.deep"),
             ("File", "path", "mypackage/utils/deep/nested.py"),
         ),
-        # Folders contain various files
         (
             ("Folder", "path", "frontend"),
             ("File", "path", "frontend/package.json"),
@@ -503,7 +471,6 @@ def test_contains_file_relationships(
             ("Folder", "path", "assets/images"),
             ("File", "path", "assets/images/icon.svg"),
         ),
-        # Test package files
         (
             ("Package", "qualified_name", f"{project_name}.tests"),
             ("File", "path", "tests/__init__.py"),
@@ -522,7 +489,6 @@ def test_contains_file_relationships(
         ),
     ]
 
-    # Get all CONTAINS_FILE relationships
     file_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -556,7 +522,6 @@ def test_depends_on_external_python_requirements(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from requirements.txt
     expected_python_deps = [
         ("flask", ">=2.0.0"),
         ("requests", "==2.28.1"),
@@ -565,7 +530,6 @@ def test_depends_on_external_python_requirements(
         ("mypy", ">=1.0.0,<2.0.0"),
     ]
 
-    # Get all DEPENDS_ON_EXTERNAL relationships
     dependency_relationships = [
         call
         for call in mock_ingestor.ensure_relationship_batch.call_args_list
@@ -603,7 +567,6 @@ def test_depends_on_external_pyproject_toml(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from pyproject.toml
     expected_pyproject_deps = [
         "click",
         "pydantic",
@@ -647,7 +610,6 @@ def test_depends_on_external_package_json(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from package.json
     expected_npm_deps = [
         ("react", "^18.2.0"),
         ("axios", "~1.4.0"),
@@ -655,7 +617,7 @@ def test_depends_on_external_package_json(
         ("typescript", "^5.0.0"),
         ("eslint", ">=8.0.0"),
         ("@types/react", "^18.0.0"),
-        ("react-dom", "^18.2.0"),  # peerDependency
+        ("react-dom", "^18.2.0"),
     ]
 
     dependency_relationships = [
@@ -695,12 +657,11 @@ def test_depends_on_external_cargo_toml(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from Cargo.toml
     expected_rust_deps = [
         "serde",
         "tokio",
         "clap",
-        "criterion",  # dev-dependency
+        "criterion",
     ]
 
     dependency_relationships = [
@@ -738,7 +699,6 @@ def test_depends_on_external_go_mod(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from go.mod
     expected_go_deps = [
         "github.com/gin-gonic/gin",
         "github.com/stretchr/testify",
@@ -781,7 +741,6 @@ def test_depends_on_external_gemfile(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from Gemfile
     expected_ruby_deps = [
         "rails",
         "pg",
@@ -826,7 +785,6 @@ def test_depends_on_external_composer_json(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from composer.json
     expected_php_deps = [
         "symfony/console",
         "doctrine/orm",
@@ -869,7 +827,6 @@ def test_depends_on_external_csproj(
 
     project_name = dependency_project.name
 
-    # Expected dependencies from .csproj file
     expected_dotnet_deps = [
         "Newtonsoft.Json",
         "Microsoft.Extensions.Logging",
@@ -900,7 +857,6 @@ def test_mixed_structure_and_dependencies(
     complex_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """Test that both structural and dependency relationships coexist correctly."""
-    # Add some dependency files to the complex project
     (complex_project / "requirements.txt").write_text("flask>=2.0.0\nrequests==2.28.1")
     (complex_project / "package.json").write_text(
         '{"dependencies": {"react": "^18.0.0"}}'
@@ -916,7 +872,6 @@ def test_mixed_structure_and_dependencies(
     )
     updater.run()
 
-    # Verify we have all types of relationships
     all_calls = mock_ingestor.ensure_relationship_batch.call_args_list
 
     relationship_types = {call[0][1] for call in all_calls if len(call[0]) >= 3}
@@ -931,7 +886,6 @@ def test_mixed_structure_and_dependencies(
     missing_types = expected_types - relationship_types
     assert not missing_types, f"Missing relationship types: {missing_types}"
 
-    # Verify specific relationships exist
     package_calls = [
         call
         for call in all_calls
@@ -966,11 +920,9 @@ def test_edge_cases_empty_folders_and_special_files(
     project_path = tmp_path / "edge_case_project"
     project_path.mkdir()
 
-    # Empty folder
     empty_dir = project_path / "empty"
     empty_dir.mkdir()
 
-    # Hidden files and folders
     (project_path / ".env").write_text("SECRET=value")
     (project_path / ".dockerignore").write_text("*.pyc")
 
@@ -979,12 +931,10 @@ def test_edge_cases_empty_folders_and_special_files(
     (hidden_dir / "workflows").mkdir()
     (hidden_dir / "workflows" / "ci.yml").write_text("name: CI")
 
-    # Special file extensions
     (project_path / "Dockerfile").write_text("FROM python:3.11")
     (project_path / "Makefile").write_text("all:\n\techo hello")
     (project_path / "script.sh").write_text("#!/bin/bash\necho hello")
 
-    # Files without extensions
     (project_path / "LICENSE").write_text("MIT License")
     (project_path / "VERSION").write_text("1.0.0")
 
@@ -1000,10 +950,8 @@ def test_edge_cases_empty_folders_and_special_files(
 
     project_name = project_path.name
 
-    # Verify relationships are created for edge cases
     all_calls = mock_ingestor.ensure_relationship_batch.call_args_list
 
-    # Check that empty folders are handled
     empty_folder_found = any(
         (
             call[0][0] == ("Project", "name", project_name)
@@ -1014,8 +962,6 @@ def test_edge_cases_empty_folders_and_special_files(
     )
     assert empty_folder_found, "Empty folder should be tracked"
 
-    # Check hidden files are handled
-    # Note: If project root has package indicators, it becomes a Package not Project
     hidden_file_found = any(
         (
             (
@@ -1029,7 +975,6 @@ def test_edge_cases_empty_folders_and_special_files(
     )
     assert hidden_file_found, "Hidden files should be tracked"
 
-    # Check nested hidden structure
     hidden_workflow_found = any(
         (
             call[0][0] == ("Folder", "path", ".github/workflows")
@@ -1040,7 +985,6 @@ def test_edge_cases_empty_folders_and_special_files(
     )
     assert hidden_workflow_found, "Nested hidden files should be tracked"
 
-    # Check special files
     special_files = ["Dockerfile", "Makefile", "script.sh", "LICENSE", "VERSION"]
     for special_file in special_files:
         special_file_found = any(

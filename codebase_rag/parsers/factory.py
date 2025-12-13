@@ -1,12 +1,10 @@
-"""Factory for creating processor instances with proper dependencies."""
-
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
 from tree_sitter import Node
 
-from ..services.graph_service import MemgraphIngestor
+from ..services import IngestorProtocol
 from .call_processor import CallProcessor
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
@@ -29,7 +27,7 @@ class ProcessorFactory:
 
     def __init__(
         self,
-        ingestor: MemgraphIngestor,
+        ingestor: IngestorProtocol,
         repo_path_getter: Callable[[], Path] | Path,
         project_name_getter: Callable[[], str] | str,
         queries: dict[str, Any],
@@ -45,10 +43,8 @@ class ProcessorFactory:
         self.simple_name_lookup = simple_name_lookup
         self.ast_cache = ast_cache
 
-        # Mapping from module qualified names to file paths for efficient lookups
         self.module_qn_to_file_path: dict[str, Path] = {}
 
-        # Create processors with proper dependencies
         self._import_processor: ImportProcessor | None = None
         self._structure_processor: StructureProcessor | None = None
         self._definition_processor: DefinitionProcessor | None = None

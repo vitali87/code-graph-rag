@@ -1,4 +1,3 @@
-# codebase_rag/vector_store.py
 from loguru import logger
 
 from .utils.dependencies import has_qdrant_client
@@ -14,9 +13,7 @@ if has_qdrant_client():
         """Get or create Qdrant client instance."""
         global _CLIENT
         if _CLIENT is None:
-            _CLIENT = QdrantClient(
-                path="./.qdrant_code_embeddings"
-            )  # disk storage path="./.qdrant_code_embeddings"
+            _CLIENT = QdrantClient(path="./.qdrant_code_embeddings")
             if not _CLIENT.collection_exists(_COLLECTION):
                 _CLIENT.create_collection(
                     collection_name=_COLLECTION,
@@ -63,10 +60,14 @@ if has_qdrant_client():
         """
         try:
             client = get_qdrant_client()
-            hits = client.search(
-                collection_name=_COLLECTION, query_vector=query_embedding, limit=top_k
+            result = client.query_points(
+                collection_name=_COLLECTION, query=query_embedding, limit=top_k
             )
-            return [(hit.payload["node_id"], hit.score) for hit in hits]
+            return [
+                (hit.payload["node_id"], hit.score)
+                for hit in result.points
+                if hit.payload is not None
+            ]
         except Exception as e:
             logger.warning(f"Failed to search embeddings: {e}")
             return []
