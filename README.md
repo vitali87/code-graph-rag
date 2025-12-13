@@ -188,7 +188,19 @@ CYPHER_MODEL=gemini-2.5-flash
 CYPHER_API_KEY=your-google-api-key
 ```
 
-#### Option 4: Mixed Providers
+#### Option 4: All Deepseek Models
+```bash
+# .env file
+ORCHESTRATOR_PROVIDER=deepseek
+ORCHESTRATOR_MODEL=deepseek-reasoner
+ORCHESTRATOR_API_KEY=sk-your-deepseek-key
+
+CYPHER_PROVIDER=deepseek
+CYPHER_MODEL=deepseek-chat
+CYPHER_API_KEY=sk-your-deepseek-key
+```
+
+#### Option 5: Mixed Providers
 ```bash
 # .env file - Google orchestrator + Ollama cypher
 ORCHESTRATOR_PROVIDER=google
@@ -559,8 +571,8 @@ Configuration is managed through environment variables in `.env` file:
 ### Provider-Specific Settings
 
 #### Orchestrator Model Configuration
-- `ORCHESTRATOR_PROVIDER`: Provider name (`google`, `openai`, `ollama`)
-- `ORCHESTRATOR_MODEL`: Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `llama3.2`)
+- `ORCHESTRATOR_PROVIDER`: Provider name (`google`, `openai`, `deepseek`, `ollama`)
+- `ORCHESTRATOR_MODEL`: Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `deepseek-reasoner`, `llama3.2`)
 - `ORCHESTRATOR_API_KEY`: API key for the provider (if required)
 - `ORCHESTRATOR_ENDPOINT`: Custom endpoint URL (if required)
 - `ORCHESTRATOR_PROJECT_ID`: Google Cloud project ID (for Vertex AI)
@@ -570,8 +582,8 @@ Configuration is managed through environment variables in `.env` file:
 - `ORCHESTRATOR_SERVICE_ACCOUNT_FILE`: Path to service account file (for Vertex AI)
 
 #### Cypher Model Configuration
-- `CYPHER_PROVIDER`: Provider name (`google`, `openai`, `ollama`)
-- `CYPHER_MODEL`: Model ID (e.g., `gemini-2.5-flash`, `gpt-4o-mini`, `codellama`)
+- `CYPHER_PROVIDER`: Provider name (`google`, `openai`, `deepseek`, `ollama`)
+- `CYPHER_MODEL`: Model ID (e.g., `gemini-2.5-flash`, `gpt-4o-mini`, `deepseek-chat`, `codellama`)
 - `CYPHER_API_KEY`: API key for the provider (if required)
 - `CYPHER_ENDPOINT`: Custom endpoint URL (if required)
 - `CYPHER_PROJECT_ID`: Google Cloud project ID (for Vertex AI)
