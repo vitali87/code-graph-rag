@@ -331,14 +331,11 @@ class CallProcessor:
             if not isinstance(call_node, Node):
                 continue
 
-            self._process_nested_calls_in_node(
-                call_node,
-                caller_qn,
-                caller_type,
-                module_qn,
-                local_var_types,
-                class_context,
-            )
+            # NOTE: We removed _process_nested_calls_in_node here because the tree-sitter
+            # query already finds ALL call nodes including nested ones. The recursive
+            # nested call processing was causing O(N*M) complexity where N = number of calls
+            # and M = average subtree size, leading to extreme slowdowns on files with
+            # many nested calls.
 
             call_name = self._get_call_target_name(call_node)
             if not call_name:

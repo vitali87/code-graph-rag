@@ -19,9 +19,11 @@ from .utils.source_extraction import extract_source_with_fallback
 class FunctionRegistryTrie:
     """Trie data structure optimized for function qualified name lookups."""
 
-    def __init__(self) -> None:
+    def __init__(self, simple_name_lookup: dict[str, set[str]] | None = None) -> None:
         self.root: dict[str, Any] = {}
         self._entries: dict[str, str] = {}
+        # Reference to simple_name_lookup for O(1) suffix lookups
+        self._simple_name_lookup = simple_name_lookup
 
     def insert(self, qualified_name: str, func_type: str) -> None:
         """Insert a function into the trie."""
@@ -133,7 +135,14 @@ class FunctionRegistryTrie:
         return results
 
     def find_ending_with(self, suffix: str) -> list[str]:
-        """Find all qualified names ending with the given suffix."""
+        """Find all qualified names ending with the given suffix.
+
+        Uses simple_name_lookup for O(1) lookup if available, falls back to O(n) scan.
+        """
+        if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
+            # O(1) lookup using the simple_name_lookup index
+            return list(self._simple_name_lookup[suffix])
+        # Fallback to linear scan if no index available
         return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
     def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
@@ -249,8 +258,8 @@ class GraphUpdater:
         self.parsers = parsers
         self.queries = self._prepare_queries_with_parsers(queries, parsers)
         self.project_name = repo_path.name
-        self.function_registry = FunctionRegistryTrie()
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
+        self.function_registry = FunctionRegistryTrie(simple_name_lookup=self.simple_name_lookup)
         self.ast_cache = BoundedASTCache(max_entries=1000, max_memory_mb=500)
         self.ignore_dirs = IGNORE_PATTERNS
 
