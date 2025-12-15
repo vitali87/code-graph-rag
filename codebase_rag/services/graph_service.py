@@ -9,9 +9,22 @@ from loguru import logger
 class MemgraphIngestor:
     """Handles all communication and query execution with the Memgraph database."""
 
-    def __init__(self, host: str, port: int, batch_size: int = 1000):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        batch_size: int = 1000,
+        username: str | None = None,
+        password: str | None = None,
+    ):
         self._host = host
         self._port = port
+        self._username = username
+        self._password = password
+        if self._password is not None and self._username is None:
+            raise ValueError(
+                "A password was provided for Memgraph, but no username. Both are required for authentication."
+            )
         if batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
         self.batch_size = batch_size
@@ -32,7 +45,19 @@ class MemgraphIngestor:
 
     def __enter__(self) -> "MemgraphIngestor":
         logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
-        self.conn = mgclient.connect(host=self._host, port=self._port)
+        # Build connection parameters - only include username/password if provided
+        connect_params = {
+            "host": self._host,
+            "port": self._port,
+        }
+
+        # Only add authentication parameters if username is provided
+        # This allows connection to Memgraph instances without authentication
+        if self._username:
+            connect_params["username"] = self._username
+            connect_params["password"] = self._password if self._password else ""
+
+        self.conn = mgclient.connect(**connect_params)
         self.conn.autocommit = True
         logger.info("Successfully connected to Memgraph.")
         return self
