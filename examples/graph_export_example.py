@@ -10,34 +10,46 @@ from loguru import logger
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from codebase_rag.graph_loader import GraphLoader, load_graph
+from codebase_rag.types_defs import GraphSummary
+
+KEY_TOTAL_NODES = "total_nodes"
+KEY_TOTAL_RELATIONSHIPS = "total_relationships"
+KEY_METADATA = "metadata"
+KEY_EXPORTED_AT = "exported_at"
+KEY_NODE_LABELS = "node_labels"
+KEY_RELATIONSHIP_TYPES = "relationship_types"
+KEY_NAME = "name"
+DEFAULT_NAME = "Unknown"
+NODE_FUNCTION = "Function"
+NODE_CLASS = "Class"
 
 
-def print_summary(summary: dict) -> None:
+def log_summary(summary: GraphSummary) -> None:
     logger.info("Graph Summary:")
-    logger.info(f"   Total nodes: {summary.get('total_nodes', 0):,}")
-    logger.info(f"   Total relationships: {summary.get('total_relationships', 0):,}")
-    if "metadata" in summary and "exported_at" in summary["metadata"]:
-        logger.info(f"   Exported at: {summary['metadata']['exported_at']}")
+    logger.info(f"   Total nodes: {summary.get(KEY_TOTAL_NODES, 0):,}")
+    logger.info(f"   Total relationships: {summary.get(KEY_TOTAL_RELATIONSHIPS, 0):,}")
+    if KEY_METADATA in summary and KEY_EXPORTED_AT in summary[KEY_METADATA]:
+        logger.info(f"   Exported at: {summary[KEY_METADATA][KEY_EXPORTED_AT]}")
 
 
-def print_node_and_relationship_types(summary: dict) -> None:
+def log_node_and_relationship_types(summary: GraphSummary) -> None:
     logger.info("Node Types:")
-    for label, count in summary.get("node_labels", {}).items():
+    for label, count in summary.get(KEY_NODE_LABELS, {}).items():
         logger.info(f"   {label}: {count:,} nodes")
 
     logger.info("Relationship Types:")
-    for rel_type, count in summary.get("relationship_types", {}).items():
+    for rel_type, count in summary.get(KEY_RELATIONSHIP_TYPES, {}).items():
         logger.info(f"   {rel_type}: {count:,} relationships")
 
 
-def print_example_nodes(graph: GraphLoader, node_label: str, limit: int = 5) -> None:
+def log_example_nodes(graph: GraphLoader, node_label: str, limit: int = 5) -> None:
     nodes = graph.find_nodes_by_label(node_label)
     logger.info(f"Found {len(nodes)} '{node_label}' nodes.")
 
     if nodes:
         logger.info(f"   Example {node_label} names:")
         for node in nodes[:limit]:
-            name = node.properties.get("name", "Unknown")
+            name = node.properties.get(KEY_NAME, DEFAULT_NAME)
             logger.info(f"      - {name}")
         if len(nodes) > limit:
             logger.info(f"      ... and {len(nodes) - limit} more")
@@ -50,25 +62,17 @@ def analyze_graph(graph_file: str) -> None:
         graph = load_graph(graph_file)
         summary = graph.summary()
 
-        print_summary(summary)
-        print_node_and_relationship_types(summary)
+        log_summary(summary)
+        log_node_and_relationship_types(summary)
 
-        print_example_nodes(graph, "Function")
-        print_example_nodes(graph, "Class")
+        log_example_nodes(graph, NODE_FUNCTION)
+        log_example_nodes(graph, NODE_CLASS)
 
         logger.success("Analysis complete!")
 
     except Exception as e:
         logger.error(f"Error analyzing graph: {e}")
         sys.exit(1)
-
-
-EPILOG = """
-To create an exported graph file, run:
-  cgr start --repo-path /path/to/repo --update-graph -o graph.json
-Or to export an existing graph:
-  cgr export -o graph.json
-"""
 
 
 def main(

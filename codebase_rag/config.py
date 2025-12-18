@@ -8,13 +8,21 @@ from prompt_toolkit.styles import Style
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .constants import (
+    DEFAULT_API_KEY,
+    DEFAULT_MODEL,
+    DEFAULT_REGION,
+    ERR_BATCH_SIZE_POSITIVE,
+    ERR_PROVIDER_EMPTY,
+    ModelRole,
+    Provider,
+)
+
 load_dotenv()
 
 
 @dataclass
 class ModelConfig:
-    """Configuration for a specific model."""
-
     provider: str
     model_id: str
     api_key: str | None = None
@@ -28,8 +36,7 @@ class ModelConfig:
 
 class AppConfig(BaseSettings):
     """
-    Application Configuration using Pydantic for robust validation and type-safety.
-    All settings are loaded from environment variables or a .env file.
+    (H) All settings are loaded from environment variables or a .env file.
     """
 
     model_config = SettingsConfigDict(
@@ -50,7 +57,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_API_KEY: str | None = None
     ORCHESTRATOR_ENDPOINT: str | None = None
     ORCHESTRATOR_PROJECT_ID: str | None = None
-    ORCHESTRATOR_REGION: str = "us-central1"
+    ORCHESTRATOR_REGION: str = DEFAULT_REGION
     ORCHESTRATOR_PROVIDER_TYPE: str | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
@@ -60,7 +67,7 @@ class AppConfig(BaseSettings):
     CYPHER_API_KEY: str | None = None
     CYPHER_ENDPOINT: str | None = None
     CYPHER_PROJECT_ID: str | None = None
-    CYPHER_REGION: str = "us-central1"
+    CYPHER_REGION: str = DEFAULT_REGION
     CYPHER_PROVIDER_TYPE: str | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
@@ -74,7 +81,6 @@ class AppConfig(BaseSettings):
     _active_cypher: ModelConfig | None = None
 
     def _get_default_config(self, role: str) -> ModelConfig:
-        """Determine default configuration for orchestrator or cypher."""
         role_upper = role.upper()
 
         provider = getattr(self, f"{role_upper}_PROVIDER", None)
@@ -87,7 +93,7 @@ class AppConfig(BaseSettings):
                 api_key=getattr(self, f"{role_upper}_API_KEY", None),
                 endpoint=getattr(self, f"{role_upper}_ENDPOINT", None),
                 project_id=getattr(self, f"{role_upper}_PROJECT_ID", None),
-                region=getattr(self, f"{role_upper}_REGION", "us-central1"),
+                region=getattr(self, f"{role_upper}_REGION", DEFAULT_REGION),
                 provider_type=getattr(self, f"{role_upper}_PROVIDER_TYPE", None),
                 thinking_budget=getattr(self, f"{role_upper}_THINKING_BUDGET", None),
                 service_account_file=getattr(
@@ -96,58 +102,48 @@ class AppConfig(BaseSettings):
             )
 
         return ModelConfig(
-            provider="ollama",
-            model_id="llama3.2",
+            provider=Provider.OLLAMA,
+            model_id=DEFAULT_MODEL,
             endpoint=str(self.LOCAL_MODEL_ENDPOINT),
-            api_key="ollama",
+            api_key=DEFAULT_API_KEY,
         )
 
     def _get_default_orchestrator_config(self) -> ModelConfig:
-        """Determine default orchestrator configuration."""
-        return self._get_default_config("orchestrator")
+        return self._get_default_config(ModelRole.ORCHESTRATOR)
 
     def _get_default_cypher_config(self) -> ModelConfig:
-        """Determine default cypher configuration."""
-        return self._get_default_config("cypher")
+        return self._get_default_config(ModelRole.CYPHER)
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:
-        """Get the active orchestrator model configuration."""
         return self._active_orchestrator or self._get_default_orchestrator_config()
 
     @property
     def active_cypher_config(self) -> ModelConfig:
-        """Get the active cypher model configuration."""
         return self._active_cypher or self._get_default_cypher_config()
 
     def set_orchestrator(self, provider: str, model: str, **kwargs: Any) -> None:
-        """Set the active orchestrator configuration."""
         self._active_orchestrator = ModelConfig(
             provider=provider.lower(), model_id=model, **kwargs
         )
 
     def set_cypher(self, provider: str, model: str, **kwargs: Any) -> None:
-        """Set the active cypher configuration."""
         self._active_cypher = ModelConfig(
             provider=provider.lower(), model_id=model, **kwargs
         )
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
-        """Parse provider:model string format."""
         if ":" not in model_string:
-            return "ollama", model_string
+            return Provider.OLLAMA, model_string
         provider, model = model_string.split(":", 1)
         if not provider:
-            raise ValueError(
-                "Provider name cannot be empty in 'provider:model' format."
-            )
+            raise ValueError(ERR_PROVIDER_EMPTY)
         return provider.lower(), model
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
-        """Return a validated batch size, falling back to config when needed."""
         resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size
         if resolved < 1:
-            raise ValueError("batch_size must be a positive integer")
+            raise ValueError(ERR_BATCH_SIZE_POSITIVE)
         return resolved
 
 
@@ -172,7 +168,7 @@ IGNORE_PATTERNS = {
 IGNORE_SUFFIXES = {".tmp", "~"}
 
 EDIT_REQUEST_KEYWORDS = frozenset(
-    [
+    {
         "modify",
         "update",
         "change",
@@ -187,22 +183,22 @@ EDIT_REQUEST_KEYWORDS = frozenset(
         "write",
         "implement",
         "replace",
-    ]
+    }
 )
 
 EDIT_TOOLS = frozenset(
-    [
+    {
         "edit_file",
         "write_file",
         "file_editor",
         "file_writer",
         "create_file",
         "replace_code_surgically",
-    ]
+    }
 )
 
 EDIT_INDICATORS = frozenset(
-    [
+    {
         "modifying",
         "updating",
         "changing",
@@ -220,7 +216,7 @@ EDIT_INDICATORS = frozenset(
         "file modified",
         "file updated",
         "file created",
-    ]
+    }
 )
 
 ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})
