@@ -1,6 +1,7 @@
 import argparse
 import sys
 import time
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +17,14 @@ from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
+class EventType(StrEnum):
+    MODIFIED = "modified"
+    CREATED = "created"
+
+
 class CodeChangeEventHandler(FileSystemEventHandler):
     def __init__(self, updater: GraphUpdater):
         self.updater = updater
-        # (H) Using centralized ignore patterns from config
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
         logger.info("File watcher is now active.")
@@ -31,6 +36,19 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         return all(part not in self.ignore_patterns for part in path.parts)
 
     def dispatch(self, event: Any) -> None:
+        # (H) ┌─────────────────────────────────────────────────────────────────────┐
+        # (H) │                      Real-Time Graph Update Steps                   │
+        # (H) ├─────────────────────────────────────────────────────────────────────┤
+        # (H) │ Step 1: Delete all old data from the graph for this file           │
+        # (H) │         Provides a clean slate for the updated information         │
+        # (H) │ Step 2: Clear the specific in-memory state for the file            │
+        # (H) │         Prevents stale in-memory representations                   │
+        # (H) │ Step 3: Re-parse the file if it was modified or created            │
+        # (H) │         Rebuilds in-memory state (AST, function registry)          │
+        # (H) │ Step 4: Re-process all function calls across the entire codebase   │
+        # (H) │         Fixes "island" problem - changes reflect in all relations  │
+        # (H) │ Step 5: Flush all collected changes to the database                │
+        # (H) └─────────────────────────────────────────────────────────────────────┘
         if event.is_directory or not self._is_relevant(event.src_path):
             return
 
@@ -48,19 +66,16 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             f"Change detected: {event.event_type} on {path}. Updating graph."
         )
 
-        # (H) --- Step 1: Delete all old data from the graph for this file ---
-        # (H) This provides a clean slate for the updated information.
+        # (H) Step 1
         delete_query = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
         ingestor.execute_write(delete_query, {"path": relative_path_str})
         logger.debug(f"Ran deletion query for path: {relative_path_str}")
 
-        # (H) --- Step 2: Clear the specific in-memory state for the file ---
-        # (H) Crucial for preventing stale in-memory representations.
+        # (H) Step 2
         self.updater.remove_file_from_state(path)
 
-        # (H) --- Step 3: Re-parse the file if it was modified or created ---
-        # (H) This rebuilds the in-memory state (AST, function registry) for the single file.
-        if event.event_type in ["modified", "created"]:
+        # (H) Step 3
+        if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_config(path.suffix)
             if lang_config and lang_config.name in self.updater.parsers:
                 if result := self.updater.factory.definition_processor.process_file(
@@ -72,14 +87,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
 
-        # (H) --- Step 4: Re-process all function calls across the entire codebase ---
-        # (H) This is the key to fixing the "island" problem. It ensures that changes
-        # (H) in one file are correctly reflected in relationships from all other files.
+        # (H) Step 4
         logger.info("Recalculating all function call relationships for consistency...")
         ingestor.execute_write("MATCH ()-[r:CALLS]->() DELETE r")
         self.updater._process_function_calls()
 
-        # (H) --- Step 5: Flush all collected changes to the database ---
+        # (H) Step 5
         self.updater.ingestor.flush_all()
         logger.success(f"Graph updated successfully for change in: {path.name}")
 
@@ -99,8 +112,7 @@ def start_watcher(
     ) as ingestor:
         updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
-        # (H) --- Perform an initial full scan to build the complete context ---
-        # (H) This is essential for the real-time updates to have a valid baseline.
+        # (H) Initial full scan builds the complete context for real-time updates
         logger.info("Performing initial full codebase scan...")
         updater.run()
         logger.success("Initial scan complete. Starting real-time watcher.")

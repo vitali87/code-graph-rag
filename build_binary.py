@@ -4,18 +4,27 @@ import os
 import platform
 import subprocess
 import sys
+from enum import StrEnum
 from pathlib import Path
 
 from loguru import logger
 
 
+class Architecture(StrEnum):
+    X86_64 = "x86_64"
+    AARCH64 = "aarch64"
+    ARM64 = "arm64"
+    AMD64 = "amd64"
+
+
 def build_binary() -> bool:
     system = platform.system().lower()
     machine = platform.machine().lower()
-    if machine == "x86_64":
-        machine = "amd64"
-    elif machine in ["aarch64", "arm64"]:
-        machine = "arm64"
+    match machine:
+        case Architecture.X86_64:
+            machine = Architecture.AMD64
+        case Architecture.AARCH64 | Architecture.ARM64:
+            machine = Architecture.ARM64
 
     binary_name = f"graph-code-{system}-{machine}"
 
