@@ -1,10 +1,10 @@
-import argparse
 import sys
 import time
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
+import typer
 from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -131,7 +131,24 @@ def start_watcher(
         observer.join()
 
 
-if __name__ == "__main__":
+def _validate_positive_int(value: int) -> int:
+    if value < 1:
+        raise typer.BadParameter(f"{value!r} is not a valid positive integer")
+    return value
+
+
+def main(
+    repo_path: Annotated[str, typer.Argument(help="Path to the repository to watch.")],
+    host: Annotated[str, typer.Option(help="Memgraph host")] = "localhost",
+    port: Annotated[int, typer.Option(help="Memgraph port")] = 7687,
+    batch_size: Annotated[
+        int | None,
+        typer.Option(
+            help="Number of buffered nodes/relationships before flushing to Memgraph",
+            callback=lambda v: _validate_positive_int(v) if v else None,
+        ),
+    ] = None,
+) -> None:
     logger.remove()
     logger.add(
         sys.stdout,
@@ -139,33 +156,8 @@ if __name__ == "__main__":
         level="INFO",
     )
     logger.info("Logger configured for Real-Time Updater.")
+    start_watcher(repo_path, host, port, batch_size)
 
-    parser = argparse.ArgumentParser(
-        description="Real-time graph updater for codebases."
-    )
-    parser.add_argument("repo_path", help="Path to the repository to watch.")
-    parser.add_argument("--host", default="localhost", help="Memgraph host")
-    parser.add_argument("--port", type=int, default=7687, help="Memgraph port")
 
-    def positive_int(value: str) -> int:
-        try:
-            ivalue = int(value)
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(
-                f"{value!r} is not a valid integer"
-            ) from exc
-        if ivalue < 1:
-            raise argparse.ArgumentTypeError(
-                f"{value!r} is not a valid positive integer"
-            )
-        return ivalue
-
-    parser.add_argument(
-        "--batch-size",
-        type=positive_int,
-        default=None,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
-    )
-    args = parser.parse_args()
-
-    start_watcher(args.repo_path, args.host, args.port, args.batch_size)
+if __name__ == "__main__":
+    typer.run(main)

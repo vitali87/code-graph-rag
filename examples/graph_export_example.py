@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 
-import argparse
 import sys
 from pathlib import Path
+from typing import Annotated
+
+import typer
+from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -10,43 +13,38 @@ from codebase_rag.graph_loader import GraphLoader, load_graph
 
 
 def print_summary(summary: dict) -> None:
-    """Prints the high-level summary of the graph."""
-    print("\n📊 Graph Summary:")
-    print(f"   • Total nodes: {summary.get('total_nodes', 0):,}")
-    print(f"   • Total relationships: {summary.get('total_relationships', 0):,}")
+    logger.info("Graph Summary:")
+    logger.info(f"   Total nodes: {summary.get('total_nodes', 0):,}")
+    logger.info(f"   Total relationships: {summary.get('total_relationships', 0):,}")
     if "metadata" in summary and "exported_at" in summary["metadata"]:
-        print(f"   • Exported at: {summary['metadata']['exported_at']}")
+        logger.info(f"   Exported at: {summary['metadata']['exported_at']}")
 
 
 def print_node_and_relationship_types(summary: dict) -> None:
-    """Prints the breakdown of node and relationship labels."""
-    print("\n🏷️  Node Types:")
+    logger.info("Node Types:")
     for label, count in summary.get("node_labels", {}).items():
-        print(f"   • {label}: {count:,} nodes")
+        logger.info(f"   {label}: {count:,} nodes")
 
-    print("\n🔗 Relationship Types:")
+    logger.info("Relationship Types:")
     for rel_type, count in summary.get("relationship_types", {}).items():
-        print(f"   • {rel_type}: {count:,} relationships")
+        logger.info(f"   {rel_type}: {count:,} relationships")
 
 
 def print_example_nodes(graph: GraphLoader, node_label: str, limit: int = 5) -> None:
-    """Finds and prints a sample of nodes for a given label."""
     nodes = graph.find_nodes_by_label(node_label)
-    print(f"\n🔍 Found {len(nodes)} '{node_label}' nodes.")
+    logger.info(f"Found {len(nodes)} '{node_label}' nodes.")
 
     if nodes:
-        print(f"   📝 Example {node_label} names:")
+        logger.info(f"   Example {node_label} names:")
         for node in nodes[:limit]:
             name = node.properties.get("name", "Unknown")
-            print(f"      - {name}")
+            logger.info(f"      - {name}")
         if len(nodes) > limit:
-            print(f"      ... and {len(nodes) - limit} more")
+            logger.info(f"      ... and {len(nodes) - limit} more")
 
 
 def analyze_graph(graph_file: str) -> None:
-    """Analyze the exported graph and show useful information."""
-    print(f"\n🔍 Analyzing graph from: {graph_file}")
-    print("=" * 60)
+    logger.info(f"Analyzing graph from: {graph_file}")
 
     try:
         graph = load_graph(graph_file)
@@ -58,38 +56,32 @@ def analyze_graph(graph_file: str) -> None:
         print_example_nodes(graph, "Function")
         print_example_nodes(graph, "Class")
 
-        print("\n✅ Analysis complete!")
+        logger.success("Analysis complete!")
 
     except Exception as e:
-        print(f"❌ Error analyzing graph: {e}", file=sys.stderr)
+        logger.error(f"Error analyzing graph: {e}")
         sys.exit(1)
 
 
-def main() -> None:
-    """Main function to demonstrate graph analysis."""
-    parser = argparse.ArgumentParser(
-        description="Analyze an exported codebase graph.",
-        epilog="""
+EPILOG = """
 To create an exported graph file, run:
   cgr start --repo-path /path/to/repo --update-graph -o graph.json
 Or to export an existing graph:
   cgr export -o graph.json
-""",
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument(
-        "graph_file", type=str, help="Path to the exported_graph.json file."
-    )
+"""
 
-    args = parser.parse_args()
 
-    graph_path = Path(args.graph_file)
-    if not graph_path.exists():
-        print(f"❌ Graph file not found: {graph_path}", file=sys.stderr)
-        sys.exit(1)
+def main(
+    graph_file: Annotated[
+        Path, typer.Argument(help="Path to the exported_graph.json file.")
+    ],
+) -> None:
+    if not graph_file.exists():
+        logger.error(f"Graph file not found: {graph_file}")
+        raise typer.Exit(1)
 
-    analyze_graph(str(graph_path))
+    analyze_graph(str(graph_file))
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
