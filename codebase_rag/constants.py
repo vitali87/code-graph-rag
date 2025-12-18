@@ -36,6 +36,14 @@ KEY_TOTAL_NODES = "total_nodes"
 KEY_TOTAL_RELATIONSHIPS = "total_relationships"
 KEY_NODE_LABELS = "node_labels"
 KEY_RELATIONSHIP_TYPES = "relationship_types"
+KEY_PARSER = "parser"
+KEY_QUALIFIED_NAME = "qualified_name"
+KEY_START_LINE = "start_line"
+KEY_END_LINE = "end_line"
+KEY_PATH = "path"
+
+# (H) File names
+INIT_PY = "__init__.py"
 
 # (H) Error messages
 ERR_GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
@@ -88,6 +96,10 @@ NODE_PROJECT = "Project"
 # (H) Cache defaults
 DEFAULT_CACHE_ENTRIES = 1000
 DEFAULT_CACHE_MEMORY_MB = 500
+EMBEDDING_PROGRESS_INTERVAL = 10
+
+# (H) Property keys
+KEY_NAME = "name"
 
 # (H) Dependency files
 DEPENDENCY_FILES = frozenset(

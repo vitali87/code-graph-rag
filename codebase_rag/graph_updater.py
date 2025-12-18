@@ -14,6 +14,15 @@ from .constants import (
     DEFAULT_CACHE_ENTRIES,
     DEFAULT_CACHE_MEMORY_MB,
     DEPENDENCY_FILES,
+    EMBEDDING_PROGRESS_INTERVAL,
+    INIT_PY,
+    KEY_END_LINE,
+    KEY_NAME,
+    KEY_NODE_ID,
+    KEY_PARSER,
+    KEY_PATH,
+    KEY_QUALIFIED_NAME,
+    KEY_START_LINE,
     LOG_ANALYSIS_COMPLETE,
     LOG_CLEANED_SIMPLE_NAME,
     LOG_EMBEDDING_FAILED,
@@ -41,6 +50,7 @@ from .constants import (
 from .language_config import LANGUAGE_FQN_CONFIGS, get_language_config
 from .parsers.factory import ProcessorFactory
 from .services import IngestorProtocol, QueryProtocol
+from .types_defs import EmbeddingQueryResult
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.source_extraction import extract_source_with_fallback
@@ -240,8 +250,8 @@ class GraphUpdater:
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
-            repo_path_getter=lambda: self.repo_path,
-            project_name_getter=lambda: self.project_name,
+            repo_path_getter=self.repo_path,
+            project_name_getter=self.project_name,
             queries=self.queries,
             function_registry=self.function_registry,
             simple_name_lookup=self.simple_name_lookup,
@@ -257,18 +267,17 @@ class GraphUpdater:
     def _prepare_queries_with_parsers(
         self, queries: dict[str, Any], parsers: dict[str, Parser]
     ) -> dict[str, Any]:
-        updated_queries = {
+        return {
             lang: (
-                {**query_data, "parser": parsers[lang]}
+                {**query_data, KEY_PARSER: parsers[lang]}
                 if lang in parsers
                 else query_data
             )
             for lang, query_data in queries.items()
         }
-        return updated_queries
 
     def run(self) -> None:
-        self.ingestor.ensure_node_batch(NODE_PROJECT, {"name": self.project_name})
+        self.ingestor.ensure_node_batch(NODE_PROJECT, {KEY_NAME: self.project_name})
         logger.info(LOG_ENSURING_PROJECT.format(name=self.project_name))
 
         logger.info(LOG_PASS_1_STRUCTURE)
@@ -296,7 +305,7 @@ class GraphUpdater:
             logger.debug(LOG_REMOVED_FROM_CACHE)
 
         relative_path = file_path.relative_to(self.repo_path)
-        if file_path.name == "__init__.py":
+        if file_path.name == INIT_PY:
             module_qn_prefix = ".".join(
                 [self.project_name] + list(relative_path.parent.parts)
             )
@@ -342,20 +351,12 @@ class GraphUpdater:
                     if result:
                         root_node, language = result
                         self.ast_cache[filepath] = (root_node, language)
-
-                    self.factory.structure_processor.process_generic_file(
-                        filepath, filepath.name
-                    )
-
                 elif self._is_dependency_file(filepath.name, filepath):
                     self.factory.definition_processor.process_dependencies(filepath)
-                    self.factory.structure_processor.process_generic_file(
-                        filepath, filepath.name
-                    )
-                else:
-                    self.factory.structure_processor.process_generic_file(
-                        filepath, filepath.name
-                    )
+
+                self.factory.structure_processor.process_generic_file(
+                    filepath, filepath.name
+                )
 
     def _process_function_calls(self) -> None:
         ast_cache_items = list(self.ast_cache.items())
@@ -389,11 +390,12 @@ class GraphUpdater:
 
             embedded_count = 0
             for result in results:
-                node_id = result["node_id"]
-                qualified_name = result["qualified_name"]
-                start_line = result.get("start_line")
-                end_line = result.get("end_line")
-                file_path = result.get("path")
+                result: EmbeddingQueryResult
+                node_id = result[KEY_NODE_ID]
+                qualified_name = result[KEY_QUALIFIED_NAME]
+                start_line = result.get(KEY_START_LINE)
+                end_line = result.get(KEY_END_LINE)
+                file_path = result.get(KEY_PATH)
 
                 if source_code := self._extract_source_code(
                     qualified_name, file_path, start_line, end_line
@@ -403,7 +405,7 @@ class GraphUpdater:
                         store_embedding(node_id, embedding, qualified_name)
                         embedded_count += 1
 
-                        if embedded_count % 10 == 0:
+                        if embedded_count % EMBEDDING_PROGRESS_INTERVAL == 0:
                             logger.debug(
                                 LOG_EMBEDDING_PROGRESS.format(
                                     done=embedded_count, total=len(results)
