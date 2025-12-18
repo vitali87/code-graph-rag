@@ -6,10 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 
 def build_binary() -> bool:
-    """Build the Graph-Code binary using PyInstaller."""
-
     system = platform.system().lower()
     machine = platform.machine().lower()
     if machine == "x86_64":
@@ -61,28 +61,28 @@ def build_binary() -> bool:
         "main.py",
     ]
 
-    print(f"Building binary: {binary_name}")
-    print("This may take a few minutes...")
+    logger.info(f"Building binary: {binary_name}")
+    logger.info("This may take a few minutes...")
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("Binary built successfully!")
+        logger.success("Binary built successfully!")
 
         binary_path = Path("dist") / binary_name
         if binary_path.exists():
             size_mb = binary_path.stat().st_size / (1024 * 1024)
-            print(f"Binary: {binary_path}")
-            print(f"Size: {size_mb:.1f} MB")
+            logger.info(f"Binary: {binary_path}")
+            logger.info(f"Size: {size_mb:.1f} MB")
 
             os.chmod(binary_path, 0o755)
-            print("Binary is ready for distribution!")
+            logger.success("Binary is ready for distribution!")
 
         return True
 
     except subprocess.CalledProcessError as e:
-        print(f"Build failed: {e}")
-        print("STDOUT:", e.stdout)
-        print("STDERR:", e.stderr)
+        logger.error(f"Build failed: {e}")
+        logger.error(f"STDOUT: {e.stdout}")
+        logger.error(f"STDERR: {e.stderr}")
         return False
 
 

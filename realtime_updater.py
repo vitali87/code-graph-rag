@@ -17,8 +17,6 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 
 
 class CodeChangeEventHandler(FileSystemEventHandler):
-    """Handles file system events and updates the graph accordingly."""
-
     def __init__(self, updater: GraphUpdater):
         self.updater = updater
         # (H) Using centralized ignore patterns from config
@@ -27,14 +25,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         logger.info("File watcher is now active.")
 
     def _is_relevant(self, path_str: str) -> bool:
-        """Check if the file path is relevant for processing."""
         path = Path(path_str)
         if any(path.name.endswith(suffix) for suffix in self.ignore_suffixes):
             return False
-        return not any(part in self.ignore_patterns for part in path.parts)
+        return all(part not in self.ignore_patterns for part in path.parts)
 
     def dispatch(self, event: Any) -> None:
-        """A single dispatch method to handle all file system events."""
         if event.is_directory or not self._is_relevant(event.src_path):
             return
 
@@ -67,13 +63,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         if event.event_type in ["modified", "created"]:
             lang_config = get_language_config(path.suffix)
             if lang_config and lang_config.name in self.updater.parsers:
-                result = self.updater.factory.definition_processor.process_file(
+                if result := self.updater.factory.definition_processor.process_file(
                     path,
                     lang_config.name,
                     self.updater.queries,
                     self.updater.factory.structure_processor.structural_elements,
-                )
-                if result:
+                ):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
 
@@ -92,7 +87,6 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 def start_watcher(
     repo_path: str, host: str, port: int, batch_size: int | None = None
 ) -> None:
-    """Initializes the graph updater and starts the file system watcher."""
     repo_path_obj = Path(repo_path).resolve()
     parsers, queries = load_parsers()
 
@@ -142,7 +136,6 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=7687, help="Memgraph port")
 
     def positive_int(value: str) -> int:
-        """Argparse type that enforces positive integers."""
         try:
             ivalue = int(value)
         except ValueError as exc:
