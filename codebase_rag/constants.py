@@ -89,6 +89,7 @@ LOG_EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {erro
 # (H) Trie internal keys
 TRIE_TYPE_KEY = "__type__"
 TRIE_QN_KEY = "__qn__"
+TRIE_INTERNAL_PREFIX = "__"
 
 # (H) Node labels
 NODE_PROJECT = "Project"

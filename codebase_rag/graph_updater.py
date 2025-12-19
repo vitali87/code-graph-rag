@@ -44,6 +44,7 @@ from .constants import (
     LOG_REMOVING_STATE,
     LOG_SEMANTIC_NOT_AVAILABLE,
     NODE_PROJECT,
+    TRIE_INTERNAL_PREFIX,
     TRIE_QN_KEY,
     TRIE_TYPE_KEY,
 )
@@ -111,8 +112,36 @@ class FunctionRegistryTrie:
             del node[part]
 
         is_endpoint = TRIE_QN_KEY in node
-        has_children = any(not key.startswith("__") for key in node)
+        has_children = any(not key.startswith(TRIE_INTERNAL_PREFIX) for key in node)
         return not has_children and not is_endpoint
+
+    def _navigate_to_prefix(self, prefix: str) -> dict[str, Any] | None:
+        parts = prefix.split(".") if prefix else []
+        current = self.root
+        for part in parts:
+            if part not in current:
+                return None
+            current = current[part]
+        return current
+
+    def _collect_from_subtree(
+        self, node: dict[str, Any], filter_fn: Any = None
+    ) -> list[tuple[str, str]]:
+        results: list[tuple[str, str]] = []
+
+        def dfs(n: dict[str, Any]) -> None:
+            if TRIE_QN_KEY in n:
+                qn = n[TRIE_QN_KEY]
+                func_type = n[TRIE_TYPE_KEY]
+                if filter_fn is None or filter_fn(qn):
+                    results.append((qn, func_type))
+
+            for key, child in n.items():
+                if not key.startswith(TRIE_INTERNAL_PREFIX):
+                    dfs(child)
+
+        dfs(node)
+        return results
 
     def keys(self) -> KeysView[str]:
         return self._entries.keys()
@@ -124,27 +153,14 @@ class FunctionRegistryTrie:
         return len(self._entries)
 
     def find_with_prefix_and_suffix(self, prefix: str, suffix: str) -> list[str]:
-        results = []
-        prefix_parts = prefix.split(".") if prefix else []
-
-        current = self.root
-        for part in prefix_parts:
-            if part not in current:
-                return []
-            current = current[part]
-
-        def dfs(node: dict[str, Any]) -> None:
-            if TRIE_QN_KEY in node:
-                qn = node[TRIE_QN_KEY]
-                if qn.endswith(f".{suffix}"):
-                    results.append(qn)
-
-            for key, child in node.items():
-                if not key.startswith("__"):
-                    dfs(child)
-
-        dfs(current)
-        return results
+        node = self._navigate_to_prefix(prefix)
+        if node is None:
+            return []
+        suffix_pattern = f".{suffix}"
+        matches = self._collect_from_subtree(
+            node, lambda qn: qn.endswith(suffix_pattern)
+        )
+        return [qn for qn, _ in matches]
 
     def find_ending_with(self, suffix: str) -> list[str]:
         if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
@@ -154,27 +170,10 @@ class FunctionRegistryTrie:
         return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
     def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
-        results = []
-        prefix_parts = prefix.split(".")
-
-        current = self.root
-        for part in prefix_parts:
-            if part not in current:
-                return []
-            current = current[part]
-
-        def dfs(node: dict[str, Any]) -> None:
-            if TRIE_QN_KEY in node:
-                qn = node[TRIE_QN_KEY]
-                func_type = node[TRIE_TYPE_KEY]
-                results.append((qn, func_type))
-
-            for key, child in node.items():
-                if not key.startswith("__"):
-                    dfs(child)
-
-        dfs(current)
-        return results
+        node = self._navigate_to_prefix(prefix)
+        if node is None:
+            return []
+        return self._collect_from_subtree(node)
 
 
 class BoundedASTCache:
@@ -305,14 +304,12 @@ class GraphUpdater:
             logger.debug(LOG_REMOVED_FROM_CACHE)
 
         relative_path = file_path.relative_to(self.repo_path)
-        if file_path.name == INIT_PY:
-            module_qn_prefix = ".".join(
-                [self.project_name] + list(relative_path.parent.parts)
-            )
-        else:
-            module_qn_prefix = ".".join(
-                [self.project_name] + list(relative_path.with_suffix("").parts)
-            )
+        path_parts = (
+            relative_path.parent.parts
+            if file_path.name == INIT_PY
+            else relative_path.with_suffix("").parts
+        )
+        module_qn_prefix = ".".join([self.project_name, *path_parts])
 
         qns_to_remove = set()
 
