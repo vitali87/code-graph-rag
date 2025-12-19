@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 
 from .constants import (
+    ENCODING_UTF8,
     ERR_DATA_NOT_LOADED,
     ERR_FAILED_TO_LOAD_DATA,
     ERR_GRAPH_FILE_NOT_FOUND,
@@ -54,7 +55,7 @@ class GraphLoader:
             )
 
         logger.info(LOG_LOADING_GRAPH.format(path=self.file_path))
-        with open(self.file_path, encoding="utf-8") as f:
+        with open(self.file_path, encoding=ENCODING_UTF8) as f:
             self._data = json.load(f)
 
         if self._data is None:

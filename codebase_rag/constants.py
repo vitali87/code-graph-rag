@@ -45,6 +45,9 @@ KEY_PATH = "path"
 # (H) File names
 INIT_PY = "__init__.py"
 
+# (H) Encoding
+ENCODING_UTF8 = "utf-8"
+
 # (H) Error messages
 ERR_GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 ERR_FAILED_TO_LOAD_DATA = "Failed to load data from file"
