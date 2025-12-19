@@ -8,6 +8,7 @@ from tree_sitter import Node, Query, QueryCursor
 
 from ..language_config import LANGUAGE_FQN_CONFIGS, LanguageConfig
 from ..services import IngestorProtocol
+from ..types_defs import NodeType, SimpleNameLookup
 from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp_utils import (
     build_cpp_qualified_name,
@@ -40,7 +41,7 @@ class DefinitionProcessor:
         repo_path: Path,
         project_name: str,
         function_registry: Any,
-        simple_name_lookup: dict[str, set[str]],
+        simple_name_lookup: SimpleNameLookup,
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
     ):
@@ -58,7 +59,7 @@ class DefinitionProcessor:
         Determine the node type for inheritance relationships.
         Returns the type from the function registry, defaulting to "Class".
         """
-        node_type = self.function_registry.get(qualified_name, "Class")
+        node_type = self.function_registry.get(qualified_name, NodeType.CLASS)
         return str(node_type)
 
     def _create_inheritance_relationship(
@@ -251,17 +252,16 @@ class DefinitionProcessor:
                         return safe_decode_text(func_node)
         return None
 
-    def _extract_template_class_type(self, template_node: Node) -> str | None:
-        """Extract the underlying class type from a template declaration."""
+    def _extract_template_class_type(self, template_node: Node) -> NodeType | None:
         for child in template_node.children:
             if child.type == "class_specifier":
-                return "Class"
+                return NodeType.CLASS
             elif child.type == "struct_specifier":
-                return "Class"
+                return NodeType.CLASS
             elif child.type == "union_specifier":
-                return "Union"
+                return NodeType.UNION
             elif child.type == "enum_specifier":
-                return "Enum"
+                return NodeType.ENUM
         return None
 
     def _extract_cpp_class_name(self, class_node: Node) -> str | None:
@@ -437,7 +437,7 @@ class DefinitionProcessor:
             logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
             self.ingestor.ensure_node_batch("Function", func_props)
 
-            self.function_registry[func_qn] = "Function"
+            self.function_registry[func_qn] = NodeType.FUNCTION
             if func_name:
                 self.simple_name_lookup[func_name].add(func_qn)
 
@@ -829,27 +829,27 @@ class DefinitionProcessor:
                 "is_exported": is_exported,
             }
             if class_node.type == "interface_declaration":
-                node_type = "Interface"
+                node_type = NodeType.INTERFACE
                 logger.info(f"  Found Interface: {class_name} (qn: {class_qn})")
             elif class_node.type in [
                 "enum_declaration",
                 "enum_specifier",
                 "enum_class_specifier",
             ]:
-                node_type = "Enum"
+                node_type = NodeType.ENUM
                 logger.info(f"  Found Enum: {class_name} (qn: {class_qn})")
             elif class_node.type == "type_alias_declaration":
-                node_type = "Type"
+                node_type = NodeType.TYPE
                 logger.info(f"  Found Type: {class_name} (qn: {class_qn})")
             elif class_node.type == "struct_specifier":
-                node_type = "Class"
+                node_type = NodeType.CLASS
                 logger.info(f"  Found Struct: {class_name} (qn: {class_qn})")
             elif class_node.type == "union_specifier":
-                node_type = "Union"
+                node_type = NodeType.UNION
                 logger.info(f"  Found Union: {class_name} (qn: {class_qn})")
             elif class_node.type == "template_declaration":
                 template_class = self._extract_template_class_type(class_node)
-                node_type = template_class if template_class else "Class"
+                node_type = template_class if template_class else NodeType.CLASS
                 logger.info(
                     f"  Found Template {node_type}: {class_name} (qn: {class_qn})"
                 )
@@ -858,27 +858,27 @@ class DefinitionProcessor:
                     safe_decode_with_fallback(class_node) if class_node.text else ""
                 )
                 if "export struct " in node_text:
-                    node_type = "Class"
+                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Struct: {class_name} (qn: {class_qn})"
                     )
                 elif "export union " in node_text:
-                    node_type = "Class"
+                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Union: {class_name} (qn: {class_qn})"
                     )
                 elif "export template" in node_text:
-                    node_type = "Class"
+                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Template Class: {class_name} (qn: {class_qn})"
                     )
                 else:
-                    node_type = "Class"
+                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Class: {class_name} (qn: {class_qn})"
                     )
             else:
-                node_type = "Class"
+                node_type = NodeType.CLASS
                 logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
 
             self.ingestor.ensure_node_batch(node_type, class_props)
@@ -988,7 +988,7 @@ class DefinitionProcessor:
         logger.info("--- Pass 4: Processing Method Override Relationships ---")
 
         for method_qn in self.function_registry.keys():
-            if self.function_registry[method_qn] == "Method":
+            if self.function_registry[method_qn] == NodeType.METHOD:
                 if "." in method_qn:
                     parts = method_qn.rsplit(".", 1)
                     if len(parts) == 2:
@@ -1387,7 +1387,7 @@ class DefinitionProcessor:
                     )
                     self.ingestor.ensure_node_batch("Function", method_props)
 
-                    self.function_registry[method_qn] = "Function"
+                    self.function_registry[method_qn] = NodeType.FUNCTION
                     self.simple_name_lookup[method_name].add(method_qn)
 
                     self.ingestor.ensure_relationship_batch(
@@ -1635,7 +1635,7 @@ class DefinitionProcessor:
                             )
                             self.ingestor.ensure_node_batch("Function", method_props)
 
-                            self.function_registry[method_qn] = "Function"
+                            self.function_registry[method_qn] = NodeType.FUNCTION
                             if method_name:
                                 self.simple_name_lookup[method_name].add(method_qn)
 
@@ -1902,7 +1902,7 @@ class DefinitionProcessor:
                                 f"  Found Object Arrow Function: {function_name} (qn: {function_qn})"
                             )
                             self.ingestor.ensure_node_batch("Function", function_props)
-                            self.function_registry[function_qn] = "Function"
+                            self.function_registry[function_qn] = NodeType.FUNCTION
                             if function_name:
                                 self.simple_name_lookup[function_name].add(function_qn)
 
@@ -1942,7 +1942,7 @@ class DefinitionProcessor:
                                 self.ingestor.ensure_node_batch(
                                     "Function", function_props
                                 )
-                                self.function_registry[function_qn] = "Function"
+                                self.function_registry[function_qn] = NodeType.FUNCTION
                                 self.simple_name_lookup[function_name].add(function_qn)
 
                     for member_expr, function_expr in zip(member_exprs, function_exprs):
@@ -1979,7 +1979,7 @@ class DefinitionProcessor:
                                 self.ingestor.ensure_node_batch(
                                     "Function", function_props
                                 )
-                                self.function_registry[function_qn] = "Function"
+                                self.function_registry[function_qn] = NodeType.FUNCTION
                                 self.simple_name_lookup[function_name].add(function_qn)
 
                 except Exception as e:

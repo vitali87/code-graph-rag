@@ -1,6 +1,28 @@
+from collections import defaultdict
+from enum import StrEnum
 from typing import TypedDict
 
 PropertyValue = str | int | float | bool | None
+
+type SimpleName = str
+type QualifiedName = str
+type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]
+
+
+class NodeType(StrEnum):
+    FUNCTION = "Function"
+    METHOD = "Method"
+    CLASS = "Class"
+    MODULE = "Module"
+    INTERFACE = "Interface"
+    PACKAGE = "Package"
+    ENUM = "Enum"
+    TYPE = "Type"
+    UNION = "Union"
+
+
+type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
+type FunctionRegistry = dict[QualifiedName, NodeType]
 
 
 class GraphMetadata(TypedDict):

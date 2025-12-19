@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
+from ..types_defs import NodeType, SimpleNameLookup
+
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
 
@@ -86,7 +88,7 @@ def ingest_method(
     container_type: str,
     ingestor: "IngestorProtocol",
     function_registry: dict[str, str],
-    simple_name_lookup: dict[str, set[str]],
+    simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Any,
     language: str = "",
     extract_decorators_func: Any = None,
@@ -141,7 +143,7 @@ def ingest_method(
 
     logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
     ingestor.ensure_node_batch("Method", method_props)
-    function_registry[method_qn] = "Method"
+    function_registry[method_qn] = NodeType.METHOD
     simple_name_lookup[method_name].add(method_qn)
 
     ingestor.ensure_relationship_batch(
@@ -158,7 +160,7 @@ def ingest_exported_function(
     export_type: str,
     ingestor: "IngestorProtocol",
     function_registry: dict[str, str],
-    simple_name_lookup: dict[str, set[str]],
+    simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Any,
     is_export_inside_function_func: Any,
 ) -> None:
@@ -192,5 +194,5 @@ def ingest_exported_function(
 
     logger.info(f"  Found {export_type}: {function_name} (qn: {function_qn})")
     ingestor.ensure_node_batch("Function", function_props)
-    function_registry[function_qn] = "Function"
+    function_registry[function_qn] = NodeType.FUNCTION
     simple_name_lookup[function_name].add(function_qn)

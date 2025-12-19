@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
+from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -807,21 +808,21 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Interface"
+        if call[0][0] == NodeType.INTERFACE
         and "namespace_merging" in call[0][1].get("qualified_name", "")
     ]
 
     enum_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Enum"
+        if call[0][0] == NodeType.ENUM
         and "namespace_merging" in call[0][1].get("qualified_name", "")
     ]
 
     class_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Class"
+        if call[0][0] == NodeType.CLASS
         and "namespace_merging" in call[0][1].get("qualified_name", "")
     ]
 
@@ -1212,14 +1213,14 @@ if (ConditionalModule.IS_NODE) {
     class_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Class"
+        if call[0][0] == NodeType.CLASS
         and "module_patterns" in call[0][1].get("qualified_name", "")
     ]
 
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Interface"
+        if call[0][0] == NodeType.INTERFACE
         and "module_patterns" in call[0][1].get("qualified_name", "")
     ]
 

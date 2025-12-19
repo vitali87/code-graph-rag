@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node
 
+from ..types_defs import NodeType, SimpleNameLookup
 from .import_processor import ImportProcessor
 from .java_utils import (
     extract_java_class_info,
@@ -31,7 +32,7 @@ class JavaTypeInferenceEngine:
         queries: dict[str, Any],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
-        simple_name_lookup: dict[str, set[str]],
+        simple_name_lookup: SimpleNameLookup,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -798,20 +799,17 @@ class JavaTypeInferenceEngine:
         if object_ref in local_var_types:
             return local_var_types[object_ref]
 
-        # Check for 'this' reference - find the containing class (using trie for O(k) lookup)
+        """(H) Check for 'this' reference - find the containing class (using trie for O(k) lookup)"""
         if object_ref == "this":
-            # Look for any class in the current module
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
-                if entity_type == "Class":
+                if entity_type == NodeType.CLASS:
                     return str(qn)
             return None
 
-        # Check for 'super' reference (using trie for O(k) lookup)
+        """(H) Check for 'super' reference - for super calls, look at parent classes (using trie for O(k) lookup)"""
         if object_ref == "super":
-            # For super calls, we need to look at parent classes
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
-                if entity_type == "Class":
-                    # Look for parent classes - simplified approach
+                if entity_type == NodeType.CLASS:
                     parent_qn = self._find_parent_class(qn)
                     if parent_qn:
                         return parent_qn
@@ -825,7 +823,7 @@ class JavaTypeInferenceEngine:
         simple_class_qn = f"{module_qn}.{object_ref}"
         if (
             simple_class_qn in self.function_registry
-            and self.function_registry[simple_class_qn] == "Class"
+            and self.function_registry[simple_class_qn] == NodeType.CLASS
         ):
             return simple_class_qn
 
@@ -844,11 +842,9 @@ class JavaTypeInferenceEngine:
         self, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         """Resolve a static method call or local method call using tree-sitter."""
-        # Search for methods in the current module that match the method name (using trie for O(k) lookup)
         for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
-            if (
-                entity_type in ["Method", "Constructor"]
-                and qn.split("(")[0].endswith(f".{method_name}")
+            if entity_type in ["Method", "Constructor"] and qn.split("(")[0].endswith(
+                f".{method_name}"
             ):
                 return entity_type, qn
 

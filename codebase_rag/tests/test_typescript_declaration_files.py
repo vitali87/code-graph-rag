@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -377,21 +378,21 @@ export {};
     function_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Function"
+        if call[0][0] == NodeType.FUNCTION
         and "ambient_declarations" in call[0][1].get("qualified_name", "")
     ]
 
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Interface"
+        if call[0][0] == NodeType.INTERFACE
         and "ambient_declarations" in call[0][1].get("qualified_name", "")
     ]
 
     [
         call
         for call in all_nodes
-        if call[0][0] == "Class"
+        if call[0][0] == NodeType.CLASS
         and "ambient_declarations" in call[0][1].get("qualified_name", "")
     ]
 
@@ -815,21 +816,21 @@ export {};
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Interface"
+        if call[0][0] == NodeType.INTERFACE
         and "module_declarations" in call[0][1].get("qualified_name", "")
     ]
 
     class_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Class"
+        if call[0][0] == NodeType.CLASS
         and "module_declarations" in call[0][1].get("qualified_name", "")
     ]
 
     function_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Function"
+        if call[0][0] == NodeType.FUNCTION
         and "module_declarations" in call[0][1].get("qualified_name", "")
     ]
 
@@ -1225,21 +1226,21 @@ export {};
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == "Interface"
+        if call[0][0] == NodeType.INTERFACE
         and "global_augmentations" in call[0][1].get("qualified_name", "")
     ]
 
     [
         call
         for call in all_nodes
-        if call[0][0] == "Class"
+        if call[0][0] == NodeType.CLASS
         and "global_augmentations" in call[0][1].get("qualified_name", "")
     ]
 
     [
         call
         for call in all_nodes
-        if call[0][0] == "Function"
+        if call[0][0] == NodeType.FUNCTION
         and "global_augmentations" in call[0][1].get("qualified_name", "")
     ]
 

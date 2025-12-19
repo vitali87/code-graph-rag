@@ -4,6 +4,7 @@ from typing import Any, Protocol
 from tree_sitter import Node
 
 from ..services import IngestorProtocol
+from ..types_defs import SimpleNameLookup
 from .call_processor import CallProcessor
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
@@ -27,7 +28,7 @@ class ProcessorFactory:
         project_name: str,
         queries: dict[str, Any],
         function_registry: Any,
-        simple_name_lookup: dict[str, set[str]],
+        simple_name_lookup: SimpleNameLookup,
         ast_cache: ASTCacheProtocol,
     ) -> None:
         self.ingestor = ingestor

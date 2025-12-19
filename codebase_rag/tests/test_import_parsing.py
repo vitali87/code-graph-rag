@@ -8,6 +8,7 @@ from tree_sitter import Language, Parser
 
 from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.types_defs import NodeType
 
 
 class TestImportParsing:
@@ -73,12 +74,18 @@ class TestImportParsing:
 
     def test_function_registry_integration(self, graph_updater: GraphUpdater) -> None:
         """Test integration between import parsing and function registry."""
-        graph_updater.function_registry["test.models.user.User"] = "CLASS"
-        graph_updater.function_registry["test.models.user.User.get_name"] = "FUNCTION"
-        graph_updater.function_registry["test.utils.logger.Logger.info"] = "FUNCTION"
+        graph_updater.function_registry["test.models.user.User"] = NodeType.CLASS
+        graph_updater.function_registry["test.models.user.User.get_name"] = (
+            NodeType.FUNCTION
+        )
+        graph_updater.function_registry["test.utils.logger.Logger.info"] = (
+            NodeType.FUNCTION
+        )
 
         assert "test.models.user.User" in graph_updater.function_registry
-        assert graph_updater.function_registry["test.models.user.User"] == "CLASS"
+        assert (
+            graph_updater.function_registry["test.models.user.User"] == NodeType.CLASS
+        )
 
     def test_relative_import_resolution(self, graph_updater: GraphUpdater) -> None:
         """Test relative import resolution methods exist."""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -66,7 +67,7 @@ def _make_engine() -> TypeInferenceEngine:
     return TypeInferenceEngine(
         import_processor=MagicMock(),
         function_registry={},
-        simple_name_lookup={},
+        simple_name_lookup=defaultdict(set),
         repo_path=Path("."),
         project_name="proj",
         ast_cache={},  # ty: ignore[invalid-argument-type]

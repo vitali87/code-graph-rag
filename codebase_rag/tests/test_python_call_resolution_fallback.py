@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.types_defs import NodeType
 
 
 class TestCallResolutionFallback:
@@ -24,15 +25,15 @@ class TestCallResolutionFallback:
         """Test that fallback logic chooses the candidate with lowest import distance."""
         mock_updater.function_registry[
             "proj.distant_package.far_module.process_data"
-        ] = "Function"
+        ] = NodeType.FUNCTION
 
         mock_updater.function_registry[
             "proj.main_package.nearby_module.process_data"
-        ] = "Function"
+        ] = NodeType.FUNCTION
 
         mock_updater.function_registry[
             "proj.main_package.sibling_module.process_data"
-        ] = "Function"
+        ] = NodeType.FUNCTION
 
         mock_updater.simple_name_lookup["process_data"].update(
             [
@@ -74,7 +75,7 @@ class TestCallResolutionFallback:
             f"but chose {resolved_qn} with distance {resolved_distance}"
         )
 
-        assert func_type == "Function"
+        assert func_type == NodeType.FUNCTION
         assert resolved_qn.endswith(".process_data")
 
     def test_fallback_with_mixed_function_types(
@@ -82,11 +83,13 @@ class TestCallResolutionFallback:
     ) -> None:
         """Test fallback logic with mix of functions and methods."""
         mock_updater.function_registry["proj.distant.far_mod.SomeClass.helper"] = (
-            "Method"
+            NodeType.METHOD
         )
-        mock_updater.function_registry["proj.main.nearby_mod.helper"] = "Function"
+        mock_updater.function_registry["proj.main.nearby_mod.helper"] = (
+            NodeType.FUNCTION
+        )
         mock_updater.function_registry["proj.main.sibling_mod.AnotherClass.helper"] = (
-            "Method"
+            NodeType.METHOD
         )
 
         mock_updater.simple_name_lookup["helper"].update(
@@ -126,7 +129,7 @@ class TestCallResolutionFallback:
     def test_fallback_with_single_candidate(self, mock_updater: GraphUpdater) -> None:
         """Test fallback logic with only one candidate."""
         mock_updater.function_registry["proj.some_package.some_module.unique_func"] = (
-            "Function"
+            NodeType.FUNCTION
         )
         mock_updater.simple_name_lookup["unique_func"].add(
             "proj.some_package.some_module.unique_func"
@@ -143,7 +146,7 @@ class TestCallResolutionFallback:
         func_type, resolved_qn = result
 
         assert resolved_qn == "proj.some_package.some_module.unique_func"
-        assert func_type == "Function"
+        assert func_type == NodeType.FUNCTION
 
     def test_fallback_with_no_candidates(self, mock_updater: GraphUpdater) -> None:
         """Test fallback logic when no candidates are found."""
@@ -161,9 +164,11 @@ class TestCallResolutionFallback:
     ) -> None:
         """Test that same-module resolution works and bypasses fallback."""
         same_module_qn = "proj.main.caller_mod.local_func"
-        mock_updater.function_registry[same_module_qn] = "Function"
+        mock_updater.function_registry[same_module_qn] = NodeType.FUNCTION
 
-        mock_updater.function_registry["proj.other.other_mod.local_func"] = "Function"
+        mock_updater.function_registry["proj.other.other_mod.local_func"] = (
+            NodeType.FUNCTION
+        )
         mock_updater.simple_name_lookup["local_func"].update(
             [same_module_qn, "proj.other.other_mod.local_func"]
         )
@@ -181,4 +186,4 @@ class TestCallResolutionFallback:
         assert resolved_qn == same_module_qn, (
             f"Should choose same-module function {same_module_qn}, got {resolved_qn}"
         )
-        assert func_type == "Function"
+        assert func_type == NodeType.FUNCTION

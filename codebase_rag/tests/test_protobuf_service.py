@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import codec.schema_pb2 as pb
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.types_defs import NodeType
 
 SAMPLE_NODES = {
     "project_node": {
@@ -108,8 +109,8 @@ def test_protobuf_ingestor_joint_serialization_and_deserialization(
     assert rel.type == pb.Relationship.RelationshipType.Value("DEFINES_METHOD")
     assert rel.source_id == "test_project.UserService"
     assert rel.target_id == "test_project.UserService.get_user"
-    assert rel.source_label == "Class"
-    assert rel.target_label == "Method"
+    assert rel.source_label == NodeType.CLASS
+    assert rel.target_label == NodeType.METHOD
 
 
 def test_protobuf_ingestor_split_index_serialization_and_deserialization(
@@ -166,5 +167,5 @@ def test_protobuf_ingestor_split_index_serialization_and_deserialization(
     assert rel.type == pb.Relationship.RelationshipType.Value("DEFINES_METHOD")
     assert rel.source_id == "test_project.UserService"
     assert rel.target_id == "test_project.UserService.get_user"
-    assert rel.source_label == "Class"
-    assert rel.target_label == "Method"
+    assert rel.source_label == NodeType.CLASS
+    assert rel.target_label == NodeType.METHOD

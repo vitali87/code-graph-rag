@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
+from ..types_defs import NodeType, SimpleNameLookup
 from .import_processor import ImportProcessor
 from .java_type_inference import JavaTypeInferenceEngine
 from .js_type_inference import JsTypeInferenceEngine
@@ -31,7 +32,7 @@ class TypeInferenceEngine:
         queries: dict[str, Any],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
-        simple_name_lookup: dict[str, set[str]],
+        simple_name_lookup: SimpleNameLookup,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -47,9 +48,7 @@ class TypeInferenceEngine:
         self._lua_type_inference: LuaTypeInferenceEngine | None = None
         self._js_type_inference: JsTypeInferenceEngine | None = None
 
-        # Memoization caches to prevent repeated work during recursive type inference
         self._method_return_type_cache: dict[str, str | None] = {}
-        # Recursion guard to prevent infinite loops in recursive type inference
         self._type_inference_in_progress: set[str] = set()
 
     @property
@@ -121,12 +120,7 @@ class TypeInferenceEngine:
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
 
-            # Single-pass traversal for all type inference:
-            # - Simple assignments (constructors, literals)
-            # - Complex assignments (method calls)
-            # - Loop variables (comprehensions, for loops)
-            # - Instance variables (self.attr)
-            # This avoids the previous O(5*N) multiple traversals
+            """(H) Single-pass traversal avoids O(5*N) multiple traversals for type inference."""
             self._traverse_single_pass(caller_node, local_var_types, module_qn)
 
         except Exception as e:
@@ -184,10 +178,8 @@ class TypeInferenceEngine:
         )
         available_class_names = []
 
-        # 1. Get classes defined in the current module (using trie for O(k) lookup)
         for qn, node_type in self.function_registry.find_with_prefix(module_qn):
-            if node_type == "Class":
-                # Check if it's directly in this module, not a submodule
+            if node_type == NodeType.CLASS:
                 if ".".join(qn.split(".")[:-1]) == module_qn:
                     available_class_names.append(qn.split(".")[-1])
 
@@ -195,7 +187,7 @@ class TypeInferenceEngine:
             for local_name, imported_qn in self.import_processor.import_mapping[
                 module_qn
             ].items():
-                if self.function_registry.get(imported_qn) == "Class":
+                if self.function_registry.get(imported_qn) == NodeType.CLASS:
                     available_class_names.append(local_name)
 
         logger.debug(f"Available classes in scope: {available_class_names}")
@@ -355,7 +347,6 @@ class TypeInferenceEngine:
         NOTE: This does a full traversal. For better performance, use
         _infer_instance_variable_types_from_assignments with pre-collected assignments.
         """
-        # Look for assignments like self.repo = Repository() in the current method
         self._analyze_self_assignments(caller_node, local_var_types, module_qn)
 
         self._analyze_class_init_assignments(caller_node, local_var_types, module_qn)
@@ -534,12 +525,10 @@ class TypeInferenceEngine:
 
         Performance: O(N) instead of O(5*N) where N = AST size.
         """
-        # Collect assignments during first pass for two-phase processing
         assignments: list[Node] = []
         comprehensions: list[Node] = []
         for_statements: list[Node] = []
 
-        # Single traversal to collect all relevant nodes
         stack: list[Node] = [node]
         while stack:
             current = stack.pop()
@@ -554,23 +543,18 @@ class TypeInferenceEngine:
 
             stack.extend(reversed(current.children))
 
-        # Phase 1: Process simple assignments first (constructors, literals)
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)
 
-        # Phase 2: Process complex assignments using types from phase 1
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
 
-        # Phase 3: Process comprehensions
         for comp in comprehensions:
             self._analyze_comprehension(comp, local_var_types, module_qn)
 
-        # Phase 4: Process for loops
         for for_stmt in for_statements:
             self._analyze_for_loop(for_stmt, local_var_types, module_qn)
 
-        # Phase 5: Instance variables (self.attr) - reuses the assignments collected
         self._infer_instance_variable_types_from_assignments(
             assignments, local_var_types, module_qn
         )
@@ -758,24 +742,23 @@ class TypeInferenceEngine:
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         """Infer return type of a method call via static analysis."""
-        # Create a cache key for this specific method call + context
         cache_key = f"{module_qn}:{method_call}"
 
-        # Recursion guard: if we're already inferring this call's type, return None
+        """(H) Recursion guard: prevent infinite loops in recursive type inference."""
         if cache_key in self._type_inference_in_progress:
             logger.debug(f"Recursion guard (method call): skipping {method_call}")
             return None
 
         self._type_inference_in_progress.add(cache_key)
         try:
-            # Handle chained method calls first
             if "." in method_call and self._is_method_chain(method_call):
                 return self._infer_chained_call_return_type_fixed(
                     method_call, module_qn, local_var_types
                 )
 
-            # Try proper AST analysis for non-chained calls
-            return self._infer_method_return_type(method_call, module_qn, local_var_types)
+            return self._infer_method_return_type(
+                method_call, module_qn, local_var_types
+            )
         finally:
             self._type_inference_in_progress.discard(cache_key)
 
@@ -870,32 +853,25 @@ class TypeInferenceEngine:
 
     def _get_method_return_type_from_ast(self, method_qn: str) -> str | None:
         """Get method return type by analyzing its AST implementation."""
-        # Check memoization cache first
         if method_qn in self._method_return_type_cache:
             return self._method_return_type_cache[method_qn]
 
-        # Recursion guard: if we're already inferring this method's type, return None
-        # This prevents infinite loops in recursive type inference chains
+        """(H) Recursion guard: prevent infinite loops in recursive type inference chains."""
         if method_qn in self._type_inference_in_progress:
             logger.debug(f"Recursion guard: skipping {method_qn}")
             return None
 
-        # Mark as in-progress
         self._type_inference_in_progress.add(method_qn)
         try:
-            # Find the method's AST node from our cache
             method_node = self._find_method_ast_node(method_qn)
             if not method_node:
                 result = None
             else:
-                # Analyze return statements in the method
                 result = self._analyze_method_return_statements(method_node, method_qn)
 
-            # Cache the result
             self._method_return_type_cache[method_qn] = result
             return result
         finally:
-            # Remove from in-progress set
             self._type_inference_in_progress.discard(method_qn)
 
     def _extract_object_type_from_call(
@@ -989,12 +965,12 @@ class TypeInferenceEngine:
         local_class_qn = f"{module_qn}.{class_name}"
         if (
             local_class_qn in self.function_registry
-            and self.function_registry[local_class_qn] == "Class"
+            and self.function_registry[local_class_qn] == NodeType.CLASS
         ):
             method_qn = f"{local_class_qn}.{method_name}"
             if (
                 method_qn in self.function_registry
-                and self.function_registry[method_qn] == "Method"
+                and self.function_registry[method_qn] == NodeType.METHOD
             ):
                 return method_qn
 
@@ -1005,25 +981,26 @@ class TypeInferenceEngine:
                 imported_class_qn = import_mapping[class_name]
                 if (
                     imported_class_qn in self.function_registry
-                    and self.function_registry[imported_class_qn] == "Class"
+                    and self.function_registry[imported_class_qn] == NodeType.CLASS
                 ):
                     method_qn = f"{imported_class_qn}.{method_name}"
                     if (
                         method_qn in self.function_registry
-                        and self.function_registry[method_qn] == "Method"
+                        and self.function_registry[method_qn] == NodeType.METHOD
                     ):
                         return method_qn
 
-        # Search through all known classes with matching names (using simple_name_lookup for O(1))
         if class_name in self.simple_name_lookup:
             for qn in self.simple_name_lookup[class_name]:
-                if self.function_registry.get(qn) == "Class":
+                if self.function_registry.get(qn) == NodeType.CLASS:
                     method_qn = f"{qn}.{method_name}"
                     if (
                         method_qn in self.function_registry
-                        and self.function_registry[method_qn] == "Method"
+                        and self.function_registry[method_qn] == NodeType.METHOD
                     ):
-                        logger.debug(f"Resolved {class_name}.{method_name} to {method_qn}")
+                        logger.debug(
+                            f"Resolved {class_name}.{method_name} to {method_qn}"
+                        )
                         return method_qn
 
         return None
@@ -1032,17 +1009,16 @@ class TypeInferenceEngine:
         """Infer the type of an instance attribute like self.manager."""
 
         try:
-            # Use module_qn_to_file_path for O(1) lookup instead of iterating all files
             if module_qn in self.module_qn_to_file_path:
                 file_path = self.module_qn_to_file_path[module_qn]
                 if file_path in self.ast_cache:
                     root_node, language = self.ast_cache[file_path]
                     if language == "python":
-                        # Look for all classes in this module and analyze their instance variables
                         instance_vars: dict[str, str] = {}
-                        self._analyze_self_assignments(root_node, instance_vars, module_qn)
+                        self._analyze_self_assignments(
+                            root_node, instance_vars, module_qn
+                        )
 
-                        # Check if our attribute was found
                         full_attr_name = f"self.{attribute_name}"
                         if full_attr_name in instance_vars:
                             attr_type: str = instance_vars[full_attr_name]
@@ -1066,7 +1042,7 @@ class TypeInferenceEngine:
         local_class_qn = f"{module_qn}.{class_name}"
         if (
             local_class_qn in self.function_registry
-            and self.function_registry[local_class_qn] == "Class"
+            and self.function_registry[local_class_qn] == NodeType.CLASS
         ):
             return class_name
 
@@ -1076,14 +1052,13 @@ class TypeInferenceEngine:
                 if (
                     local_name == class_name
                     and imported_qn in self.function_registry
-                    and self.function_registry[imported_qn] == "Class"
+                    and self.function_registry[imported_qn] == NodeType.CLASS
                 ):
                     return class_name
 
-        # Look for classes with matching simple names across the project (using simple_name_lookup for O(1))
         if class_name in self.simple_name_lookup:
             for qn in self.simple_name_lookup[class_name]:
-                if self.function_registry.get(qn) == "Class":
+                if self.function_registry.get(qn) == NodeType.CLASS:
                     return class_name
 
         return None
@@ -1094,12 +1069,10 @@ class TypeInferenceEngine:
         if len(qn_parts) < 3:
             return None
 
-        project_name = qn_parts[0]
         class_name = qn_parts[-2]
         method_name = qn_parts[-1]
 
-        # Use module_qn_to_file_path for O(1) lookup instead of iterating all files
-        expected_module = ".".join(qn_parts[:-2])  # Remove class and method name
+        expected_module = ".".join(qn_parts[:-2])
         if expected_module in self.module_qn_to_file_path:
             file_path = self.module_qn_to_file_path[expected_module]
             if file_path in self.ast_cache:

@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.tests.conftest import run_updater
+from codebase_rag.types_defs import NodeType
 
 
 def test_lua_basic_closures(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -118,7 +119,7 @@ print("Partial result:", add_5_10(3))  -- 5 + 10 + 3 = 18
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -350,7 +351,7 @@ print("Middleware result:", result)
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -572,7 +573,7 @@ events:emit("test", "Should not show regular listener")
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -840,7 +841,7 @@ print("Is -2 positive and even?", is_positive_and_even(-2))
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 

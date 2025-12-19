@@ -1,6 +1,6 @@
 import sys
 from collections import OrderedDict, defaultdict
-from collections.abc import ItemsView, KeysView
+from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
 from typing import Any
 
@@ -54,45 +54,56 @@ from .constants import (
 from .language_config import LANGUAGE_FQN_CONFIGS, get_language_config
 from .parsers.factory import ProcessorFactory
 from .services import IngestorProtocol, QueryProtocol
-from .types_defs import EmbeddingQueryResult
+from .types_defs import (
+    EmbeddingQueryResult,
+    FunctionRegistry,
+    NodeType,
+    QualifiedName,
+    SimpleNameLookup,
+    TrieNode,
+)
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.source_extraction import extract_source_with_fallback
 
 
 class FunctionRegistryTrie:
-    def __init__(self, simple_name_lookup: dict[str, set[str]] | None = None) -> None:
-        self.root: dict[str, Any] = {}
-        self._entries: dict[str, str] = {}
+    def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
+        self.root: TrieNode = {}
+        self._entries: FunctionRegistry = {}
         self._simple_name_lookup = simple_name_lookup
 
-    def insert(self, qualified_name: str, func_type: str) -> None:
+    def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self._entries[qualified_name] = func_type
 
         parts = qualified_name.split(".")
-        current = self.root
+        current: TrieNode = self.root
 
         for part in parts:
             if part not in current:
                 current[part] = {}
-            current = current[part]
+            child = current[part]
+            assert isinstance(child, dict)
+            current = child
 
         current[TRIE_TYPE_KEY] = func_type
         current[TRIE_QN_KEY] = qualified_name
 
-    def get(self, qualified_name: str, default: str | None = None) -> str | None:
+    def get(
+        self, qualified_name: QualifiedName, default: NodeType | None = None
+    ) -> NodeType | None:
         return self._entries.get(qualified_name, default)
 
-    def __contains__(self, qualified_name: str) -> bool:
+    def __contains__(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._entries
 
-    def __getitem__(self, qualified_name: str) -> str:
+    def __getitem__(self, qualified_name: QualifiedName) -> NodeType:
         return self._entries[qualified_name]
 
-    def __setitem__(self, qualified_name: str, func_type: str) -> None:
+    def __setitem__(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self.insert(qualified_name, func_type)
 
-    def __delitem__(self, qualified_name: str) -> None:
+    def __delitem__(self, qualified_name: QualifiedName) -> None:
         if qualified_name not in self._entries:
             return
 
@@ -101,7 +112,7 @@ class FunctionRegistryTrie:
         parts = qualified_name.split(".")
         self._cleanup_trie_path(parts, self.root)
 
-    def _cleanup_trie_path(self, parts: list[str], node: dict[str, Any]) -> bool:
+    def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
         if not parts:
             node.pop(TRIE_QN_KEY, None)
             node.pop(TRIE_TYPE_KEY, None)
@@ -111,51 +122,61 @@ class FunctionRegistryTrie:
         if part not in node:
             return False
 
-        if self._cleanup_trie_path(parts[1:], node[part]):
+        child = node[part]
+        assert isinstance(child, dict)
+        if self._cleanup_trie_path(parts[1:], child):
             del node[part]
 
         is_endpoint = TRIE_QN_KEY in node
         has_children = any(not key.startswith(TRIE_INTERNAL_PREFIX) for key in node)
         return not has_children and not is_endpoint
 
-    def _navigate_to_prefix(self, prefix: str) -> dict[str, Any] | None:
+    def _navigate_to_prefix(self, prefix: str) -> TrieNode | None:
         parts = prefix.split(".") if prefix else []
-        current = self.root
+        current: TrieNode = self.root
         for part in parts:
             if part not in current:
                 return None
-            current = current[part]
+            child = current[part]
+            assert isinstance(child, dict)
+            current = child
         return current
 
     def _collect_from_subtree(
-        self, node: dict[str, Any], filter_fn: Any = None
-    ) -> list[tuple[str, str]]:
-        results: list[tuple[str, str]] = []
+        self,
+        node: TrieNode,
+        filter_fn: Callable[[QualifiedName], bool] | None = None,
+    ) -> list[tuple[QualifiedName, NodeType]]:
+        results: list[tuple[QualifiedName, NodeType]] = []
 
-        def dfs(n: dict[str, Any]) -> None:
+        def dfs(n: TrieNode) -> None:
             if TRIE_QN_KEY in n:
                 qn = n[TRIE_QN_KEY]
                 func_type = n[TRIE_TYPE_KEY]
+                assert isinstance(qn, str) and isinstance(func_type, NodeType)
                 if filter_fn is None or filter_fn(qn):
                     results.append((qn, func_type))
 
             for key, child in n.items():
                 if not key.startswith(TRIE_INTERNAL_PREFIX):
+                    assert isinstance(child, dict)
                     dfs(child)
 
         dfs(node)
         return results
 
-    def keys(self) -> KeysView[str]:
+    def keys(self) -> KeysView[QualifiedName]:
         return self._entries.keys()
 
-    def items(self) -> ItemsView[str, str]:
+    def items(self) -> ItemsView[QualifiedName, NodeType]:
         return self._entries.items()
 
     def __len__(self) -> int:
         return len(self._entries)
 
-    def find_with_prefix_and_suffix(self, prefix: str, suffix: str) -> list[str]:
+    def find_with_prefix_and_suffix(
+        self, prefix: str, suffix: str
+    ) -> list[QualifiedName]:
         node = self._navigate_to_prefix(prefix)
         if node is None:
             return []
@@ -165,14 +186,14 @@ class FunctionRegistryTrie:
         )
         return [qn for qn, _ in matches]
 
-    def find_ending_with(self, suffix: str) -> list[str]:
+    def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
             # (H) O(1) lookup using the simple_name_lookup index
             return list(self._simple_name_lookup[suffix])
         # (H) Fallback to linear scan if no index available
         return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
-    def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
+    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
         return [] if node is None else self._collect_from_subtree(node)
 
@@ -241,7 +262,7 @@ class GraphUpdater:
         self.parsers = parsers
         self.queries = self._prepare_queries_with_parsers(queries, parsers)
         self.project_name = repo_path.name
-        self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
+        self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
         )

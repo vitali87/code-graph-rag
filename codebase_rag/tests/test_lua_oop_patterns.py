@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.types_defs import NodeType
 
 
 def test_lua_class_pattern_basic(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -140,7 +141,7 @@ local breed = myDog:getBreed()  -- Should call Dog's getBreed
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -224,7 +225,7 @@ local quotient = calc.divide(20, 5)
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -309,7 +310,7 @@ local circle2 = shapes.createCircle(0, 0, 10)
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -432,7 +433,7 @@ local name = user:getName()  -- From User itself
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -530,7 +531,7 @@ config2:reset()
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == "Function"
+        if c[0][0] == NodeType.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 

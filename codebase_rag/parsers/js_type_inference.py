@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node
 
+from ..types_defs import NodeType
 from .import_processor import ImportProcessor
 from .js_utils import (
     analyze_js_return_expression,
@@ -180,7 +181,7 @@ class JsTypeInferenceEngine:
                 full_class_qn = f"{imported_qn}.{class_name}"
                 if (
                     full_class_qn in self.function_registry
-                    and self.function_registry[full_class_qn] == "Class"
+                    and self.function_registry[full_class_qn] == NodeType.CLASS
                 ):
                     return full_class_qn
 
@@ -189,7 +190,7 @@ class JsTypeInferenceEngine:
         local_class_qn = f"{module_qn}.{class_name}"
         if (
             local_class_qn in self.function_registry
-            and self.function_registry[local_class_qn] == "Class"
+            and self.function_registry[local_class_qn] == NodeType.CLASS
         ):
             return local_class_qn
 

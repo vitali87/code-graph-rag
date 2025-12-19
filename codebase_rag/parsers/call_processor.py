@@ -7,6 +7,7 @@ from tree_sitter import Node, QueryCursor
 
 from ..language_config import LanguageConfig
 from ..services import IngestorProtocol
+from ..types_defs import NodeType
 from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
 from .import_processor import ImportProcessor
 from .python_utils import resolve_class_name
@@ -331,11 +332,10 @@ class CallProcessor:
             if not isinstance(call_node, Node):
                 continue
 
-            # NOTE: We removed _process_nested_calls_in_node here because the tree-sitter
-            # query already finds ALL call nodes including nested ones. The recursive
-            # nested call processing was causing O(N*M) complexity where N = number of calls
-            # and M = average subtree size, leading to extreme slowdowns on files with
-            # many nested calls.
+            """(H) We removed _process_nested_calls_in_node because tree-sitter query finds
+            ALL call nodes including nested ones. The recursive nested call processing
+            was causing O(N*M) complexity, leading to extreme slowdowns on files with
+            many nested calls."""
 
             call_name = self._get_call_target_name(call_node)
             if not call_name:
@@ -533,7 +533,7 @@ class CallProcessor:
                                 class_name
                             )
                             for qn in matching_qns:
-                                if self.function_registry.get(qn) == "Class":
+                                if self.function_registry.get(qn) == NodeType.CLASS:
                                     class_qn = qn
                                     break
 
