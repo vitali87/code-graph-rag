@@ -9,6 +9,9 @@ from tree_sitter import Node, Parser
 
 from .config import IGNORE_PATTERNS
 from .constants import (
+    BYTES_PER_MB,
+    CACHE_EVICTION_DIVISOR,
+    CACHE_MEMORY_THRESHOLD_RATIO,
     CSPROJ_SUFFIX,
     CYPHER_QUERY_EMBEDDINGS,
     DEFAULT_CACHE_ENTRIES,
@@ -184,7 +187,7 @@ class BoundedASTCache:
     ):
         self.cache: OrderedDict[Path, tuple[Node, str]] = OrderedDict()
         self.max_entries = max_entries
-        self.max_memory_bytes = max_memory_mb * 1024 * 1024
+        self.max_memory_bytes = max_memory_mb * BYTES_PER_MB
 
     def __setitem__(self, key: Path, value: tuple[Node, str]) -> None:
         if key in self.cache:
@@ -214,7 +217,7 @@ class BoundedASTCache:
             self.cache.popitem(last=False)  # (H) Remove least recently used
 
         if self._should_evict_for_memory():
-            entries_to_remove = max(1, len(self.cache) // 10)
+            entries_to_remove = max(1, len(self.cache) // CACHE_EVICTION_DIVISOR)
             for _ in range(entries_to_remove):
                 if self.cache:
                     self.cache.popitem(last=False)
@@ -224,7 +227,7 @@ class BoundedASTCache:
             cache_size = sum(sys.getsizeof(v) for v in self.cache.values())
             return cache_size > self.max_memory_bytes
         except Exception:
-            return len(self.cache) > self.max_entries * 0.8
+            return len(self.cache) > self.max_entries * CACHE_MEMORY_THRESHOLD_RATIO
 
 
 class GraphUpdater:
