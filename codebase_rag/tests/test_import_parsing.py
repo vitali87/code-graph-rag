@@ -133,13 +133,13 @@ class TestImportParsing:
         except Exception as e:
             pytest.fail(f"Function resolution crashed unexpectedly: {e}")
 
-    def test_python_alias_import_parsing(self, graph_updater: GraphUpdater) -> None:
-        """Test Python aliased import parsing functionality."""
+    def test_python_alias_import_parsing(self) -> None:
         PY_LANGUAGE = Language(tsp.language())
         parser = Parser(PY_LANGUAGE)
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
+            temp_path = Path(temp_dir) / "test"
+            temp_path.mkdir()
 
             (temp_path / "module").mkdir()
             (temp_path / "module" / "__init__.py").touch()
@@ -149,11 +149,17 @@ class TestImportParsing:
             (temp_path / "data").mkdir()
             (temp_path / "data" / "__init__.py").touch()
 
-            graph_updater.repo_path = temp_path
+            mock_ingestor = MagicMock()
+            parsers, queries = load_parsers()
+            updater = GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=temp_path,
+                parsers=parsers,
+                queries=queries,
+            )
 
             module_qn = "test.project.main"
-            graph_updater.project_name = "test"
-            graph_updater.factory.import_processor.import_mapping[module_qn] = {}
+            updater.factory.import_processor.import_mapping[module_qn] = {}
 
             test_cases = [
                 ("import module as alias", {"alias": "test.module"}),
@@ -177,21 +183,21 @@ class TestImportParsing:
             ]
 
             for import_statement, expected_mappings in test_cases:
-                graph_updater.factory.import_processor.import_mapping[module_qn] = {}
+                updater.factory.import_processor.import_mapping[module_qn] = {}
 
                 tree = parser.parse(bytes(import_statement, "utf8"))
                 import_node = tree.root_node.children[0]
 
                 if import_node.type == "import_statement":
-                    graph_updater.factory.import_processor._handle_python_import_statement(
+                    updater.factory.import_processor._handle_python_import_statement(
                         import_node, module_qn
                     )
                 elif import_node.type == "import_from_statement":
-                    graph_updater.factory.import_processor._handle_python_import_from_statement(
+                    updater.factory.import_processor._handle_python_import_from_statement(
                         import_node, module_qn
                     )
 
-                actual_mappings = graph_updater.factory.import_processor.import_mapping[
+                actual_mappings = updater.factory.import_processor.import_mapping[
                     module_qn
                 ]
 

@@ -249,8 +249,8 @@ class GraphUpdater:
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
-            repo_path_getter=self.repo_path,
-            project_name_getter=self.project_name,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
             queries=self.queries,
             function_registry=self.function_registry,
             simple_name_lookup=self.simple_name_lookup,

@@ -109,17 +109,15 @@ def _save_persistent_cache() -> None:
 
 
 class ImportProcessor:
-    """Handles parsing and processing of import statements."""
-
     def __init__(
         self,
-        repo_path_getter: Any,
-        project_name_getter: Any,
+        repo_path: Path,
+        project_name: str,
         ingestor: Any | None = None,
         function_registry: Any | None = None,
     ) -> None:
-        self._repo_path_getter = repo_path_getter
-        self._project_name_getter = project_name_getter
+        self.repo_path = repo_path
+        self.project_name = project_name
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
@@ -163,26 +161,6 @@ class ImportProcessor:
             ),
             "external_tools_checked": _EXTERNAL_TOOLS.copy(),
         }
-
-    @property
-    def repo_path(self) -> Path:
-        """Get the current repo path dynamically."""
-        if callable(self._repo_path_getter):
-            result = self._repo_path_getter()
-            return result if isinstance(result, Path) else Path(result)
-        return (
-            Path(self._repo_path_getter)
-            if isinstance(self._repo_path_getter, str)
-            else self._repo_path_getter
-        )
-
-    @property
-    def project_name(self) -> str:
-        """Get the current project name dynamically."""
-        if callable(self._project_name_getter):
-            result = self._project_name_getter()
-            return str(result)
-        return str(self._project_name_getter)
 
     def parse_imports(
         self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]

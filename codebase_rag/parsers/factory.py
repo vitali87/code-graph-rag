@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -13,8 +12,6 @@ from .type_inference import TypeInferenceEngine
 
 
 class ASTCacheProtocol(Protocol):
-    """Protocol for AST cache implementations."""
-
     def __setitem__(self, key: Path, value: tuple[Node, str]) -> None: ...
     def __getitem__(self, key: Path) -> tuple[Node, str]: ...
     def __delitem__(self, key: Path) -> None: ...
@@ -23,21 +20,19 @@ class ASTCacheProtocol(Protocol):
 
 
 class ProcessorFactory:
-    """Factory for creating processor instances with proper dependency injection."""
-
     def __init__(
         self,
         ingestor: IngestorProtocol,
-        repo_path_getter: Callable[[], Path] | Path,
-        project_name_getter: Callable[[], str] | str,
+        repo_path: Path,
+        project_name: str,
         queries: dict[str, Any],
         function_registry: Any,
         simple_name_lookup: dict[str, set[str]],
         ast_cache: ASTCacheProtocol,
     ) -> None:
         self.ingestor = ingestor
-        self._repo_path_getter = repo_path_getter
-        self._project_name_getter = project_name_getter
+        self.repo_path = repo_path
+        self.project_name = project_name
         self.queries = queries
         self.function_registry = function_registry
         self.simple_name_lookup = simple_name_lookup
@@ -52,30 +47,11 @@ class ProcessorFactory:
         self._call_processor: CallProcessor | None = None
 
     @property
-    def repo_path(self) -> Path:
-        """Get the current repo path dynamically."""
-        if callable(self._repo_path_getter):
-            return self._repo_path_getter()
-        return (
-            Path(self._repo_path_getter)
-            if isinstance(self._repo_path_getter, str)
-            else self._repo_path_getter
-        )
-
-    @property
-    def project_name(self) -> str:
-        """Get the current project name dynamically."""
-        if callable(self._project_name_getter):
-            return self._project_name_getter()
-        return str(self._project_name_getter)
-
-    @property
     def import_processor(self) -> ImportProcessor:
-        """Get or create the import processor."""
         if self._import_processor is None:
             self._import_processor = ImportProcessor(
-                repo_path_getter=lambda: self.repo_path,
-                project_name_getter=lambda: self.project_name,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
                 ingestor=self.ingestor,
                 function_registry=self.function_registry,
             )
@@ -83,7 +59,6 @@ class ProcessorFactory:
 
     @property
     def structure_processor(self) -> StructureProcessor:
-        """Get or create the structure processor."""
         if self._structure_processor is None:
             self._structure_processor = StructureProcessor(
                 ingestor=self.ingestor,
