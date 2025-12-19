@@ -6,6 +6,7 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
+from ..constants import SEPARATOR_DOT
 from ..language_config import LANGUAGE_FQN_CONFIGS, LanguageConfig
 from ..services import IngestorProtocol
 from ..types_defs import NodeType, SimpleNameLookup
@@ -108,15 +109,15 @@ class DefinitionProcessor:
             tree = parser.parse(source_bytes)
             root_node = tree.root_node
 
-            module_qn = ".".join(
+            module_qn = SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
             if file_path.name == "__init__.py":
-                module_qn = ".".join(
+                module_qn = SEPARATOR_DOT.join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
             elif file_path.name == "mod.rs":
-                module_qn = ".".join(
+                module_qn = SEPARATOR_DOT.join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
 
@@ -379,7 +380,7 @@ class DefinitionProcessor:
                     func_node, file_path, self.repo_path, self.project_name, fqn_config
                 )
                 if func_qn:
-                    func_name = func_qn.split(".")[-1]
+                    func_name = func_qn.split(SEPARATOR_DOT)[-1]
                     if language == "cpp":
                         is_exported = is_cpp_exported(func_node)
 
@@ -787,7 +788,7 @@ class DefinitionProcessor:
                     class_node, file_path, self.repo_path, self.project_name, fqn_config
                 )
                 if class_qn:
-                    class_name = class_qn.split(".")[-1]
+                    class_name = class_qn.split(SEPARATOR_DOT)[-1]
                     if language == "cpp":
                         if class_node.type == "function_definition":
                             is_exported = True
@@ -989,8 +990,8 @@ class DefinitionProcessor:
 
         for method_qn in self.function_registry.keys():
             if self.function_registry[method_qn] == NodeType.METHOD:
-                if "." in method_qn:
-                    parts = method_qn.rsplit(".", 1)
+                if SEPARATOR_DOT in method_qn:
+                    parts = method_qn.rsplit(SEPARATOR_DOT, 1)
                     if len(parts) == 2:
                         class_qn, method_name = parts
                         self._check_method_overrides(method_qn, method_name, class_qn)
@@ -1911,8 +1912,8 @@ class DefinitionProcessor:
                     ):
                         if member_expr.text and arrow_function:
                             member_text = safe_decode_with_fallback(member_expr)
-                            if "." in member_text:
-                                function_name = member_text.split(".")[-1]
+                            if SEPARATOR_DOT in member_text:
+                                function_name = member_text.split(SEPARATOR_DOT)[-1]
 
                                 lang_config = queries[language].get("config")
                                 if lang_config:
@@ -1948,8 +1949,8 @@ class DefinitionProcessor:
                     for member_expr, function_expr in zip(member_exprs, function_exprs):
                         if member_expr.text and function_expr:
                             member_text = safe_decode_with_fallback(member_expr)
-                            if "." in member_text:
-                                function_name = member_text.split(".")[-1]
+                            if SEPARATOR_DOT in member_text:
+                                function_name = member_text.split(SEPARATOR_DOT)[-1]
 
                                 lang_config = queries[language].get("config")
                                 if lang_config:

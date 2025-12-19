@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING
 
+from ..constants import SEPARATOR_DOT
+
 if TYPE_CHECKING:
     from ..graph_updater import FunctionRegistryTrie
     from .import_processor import ImportProcessor
@@ -32,16 +34,16 @@ def resolve_class_name(
     if same_module_qn in function_registry:
         return same_module_qn
 
-    module_parts = module_qn.split(".")
+    module_parts = module_qn.split(SEPARATOR_DOT)
     for i in range(len(module_parts) - 1, 0, -1):
-        parent_module = ".".join(module_parts[:i])
+        parent_module = SEPARATOR_DOT.join(module_parts[:i])
         potential_qn = f"{parent_module}.{class_name}"
         if potential_qn in function_registry:
             return potential_qn
 
     matches = function_registry.find_ending_with(class_name)
     for match in matches:
-        match_parts = match.split(".")
+        match_parts = match.split(SEPARATOR_DOT)
         if class_name in match_parts:
             return str(match)
 

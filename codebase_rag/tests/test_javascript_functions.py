@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import SEPARATOR_DOT
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
@@ -643,7 +644,7 @@ const memoizedAdd = memoize(add5);
         call
         for call in function_calls
         if "higher_order_functions" in call[0][1]["qualified_name"]
-        and len(call[0][1]["qualified_name"].split(".")) > 3
+        and len(call[0][1]["qualified_name"].split(SEPARATOR_DOT)) > 3
     ]
 
     assert len(nested_functions) >= 5, (

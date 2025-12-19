@@ -2,6 +2,7 @@ from typing import TypedDict
 
 from tree_sitter import Node
 
+from ..constants import SEPARATOR_DOT
 from .utils import safe_decode_text
 
 DELIMITER_TOKENS = ["(", ")", ","]
@@ -110,7 +111,7 @@ def extract_java_import_path(import_node: Node) -> dict[str, str]:
         wildcard_key = f"*{imported_path}"
         imports[wildcard_key] = imported_path
     else:
-        parts = imported_path.split(".")
+        parts = imported_path.split(SEPARATOR_DOT)
         if parts:
             imported_name = parts[-1]
             imports[imported_name] = imported_path

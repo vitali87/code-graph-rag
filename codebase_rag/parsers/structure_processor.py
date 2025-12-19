@@ -4,6 +4,7 @@ from typing import Any
 from loguru import logger
 
 from ..config import IGNORE_PATTERNS
+from ..constants import SEPARATOR_DOT
 from ..services import IngestorProtocol
 
 
@@ -55,7 +56,9 @@ class StructureProcessor:
                     break
 
             if is_package:
-                package_qn = ".".join([self.project_name] + list(relative_root.parts))
+                package_qn = SEPARATOR_DOT.join(
+                    [self.project_name] + list(relative_root.parts)
+                )
                 self.structural_elements[relative_root] = package_qn
                 logger.info(f"  Identified Package: {package_qn}")
                 self.ingestor.ensure_node_batch(

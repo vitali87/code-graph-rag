@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
+from ..constants import SEPARATOR_DOT
 from ..types_defs import NodeType, SimpleNameLookup
 from .import_processor import ImportProcessor
 from .java_type_inference import JavaTypeInferenceEngine
@@ -180,8 +181,8 @@ class TypeInferenceEngine:
 
         for qn, node_type in self.function_registry.find_with_prefix(module_qn):
             if node_type == NodeType.CLASS:
-                if ".".join(qn.split(".")[:-1]) == module_qn:
-                    available_class_names.append(qn.split(".")[-1])
+                if SEPARATOR_DOT.join(qn.split(SEPARATOR_DOT)[:-1]) == module_qn:
+                    available_class_names.append(qn.split(SEPARATOR_DOT)[-1])
 
         if module_qn in self.import_processor.import_mapping:
             for local_name, imported_qn in self.import_processor.import_mapping[
@@ -751,7 +752,7 @@ class TypeInferenceEngine:
 
         self._type_inference_in_progress.add(cache_key)
         try:
-            if "." in method_call and self._is_method_chain(method_call):
+            if SEPARATOR_DOT in method_call and self._is_method_chain(method_call):
                 return self._infer_chained_call_return_type_fixed(
                     method_call, module_qn, local_var_types
                 )
@@ -789,7 +790,7 @@ class TypeInferenceEngine:
 
         if object_type:
             full_object_type = object_type
-            if "." not in object_type:
+            if SEPARATOR_DOT not in object_type:
                 resolved_class = self._resolve_class_name(object_type, module_qn)
                 if resolved_class:
                     full_object_type = resolved_class
@@ -919,10 +920,10 @@ class TypeInferenceEngine:
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         """Resolve a method call like 'self.manager.create_user' to its qualified name."""
-        if "." not in method_call:
+        if SEPARATOR_DOT not in method_call:
             return None
 
-        parts = method_call.split(".")
+        parts = method_call.split(SEPARATOR_DOT)
         if len(parts) < 2:
             return None
 
@@ -1065,14 +1066,14 @@ class TypeInferenceEngine:
 
     def _find_method_ast_node(self, method_qn: str) -> Node | None:
         """Find the AST node for a method by its qualified name."""
-        qn_parts = method_qn.split(".")
+        qn_parts = method_qn.split(SEPARATOR_DOT)
         if len(qn_parts) < 3:
             return None
 
         class_name = qn_parts[-2]
         method_name = qn_parts[-1]
 
-        expected_module = ".".join(qn_parts[:-2])
+        expected_module = SEPARATOR_DOT.join(qn_parts[:-2])
         if expected_module in self.module_qn_to_file_path:
             file_path = self.module_qn_to_file_path[expected_module]
             if file_path in self.ast_cache:
@@ -1188,7 +1189,7 @@ class TypeInferenceEngine:
                     class_name = safe_decode_text(func_node)
                     if class_name:
                         if class_name == "cls":
-                            qn_parts = method_qn.split(".")
+                            qn_parts = method_qn.split(SEPARATOR_DOT)
                             if len(qn_parts) >= 2:
                                 return qn_parts[-2]
                         elif (
@@ -1196,7 +1197,9 @@ class TypeInferenceEngine:
                             and len(class_name) > 0
                             and class_name[0].isupper()
                         ):
-                            module_qn = ".".join(method_qn.split(".")[:-2])
+                            module_qn = SEPARATOR_DOT.join(
+                                method_qn.split(SEPARATOR_DOT)[:-2]
+                            )
                             resolved_class = self._find_class_in_scope(
                                 class_name, module_qn
                             )
@@ -1205,7 +1208,7 @@ class TypeInferenceEngine:
             elif func_node and func_node.type == "attribute":
                 method_call_text = self._extract_full_method_call(func_node)
                 if method_call_text:
-                    module_qn = ".".join(method_qn.split(".")[:-2])
+                    module_qn = SEPARATOR_DOT.join(method_qn.split(SEPARATOR_DOT)[:-2])
                     return self._infer_method_call_return_type(
                         method_call_text, module_qn
                     )
@@ -1215,11 +1218,11 @@ class TypeInferenceEngine:
             if text is not None:
                 identifier = safe_decode_text(expr_node)
                 if identifier == "self" or identifier == "cls":
-                    qn_parts = method_qn.split(".")
+                    qn_parts = method_qn.split(SEPARATOR_DOT)
                     if len(qn_parts) >= 2:
                         return qn_parts[-2]
                 else:
-                    module_qn = ".".join(method_qn.split(".")[:-2])
+                    module_qn = SEPARATOR_DOT.join(method_qn.split(SEPARATOR_DOT)[:-2])
 
                     method_node = self._find_method_ast_node(method_qn)
                     if method_node:
@@ -1244,7 +1247,7 @@ class TypeInferenceEngine:
                 if object_text is not None:
                     object_name = safe_decode_text(object_node)
                     if object_name == "cls" or object_name == "self":
-                        qn_parts = method_qn.split(".")
+                        qn_parts = method_qn.split(SEPARATOR_DOT)
                         if len(qn_parts) >= 2:
                             return qn_parts[-2]
 

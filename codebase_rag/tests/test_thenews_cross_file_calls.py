@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import SEPARATOR_DOT
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_relationships
@@ -119,11 +120,13 @@ public class Main {
 
                     def extract_package(qn: str) -> str:
                         """Extract package path from qualified name."""
-                        parts = qn.replace("()", "").replace("(", "").split(".")
+                        parts = (
+                            qn.replace("()", "").replace("(", "").split(SEPARATOR_DOT)
+                        )
                         for i in range(len(parts) - 1):
                             if i + 1 < len(parts) and parts[i] == parts[i + 1]:
-                                return ".".join(parts[: i + 1])
-                        return ".".join(parts[:-1])
+                                return SEPARATOR_DOT.join(parts[: i + 1])
+                        return SEPARATOR_DOT.join(parts[:-1])
 
                     source_package = extract_package(source_qn)
                     target_package = extract_package(target_qn)

@@ -1,5 +1,6 @@
 from tree_sitter import Node
 
+from ..constants import SEPARATOR_DOT
 from .utils import safe_decode_text, safe_decode_with_fallback
 
 CPP_OPERATOR_SYMBOL_MAP = {
@@ -48,7 +49,7 @@ def convert_operator_symbol_to_name(symbol: str) -> str:
 
 def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
     """Build qualified name for C++ entities, handling namespaces properly."""
-    module_parts = module_qn.split(".")
+    module_parts = module_qn.split(SEPARATOR_DOT)
 
     is_module_file = len(module_parts) >= 3 and (
         "interfaces" in module_parts

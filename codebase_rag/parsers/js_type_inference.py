@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node
 
+from ..constants import SEPARATOR_DOT
 from ..types_defs import NodeType
 from .import_processor import ImportProcessor
 from .js_utils import (
@@ -134,7 +135,7 @@ class JsTypeInferenceEngine:
         For example: Storage.getInstance() should return 'Storage'
         """
         try:
-            parts = method_call.split(".")
+            parts = method_call.split(SEPARATOR_DOT)
             if len(parts) != 2:
                 logger.debug(f"Method call {method_call} doesn't have 2 parts")
                 return None

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
+from ..constants import SEPARATOR_DOT
 from ..language_config import get_language_config
 from ..parser_loader import load_parsers
 
@@ -155,7 +156,7 @@ class FileEditor:
                 )
                 return None
 
-            if "." in function_name:
+            if SEPARATOR_DOT in function_name:
                 for func in matching_functions:
                     if func["qualified_name"] == function_name:
                         node_text = func["node"].text

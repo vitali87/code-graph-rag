@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from ..constants import SEPARATOR_DOT
+
 if TYPE_CHECKING:
     from tree_sitter import Node
 
@@ -49,7 +51,7 @@ def resolve_fqn_from_ast(
 
         module_parts = fqn_config.file_to_module_parts(file_path, repo_root)
         full_parts = [project_name] + module_parts + parts
-        return ".".join(full_parts)
+        return SEPARATOR_DOT.join(full_parts)
 
     except Exception as e:
         logger.debug(f"Failed to resolve FQN for node at {file_path}: {e}")

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import SEPARATOR_DOT
 from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 from codebase_rag.types_defs import NodeType
 
@@ -203,7 +204,7 @@ console.log(manager instanceof Person);    // true
         func
         for func in created_functions
         if any(
-            expected_method.split(".")[-1] in func
+            expected_method.split(SEPARATOR_DOT)[-1] in func
             for expected_method in expected_prototype_methods
         )
     ]

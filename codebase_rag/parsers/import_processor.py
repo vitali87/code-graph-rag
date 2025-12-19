@@ -6,6 +6,7 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node
 
+from ..constants import SEPARATOR_DOT
 from ..language_config import LanguageConfig
 from .lua_utils import (
     extract_lua_assigned_name,
@@ -230,7 +231,7 @@ class ImportProcessor:
         for child in import_node.named_children:
             if child.type == "dotted_name":
                 module_name = safe_decode_text(child) or ""
-                local_name = module_name.split(".")[0]
+                local_name = module_name.split(SEPARATOR_DOT)[0]
 
                 if (self.repo_path / local_name).is_dir() or (
                     self.repo_path / f"{local_name}.py"
@@ -253,7 +254,7 @@ class ImportProcessor:
                     module_name = decoded_module_name
                     alias = decoded_alias
 
-                    top_level_module = module_name.split(".")[0]
+                    top_level_module = module_name.split(SEPARATOR_DOT)[0]
                     if (self.repo_path / top_level_module).is_dir() or (
                         self.repo_path / f"{top_level_module}.py"
                     ).is_file():
@@ -311,7 +312,7 @@ class ImportProcessor:
             if module_name.startswith(self.project_name):
                 base_module = module_name
             else:
-                top_level_module = module_name.split(".")[0]
+                top_level_module = module_name.split(SEPARATOR_DOT)[0]
                 if (self.repo_path / top_level_module).is_dir() or (
                     self.repo_path / f"{top_level_module}.py"
                 ).is_file():
@@ -331,7 +332,7 @@ class ImportProcessor:
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         """Resolve relative imports like '.module' or '..parent.module'."""
-        module_parts = module_qn.split(".")[1:]
+        module_parts = module_qn.split(SEPARATOR_DOT)[1:]
 
         dots = 0
         module_name = ""
@@ -351,9 +352,9 @@ class ImportProcessor:
         target_parts = module_parts[:-dots] if dots > 0 else module_parts
 
         if module_name:
-            target_parts.extend(module_name.split("."))
+            target_parts.extend(module_name.split(SEPARATOR_DOT))
 
-        return ".".join(target_parts)
+        return SEPARATOR_DOT.join(target_parts)
 
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
         """Parse JavaScript/TypeScript import statements."""
@@ -385,9 +386,9 @@ class ImportProcessor:
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         """Resolve JavaScript module path to qualified name."""
         if not import_path.startswith("."):
-            return import_path.replace("/", ".")
+            return import_path.replace("/", SEPARATOR_DOT)
 
-        current_parts = current_module.split(".")[:-1]
+        current_parts = current_module.split(SEPARATOR_DOT)[:-1]
         import_parts = import_path.split("/")
 
         for part in import_parts:
@@ -399,7 +400,7 @@ class ImportProcessor:
             elif part:
                 current_parts.append(part)
 
-        return ".".join(current_parts)
+        return SEPARATOR_DOT.join(current_parts)
 
     def _parse_js_import_clause(
         self, clause_node: Node, source_module: str, current_module: str
@@ -550,7 +551,7 @@ class ImportProcessor:
                     logger.debug(f"Java wildcard import: {imported_path}.*")
                     self.import_mapping[module_qn][f"*{imported_path}"] = imported_path
                 else:
-                    parts = imported_path.split(".")
+                    parts = imported_path.split(SEPARATOR_DOT)
                     if parts:
                         imported_name = parts[-1]
                         if is_static:
@@ -648,7 +649,7 @@ class ImportProcessor:
         if include_path:
             header_name = include_path.split("/")[-1]
             if header_name.endswith(".h") or header_name.endswith(".hpp"):
-                local_name = header_name.split(".")[0]
+                local_name = header_name.split(SEPARATOR_DOT)[0]
             else:
                 local_name = header_name
 
@@ -660,7 +661,9 @@ class ImportProcessor:
                 )
             else:
                 path_parts = (
-                    include_path.replace("/", ".").replace(".h", "").replace(".hpp", "")
+                    include_path.replace("/", SEPARATOR_DOT)
+                    .replace(".h", "")
+                    .replace(".hpp", "")
                 )
                 full_name = f"{self.project_name}.{path_parts}"
 
@@ -754,7 +757,7 @@ class ImportProcessor:
                 if module_path:
                     local_name = (
                         self._lua_extract_assignment_lhs(call_node)
-                        or module_path.split(".")[-1]
+                        or module_path.split(SEPARATOR_DOT)[-1]
                     )
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
@@ -763,7 +766,7 @@ class ImportProcessor:
                 if module_path:
                     local_name = (
                         self._lua_extract_pcall_assignment_lhs(call_node)
-                        or module_path.split(".")[-1]
+                        or module_path.split(SEPARATOR_DOT)[-1]
                     )
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
@@ -851,7 +854,7 @@ class ImportProcessor:
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
         """Resolve Lua module path for require. Handles ./ and ../ prefixes."""
         if import_path.startswith("./") or import_path.startswith("../"):
-            parts = current_module.split(".")[:-1]
+            parts = current_module.split(SEPARATOR_DOT)[:-1]
             rel_parts = [p for p in import_path.replace("\\", "/").split("/")]
             for p in rel_parts:
                 if p == ".":
@@ -861,11 +864,11 @@ class ImportProcessor:
                         parts.pop()
                 elif p:
                     parts.append(p)
-            return ".".join(parts)
-        dotted = import_path.replace("/", ".")
+            return SEPARATOR_DOT.join(parts)
+        dotted = import_path.replace("/", SEPARATOR_DOT)
 
         try:
-            relative_file = dotted.replace(".", "/") + ".lua"
+            relative_file = dotted.replace(SEPARATOR_DOT, "/") + ".lua"
             if (self.repo_path / relative_file).is_file():
                 return f"{self.project_name}.{dotted}"
             if (self.repo_path / f"{dotted}.lua").is_file():
@@ -940,7 +943,7 @@ class ImportProcessor:
         if self.function_registry and full_qualified_name in self.function_registry:
             entity_type = self.function_registry[full_qualified_name]
             if entity_type in ("Class", "Function", "Method"):
-                parts = full_qualified_name.rsplit(".", 1)
+                parts = full_qualified_name.rsplit(SEPARATOR_DOT, 1)
                 if len(parts) == 2:
                     return parts[0]
 
@@ -967,7 +970,7 @@ class ImportProcessor:
         if cached_result is not None:
             return cached_result
 
-        parts = full_qualified_name.split(".")
+        parts = full_qualified_name.split(SEPARATOR_DOT)
         if len(parts) >= 2:
             module_name = parts[0]
             entity_name = parts[-1]
@@ -985,14 +988,14 @@ class ImportProcessor:
                         or inspect.isfunction(obj)
                         or not inspect.ismodule(obj)
                     ):
-                        module_path = ".".join(parts[:-1])
+                        module_path = SEPARATOR_DOT.join(parts[:-1])
                         _cache_stdlib_result("python", full_qualified_name, module_path)
                         return module_path
             except (ImportError, AttributeError):
                 pass
 
             if entity_name[0].isupper():
-                result = ".".join(parts[:-1])
+                result = SEPARATOR_DOT.join(parts[:-1])
             else:
                 result = full_qualified_name
 
@@ -1007,7 +1010,7 @@ class ImportProcessor:
         if cached_result is not None:
             return cached_result
 
-        parts = full_qualified_name.split(".")
+        parts = full_qualified_name.split(SEPARATOR_DOT)
         if len(parts) >= 2:
             module_name = parts[0]
             entity_name = parts[-1]
@@ -1055,7 +1058,7 @@ class ImportProcessor:
                             "function",
                             "object",
                         ]:
-                            module_path = ".".join(parts[:-1])
+                            module_path = SEPARATOR_DOT.join(parts[:-1])
                             _cache_stdlib_result(
                                 "javascript", full_qualified_name, module_path
                             )
@@ -1069,7 +1072,7 @@ class ImportProcessor:
                     pass
 
             if entity_name[0].isupper():
-                result = ".".join(parts[:-1])
+                result = SEPARATOR_DOT.join(parts[:-1])
             else:
                 result = full_qualified_name
 
@@ -1317,7 +1320,7 @@ int main() {{
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Java stdlib module path using reflection."""
-        parts = full_qualified_name.split(".")
+        parts = full_qualified_name.split(SEPARATOR_DOT)
         if len(parts) >= 2:
             try:
                 import json
@@ -1325,7 +1328,7 @@ int main() {{
                 import subprocess
                 import tempfile
 
-                package_name = ".".join(parts[:-1])
+                package_name = SEPARATOR_DOT.join(parts[:-1])
                 entity_name = parts[-1]
 
                 java_program = """
@@ -1413,7 +1416,7 @@ public class StdlibCheck {
                         if run_result.returncode == 0:
                             data = json.loads(run_result.stdout.strip())
                             if data.get("hasEntity"):
-                                return ".".join(parts[:-1])
+                                return SEPARATOR_DOT.join(parts[:-1])
 
                 finally:
                     for ext in [".java", ".class"]:
@@ -1457,13 +1460,13 @@ public class StdlibCheck {
                     "BigDecimal",
                 }
             ):
-                return ".".join(parts[:-1])
+                return SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Lua stdlib module path using runtime introspection."""
-        parts = full_qualified_name.split(".")
+        parts = full_qualified_name.split(SEPARATOR_DOT)
         if len(parts) >= 2:
             module_name = parts[0]
             entity_name = parts[-1]
@@ -1522,7 +1525,7 @@ end
                 if result.returncode == 0:
                     output = result.stdout.strip()
                     if "hasEntity=true" in output:
-                        return ".".join(parts[:-1])
+                        return SEPARATOR_DOT.join(parts[:-1])
 
             except (
                 subprocess.TimeoutExpired,
@@ -1540,16 +1543,16 @@ end
                 "os",
                 "debug",
             }:
-                return ".".join(parts[:-1])
+                return SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_generic_stdlib_path(self, full_qualified_name: str) -> str:
         """Generic fallback using basic heuristics."""
-        parts = full_qualified_name.split(".")
+        parts = full_qualified_name.split(SEPARATOR_DOT)
         if len(parts) >= 2:
             entity_name = parts[-1]
             if entity_name[0].isupper():
-                return ".".join(parts[:-1])
+                return SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name

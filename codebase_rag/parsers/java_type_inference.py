@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node
 
+from ..constants import SEPARATOR_DOT
 from ..types_defs import NodeType, SimpleNameLookup
 from .import_processor import ImportProcessor
 from .java_utils import (
@@ -68,36 +69,36 @@ class JavaTypeInferenceEngine:
                 modules.append(value)
 
         for module_qn in self.module_qn_to_file_path.keys():
-            parts = module_qn.split(".")
+            parts = module_qn.split(SEPARATOR_DOT)
             package_start_idx = find_java_package_start_index(parts)
 
             if package_start_idx:
-                simple_class_name = ".".join(parts[package_start_idx:])
+                simple_class_name = SEPARATOR_DOT.join(parts[package_start_idx:])
                 if simple_class_name:
                     _add_mapping(simple_class_name, module_qn)
 
-                    class_parts = simple_class_name.split(".")
+                    class_parts = simple_class_name.split(SEPARATOR_DOT)
                     for j in range(1, len(class_parts)):
-                        suffix = ".".join(class_parts[j:])
+                        suffix = SEPARATOR_DOT.join(class_parts[j:])
                         _add_mapping(suffix, module_qn)
 
         return fqn_map
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
         """Convert an internal module QN to a Java fully qualified class name."""
-        parts = module_qn.split(".")
+        parts = module_qn.split(SEPARATOR_DOT)
         package_start_idx = find_java_package_start_index(parts)
         if package_start_idx is None:
             return None
         class_parts = parts[package_start_idx:]
-        return ".".join(class_parts) if class_parts else None
+        return SEPARATOR_DOT.join(class_parts) if class_parts else None
 
     def _calculate_module_distance(
         self, candidate_qn: str, caller_module_qn: str
     ) -> int:
         """Heuristic distance between the caller and a candidate module."""
-        caller_parts = caller_module_qn.split(".")
-        candidate_parts = candidate_qn.split(".")
+        caller_parts = caller_module_qn.split(SEPARATOR_DOT)
+        candidate_parts = candidate_qn.split(SEPARATOR_DOT)
 
         common_prefix = 0
         for caller_part, candidate_part in zip(caller_parts, candidate_parts):
@@ -498,14 +499,14 @@ class JavaTypeInferenceEngine:
         if not method_call:
             return None
 
-        parts = method_call.split(".")
+        parts = method_call.split(SEPARATOR_DOT)
         if len(parts) < 2:
             method_name = method_call
             current_class_qn = self._get_current_class_name(module_qn)
             if current_class_qn:
                 return self._find_method_return_type(current_class_qn, method_name)
         else:
-            object_part = ".".join(parts[:-1])
+            object_part = SEPARATOR_DOT.join(parts[:-1])
             method_name = parts[-1]
 
             if object_part in self.function_registry:
@@ -526,11 +527,11 @@ class JavaTypeInferenceEngine:
         if not class_qn or not method_name:
             return None
 
-        parts = class_qn.split(".")
+        parts = class_qn.split(SEPARATOR_DOT)
         if len(parts) < 2:
             return None
 
-        module_qn = ".".join(parts[:-1])
+        module_qn = SEPARATOR_DOT.join(parts[:-1])
         target_class_name = parts[-1]
 
         file_path = self.module_qn_to_file_path.get(module_qn)
@@ -590,7 +591,7 @@ class JavaTypeInferenceEngine:
             elif "size" in method_call.lower() or "length" in method_call.lower():
                 return "int"
         elif "create" in method_call.lower() or "new" in method_call.lower():
-            parts = method_call.split(".")
+            parts = method_call.split(SEPARATOR_DOT)
             if len(parts) >= 2:
                 method_name = parts[-1]
                 if "user" in method_name.lower():
@@ -611,16 +612,16 @@ class JavaTypeInferenceEngine:
 
         resolved_class_type = self._resolve_java_type_name(class_type, module_qn)
 
-        if "." in resolved_class_type:
+        if SEPARATOR_DOT in resolved_class_type:
             class_qn = resolved_class_type
         else:
             class_qn = f"{module_qn}.{resolved_class_type}"
 
-        parts = class_qn.split(".")
+        parts = class_qn.split(SEPARATOR_DOT)
         if len(parts) < 2:
             return None
 
-        target_module_qn = ".".join(parts[:-1])
+        target_module_qn = SEPARATOR_DOT.join(parts[:-1])
         target_class_name = parts[-1]
 
         file_path = self.module_qn_to_file_path.get(target_module_qn)
@@ -650,7 +651,7 @@ class JavaTypeInferenceEngine:
         self._lookup_in_progress.add(cache_key)
 
         try:
-            module_parts = module_qn.split(".")
+            module_parts = module_qn.split(SEPARATOR_DOT)
             if len(module_parts) < 2:
                 result = None
             else:
@@ -682,7 +683,7 @@ class JavaTypeInferenceEngine:
         if not type_name:
             return "Object"
 
-        if "." in type_name:
+        if SEPARATOR_DOT in type_name:
             return type_name
 
         if type_name in [
@@ -890,8 +891,10 @@ class JavaTypeInferenceEngine:
                     return method_type, qn
 
         if class_qn and not class_qn.startswith(self.project_name):
-            suffixes = class_qn.split(".") if class_qn else []
-            lookup_keys = [".".join(suffixes[i:]) for i in range(len(suffixes))]
+            suffixes = class_qn.split(SEPARATOR_DOT) if class_qn else []
+            lookup_keys = [
+                SEPARATOR_DOT.join(suffixes[i:]) for i in range(len(suffixes))
+            ]
             if not lookup_keys:
                 lookup_keys = [class_qn]
 
@@ -909,7 +912,7 @@ class JavaTypeInferenceEngine:
                 candidate_modules, class_qn, current_module_qn
             )
 
-            simple_class_name = class_qn.split(".")[-1]
+            simple_class_name = class_qn.split(SEPARATOR_DOT)[-1]
 
             for module_qn in ranked_candidates:
                 registry_class_qn = f"{module_qn}.{simple_class_name}"
@@ -964,11 +967,11 @@ class JavaTypeInferenceEngine:
 
     def _get_implemented_interfaces(self, class_qn: str) -> list[str]:
         """Get all interfaces implemented by a class using tree-sitter AST analysis."""
-        parts = class_qn.split(".")
+        parts = class_qn.split(SEPARATOR_DOT)
         if len(parts) < 2:
             return []
 
-        module_qn = ".".join(parts[:-1])
+        module_qn = SEPARATOR_DOT.join(parts[:-1])
         target_class_name = parts[-1]
 
         file_path = self.module_qn_to_file_path.get(module_qn)
@@ -1023,7 +1026,7 @@ class JavaTypeInferenceEngine:
 
     def _get_current_class_name(self, module_qn: str) -> str | None:
         """Extract current class name from AST context using precise tree-sitter traversal."""
-        module_parts = module_qn.split(".")
+        module_parts = module_qn.split(SEPARATOR_DOT)
         if len(module_parts) < 2:
             return None
 
@@ -1061,11 +1064,11 @@ class JavaTypeInferenceEngine:
 
     def _get_superclass_name(self, class_qn: str) -> str | None:
         """Get the superclass name using precise tree-sitter AST analysis."""
-        parts = class_qn.split(".")
+        parts = class_qn.split(SEPARATOR_DOT)
         if len(parts) < 2:
             return None
 
-        module_qn = ".".join(parts[:-1])
+        module_qn = SEPARATOR_DOT.join(parts[:-1])
         target_class_name = parts[-1]
 
         file_path = self.module_qn_to_file_path.get(module_qn)

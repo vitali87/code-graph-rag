@@ -47,6 +47,7 @@ from .constants import (
     LOG_REMOVING_STATE,
     LOG_SEMANTIC_NOT_AVAILABLE,
     NODE_PROJECT,
+    SEPARATOR_DOT,
     TRIE_INTERNAL_PREFIX,
     TRIE_QN_KEY,
     TRIE_TYPE_KEY,
@@ -76,7 +77,7 @@ class FunctionRegistryTrie:
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self._entries[qualified_name] = func_type
 
-        parts = qualified_name.split(".")
+        parts = qualified_name.split(SEPARATOR_DOT)
         current: TrieNode = self.root
 
         for part in parts:
@@ -109,7 +110,7 @@ class FunctionRegistryTrie:
 
         del self._entries[qualified_name]
 
-        parts = qualified_name.split(".")
+        parts = qualified_name.split(SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
 
     def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
@@ -132,7 +133,7 @@ class FunctionRegistryTrie:
         return not has_children and not is_endpoint
 
     def _navigate_to_prefix(self, prefix: str) -> TrieNode | None:
-        parts = prefix.split(".") if prefix else []
+        parts = prefix.split(SEPARATOR_DOT) if prefix else []
         current: TrieNode = self.root
         for part in parts:
             if part not in current:
@@ -331,7 +332,7 @@ class GraphUpdater:
             if file_path.name == INIT_PY
             else relative_path.with_suffix("").parts
         )
-        module_qn_prefix = ".".join([self.project_name, *path_parts])
+        module_qn_prefix = SEPARATOR_DOT.join([self.project_name, *path_parts])
 
         qns_to_remove = set()
 

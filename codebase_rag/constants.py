@@ -89,6 +89,9 @@ LOG_NO_SOURCE_FOR = "No source code found for {name}"
 LOG_EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 LOG_EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 
+# (H) Qualified name separators
+SEPARATOR_DOT = "."
+
 # (H) Trie internal keys
 TRIE_TYPE_KEY = "__type__"
 TRIE_QN_KEY = "__qn__"

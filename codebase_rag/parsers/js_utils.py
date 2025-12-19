@@ -1,5 +1,6 @@
 from tree_sitter import Node
 
+from ..constants import SEPARATOR_DOT
 from .utils import safe_decode_text
 
 
@@ -146,29 +147,29 @@ def analyze_js_return_expression(expr_node: Node, method_qn: str) -> str | None:
     if expr_node.type == "new_expression":
         class_name = extract_js_constructor_name(expr_node)
         if class_name:
-            qn_parts = method_qn.split(".")
+            qn_parts = method_qn.split(SEPARATOR_DOT)
             if len(qn_parts) >= 2:
-                return ".".join(qn_parts[:-1])
+                return SEPARATOR_DOT.join(qn_parts[:-1])
             return class_name
 
     elif expr_node.type == "this":
-        qn_parts = method_qn.split(".")
+        qn_parts = method_qn.split(SEPARATOR_DOT)
         if len(qn_parts) >= 2:
-            return ".".join(qn_parts[:-1])
+            return SEPARATOR_DOT.join(qn_parts[:-1])
 
     elif expr_node.type == "member_expression":
         object_node = expr_node.child_by_field_name("object")
         if object_node:
             if object_node.type == "this":
-                qn_parts = method_qn.split(".")
+                qn_parts = method_qn.split(SEPARATOR_DOT)
                 if len(qn_parts) >= 2:
-                    return ".".join(qn_parts[:-1])
+                    return SEPARATOR_DOT.join(qn_parts[:-1])
             elif object_node.type == "identifier":
                 object_text = object_node.text
                 if object_text:
                     object_name = safe_decode_text(object_node)
-                    qn_parts = method_qn.split(".")
+                    qn_parts = method_qn.split(SEPARATOR_DOT)
                     if len(qn_parts) >= 2 and object_name == qn_parts[-2]:
-                        return ".".join(qn_parts[:-1])
+                        return SEPARATOR_DOT.join(qn_parts[:-1])
 
     return None

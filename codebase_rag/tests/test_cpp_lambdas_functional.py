@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import SEPARATOR_DOT
 from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
 
 
@@ -529,7 +530,7 @@ void demonstrateLambdasAndFunctional() {
     lambda_functions = [
         func
         for func in created_functions
-        if "lambda_" in func and func.split(".")[-1].startswith("lambda_")
+        if "lambda_" in func and func.split(SEPARATOR_DOT)[-1].startswith("lambda_")
     ]
 
     assert len(lambda_functions) >= 10, (

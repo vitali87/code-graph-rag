@@ -5,6 +5,7 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
+from ..constants import SEPARATOR_DOT
 from ..language_config import LanguageConfig
 from ..services import IngestorProtocol
 from ..types_defs import NodeType
@@ -100,11 +101,11 @@ class CallProcessor:
         logger.debug(f"Processing calls in cached AST for: {relative_path}")
 
         try:
-            module_qn = ".".join(
+            module_qn = SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
             if file_path.name in ("__init__.py", "mod.rs"):
-                module_qn = ".".join(
+                module_qn = SEPARATOR_DOT.join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
 
@@ -456,7 +457,7 @@ class CallProcessor:
         ):
             return self._resolve_super_call(call_name, module_qn, class_context)
 
-        if "." in call_name and self._is_method_chain(call_name):
+        if SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
             return self._resolve_chained_call(call_name, module_qn, local_var_types)
 
         if module_qn in self.import_processor.import_mapping:
@@ -470,13 +471,13 @@ class CallProcessor:
                     )
                     return self.function_registry[imported_qn], imported_qn
 
-            if "." in call_name or "::" in call_name or ":" in call_name:
+            if SEPARATOR_DOT in call_name or "::" in call_name or ":" in call_name:
                 if "::" in call_name:
                     separator = "::"
                 elif ":" in call_name:
                     separator = ":"
                 else:
-                    separator = "."
+                    separator = SEPARATOR_DOT
                 parts = call_name.split(separator)
 
                 if len(parts) == 2:
@@ -485,7 +486,7 @@ class CallProcessor:
                     if local_var_types and object_name in local_var_types:
                         var_type = local_var_types[object_name]
 
-                        if "." in var_type:
+                        if SEPARATOR_DOT in var_type:
                             class_qn = var_type
                         elif var_type in import_map:
                             class_qn = import_map[var_type]
@@ -542,7 +543,9 @@ class CallProcessor:
                         if test_method_qn in self.function_registry:
                             class_qn = potential_class_qn
 
-                        registry_separator = separator if separator == ":" else "."
+                        registry_separator = (
+                            separator if separator == ":" else SEPARATOR_DOT
+                        )
                         method_qn = f"{class_qn}{registry_separator}{method_name}"
                         if method_qn in self.function_registry:
                             logger.debug(
@@ -558,13 +561,13 @@ class CallProcessor:
                         return self.function_registry[method_qn], method_qn
 
                 if len(parts) >= 3 and parts[0] == "self":
-                    attribute_ref = ".".join(parts[:-1])
+                    attribute_ref = SEPARATOR_DOT.join(parts[:-1])
                     method_name = parts[-1]
 
                     if local_var_types and attribute_ref in local_var_types:
                         var_type = local_var_types[attribute_ref]
 
-                        if "." in var_type:
+                        if SEPARATOR_DOT in var_type:
                             class_qn = var_type
                         elif var_type in import_map:
                             class_qn = import_map[var_type]
@@ -596,7 +599,7 @@ class CallProcessor:
                                 return inherited_method
                 else:
                     class_name = parts[0]
-                    method_name = ".".join(parts[1:])
+                    method_name = SEPARATOR_DOT.join(parts[1:])
 
                     if class_name in import_map:
                         class_qn = import_map[class_name]
@@ -611,7 +614,7 @@ class CallProcessor:
                     if local_var_types and class_name in local_var_types:
                         var_type = local_var_types[class_name]
 
-                        if "." in var_type:
+                        if SEPARATOR_DOT in var_type:
                             class_qn = var_type
                         elif var_type in import_map:
                             class_qn = import_map[var_type]
@@ -709,7 +712,7 @@ class CallProcessor:
         if ".prototype." in call_name and (
             call_name.endswith(".call") or call_name.endswith(".apply")
         ):
-            base_call = call_name.rsplit(".", 1)[0]
+            base_call = call_name.rsplit(SEPARATOR_DOT, 1)[0]
             return ("Function", base_call)
 
         return None
@@ -778,7 +781,7 @@ class CallProcessor:
     def _is_method_chain(self, call_name: str) -> bool:
         """Check if this appears to be a method chain with parentheses (not just obj.method)."""
         if "(" in call_name and ")" in call_name:
-            parts = call_name.split(".")
+            parts = call_name.split(SEPARATOR_DOT)
             method_calls = sum(1 for part in parts if "(" in part and ")" in part)
             return method_calls >= 1 and len(parts) >= 2
         return False
@@ -805,7 +808,7 @@ class CallProcessor:
 
         if object_type:
             full_object_type = object_type
-            if "." not in object_type:
+            if SEPARATOR_DOT not in object_type:
                 resolved_class = self._resolve_class_name(object_type, module_qn)
                 if resolved_class:
                     full_object_type = resolved_class
@@ -839,9 +842,9 @@ class CallProcessor:
         if call_name == "super":
             method_name = "constructor"
         elif call_name.startswith("super."):
-            method_name = call_name.split(".", 1)[1]
-        elif "." in call_name:
-            method_name = call_name.split(".", 1)[1]
+            method_name = call_name.split(SEPARATOR_DOT, 1)[1]
+        elif SEPARATOR_DOT in call_name:
+            method_name = call_name.split(SEPARATOR_DOT, 1)[1]
         else:
             return None
 
@@ -905,8 +908,8 @@ class CallProcessor:
         Calculate the 'distance' between a candidate function and the calling module.
         Lower values indicate more likely imports (closer modules, common prefixes).
         """
-        caller_parts = caller_module_qn.split(".")
-        candidate_parts = candidate_qn.split(".")
+        caller_parts = caller_module_qn.split(SEPARATOR_DOT)
+        candidate_parts = candidate_qn.split(SEPARATOR_DOT)
 
         common_prefix = 0
         for i in range(min(len(caller_parts), len(candidate_parts))):
@@ -917,7 +920,9 @@ class CallProcessor:
 
         base_distance = max(len(caller_parts), len(candidate_parts)) - common_prefix
 
-        if candidate_qn.startswith(".".join(caller_parts[:-1]) + "."):
+        if candidate_qn.startswith(
+            SEPARATOR_DOT.join(caller_parts[:-1]) + SEPARATOR_DOT
+        ):
             base_distance -= 1
 
         return base_distance
