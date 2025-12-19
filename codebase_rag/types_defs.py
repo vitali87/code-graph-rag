@@ -1,4 +1,6 @@
-from typing import Any, TypedDict
+from typing import TypedDict
+
+PropertyValue = str | int | float | bool | None
 
 
 class GraphMetadata(TypedDict):
@@ -10,14 +12,14 @@ class GraphMetadata(TypedDict):
 class NodeData(TypedDict):
     node_id: int
     labels: list[str]
-    properties: dict[str, Any]
+    properties: dict[str, PropertyValue]
 
 
 class RelationshipData(TypedDict):
     from_id: int
     to_id: int
     type: str
-    properties: dict[str, Any]
+    properties: dict[str, PropertyValue]
 
 
 class GraphData(TypedDict):

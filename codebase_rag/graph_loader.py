@@ -1,7 +1,6 @@
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 
@@ -24,7 +23,7 @@ from .constants import (
     LOG_LOADING_GRAPH,
 )
 from .models import GraphNode, GraphRelationship
-from .types_defs import GraphData, GraphMetadata, GraphSummary
+from .types_defs import GraphData, GraphMetadata, GraphSummary, PropertyValue
 
 
 class GraphLoader:
@@ -35,10 +34,14 @@ class GraphLoader:
         self._relationships: list[GraphRelationship] | None = None
 
         self._nodes_by_id: dict[int, GraphNode] = {}
-        self._nodes_by_label: dict[str, list[GraphNode]] = defaultdict(list)
-        self._outgoing_rels: dict[int, list[GraphRelationship]] = defaultdict(list)
-        self._incoming_rels: dict[int, list[GraphRelationship]] = defaultdict(list)
-        self._property_indexes: dict[str, dict[Any, list[GraphNode]]] = {}
+        self._nodes_by_label: defaultdict[str, list[GraphNode]] = defaultdict(list)
+        self._outgoing_rels: defaultdict[int, list[GraphRelationship]] = defaultdict(
+            list
+        )
+        self._incoming_rels: defaultdict[int, list[GraphRelationship]] = defaultdict(
+            list
+        )
+        self._property_indexes: dict[str, dict[PropertyValue, list[GraphNode]]] = {}
 
     def _ensure_loaded(self) -> None:
         if self._data is None:
@@ -93,7 +96,7 @@ class GraphLoader:
         if property_name in self._property_indexes:
             return
 
-        index: dict[Any, list[GraphNode]] = defaultdict(list)
+        index: defaultdict[PropertyValue, list[GraphNode]] = defaultdict(list)
         for node in self.nodes:
             value = node.properties.get(property_name)
             if value is not None:
@@ -122,7 +125,9 @@ class GraphLoader:
         self._ensure_loaded()
         return self._nodes_by_label.get(label, [])
 
-    def find_node_by_property(self, property_name: str, value: Any) -> list[GraphNode]:
+    def find_node_by_property(
+        self, property_name: str, value: PropertyValue
+    ) -> list[GraphNode]:
         self._ensure_loaded()
         self._build_property_index(property_name)
         return self._property_indexes[property_name].get(value, [])
