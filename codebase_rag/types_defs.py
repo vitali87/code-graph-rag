@@ -1,12 +1,37 @@
 from typing import Any, TypedDict
 
 
+class GraphMetadata(TypedDict):
+    total_nodes: int
+    total_relationships: int
+    exported_at: str
+
+
+class NodeData(TypedDict):
+    node_id: int
+    labels: list[str]
+    properties: dict[str, Any]
+
+
+class RelationshipData(TypedDict):
+    from_id: int
+    to_id: int
+    type: str
+    properties: dict[str, Any]
+
+
+class GraphData(TypedDict):
+    nodes: list[NodeData]
+    relationships: list[RelationshipData]
+    metadata: GraphMetadata
+
+
 class GraphSummary(TypedDict):
     total_nodes: int
     total_relationships: int
     node_labels: dict[str, int]
     relationship_types: dict[str, int]
-    metadata: dict[str, Any]
+    metadata: GraphMetadata
 
 
 class EmbeddingQueryResult(TypedDict):

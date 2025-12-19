@@ -24,13 +24,13 @@ from .constants import (
     LOG_LOADING_GRAPH,
 )
 from .models import GraphNode, GraphRelationship
-from .types_defs import GraphSummary
+from .types_defs import GraphData, GraphMetadata, GraphSummary
 
 
 class GraphLoader:
     def __init__(self, file_path: str):
         self.file_path = Path(file_path)
-        self._data: dict[str, Any] | None = None
+        self._data: GraphData | None = None
         self._nodes: list[GraphNode] | None = None
         self._relationships: list[GraphRelationship] | None = None
 
@@ -113,10 +113,10 @@ class GraphLoader:
         return self._relationships
 
     @property
-    def metadata(self) -> dict[str, Any]:
+    def metadata(self) -> GraphMetadata:
         self._ensure_loaded()
         assert self._data is not None, ERR_DATA_NOT_LOADED
-        return self._data[KEY_METADATA]  # type: ignore
+        return self._data[KEY_METADATA]
 
     def find_nodes_by_label(self, label: str) -> list[GraphNode]:
         self._ensure_loaded()

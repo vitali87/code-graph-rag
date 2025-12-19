@@ -174,9 +174,7 @@ class FunctionRegistryTrie:
 
     def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
         node = self._navigate_to_prefix(prefix)
-        if node is None:
-            return []
-        return self._collect_from_subtree(node)
+        return [] if node is None else self._collect_from_subtree(node)
 
 
 class BoundedASTCache:
