@@ -1,0 +1,2 @@
+class LLMGenerationError(Exception):
+    pass

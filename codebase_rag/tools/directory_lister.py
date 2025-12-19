@@ -2,7 +2,9 @@ import os
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import Tool
+from pydantic_ai import RunContext
+
+from ..deps import RAGDeps
 
 
 class DirectoryLister:
@@ -10,9 +12,6 @@ class DirectoryLister:
         self.project_root = Path(project_root).resolve()
 
     def list_directory_contents(self, directory_path: str) -> str:
-        """
-        Lists the contents of a specified directory.
-        """
         target_path = self._get_safe_path(directory_path)
         logger.info(f"Listing contents of directory: {target_path}")
 
@@ -30,10 +29,6 @@ class DirectoryLister:
             return f"Error: Could not list contents of '{directory_path}'."
 
     def _get_safe_path(self, file_path: str) -> Path:
-        """
-        Resolves the file path relative to the root and ensures it's within
-        the project directory.
-        """
         if Path(file_path).is_absolute():
             safe_path = Path(file_path).resolve()
         else:
@@ -54,8 +49,8 @@ class DirectoryLister:
         return safe_path
 
 
-def create_directory_lister_tool(directory_lister: DirectoryLister) -> Tool:
-    return Tool(
-        function=directory_lister.list_directory_contents,
-        description="Lists the contents of a directory to explore the codebase.",
-    )
+def list_directory(ctx: RunContext[RAGDeps], directory_path: str) -> str:
+    """
+    Lists the contents of a directory to explore the codebase.
+    """
+    return ctx.deps.directory_lister.list_directory_contents(directory_path)

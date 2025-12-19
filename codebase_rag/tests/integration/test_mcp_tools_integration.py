@@ -109,28 +109,29 @@ class TestMCPToolsIntegration:
 class TestToolConsistency:
     """Tests that verify all tools follow consistent patterns."""
 
-    async def test_all_tools_have_consistent_takes_ctx(
+    async def test_all_service_classes_are_initialized(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        """Verify all tools have consistent takes_ctx settings."""
-        tools = {
-            "query": mcp_registry._query_tool,
-            "code": mcp_registry._code_tool,
-            "editor": mcp_registry._file_editor_tool,
-            "reader": mcp_registry._file_reader_tool,
-            "writer": mcp_registry._file_writer_tool,
-            "lister": mcp_registry._directory_lister_tool,
+        """Verify all service classes are properly initialized."""
+        assert mcp_registry.code_retriever is not None
+        assert mcp_registry.file_editor is not None
+        assert mcp_registry.file_reader is not None
+        assert mcp_registry.file_writer is not None
+        assert mcp_registry.directory_lister is not None
+
+    async def test_all_tools_are_registered(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        """Verify all expected tools are registered."""
+        expected_tools = {
+            "index_repository",
+            "query_code_graph",
+            "get_code_snippet",
+            "surgical_replace_code",
+            "read_file",
+            "write_file",
+            "list_directory",
         }
 
-        takes_ctx_values = {name: tool.takes_ctx for name, tool in tools.items()}
-
-        assert takes_ctx_values == {
-            "query": False,
-            "code": False,
-            "editor": False,
-            "reader": False,
-            "writer": False,
-            "lister": False,
-        }
-
-        assert all(not takes_ctx for takes_ctx in takes_ctx_values.values())
+        registered_tools = set(mcp_registry.list_tool_names())
+        assert registered_tools == expected_tools

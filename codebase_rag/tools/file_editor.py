@@ -5,9 +5,10 @@ from typing import TypedDict
 import diff_match_patch
 from loguru import logger
 from pydantic import BaseModel
-from pydantic_ai import Tool
+from pydantic_ai import RunContext
 from tree_sitter import Node, Parser
 
+from ..deps import RAGDeps
 from ..language_config import get_language_config
 from ..parser_loader import load_parsers
 
@@ -40,8 +41,6 @@ LANGUAGE_EXTENSIONS = {
 
 
 class EditResult(BaseModel):
-    """Data model for file edit results."""
-
     file_path: str
     success: bool
     error_message: str | None = None
@@ -55,7 +54,6 @@ class FileEditor:
         logger.info(f"FileEditor initialized with root: {self.project_root}")
 
     def _get_real_extension(self, file_path_obj: Path) -> str:
-        """Gets the file extension, looking past a .tmp suffix if present."""
         extension = file_path_obj.suffix
         if extension == ".tmp":
             base_name = file_path_obj.stem
@@ -248,7 +246,6 @@ class FileEditor:
         return "".join(diff)
 
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
-        """Apply a patch to a file using diff-match-patch."""
         try:
             with open(file_path, encoding="utf-8") as f:
                 original_content = f.read()
@@ -274,7 +271,6 @@ class FileEditor:
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> bool:
-        """Surgically replace a specific code block in a file using diff-match-patch."""
         logger.info(
             f"[FileEditor] Attempting surgical block replacement in: {file_path}"
         )
@@ -334,7 +330,6 @@ class FileEditor:
             return False
 
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
-        """Overwrites entire file with new content - use for full file replacement."""
         logger.info(f"[FileEditor] Attempting full file replacement: {file_path}")
         try:
             full_path = (self.project_root / file_path).resolve()
@@ -369,35 +364,26 @@ class FileEditor:
             )
 
 
-def create_file_editor_tool(file_editor: FileEditor) -> Tool:
-    """Factory function to create the file editor tool."""
+async def replace_code_surgically(
+    ctx: RunContext[RAGDeps], file_path: str, target_code: str, replacement_code: str
+) -> str:
+    """
+    Surgically replaces a specific code block in a file using diff-match-patch.
+    This tool finds the exact target code block and replaces only that section,
+    leaving the rest of the file completely unchanged. This is true surgical patching.
 
-    async def replace_code_surgically(
-        file_path: str, target_code: str, replacement_code: str
-    ) -> str:
-        """
-        Surgically replaces a specific code block in a file using diff-match-patch.
-        This tool finds the exact target code block and replaces only that section,
-        leaving the rest of the file completely unchanged. This is true surgical patching.
+    Args:
+        file_path: Path to the file to modify
+        target_code: The exact code block to find and replace (must match exactly)
+        replacement_code: The new code to replace the target with
 
-        Args:
-            file_path: Path to the file to modify
-            target_code: The exact code block to find and replace (must match exactly)
-            replacement_code: The new code to replace the target with
-
-        Use this when you need to change specific functions, classes, or code blocks
-        without affecting the rest of the file. The target_code must be an exact match.
-        """
-        success = file_editor.replace_code_block(
-            file_path, target_code, replacement_code
-        )
-        if success:
-            return f"Successfully applied surgical code replacement in: {file_path}"
-        else:
-            return f"Failed to apply surgical replacement in {file_path}. Target code not found or patches failed."
-
-    return Tool(
-        function=replace_code_surgically,
-        description="Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.",
-        requires_approval=True,
+    Use this when you need to change specific functions, classes, or code blocks
+    without affecting the rest of the file. The target_code must be an exact match.
+    """
+    success = ctx.deps.file_editor.replace_code_block(
+        file_path, target_code, replacement_code
     )
+    if success:
+        return f"Successfully applied surgical code replacement in: {file_path}"
+    else:
+        return f"Failed to apply surgical replacement in {file_path}. Target code not found or patches failed."

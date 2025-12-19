@@ -7,14 +7,13 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ClientError
 from loguru import logger
-from pydantic_ai import Tool
+from pydantic_ai import RunContext
 
 from ..config import settings
+from ..deps import RAGDeps
 
 
 class _NotSupportedClient:
-    """Placeholder client that raises NotImplementedError for unsupported providers."""
-
     def __getattr__(self, name: str) -> None:
         raise NotImplementedError(
             "DocumentAnalyzer does not support the 'local' LLM provider."
@@ -22,11 +21,6 @@ class _NotSupportedClient:
 
 
 class DocumentAnalyzer:
-    """
-    A tool to perform multimodal analysis on documents like PDFs
-    by making a direct call to the Gemini API.
-    """
-
     def __init__(self, project_root: str) -> None:
         self.project_root = Path(project_root).resolve()
 
@@ -47,10 +41,6 @@ class DocumentAnalyzer:
         logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
 
     def analyze(self, file_path: str, question: str) -> str:
-        """
-        Reads a document (e.g., PDF), sends it to the Gemini multimodal endpoint
-        with a specific question, and returns the model's analysis.
-        """
         logger.info(
             f"[DocumentAnalyzer] Analyzing '{file_path}' with question: '{question}'"
         )
@@ -134,34 +124,25 @@ class DocumentAnalyzer:
             return f"An error occurred during analysis: {e}"
 
 
-def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
-    """Factory function to create the document analyzer tool."""
+def analyze_document(ctx: RunContext[RAGDeps], file_path: str, question: str) -> str:
+    """
+    Analyzes a document (like a PDF) to answer a specific question about its content.
+    Use this tool when a user asks a question that requires understanding the content of a non-source-code file.
 
-    def analyze_document(file_path: str, question: str) -> str:
-        """
-        Analyzes a document (like a PDF) to answer a specific question about its content.
-        Use this tool when a user asks a question that requires understanding the content of a non-source-code file.
-
-        Args:
-            file_path: The path to the document file (e.g., 'path/to/book.pdf').
-            question: The specific question to ask about the document's content.
-        """
-        try:
-            result = analyzer.analyze(file_path, question)
-            logger.debug(
-                f"[analyze_document] Result type: {type(result)}, content: {result[:100] if result else 'None'}..."
-            )
-            return result
-        except Exception as e:
-            logger.error(
-                f"[analyze_document] Exception during analysis: {e}", exc_info=True
-            )
-            if str(e).startswith("Error:") or str(e).startswith("API error:"):
-                return str(e)
-            return f"Error during document analysis: {e}"
-
-    return Tool(
-        function=analyze_document,
-        name="analyze_document",
-        description="Analyzes documents (PDFs, images) to answer questions about their content.",
-    )
+    Args:
+        file_path: The path to the document file (e.g., 'path/to/book.pdf').
+        question: The specific question to ask about the document's content.
+    """
+    try:
+        result = ctx.deps.document_analyzer.analyze(file_path, question)
+        logger.debug(
+            f"[analyze_document] Result type: {type(result)}, content: {result[:100] if result else 'None'}..."
+        )
+        return result
+    except Exception as e:
+        logger.error(
+            f"[analyze_document] Exception during analysis: {e}", exc_info=True
+        )
+        if str(e).startswith("Error:") or str(e).startswith("API error:"):
+            return str(e)
+        return f"Error during document analysis: {e}"
