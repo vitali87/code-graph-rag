@@ -5,7 +5,7 @@ from ..config import settings
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
-    RAG_ORCHESTRATOR_SYSTEM_PROMPT,
+    build_rag_orchestrator_prompt,
 )
 from ..providers.base import get_provider
 
@@ -103,7 +103,7 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
 
         return Agent(
             model=llm,
-            system_prompt=RAG_ORCHESTRATOR_SYSTEM_PROMPT,
+            system_prompt=build_rag_orchestrator_prompt(tools),
             tools=tools,
             retries=settings.AGENT_RETRIES,
             output_retries=100,

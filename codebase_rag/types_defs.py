@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
-from .constants import SupportedLanguage
+from .constants import NodeLabel, RelationshipType, SupportedLanguage
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Parser, Query
@@ -98,6 +98,22 @@ class LanguageImport(NamedTuple):
     submodule_name: SupportedLanguage
 
 
+class ToolNames(NamedTuple):
+    query_graph: str
+    read_file: str
+    analyze_document: str
+    semantic_search: str
+    create_file: str
+    edit_file: str
+    shell_command: str
+
+
+class ConfirmationToolNames(NamedTuple):
+    replace_code: str
+    create_file: str
+    shell_command: str
+
+
 class ReplaceCodeArgs(TypedDict, total=False):
     file_path: str
     target_code: str
@@ -134,3 +150,136 @@ class LanguageQueries(TypedDict):
     config: "LanguageConfig"
     language: "Language"
     parser: "Parser"
+
+
+class NodeSchema(NamedTuple):
+    label: NodeLabel
+    properties: str
+
+
+class RelationshipSchema(NamedTuple):
+    sources: tuple[NodeLabel, ...]
+    rel_type: RelationshipType
+    targets: tuple[NodeLabel, ...]
+
+
+NODE_SCHEMAS: tuple[NodeSchema, ...] = (
+    NodeSchema(NodeLabel.PROJECT, "{name: string}"),
+    NodeSchema(
+        NodeLabel.PACKAGE, "{qualified_name: string, name: string, path: string}"
+    ),
+    NodeSchema(NodeLabel.FOLDER, "{path: string, name: string}"),
+    NodeSchema(NodeLabel.FILE, "{path: string, name: string, extension: string}"),
+    NodeSchema(
+        NodeLabel.MODULE, "{qualified_name: string, name: string, path: string}"
+    ),
+    NodeSchema(
+        NodeLabel.CLASS,
+        "{qualified_name: string, name: string, decorators: list[string]}",
+    ),
+    NodeSchema(
+        NodeLabel.FUNCTION,
+        "{qualified_name: string, name: string, decorators: list[string]}",
+    ),
+    NodeSchema(
+        NodeLabel.METHOD,
+        "{qualified_name: string, name: string, decorators: list[string]}",
+    ),
+    NodeSchema(NodeLabel.INTERFACE, "{qualified_name: string, name: string}"),
+    NodeSchema(NodeLabel.ENUM, "{qualified_name: string, name: string}"),
+    NodeSchema(NodeLabel.TYPE, "{qualified_name: string, name: string}"),
+    NodeSchema(NodeLabel.UNION, "{qualified_name: string, name: string}"),
+    NodeSchema(
+        NodeLabel.MODULE_INTERFACE,
+        "{qualified_name: string, name: string, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.MODULE_IMPLEMENTATION,
+        "{qualified_name: string, name: string, path: string, implements_module: string}",
+    ),
+    NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version_spec: string}"),
+)
+
+
+RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
+    RelationshipSchema(
+        (NodeLabel.PROJECT, NodeLabel.PACKAGE, NodeLabel.FOLDER),
+        RelationshipType.CONTAINS_PACKAGE,
+        (NodeLabel.PACKAGE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT, NodeLabel.PACKAGE, NodeLabel.FOLDER),
+        RelationshipType.CONTAINS_FOLDER,
+        (NodeLabel.FOLDER,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT, NodeLabel.PACKAGE, NodeLabel.FOLDER),
+        RelationshipType.CONTAINS_FILE,
+        (NodeLabel.FILE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT, NodeLabel.PACKAGE, NodeLabel.FOLDER),
+        RelationshipType.CONTAINS_MODULE,
+        (NodeLabel.MODULE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.DEFINES,
+        (NodeLabel.CLASS, NodeLabel.FUNCTION),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLASS,),
+        RelationshipType.DEFINES_METHOD,
+        (NodeLabel.METHOD,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.IMPORTS,
+        (NodeLabel.MODULE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.EXPORTS,
+        (NodeLabel.CLASS, NodeLabel.FUNCTION),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.EXPORTS_MODULE,
+        (NodeLabel.MODULE_INTERFACE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.IMPLEMENTS_MODULE,
+        (NodeLabel.MODULE_IMPLEMENTATION,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLASS,),
+        RelationshipType.INHERITS,
+        (NodeLabel.CLASS,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLASS,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.INTERFACE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.METHOD,),
+        RelationshipType.OVERRIDES,
+        (NodeLabel.METHOD,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE_IMPLEMENTATION,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.MODULE_INTERFACE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT,),
+        RelationshipType.DEPENDS_ON_EXTERNAL,
+        (NodeLabel.EXTERNAL_PACKAGE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.CALLS,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+)

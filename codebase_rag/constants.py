@@ -6,12 +6,6 @@ class ModelRole(StrEnum):
     CYPHER = "cypher"
 
 
-class ToolName(StrEnum):
-    REPLACE_CODE = "replace_code_surgically"
-    CREATE_FILE = "create_new_file"
-    SHELL_COMMAND = "execute_shell_command"
-
-
 class Provider(StrEnum):
     OLLAMA = "ollama"
     ANTHROPIC = "anthropic"
@@ -204,8 +198,44 @@ TRIE_TYPE_KEY = "__type__"
 TRIE_QN_KEY = "__qn__"
 TRIE_INTERNAL_PREFIX = "__"
 
-# (H) Node labels
-NODE_PROJECT = "Project"
+
+class NodeLabel(StrEnum):
+    PROJECT = "Project"
+    PACKAGE = "Package"
+    FOLDER = "Folder"
+    FILE = "File"
+    MODULE = "Module"
+    CLASS = "Class"
+    FUNCTION = "Function"
+    METHOD = "Method"
+    INTERFACE = "Interface"
+    ENUM = "Enum"
+    TYPE = "Type"
+    UNION = "Union"
+    MODULE_INTERFACE = "ModuleInterface"
+    MODULE_IMPLEMENTATION = "ModuleImplementation"
+    EXTERNAL_PACKAGE = "ExternalPackage"
+
+
+class RelationshipType(StrEnum):
+    CONTAINS_PACKAGE = "CONTAINS_PACKAGE"
+    CONTAINS_FOLDER = "CONTAINS_FOLDER"
+    CONTAINS_FILE = "CONTAINS_FILE"
+    CONTAINS_MODULE = "CONTAINS_MODULE"
+    DEFINES = "DEFINES"
+    DEFINES_METHOD = "DEFINES_METHOD"
+    IMPORTS = "IMPORTS"
+    EXPORTS = "EXPORTS"
+    EXPORTS_MODULE = "EXPORTS_MODULE"
+    IMPLEMENTS_MODULE = "IMPLEMENTS_MODULE"
+    INHERITS = "INHERITS"
+    IMPLEMENTS = "IMPLEMENTS"
+    OVERRIDES = "OVERRIDES"
+    CALLS = "CALLS"
+    DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
+
+
+NODE_PROJECT = NodeLabel.PROJECT
 
 # (H) Cache defaults
 DEFAULT_CACHE_ENTRIES = 1000

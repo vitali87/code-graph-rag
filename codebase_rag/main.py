@@ -101,7 +101,6 @@ from .constants import (
     ModelRole,
     Provider,
     StyleModifier,
-    ToolName,
 )
 from .models import AgentLoopConfig, AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
@@ -122,6 +121,7 @@ from .tools.semantic_search import (
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 from .types_defs import (
     CancelledResult,
+    ConfirmationToolNames,
     CreateFileArgs,
     GraphData,
     RawToolArgs,
@@ -220,41 +220,46 @@ def _print_new_file_content(path: str, content: str) -> None:
     app_context.console.print(separator)
 
 
-def _to_tool_args(tool_name: str, raw_args: RawToolArgs) -> ToolArgs:
+def _to_tool_args(
+    tool_name: str, raw_args: RawToolArgs, tool_names: ConfirmationToolNames
+) -> ToolArgs:
     match tool_name:
-        case ToolName.REPLACE_CODE:
+        case tool_names.replace_code:
             return ReplaceCodeArgs(
                 file_path=raw_args.file_path,
                 target_code=raw_args.target_code,
                 replacement_code=raw_args.replacement_code,
             )
-        case ToolName.CREATE_FILE:
+        case tool_names.create_file:
             return CreateFileArgs(
                 file_path=raw_args.file_path,
                 content=raw_args.content,
             )
-        case ToolName.SHELL_COMMAND:
+        case tool_names.shell_command:
             return ShellCommandArgs(command=raw_args.command)
         case _:
             return ShellCommandArgs()
 
 
 def _display_tool_call_diff(
-    tool_name: str, tool_args: ToolArgs, file_path: str | None = None
+    tool_name: str,
+    tool_args: ToolArgs,
+    tool_names: ConfirmationToolNames,
+    file_path: str | None = None,
 ) -> None:
     match tool_name:
-        case ToolName.REPLACE_CODE:
+        case tool_names.replace_code:
             target = str(tool_args.get(ARG_TARGET_CODE, ""))
             replacement = str(tool_args.get(ARG_REPLACEMENT_CODE, ""))
             path = str(tool_args.get(ARG_FILE_PATH, file_path or DIFF_FALLBACK_PATH))
             _print_unified_diff(target, replacement, path)
 
-        case ToolName.CREATE_FILE:
+        case tool_names.create_file:
             path = str(tool_args.get(ARG_FILE_PATH, ""))
             content = str(tool_args.get(ARG_CONTENT, ""))
             _print_new_file_content(path, content)
 
-        case ToolName.SHELL_COMMAND:
+        case tool_names.shell_command:
             command = tool_args.get(ARG_COMMAND, "")
             app_context.console.print(f"\n{UI_SHELL_COMMAND_HEADER}")
             app_context.console.print(
@@ -270,16 +275,21 @@ def _display_tool_call_diff(
 
 
 def _process_tool_approvals(
-    requests: DeferredToolRequests, approval_prompt: str, denial_default: str
+    requests: DeferredToolRequests,
+    approval_prompt: str,
+    denial_default: str,
+    tool_names: ConfirmationToolNames,
 ) -> DeferredToolResults:
     deferred_results = DeferredToolResults()
 
     for call in requests.approvals:
-        tool_args = _to_tool_args(call.tool_name, RawToolArgs(**call.args_as_dict()))
+        tool_args = _to_tool_args(
+            call.tool_name, RawToolArgs(**call.args_as_dict()), tool_names
+        )
         app_context.console.print(
             f"\n{UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
         )
-        _display_tool_call_diff(call.tool_name, tool_args)
+        _display_tool_call_diff(call.tool_name, tool_args, tool_names)
 
         if app_context.session.confirm_edits:
             if Confirm.ask(style(approval_prompt, Color.CYAN)):
@@ -368,6 +378,7 @@ async def run_optimization_loop(
     message_history: list[ModelMessage],
     project_root: Path,
     language: str,
+    tool_names: ConfirmationToolNames,
     reference_document: str | None = None,
 ) -> None:
     app_context.console.print(UI_OPTIMIZATION_START.format(language=language))
@@ -397,6 +408,7 @@ async def run_optimization_loop(
         project_root,
         OPTIMIZATION_LOOP_CONFIG,
         style(PROMPT_YOUR_RESPONSE, Color.CYAN),
+        tool_names,
         initial_question,
     )
 
@@ -434,6 +446,7 @@ async def _run_agent_response_loop(
     message_history: list[ModelMessage],
     question_with_context: str,
     config: AgentLoopConfig,
+    tool_names: ConfirmationToolNames,
 ) -> None:
     deferred_results: DeferredToolResults | None = None
 
@@ -457,6 +470,7 @@ async def _run_agent_response_loop(
                 response.output,
                 config.approval_prompt,
                 config.denial_default,
+                tool_names,
             )
             message_history.extend(response.new_messages())
             continue
@@ -577,6 +591,7 @@ async def _run_interactive_loop(
     project_root: Path,
     config: AgentLoopConfig,
     input_prompt: str,
+    tool_names: ConfirmationToolNames,
     initial_question: str | None = None,
 ) -> None:
     init_session_log(project_root)
@@ -606,7 +621,7 @@ async def _run_interactive_loop(
             )
 
             await _run_agent_response_loop(
-                rag_agent, message_history, question_with_context, config
+                rag_agent, message_history, question_with_context, config, tool_names
             )
 
             initial_question = None
@@ -622,6 +637,7 @@ async def run_chat_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
     project_root: Path,
+    tool_names: ConfirmationToolNames,
 ) -> None:
     await _run_interactive_loop(
         rag_agent,
@@ -629,6 +645,7 @@ async def run_chat_loop(
         project_root,
         CHAT_LOOP_CONFIG,
         style(PROMPT_ASK_QUESTION, Color.CYAN),
+        tool_names,
     )
 
 
@@ -724,7 +741,7 @@ def _validate_provider_config(role: ModelRole, config: ModelConfig) -> None:
 
 def _initialize_services_and_agent(
     repo_path: str, ingestor: QueryProtocol
-) -> Agent[None, str | DeferredToolRequests]:
+) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames]:
     _validate_provider_config(
         ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
@@ -752,6 +769,12 @@ def _initialize_services_and_agent(
     semantic_search_tool = create_semantic_search_tool()
     function_source_tool = create_get_function_source_tool()
 
+    confirmation_tool_names = ConfirmationToolNames(
+        replace_code=file_editor_tool.name,
+        create_file=file_writer_tool.name,
+        shell_command=shell_command_tool.name,
+    )
+
     rag_agent = create_rag_orchestrator(
         tools=[
             query_tool,
@@ -766,7 +789,7 @@ def _initialize_services_and_agent(
             function_source_tool,
         ]
     )
-    return rag_agent
+    return rag_agent, confirmation_tool_names
 
 
 async def main_async(repo_path: str, batch_size: int) -> None:
@@ -784,8 +807,8 @@ async def main_async(repo_path: str, batch_size: int) -> None:
             )
         )
 
-        rag_agent = _initialize_services_and_agent(repo_path, ingestor)
-        await run_chat_loop(rag_agent, [], project_root)
+        rag_agent, tool_names = _initialize_services_and_agent(repo_path, ingestor)
+        await run_chat_loop(rag_agent, [], project_root, tool_names)
 
 
 async def main_optimize_async(
@@ -814,7 +837,9 @@ async def main_optimize_async(
     with _connect_memgraph(effective_batch_size) as ingestor:
         app_context.console.print(style(MSG_CONNECTED_MEMGRAPH, Color.GREEN))
 
-        rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
+        rag_agent, tool_names = _initialize_services_and_agent(
+            target_repo_path, ingestor
+        )
         await run_optimization_loop(
-            rag_agent, [], project_root, language, reference_document
+            rag_agent, [], project_root, language, tool_names, reference_document
         )
