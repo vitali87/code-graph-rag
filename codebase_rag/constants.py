@@ -279,6 +279,15 @@ MSG_CHAT_INSTRUCTIONS = (
     "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
 )
 
+# (H) Default titles and prompts
+DEFAULT_TABLE_TITLE = "Graph-Code Initializing..."
+PROMPT_ASK_QUESTION = "Ask a question"
+PROMPT_YOUR_RESPONSE = "Your response"
+MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
+
+# (H) JSON formatting
+JSON_INDENT = 2
+
 # (H) File/directory ignore patterns
 IGNORE_PATTERNS = frozenset(
     {

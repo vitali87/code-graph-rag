@@ -313,7 +313,9 @@ class TestGetCodeSnippetIntegration:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test that qualified name is correctly passed to underlying tool."""
-        mcp_registry._code_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
+        mock_func = mcp_registry._code_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = MagicMock(
             model_dump=lambda: {
                 "qualified_name": "test.function",
                 "source_code": "def function(): pass",
@@ -326,6 +328,4 @@ class TestGetCodeSnippetIntegration:
 
         await mcp_registry.get_code_snippet("test.function")
 
-        mcp_registry._code_tool.function.assert_called_once_with(
-            qualified_name="test.function"
-        )
+        mock_func.assert_called_once_with(qualified_name="test.function")

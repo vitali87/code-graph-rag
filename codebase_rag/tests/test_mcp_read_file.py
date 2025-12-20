@@ -63,16 +63,15 @@ class TestReadFileWithoutPagination:
     async def test_read_full_file(
         self, mcp_registry: MCPToolsRegistry, sample_file: Path
     ) -> None:
-        """Test reading entire file without pagination."""
         expected_content = sample_file.read_text(encoding="utf-8")
-        mcp_registry._file_reader_tool.function.return_value = expected_content  # ty: ignore[invalid-assignment]
+        mock_func = mcp_registry._file_reader_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = expected_content
 
         result = await mcp_registry.read_file("test_file.txt")
 
         assert result == expected_content
-        mcp_registry._file_reader_tool.function.assert_called_once_with(
-            file_path="test_file.txt"
-        )
+        mock_func.assert_called_once_with(file_path="test_file.txt")
 
 
 class TestReadFileWithPagination:

@@ -5,6 +5,8 @@ from typing import Any
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
+from ..types_defs import GraphData, GraphMetadata, NodeData, RelationshipData
+
 
 class MemgraphIngestor:
     """Handles all communication and query execution with the Memgraph database."""
@@ -293,36 +295,35 @@ class MemgraphIngestor:
         logger.debug(f"Executing write query: {query} with params: {params}")
         self._execute_query(query, params)
 
-    def export_graph_to_dict(self) -> dict[str, Any]:
-        """Export the entire graph as a dictionary with nodes and relationships."""
+    def export_graph_to_dict(self) -> GraphData:
         logger.info("Exporting graph data...")
 
         nodes_query = """
         MATCH (n)
         RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
         """
-        nodes_data = self.fetch_all(nodes_query)
+        nodes_data: list[NodeData] = self.fetch_all(nodes_query)
 
         relationships_query = """
         MATCH (a)-[r]->(b)
         RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
         """
-        relationships_data = self.fetch_all(relationships_query)
+        relationships_data: list[RelationshipData] = self.fetch_all(relationships_query)
 
-        graph_data = {
-            "nodes": nodes_data,
-            "relationships": relationships_data,
-            "metadata": {
-                "total_nodes": len(nodes_data),
-                "total_relationships": len(relationships_data),
-                "exported_at": self._get_current_timestamp(),
-            },
-        }
+        metadata = GraphMetadata(
+            total_nodes=len(nodes_data),
+            total_relationships=len(relationships_data),
+            exported_at=self._get_current_timestamp(),
+        )
 
         logger.info(
             f"Exported {len(nodes_data)} nodes and {len(relationships_data)} relationships"
         )
-        return graph_data
+        return GraphData(
+            nodes=nodes_data,
+            relationships=relationships_data,
+            metadata=metadata,
+        )
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""

@@ -25,16 +25,24 @@ from .config import CHAT_LOOP_CONFIG, OPTIMIZATION_LOOP_CONFIG, ORANGE_STYLE, se
 from .constants import (
     CONFIRM_DISABLED,
     CONFIRM_ENABLED,
+    DEFAULT_TABLE_TITLE,
     DIFF_LABEL_AFTER,
     DIFF_LABEL_BEFORE,
     EXIT_COMMANDS,
     HORIZONTAL_SEPARATOR,
     IMAGE_EXTENSIONS,
+    JSON_INDENT,
+    KEY_METADATA,
+    KEY_TOTAL_NODES,
+    KEY_TOTAL_RELATIONSHIPS,
     LOG_FORMAT,
     MSG_CHAT_INSTRUCTIONS,
     MSG_CONNECTED_MEMGRAPH,
     MSG_THINKING_CANCELLED,
     MSG_TIMEOUT_FORMAT,
+    MULTILINE_INPUT_HINT,
+    PROMPT_ASK_QUESTION,
+    PROMPT_YOUR_RESPONSE,
     SESSION_CONTEXT_END,
     SESSION_CONTEXT_START,
     SESSION_LOG_HEADER,
@@ -72,7 +80,7 @@ from .tools.semantic_search import (
     create_semantic_search_tool,
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
-from .types_defs import CancelledResult, ToolArgValue
+from .types_defs import CancelledResult, GraphData, ToolArgValue
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -171,7 +179,7 @@ def _display_tool_call_diff(
 
         case _:
             app_context.console.print(
-                f"    Arguments: {json.dumps(tool_args, indent=2)}"
+                f"    Arguments: {json.dumps(tool_args, indent=JSON_INDENT)}"
             )
 
 
@@ -221,7 +229,7 @@ def _setup_common_initialization(repo_path: str) -> Path:
 
 def _create_configuration_table(
     repo_path: str,
-    title: str = "Graph-Code Initializing...",
+    title: str = DEFAULT_TABLE_TITLE,
     language: str | None = None,
 ) -> Table:
     table = Table(title=f"[bold green]{title}[/bold green]")
@@ -334,7 +342,7 @@ async def run_optimization_loop(
         message_history,
         project_root,
         OPTIMIZATION_LOOP_CONFIG,
-        "[bold cyan]Your response[/bold cyan]",
+        f"[bold cyan]{PROMPT_YOUR_RESPONSE}[/bold cyan]",
         initial_question,
     )
 
@@ -479,7 +487,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     return updated_question
 
 
-def get_multiline_input(prompt_text: str = "Ask a question") -> str:
+def get_multiline_input(prompt_text: str = PROMPT_ASK_QUESTION) -> str:
     bindings = KeyBindings()
 
     @bindings.add("c-j")
@@ -498,7 +506,7 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
 
     print_formatted_text(
         HTML(
-            f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>(Press Ctrl+J to submit, Enter for new line)</ansiyellow>: "
+            f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>{MULTILINE_INPUT_HINT}</ansiyellow>: "
         )
     )
 
@@ -574,7 +582,7 @@ async def run_chat_loop(
         message_history,
         project_root,
         CHAT_LOOP_CONFIG,
-        "[bold cyan]Ask a question[/bold cyan]",
+        f"[bold cyan]{PROMPT_ASK_QUESTION}[/bold cyan]",
     )
 
 
@@ -616,12 +624,12 @@ def _update_model_settings(
         _update_single_model_setting(ModelRole.CYPHER, cypher)
 
 
-def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> dict:
-    graph_data = ingestor.export_graph_to_dict()
+def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphData:
+    graph_data: GraphData = ingestor.export_graph_to_dict()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(graph_data, f, indent=2, ensure_ascii=False)
+        json.dump(graph_data, f, indent=JSON_INDENT, ensure_ascii=False)
 
     return graph_data
 
@@ -639,11 +647,12 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
     try:
         graph_data = _write_graph_json(ingestor, output_path)
+        metadata = graph_data[KEY_METADATA]
         app_context.console.print(
             f"[bold green]Graph exported successfully to: {output_path.absolute()}[/bold green]"
         )
         app_context.console.print(
-            f"[bold cyan]Export contains {graph_data['metadata']['total_nodes']} nodes and {graph_data['metadata']['total_relationships']} relationships[/bold cyan]"
+            f"[bold cyan]Export contains {metadata[KEY_TOTAL_NODES]} nodes and {metadata[KEY_TOTAL_RELATIONSHIPS]} relationships[/bold cyan]"
         )
         return True
 

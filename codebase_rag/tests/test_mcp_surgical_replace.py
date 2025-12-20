@@ -63,10 +63,9 @@ class TestSurgicalReplaceBasic:
     async def test_replace_function_implementation(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test replacing a function's implementation."""
-        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Successfully replaced code in sample.py"
-        )
+        mock_func = mcp_registry._file_editor_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = "Successfully replaced code in sample.py"
 
         target = '    print("Hello, World!")'
         replacement = '    print("Hello, Universe!")'
@@ -77,15 +76,14 @@ class TestSurgicalReplaceBasic:
 
         assert "Error:" not in result
         assert "Success" in result or "replaced" in result.lower()
-        mcp_registry._file_editor_tool.function.assert_called_once()
+        mock_func.assert_called_once()
 
     async def test_replace_method_implementation(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test replacing a method's implementation."""
-        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Successfully replaced code in sample.py"
-        )
+        mock_func = mcp_registry._file_editor_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = "Successfully replaced code in sample.py"
 
         target = """    def add(self, a: int, b: int) -> int:
         \"\"\"Add two numbers.\"\"\"
@@ -101,22 +99,22 @@ class TestSurgicalReplaceBasic:
         )
 
         assert "Error:" not in result
-        mcp_registry._file_editor_tool.function.assert_called_once()
+        mock_func.assert_called_once()
 
     async def test_replace_with_exact_match(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that replacement requires exact match."""
-        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Successfully replaced code in sample.py"
-        )
+        mock_func = mcp_registry._file_editor_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = "Successfully replaced code in sample.py"
 
         target = 'print("Hello, World!")'
         replacement = 'print("Goodbye!")'
 
         await mcp_registry.surgical_replace_code("sample.py", target, replacement)
 
-        call_args = mcp_registry._file_editor_tool.function.call_args
+        call_args = mock_func.call_args
+        assert call_args is not None
         assert call_args.kwargs["file_path"] == "sample.py"
         assert call_args.kwargs["target_code"] == target
         assert call_args.kwargs["replacement_code"] == replacement
@@ -197,17 +195,17 @@ class TestSurgicalReplaceEdgeCases:
     async def test_replace_preserves_whitespace(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that whitespace in target/replacement is preserved."""
-        mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Successfully replaced code"
-        )
+        mock_func = mcp_registry._file_editor_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = "Successfully replaced code"
 
         target = "    def add(self, a: int, b: int) -> int:"
         replacement = "    def multiply(self, a: int, b: int) -> int:"
 
         await mcp_registry.surgical_replace_code("sample.py", target, replacement)
 
-        call_args = mcp_registry._file_editor_tool.function.call_args
+        call_args = mock_func.call_args
+        assert call_args is not None
         assert call_args.kwargs["target_code"] == target
         assert call_args.kwargs["replacement_code"] == replacement
 
@@ -345,12 +343,13 @@ class TestSurgicalReplaceIntegration:
     async def test_replace_verifies_parameters_passed(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that all parameters are correctly passed to underlying tool."""
-        mcp_registry._file_editor_tool.function.return_value = "Success"  # ty: ignore[invalid-assignment]
+        mock_func = mcp_registry._file_editor_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = "Success"
 
         await mcp_registry.surgical_replace_code("test.py", "old_code", "new_code")
 
-        mcp_registry._file_editor_tool.function.assert_called_once_with(
+        mock_func.assert_called_once_with(
             file_path="test.py", target_code="old_code", replacement_code="new_code"
         )
 
