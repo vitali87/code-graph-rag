@@ -32,6 +32,12 @@ class KeyBinding(StrEnum):
     CTRL_C = "c-c"
 
 
+class StyleModifier(StrEnum):
+    BOLD = "bold"
+    DIM = "dim"
+    NONE = ""
+
+
 DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_API_KEY = "ollama"

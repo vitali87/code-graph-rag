@@ -93,6 +93,7 @@ from .constants import (
     KeyBinding,
     ModelRole,
     Provider,
+    StyleModifier,
     ToolName,
 )
 from .models import AgentLoopConfig, AppContext
@@ -128,8 +129,14 @@ if TYPE_CHECKING:
     from .config import ModelConfig
 
 
-def style(text: str, color: Color) -> str:
-    return f"[bold {color}]{text}[/bold {color}]"
+def style(text: str, color: Color, modifier: StyleModifier = StyleModifier.BOLD) -> str:
+    if modifier == StyleModifier.NONE:
+        return f"[{color}]{text}[/{color}]"
+    return f"[{modifier} {color}]{text}[/{modifier} {color}]"
+
+
+def dim(text: str) -> str:
+    return f"[{StyleModifier.DIM}]{text}[/{StyleModifier.DIM}]"
 
 
 app_context = AppContext()
@@ -160,7 +167,7 @@ def get_session_context() -> str:
 
 
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:
-    separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
+    separator = dim(HORIZONTAL_SEPARATOR)
     app_context.console.print(f"\n{UI_DIFF_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
 
@@ -176,13 +183,13 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
         line = line.rstrip("\n")
         match line[:1]:
             case "+" | "-" if line.startswith("+++") or line.startswith("---"):
-                app_context.console.print(f"[dim]{line}[/dim]")
+                app_context.console.print(dim(line))
             case "@":
-                app_context.console.print(f"[cyan]{line}[/cyan]")
+                app_context.console.print(style(line, Color.CYAN, StyleModifier.NONE))
             case "+":
-                app_context.console.print(f"[green]{line}[/green]")
+                app_context.console.print(style(line, Color.GREEN, StyleModifier.NONE))
             case "-":
-                app_context.console.print(f"[red]{line}[/red]")
+                app_context.console.print(style(line, Color.RED, StyleModifier.NONE))
             case _:
                 app_context.console.print(line)
 
@@ -190,12 +197,12 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
 
 
 def _print_new_file_content(path: str, content: str) -> None:
-    separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
+    separator = dim(HORIZONTAL_SEPARATOR)
     app_context.console.print(f"\n{UI_NEW_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
 
     for line in content.splitlines():
-        app_context.console.print(f"[green]+ {line}[/green]")
+        app_context.console.print(style(f"+ {line}", Color.GREEN, StyleModifier.NONE))
 
     app_context.console.print(separator)
 
@@ -237,7 +244,9 @@ def _display_tool_call_diff(
         case ToolName.SHELL_COMMAND:
             command = tool_args.get(ARG_COMMAND, "")
             app_context.console.print(f"\n{UI_SHELL_COMMAND_HEADER}")
-            app_context.console.print(f"[yellow]$ {command}[/yellow]")
+            app_context.console.print(
+                style(f"$ {command}", Color.YELLOW, StyleModifier.NONE)
+            )
 
         case _:
             app_context.console.print(
