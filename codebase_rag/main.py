@@ -5,8 +5,9 @@ import shlex
 import shutil
 import sys
 import uuid
+from collections.abc import Coroutine
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, TypedDict
 
 import typer
 from loguru import logger
@@ -22,10 +23,8 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from .config import (
-    ORANGE_STYLE,
-    settings,
-)
+from .config import ORANGE_STYLE, settings
+from .constants import IMAGE_EXTENSIONS
 from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
 from .services import QueryProtocol
@@ -46,6 +45,20 @@ from .tools.semantic_search import (
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 
+if TYPE_CHECKING:
+    from prompt_toolkit.key_binding import KeyPressEvent
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelMessage
+
+    from .config import ModelConfig
+
+
+class CancelledResult(TypedDict):
+    cancelled: bool
+
+
+ToolArgValue = str | int | float | bool | list[str] | None
+
 confirm_edits_globally = True
 
 app = typer.Typer(
@@ -65,7 +78,6 @@ session_cancelled = False
 
 
 def init_session_log(project_root: Path) -> Path:
-    """Initialize session log file."""
     global session_log_file
     log_dir = project_root / ".tmp"
     log_dir.mkdir(exist_ok=True)
@@ -76,7 +88,6 @@ def init_session_log(project_root: Path) -> Path:
 
 
 def log_session_event(event: str) -> None:
-    """Log an event to the session file."""
     global session_log_file
     if session_log_file:
         with open(session_log_file, "a") as f:
@@ -84,7 +95,6 @@ def log_session_event(event: str) -> None:
 
 
 def get_session_context() -> str:
-    """Get the full session context for cancelled operations."""
     global session_log_file
     if session_log_file and session_log_file.exists():
         content = Path(session_log_file).read_text()
@@ -93,62 +103,62 @@ def get_session_context() -> str:
 
 
 def _display_tool_call_diff(
-    tool_name: str, tool_args: dict[str, Any], file_path: str | None = None
+    tool_name: str, tool_args: dict[str, ToolArgValue], file_path: str | None = None
 ) -> None:
-    if tool_name == "replace_code_surgically":
-        target = tool_args.get("target_code", "")
-        replacement = tool_args.get("replacement_code", "")
-        path = tool_args.get("file_path", file_path or "file")
+    match tool_name:
+        case "replace_code_surgically":
+            target = str(tool_args.get("target_code", ""))
+            replacement = str(tool_args.get("replacement_code", ""))
+            path = tool_args.get("file_path", file_path or "file")
 
-        console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
-        console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
+            console.print("[dim]" + "─" * 60 + "[/dim]")
 
-        diff = difflib.unified_diff(
-            target.splitlines(keepends=True),
-            replacement.splitlines(keepends=True),
-            fromfile="before",
-            tofile="after",
-            lineterm="",
-        )
+            diff = difflib.unified_diff(
+                target.splitlines(keepends=True),
+                replacement.splitlines(keepends=True),
+                fromfile="before",
+                tofile="after",
+                lineterm="",
+            )
 
-        for line in diff:
-            line = line.rstrip("\n")
-            if line.startswith("+++") or line.startswith("---"):
-                console.print(f"[dim]{line}[/dim]")
-            elif line.startswith("@@"):
-                console.print(f"[cyan]{line}[/cyan]")
-            elif line.startswith("+"):
-                console.print(f"[green]{line}[/green]")
-            elif line.startswith("-"):
-                console.print(f"[red]{line}[/red]")
-            else:
-                console.print(line)
+            for line in diff:
+                line = line.rstrip("\n")
+                if line.startswith("+++") or line.startswith("---"):
+                    console.print(f"[dim]{line}[/dim]")
+                elif line.startswith("@@"):
+                    console.print(f"[cyan]{line}[/cyan]")
+                elif line.startswith("+"):
+                    console.print(f"[green]{line}[/green]")
+                elif line.startswith("-"):
+                    console.print(f"[red]{line}[/red]")
+                else:
+                    console.print(line)
 
-        console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print("[dim]" + "─" * 60 + "[/dim]")
 
-    elif tool_name == "create_new_file":
-        path = tool_args.get("file_path", "")
-        content = tool_args.get("content", "")
+        case "create_new_file":
+            path = tool_args.get("file_path", "")
+            content = str(tool_args.get("content", ""))
 
-        console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
-        console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
+            console.print("[dim]" + "─" * 60 + "[/dim]")
 
-        for line in content.splitlines():
-            console.print(f"[green]+ {line}[/green]")
+            for line in content.splitlines():
+                console.print(f"[green]+ {line}[/green]")
 
-        console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print("[dim]" + "─" * 60 + "[/dim]")
 
-    elif tool_name == "execute_shell_command":
-        command = tool_args.get("command", "")
-        console.print("\n[bold cyan]Shell command:[/bold cyan]")
-        console.print(f"[yellow]$ {command}[/yellow]")
+        case "execute_shell_command":
+            command = tool_args.get("command", "")
+            console.print("\n[bold cyan]Shell command:[/bold cyan]")
+            console.print(f"[yellow]$ {command}[/yellow]")
 
-    else:
-        console.print(f"    Arguments: {json.dumps(tool_args, indent=2)}")
+        case _:
+            console.print(f"    Arguments: {json.dumps(tool_args, indent=2)}")
 
 
 def _setup_common_initialization(repo_path: str) -> Path:
-    """Common setup logic for both main and optimize functions."""
     logger.remove()
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
@@ -169,7 +179,6 @@ def _create_configuration_table(
     title: str = "Graph-Code Initializing...",
     language: str | None = None,
 ) -> Table:
-    """Create and return a configuration table."""
     table = Table(title=f"[bold green]{title}[/bold green]")
     table.add_column("Configuration", style="cyan")
     table.add_column("Value", style="magenta")
@@ -215,13 +224,12 @@ def _create_configuration_table(
 
 
 async def run_optimization_loop(
-    rag_agent: Any,
-    message_history: list[Any],
+    rag_agent: "Agent[None, str | DeferredToolRequests]",
+    message_history: list["ModelMessage"],
     project_root: Path,
     language: str,
     reference_document: str | None = None,
 ) -> None:
-    """Runs the optimization loop with proper confirmation handling."""
     global session_cancelled
 
     init_session_log(project_root)
@@ -316,7 +324,7 @@ Remember: Propose changes first, wait for my approval, then implement.
                         ),
                     )
 
-                    if isinstance(response, dict) and response.get("cancelled"):
+                    if not hasattr(response, "output"):
                         log_session_event("ASSISTANT: [Analysis was cancelled]")
                         session_cancelled = True
                         break
@@ -344,8 +352,7 @@ Remember: Propose changes first, wait for my approval, then implement.
                                 )
                                 denial_msg = (
                                     feedback.strip()
-                                    if feedback.strip()
-                                    else "User rejected this optimization without feedback"
+                                    or "User rejected this optimization without feedback"
                                 )
                                 deferred_results.approvals[call.tool_call_id] = (
                                     ToolDenied(denial_msg)
@@ -356,7 +363,10 @@ Remember: Propose changes first, wait for my approval, then implement.
                     message_history.extend(response.new_messages())
                     continue
 
-                markdown_response = Markdown(response.output)
+                output_text = response.output
+                if not isinstance(output_text, str):
+                    continue
+                markdown_response = Markdown(output_text)
                 console.print(
                     Panel(
                         markdown_response,
@@ -365,7 +375,7 @@ Remember: Propose changes first, wait for my approval, then implement.
                     )
                 )
 
-                log_session_event(f"ASSISTANT: {response.output}")
+                log_session_event(f"ASSISTANT: {output_text}")
                 message_history.extend(response.new_messages())
                 break
 
@@ -378,10 +388,9 @@ Remember: Propose changes first, wait for my approval, then implement.
             console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
 
 
-async def run_with_cancellation(
-    console: Console, coro: Any, timeout: float | None = None
-) -> Any:
-    """Run a coroutine with proper Ctrl+C cancellation that doesn't exit the program."""
+async def run_with_cancellation[T](
+    console: Console, coro: Coroutine[None, None, T], timeout: float | None = None
+) -> T | CancelledResult:
     task = asyncio.create_task(coro)
 
     try:
@@ -395,7 +404,7 @@ async def run_with_cancellation(
         console.print(
             f"\n[bold yellow]Operation timed out after {timeout} seconds.[/bold yellow]"
         )
-        return {"cancelled": True, "timeout": True}
+        return CancelledResult(cancelled=True)
     except (asyncio.CancelledError, KeyboardInterrupt):
         if not task.done():
             task.cancel()
@@ -404,24 +413,19 @@ async def run_with_cancellation(
             except asyncio.CancelledError:
                 pass
         console.print("\n[bold yellow]Thinking cancelled.[/bold yellow]")
-        return {"cancelled": True}
+        return CancelledResult(cancelled=True)
 
 
 def _handle_chat_images(question: str, project_root: Path) -> str:
-    """
-    Checks for image file paths in the question, copies them to a temporary
-    directory, and replaces the path in the question.
-    """
     try:
         tokens = shlex.split(question)
     except ValueError:
         tokens = question.split()
 
-    image_extensions = (".png", ".jpg", ".jpeg", ".gif")
     image_files = [
         token
         for token in tokens
-        if token.startswith("/") and token.lower().endswith(image_extensions)
+        if token.startswith("/") and token.lower().endswith(IMAGE_EXTENSIONS)
     ]
 
     if not image_files:
@@ -472,22 +476,18 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
 
 
 def get_multiline_input(prompt_text: str = "Ask a question") -> str:
-    """Get multiline input from user with Ctrl+J to submit."""
     bindings = KeyBindings()
 
     @bindings.add("c-j")
-    def submit(event: Any) -> None:
-        """Submit the current input."""
+    def submit(event: "KeyPressEvent") -> None:
         event.app.exit(result=event.app.current_buffer.text)
 
     @bindings.add("enter")
-    def new_line(event: Any) -> None:
-        """Insert a new line instead of submitting."""
+    def new_line(event: "KeyPressEvent") -> None:
         event.current_buffer.insert_text("\n")
 
     @bindings.add("c-c")
-    def keyboard_interrupt(event: Any) -> None:
-        """Handle Ctrl+C."""
+    def keyboard_interrupt(event: "KeyPressEvent") -> None:
         event.app.exit(exception=KeyboardInterrupt)
 
     clean_prompt = Text.from_markup(prompt_text).plain
@@ -507,11 +507,14 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     )
     if result is None:
         raise EOFError
-    return result.strip()  # type: ignore[no-any-return]
+    stripped: str = result.strip()
+    return stripped
 
 
 async def run_chat_loop(
-    rag_agent: Any, message_history: list[Any], project_root: Path
+    rag_agent: "Agent[None, str | DeferredToolRequests]",
+    message_history: list["ModelMessage"],
+    project_root: Path,
 ) -> None:
     global session_cancelled
 
@@ -555,7 +558,7 @@ async def run_chat_loop(
                         ),
                     )
 
-                    if isinstance(response, dict) and response.get("cancelled"):
+                    if not hasattr(response, "output"):
                         log_session_event("ASSISTANT: [Thinking was cancelled]")
                         session_cancelled = True
                         break
@@ -595,7 +598,10 @@ async def run_chat_loop(
                     message_history.extend(response.new_messages())
                     continue
 
-                markdown_response = Markdown(response.output)
+                output_text = response.output
+                if not isinstance(output_text, str):
+                    continue
+                markdown_response = Markdown(output_text)
                 console.print(
                     Panel(
                         markdown_response,
@@ -604,7 +610,7 @@ async def run_chat_loop(
                     )
                 )
 
-                log_session_event(f"ASSISTANT: {response.output}")
+                log_session_event(f"ASSISTANT: {output_text}")
                 message_history.extend(response.new_messages())
                 break
 
@@ -616,7 +622,6 @@ async def run_chat_loop(
 
 
 def _update_single_model_setting(role: str, model_string: str) -> None:
-    """Update a single model setting (orchestrator or cypher)."""
     provider, model = settings.parse_model_string(model_string)
 
     if role == "orchestrator":
@@ -647,7 +652,6 @@ def _update_model_settings(
     orchestrator: str | None,
     cypher: str | None,
 ) -> None:
-    """Update model settings based on command-line arguments."""
     if orchestrator:
         _update_single_model_setting("orchestrator", orchestrator)
     if cypher:
@@ -655,17 +659,6 @@ def _update_model_settings(
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
-    """
-    Export graph data to a JSON file.
-
-    Args:
-        ingestor: The MemgraphIngestor instance to export from
-        output: Output file path
-
-    Returns:
-        True if export was successful, False otherwise
-    """
-
     try:
         graph_data = ingestor.export_graph_to_dict()
         output_path = Path(output)
@@ -689,12 +682,12 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> Any:
-    """Initializes all services and creates the RAG agent."""
+def _initialize_services_and_agent(
+    repo_path: str, ingestor: QueryProtocol
+) -> "Agent[None, str | DeferredToolRequests]":
     from .providers.base import get_provider
 
-    def _validate_provider_config(role: str, config: Any) -> None:
-        """Validate a single provider configuration."""
+    def _validate_provider_config(role: str, config: "ModelConfig") -> None:
         try:
             provider = get_provider(
                 config.provider,
@@ -753,7 +746,6 @@ def _initialize_services_and_agent(repo_path: str, ingestor: QueryProtocol) -> A
 
 
 async def main_async(repo_path: str, batch_size: int) -> None:
-    """Initializes services and runs the main application loop."""
     project_root = _setup_common_initialization(repo_path)
 
     table = _create_configuration_table(repo_path)
@@ -819,7 +811,6 @@ def start(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    """Starts the Codebase RAG CLI."""
     global confirm_edits_globally
 
     confirm_edits_globally = not no_confirm
@@ -890,7 +881,6 @@ def index(
         help="Write index to separate nodes.bin and relationships.bin files.",
     ),
 ) -> None:
-    """Parses a codebase and creates a portable binary index file."""
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     repo_to_index = Path(target_repo_path)
 
@@ -932,7 +922,6 @@ def export(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    """Export the current knowledge graph to a file."""
     if not format_json:
         console.print(
             "[bold red]Error: Currently only JSON format is supported.[/bold red]"
@@ -967,7 +956,6 @@ async def main_optimize_async(
     cypher: str | None = None,
     batch_size: int | None = None,
 ) -> None:
-    """Async wrapper for the optimization functionality."""
     project_root = _setup_common_initialization(target_repo_path)
 
     _update_model_settings(orchestrator, cypher)
@@ -1032,7 +1020,6 @@ def optimize(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    """Optimize a codebase for a specific programming language."""
     global confirm_edits_globally
 
     confirm_edits_globally = not no_confirm
@@ -1056,25 +1043,8 @@ def optimize(
         console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
-@app.command(name="mcp-server")
+@app.command(name="mcp-server", help="Start the MCP server for Claude Code integration")
 def mcp_server() -> None:
-    """Start the MCP (Model Context Protocol) server.
-
-    This command starts an MCP server that exposes code-graph-rag's capabilities
-    to MCP clients like Claude Code. The server runs on stdio transport and requires
-    the TARGET_REPO_PATH environment variable to be set to the target repository.
-
-    Usage:
-        graph-code mcp-server
-
-    Environment Variables:
-        TARGET_REPO_PATH: Path to the target repository (required)
-
-    For Claude Code integration:
-        claude mcp add --transport stdio graph-code \\
-          --env TARGET_REPO_PATH=/path/to/your/project \\
-          -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
-    """
     try:
         from codebase_rag.mcp import main as mcp_main
 
@@ -1094,7 +1064,6 @@ def mcp_server() -> None:
 def graph_loader_command(
     graph_file: str = typer.Argument(..., help="Path to the exported graph JSON file"),
 ) -> None:
-    """Load and display summary of an exported graph file."""
     from .graph_loader import load_graph
 
     try:
@@ -1117,16 +1086,10 @@ def graph_loader_command(
 
 @app.command(
     name="language",
+    help="Manage language grammars (add, remove, list)",
     context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
 )
 def language_command(ctx: typer.Context) -> None:
-    """Manage language grammars (add, remove, list).
-
-    Examples:
-        cgr language add-grammar python
-        cgr language list-languages
-        cgr language remove-language python
-    """
     language_cli(ctx.args, standalone_mode=False)
 
 

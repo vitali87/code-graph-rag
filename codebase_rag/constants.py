@@ -213,3 +213,6 @@ INDEX_MOD = "mod"
 
 # (H) AST field names for name extraction
 NAME_FIELDS = ("identifier", "name", "id")
+
+# (H) Image file extensions for chat image handling
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
