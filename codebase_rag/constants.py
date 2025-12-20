@@ -353,6 +353,15 @@ CONFIRM_DISABLED = "Disabled (YOLO Mode)"
 DIFF_LABEL_BEFORE = "before"
 DIFF_LABEL_AFTER = "after"
 
+
+class DiffMarker:
+    ADD = "+"
+    DEL = "-"
+    HUNK = "@"
+    HEADER_ADD = "+++"
+    HEADER_DEL = "---"
+
+
 # (H) Table column headers
 TABLE_COL_CONFIGURATION = "Configuration"
 TABLE_COL_VALUE = "Value"

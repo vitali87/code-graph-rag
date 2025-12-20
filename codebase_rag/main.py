@@ -91,6 +91,7 @@ from .constants import (
     UI_SHELL_COMMAND_HEADER,
     UI_TOOL_APPROVAL,
     Color,
+    DiffMarker,
     KeyBinding,
     ModelRole,
     Provider,
@@ -184,13 +185,15 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
     for line in diff:
         line = line.rstrip("\n")
         match line[:1]:
-            case "+" | "-" if line.startswith("+++") or line.startswith("---"):
+            case DiffMarker.ADD | DiffMarker.DEL if line.startswith(
+                DiffMarker.HEADER_ADD
+            ) or line.startswith(DiffMarker.HEADER_DEL):
                 app_context.console.print(dim(line))
-            case "@":
+            case DiffMarker.HUNK:
                 app_context.console.print(style(line, Color.CYAN, StyleModifier.NONE))
-            case "+":
+            case DiffMarker.ADD:
                 app_context.console.print(style(line, Color.GREEN, StyleModifier.NONE))
-            case "-":
+            case DiffMarker.DEL:
                 app_context.console.print(style(line, Color.RED, StyleModifier.NONE))
             case _:
                 app_context.console.print(line)
@@ -204,7 +207,9 @@ def _print_new_file_content(path: str, content: str) -> None:
     app_context.console.print(separator)
 
     for line in content.splitlines():
-        app_context.console.print(style(f"+ {line}", Color.GREEN, StyleModifier.NONE))
+        app_context.console.print(
+            style(f"{DiffMarker.ADD} {line}", Color.GREEN, StyleModifier.NONE)
+        )
 
     app_context.console.print(separator)
 
