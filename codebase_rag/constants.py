@@ -352,6 +352,7 @@ CONFIRM_DISABLED = "Disabled (YOLO Mode)"
 # (H) Diff labels
 DIFF_LABEL_BEFORE = "before"
 DIFF_LABEL_AFTER = "after"
+DIFF_FALLBACK_PATH = "file"
 
 
 class DiffMarker:

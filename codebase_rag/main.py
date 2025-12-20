@@ -33,6 +33,7 @@ from .constants import (
     CONFIRM_DISABLED,
     CONFIRM_ENABLED,
     DEFAULT_TABLE_TITLE,
+    DIFF_FALLBACK_PATH,
     DIFF_LABEL_AFTER,
     DIFF_LABEL_BEFORE,
     ENCODING_UTF8,
@@ -240,7 +241,7 @@ def _display_tool_call_diff(
         case ToolName.REPLACE_CODE:
             target = str(tool_args.get(ARG_TARGET_CODE, ""))
             replacement = str(tool_args.get(ARG_REPLACEMENT_CODE, ""))
-            path = str(tool_args.get(ARG_FILE_PATH, file_path or "file"))
+            path = str(tool_args.get(ARG_FILE_PATH, file_path or DIFF_FALLBACK_PATH))
             _print_unified_diff(target, replacement, path)
 
         case ToolName.CREATE_FILE:
