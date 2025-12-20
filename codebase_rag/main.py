@@ -245,31 +245,7 @@ def _create_configuration_table(
     return table
 
 
-async def run_optimization_loop(
-    rag_agent: "Agent[None, str | DeferredToolRequests]",
-    message_history: list["ModelMessage"],
-    project_root: Path,
-    language: str,
-    reference_document: str | None = None,
-) -> None:
-    init_session_log(project_root)
-    console.print(
-        f"[bold green]Starting {language} optimization session...[/bold green]"
-    )
-    document_info = (
-        f" using the reference document: {reference_document}"
-        if reference_document
-        else ""
-    )
-    console.print(
-        Panel(
-            f"[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
-            f" You'll be asked to approve each suggestion before implementation."
-            f" Type 'exit' or 'quit' to end the session.[/bold yellow]",
-            border_style="yellow",
-        )
-    )
-
+def _build_optimization_prompt(language: str, reference_document: str | None) -> str:
     instructions = [
         "Use your code retrieval and graph querying tools to understand the codebase structure",
         "Read relevant source files to identify optimization opportunities",
@@ -292,7 +268,7 @@ async def run_optimization_loop(
         f"{i + 1}. {inst}" for i, inst in enumerate(instructions)
     )
 
-    initial_question = f"""
+    return f"""
 I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
 
 Please:
@@ -302,47 +278,41 @@ Start by analyzing the codebase structure and identifying the main areas that co
 Remember: Propose changes first, wait for my approval, then implement.
 """
 
-    first_run = True
-    question = initial_question
 
-    while True:
-        try:
-            if not first_run:
-                question = await asyncio.to_thread(
-                    get_multiline_input, "[bold cyan]Your response[/bold cyan]"
-                )
+async def run_optimization_loop(
+    rag_agent: "Agent[None, str | DeferredToolRequests]",
+    message_history: list["ModelMessage"],
+    project_root: Path,
+    language: str,
+    reference_document: str | None = None,
+) -> None:
+    console.print(
+        f"[bold green]Starting {language} optimization session...[/bold green]"
+    )
+    document_info = (
+        f" using the reference document: {reference_document}"
+        if reference_document
+        else ""
+    )
+    console.print(
+        Panel(
+            f"[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
+            f" You'll be asked to approve each suggestion before implementation."
+            f" Type 'exit' or 'quit' to end the session.[/bold yellow]",
+            border_style="yellow",
+        )
+    )
 
-            if question.lower() in EXIT_COMMANDS:
-                break
-            if not question.strip():
-                continue
+    initial_question = _build_optimization_prompt(language, reference_document)
 
-            log_session_event(f"USER: {question}")
-
-            if session_state.cancelled:
-                question_with_context = question + get_session_context()
-                session_state.reset_cancelled()
-            else:
-                question_with_context = question
-
-            question_with_context = _handle_chat_images(
-                question_with_context, project_root
-            )
-
-            await _run_agent_response_loop(
-                rag_agent,
-                message_history,
-                question_with_context,
-                OPTIMIZATION_LOOP_CONFIG,
-            )
-
-            first_run = False
-
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            logger.error("An unexpected error occurred: {}", e, exc_info=True)
-            console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+    await _run_interactive_loop(
+        rag_agent,
+        message_history,
+        project_root,
+        OPTIMIZATION_LOOP_CONFIG,
+        "[bold cyan]Your response[/bold cyan]",
+        initial_question,
+    )
 
 
 async def run_with_cancellation[T](
@@ -518,22 +488,26 @@ def get_multiline_input(prompt_text: str = "Ask a question") -> str:
     return stripped
 
 
-async def run_chat_loop(
+async def _run_interactive_loop(
     rag_agent: "Agent[None, str | DeferredToolRequests]",
     message_history: list["ModelMessage"],
     project_root: Path,
+    config: AgentLoopConfig,
+    input_prompt: str,
+    initial_question: str | None = None,
 ) -> None:
     init_session_log(project_root)
+    question = initial_question or ""
 
     while True:
         try:
-            question = await asyncio.to_thread(
-                get_multiline_input, "[bold cyan]Ask a question[/bold cyan]"
-            )
+            if not initial_question or question != initial_question:
+                question = await asyncio.to_thread(get_multiline_input, input_prompt)
 
             if question.lower() in EXIT_COMMANDS:
                 break
             if not question.strip():
+                initial_question = None
                 continue
 
             log_session_event(f"USER: {question}")
@@ -549,14 +523,30 @@ async def run_chat_loop(
             )
 
             await _run_agent_response_loop(
-                rag_agent, message_history, question_with_context, CHAT_LOOP_CONFIG
+                rag_agent, message_history, question_with_context, config
             )
+
+            initial_question = None
 
         except KeyboardInterrupt:
             break
         except Exception as e:
             logger.error("An unexpected error occurred: {}", e, exc_info=True)
             console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+
+
+async def run_chat_loop(
+    rag_agent: "Agent[None, str | DeferredToolRequests]",
+    message_history: list["ModelMessage"],
+    project_root: Path,
+) -> None:
+    await _run_interactive_loop(
+        rag_agent,
+        message_history,
+        project_root,
+        CHAT_LOOP_CONFIG,
+        "[bold cyan]Ask a question[/bold cyan]",
+    )
 
 
 def _update_single_model_setting(role: ModelRole, model_string: str) -> None:
