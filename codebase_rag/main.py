@@ -97,7 +97,7 @@ from .constants import (
     ToolName,
 )
 from .models import AgentLoopConfig, AppContext
-from .prompts import build_optimization_prompt
+from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -369,7 +369,13 @@ async def run_optimization_loop(
         )
     )
 
-    initial_question = build_optimization_prompt(language, reference_document)
+    initial_question = (
+        OPTIMIZATION_PROMPT_WITH_REFERENCE.format(
+            language=language, reference_document=reference_document
+        )
+        if reference_document
+        else OPTIMIZATION_PROMPT.format(language=language)
+    )
 
     await _run_interactive_loop(
         rag_agent,

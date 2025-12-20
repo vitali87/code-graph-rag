@@ -210,49 +210,33 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 # ======================================================================================
 #  OPTIMIZATION PROMPT
 # ======================================================================================
-OPTIMIZATION_INSTRUCTIONS_BASE = (
-    "Use your code retrieval and graph querying tools to understand the codebase structure",
-    "Read relevant source files to identify optimization opportunities",
-)
-
-OPTIMIZATION_INSTRUCTION_REFERENCE_DOC = "Use the analyze_document tool to reference best practices from {reference_document}"
-
-OPTIMIZATION_INSTRUCTIONS_EXTENDED = (
-    "Reference established patterns and best practices for {language}",
-    "Propose specific, actionable optimizations with file references",
-    "IMPORTANT: Do not make any changes yet - just propose them and wait for approval",
-    "After approval, use your file editing tools to implement the changes",
-)
-
-OPTIMIZATION_PROMPT_TEMPLATE = """
+OPTIMIZATION_PROMPT = """
 I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
 
 Please:
-{numbered_instructions}
+1. Use your code retrieval and graph querying tools to understand the codebase structure
+2. Read relevant source files to identify optimization opportunities
+3. Reference established patterns and best practices for {language}
+4. Propose specific, actionable optimizations with file references
+5. IMPORTANT: Do not make any changes yet - just propose them and wait for approval
+6. After approval, use your file editing tools to implement the changes
 
 Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
 Remember: Propose changes first, wait for my approval, then implement.
 """
 
+OPTIMIZATION_PROMPT_WITH_REFERENCE = """
+I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
 
-def build_optimization_prompt(language: str, reference_document: str | None) -> str:
-    instructions = list(OPTIMIZATION_INSTRUCTIONS_BASE)
+Please:
+1. Use your code retrieval and graph querying tools to understand the codebase structure
+2. Read relevant source files to identify optimization opportunities
+3. Use the analyze_document tool to reference best practices from {reference_document}
+4. Reference established patterns and best practices for {language}
+5. Propose specific, actionable optimizations with file references
+6. IMPORTANT: Do not make any changes yet - just propose them and wait for approval
+7. After approval, use your file editing tools to implement the changes
 
-    if reference_document:
-        instructions.append(
-            OPTIMIZATION_INSTRUCTION_REFERENCE_DOC.format(
-                reference_document=reference_document
-            )
-        )
-
-    instructions.extend(
-        inst.format(language=language) for inst in OPTIMIZATION_INSTRUCTIONS_EXTENDED
-    )
-
-    numbered_instructions = "\n".join(
-        f"{i + 1}. {inst}" for i, inst in enumerate(instructions)
-    )
-
-    return OPTIMIZATION_PROMPT_TEMPLATE.format(
-        language=language, numbered_instructions=numbered_instructions
-    )
+Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
+Remember: Propose changes first, wait for my approval, then implement.
+"""
