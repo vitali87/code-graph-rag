@@ -522,3 +522,9 @@ IGNORE_PATTERNS = frozenset(
     }
 )
 IGNORE_SUFFIXES = frozenset({".tmp", "~"})
+
+PAYLOAD_NODE_ID = "node_id"
+PAYLOAD_QUALIFIED_NAME = "qualified_name"
+
+LOG_EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
+LOG_EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"

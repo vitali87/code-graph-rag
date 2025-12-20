@@ -87,6 +87,11 @@ class AppConfig(BaseSettings):
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
 
+    QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
+    QDRANT_COLLECTION_NAME: str = "code_embeddings"
+    QDRANT_VECTOR_DIM: int = 768
+    QDRANT_TOP_K: int = 5
+
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
