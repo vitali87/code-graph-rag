@@ -135,6 +135,13 @@ FIELD_MODEL_ID = "model_id"
 FIELD_API_KEY = "api_key"
 FIELD_ENDPOINT = "endpoint"
 
+# (H) Tool argument field names
+ARG_TARGET_CODE = "target_code"
+ARG_REPLACEMENT_CODE = "replacement_code"
+ARG_FILE_PATH = "file_path"
+ARG_CONTENT = "content"
+ARG_COMMAND = "command"
+
 # (H) Qualified name separators
 SEPARATOR_DOT = "."
 

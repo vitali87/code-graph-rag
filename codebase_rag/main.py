@@ -23,6 +23,11 @@ from rich.text import Text
 
 from .config import CHAT_LOOP_CONFIG, OPTIMIZATION_LOOP_CONFIG, ORANGE_STYLE, settings
 from .constants import (
+    ARG_COMMAND,
+    ARG_CONTENT,
+    ARG_FILE_PATH,
+    ARG_REPLACEMENT_CODE,
+    ARG_TARGET_CODE,
     CONFIRM_DISABLED,
     CONFIRM_ENABLED,
     DEFAULT_TABLE_TITLE,
@@ -183,18 +188,18 @@ def _display_tool_call_diff(
 ) -> None:
     match tool_name:
         case ToolName.REPLACE_CODE:
-            target = str(tool_args.get("target_code", ""))
-            replacement = str(tool_args.get("replacement_code", ""))
-            path = str(tool_args.get("file_path", file_path or "file"))
+            target = str(tool_args.get(ARG_TARGET_CODE, ""))
+            replacement = str(tool_args.get(ARG_REPLACEMENT_CODE, ""))
+            path = str(tool_args.get(ARG_FILE_PATH, file_path or "file"))
             _print_unified_diff(target, replacement, path)
 
         case ToolName.CREATE_FILE:
-            path = str(tool_args.get("file_path", ""))
-            content = str(tool_args.get("content", ""))
+            path = str(tool_args.get(ARG_FILE_PATH, ""))
+            content = str(tool_args.get(ARG_CONTENT, ""))
             _print_new_file_content(path, content)
 
         case ToolName.SHELL_COMMAND:
-            command = tool_args.get("command", "")
+            command = tool_args.get(ARG_COMMAND, "")
             app_context.console.print(f"\n{UI_SHELL_COMMAND_HEADER}")
             app_context.console.print(f"[yellow]$ {command}[/yellow]")
 
