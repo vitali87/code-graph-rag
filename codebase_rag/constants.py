@@ -232,6 +232,9 @@ HORIZONTAL_SEPARATOR = "─" * 60
 # (H) Session log header
 SESSION_LOG_HEADER = "=== CODE-GRAPH RAG SESSION LOG ===\n\n"
 
+# (H) Logger format
+LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}"
+
 # (H) Temporary directory
 TMP_DIR = ".tmp"
 SESSION_LOG_PREFIX = "session_"

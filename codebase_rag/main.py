@@ -27,6 +27,7 @@ from .constants import (
     EXIT_COMMANDS,
     HORIZONTAL_SEPARATOR,
     IMAGE_EXTENSIONS,
+    LOG_FORMAT,
     SESSION_LOG_HEADER,
     SESSION_LOG_PREFIX,
     TMP_DIR,
@@ -101,16 +102,17 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
 
     for line in diff:
         line = line.rstrip("\n")
-        if line.startswith("+++") or line.startswith("---"):
-            console.print(f"[dim]{line}[/dim]")
-        elif line.startswith("@@"):
-            console.print(f"[cyan]{line}[/cyan]")
-        elif line.startswith("+"):
-            console.print(f"[green]{line}[/green]")
-        elif line.startswith("-"):
-            console.print(f"[red]{line}[/red]")
-        else:
-            console.print(line)
+        match line[:1]:
+            case "+" | "-" if line.startswith("+++") or line.startswith("---"):
+                console.print(f"[dim]{line}[/dim]")
+            case "@":
+                console.print(f"[cyan]{line}[/cyan]")
+            case "+":
+                console.print(f"[green]{line}[/green]")
+            case "-":
+                console.print(f"[red]{line}[/red]")
+            case _:
+                console.print(line)
 
     console.print(separator)
 
@@ -180,7 +182,7 @@ def _process_tool_approvals(
 
 def _setup_common_initialization(repo_path: str) -> Path:
     logger.remove()
-    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    logger.add(sys.stdout, format=LOG_FORMAT)
 
     project_root = Path(repo_path).resolve()
     tmp_dir = project_root / TMP_DIR
