@@ -1,7 +1,9 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
+
+from rich.console import Console
 
 from .types_defs import PropertyValue
 
@@ -25,6 +27,16 @@ class SessionState:
 
     def reset_cancelled(self) -> None:
         self.cancelled = False
+
+
+def _default_console() -> Console:
+    return Console(width=None, force_terminal=True)
+
+
+@dataclass
+class AppContext:
+    session: SessionState = field(default_factory=SessionState)
+    console: Console = field(default_factory=_default_console)
 
 
 @dataclass

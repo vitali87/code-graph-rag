@@ -3,7 +3,6 @@ from pathlib import Path
 
 import typer
 from loguru import logger
-from rich.console import Console
 
 from .config import settings
 from .graph_updater import GraphUpdater
@@ -11,9 +10,9 @@ from .main import (
     _connect_memgraph,
     _export_graph_to_file,
     _update_model_settings,
+    app_context,
     main_async,
     main_optimize_async,
-    session_state,
 )
 from .parser_loader import load_parsers
 from .services.protobuf_service import ProtobufFileIngestor
@@ -28,8 +27,6 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
-
-console = Console(width=None, force_terminal=True)
 
 
 @app.command()
@@ -75,12 +72,12 @@ def start(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    session_state.confirm_edits = not no_confirm
+    app_context.session.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
     if output and not update_graph:
-        console.print(
+        app_context.console.print(
             "[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]"
         )
         raise typer.Exit(1)
@@ -91,13 +88,15 @@ def start(
 
     if update_graph:
         repo_to_update = Path(target_repo_path)
-        console.print(
+        app_context.console.print(
             f"[bold green]Updating knowledge graph for: {repo_to_update}[/bold green]"
         )
 
         with _connect_memgraph(effective_batch_size) as ingestor:
             if clean:
-                console.print("[bold yellow]Cleaning database...[/bold yellow]")
+                app_context.console.print(
+                    "[bold yellow]Cleaning database...[/bold yellow]"
+                )
                 ingestor.clean_database()
             ingestor.ensure_constraints()
 
@@ -107,19 +106,23 @@ def start(
             updater.run()
 
             if output:
-                console.print(f"[bold cyan]Exporting graph to: {output}[/bold cyan]")
+                app_context.console.print(
+                    f"[bold cyan]Exporting graph to: {output}[/bold cyan]"
+                )
                 if not _export_graph_to_file(ingestor, output):
                     raise typer.Exit(1)
 
-        console.print("[bold green]Graph update completed![/bold green]")
+        app_context.console.print("[bold green]Graph update completed![/bold green]")
         return
 
     try:
         asyncio.run(main_async(target_repo_path, effective_batch_size))
     except KeyboardInterrupt:
-        console.print("\n[bold red]Application terminated by user.[/bold red]")
+        app_context.console.print(
+            "\n[bold red]Application terminated by user.[/bold red]"
+        )
     except ValueError as e:
-        console.print(f"[bold red]Startup Error: {e}[/bold red]")
+        app_context.console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
 @app.command()
@@ -142,8 +145,10 @@ def index(
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     repo_to_index = Path(target_repo_path)
 
-    console.print(f"[bold green]Indexing codebase at: {repo_to_index}[/bold green]")
-    console.print(
+    app_context.console.print(
+        f"[bold green]Indexing codebase at: {repo_to_index}[/bold green]"
+    )
+    app_context.console.print(
         f"[bold cyan]Output will be written to: {output_proto_dir}[/bold cyan]"
     )
 
@@ -156,11 +161,13 @@ def index(
 
         updater.run()
 
-        console.print(
+        app_context.console.print(
             "[bold green]Indexing process completed successfully![/bold green]"
         )
     except Exception as e:
-        console.print(f"[bold red]An error occurred during indexing: {e}[/bold red]")
+        app_context.console.print(
+            f"[bold red]An error occurred during indexing: {e}[/bold red]"
+        )
         logger.error("Indexing failed", exc_info=True)
         raise typer.Exit(1) from e
 
@@ -181,23 +188,25 @@ def export(
     ),
 ) -> None:
     if not format_json:
-        console.print(
+        app_context.console.print(
             "[bold red]Error: Currently only JSON format is supported.[/bold red]"
         )
         raise typer.Exit(1)
 
-    console.print("[bold cyan]Connecting to Memgraph to export graph...[/bold cyan]")
+    app_context.console.print(
+        "[bold cyan]Connecting to Memgraph to export graph...[/bold cyan]"
+    )
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     try:
         with _connect_memgraph(effective_batch_size) as ingestor:
-            console.print("[bold cyan]Exporting graph data...[/bold cyan]")
+            app_context.console.print("[bold cyan]Exporting graph data...[/bold cyan]")
             if not _export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
 
     except Exception as e:
-        console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
+        app_context.console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
         logger.error(f"Export error: {e}", exc_info=True)
         raise typer.Exit(1) from e
 
@@ -238,7 +247,7 @@ def optimize(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    session_state.confirm_edits = not no_confirm
+    app_context.session.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
@@ -254,9 +263,11 @@ def optimize(
             )
         )
     except KeyboardInterrupt:
-        console.print("\n[bold red]Optimization session terminated by user.[/bold red]")
+        app_context.console.print(
+            "\n[bold red]Optimization session terminated by user.[/bold red]"
+        )
     except ValueError as e:
-        console.print(f"[bold red]Startup Error: {e}[/bold red]")
+        app_context.console.print(f"[bold red]Startup Error: {e}[/bold red]")
 
 
 @app.command(name="mcp-server", help="Start the MCP server for Claude Code integration")
@@ -266,14 +277,16 @@ def mcp_server() -> None:
 
         asyncio.run(mcp_main())
     except KeyboardInterrupt:
-        console.print("\n[bold red]MCP server terminated by user.[/bold red]")
+        app_context.console.print(
+            "\n[bold red]MCP server terminated by user.[/bold red]"
+        )
     except ValueError as e:
-        console.print(f"[bold red]Configuration Error: {e}[/bold red]")
-        console.print(
+        app_context.console.print(f"[bold red]Configuration Error: {e}[/bold red]")
+        app_context.console.print(
             "\n[yellow]Hint: Make sure TARGET_REPO_PATH environment variable is set.[/yellow]"
         )
     except Exception as e:
-        console.print(f"[bold red]MCP Server Error: {e}[/bold red]")
+        app_context.console.print(f"[bold red]MCP Server Error: {e}[/bold red]")
 
 
 @app.command(name="graph-loader")
@@ -286,17 +299,23 @@ def graph_loader_command(
         graph = load_graph(graph_file)
         summary = graph.summary()
 
-        console.print("[bold green]Graph Summary:[/bold green]")
-        console.print(f"  Total nodes: {summary['total_nodes']}")
-        console.print(f"  Total relationships: {summary['total_relationships']}")
-        console.print(f"  Node types: {list(summary['node_labels'].keys())}")
-        console.print(
+        app_context.console.print("[bold green]Graph Summary:[/bold green]")
+        app_context.console.print(f"  Total nodes: {summary['total_nodes']}")
+        app_context.console.print(
+            f"  Total relationships: {summary['total_relationships']}"
+        )
+        app_context.console.print(
+            f"  Node types: {list(summary['node_labels'].keys())}"
+        )
+        app_context.console.print(
             f"  Relationship types: {list(summary['relationship_types'].keys())}"
         )
-        console.print(f"  Exported at: {summary['metadata']['exported_at']}")
+        app_context.console.print(
+            f"  Exported at: {summary['metadata']['exported_at']}"
+        )
 
     except Exception as e:
-        console.print(f"[bold red]Failed to load graph: {e}[/bold red]")
+        app_context.console.print(f"[bold red]Failed to load graph: {e}[/bold red]")
         raise typer.Exit(1) from e
 
 

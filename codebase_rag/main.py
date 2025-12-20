@@ -15,7 +15,6 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied
-from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -57,7 +56,7 @@ from .constants import (
     Provider,
     ToolName,
 )
-from .models import AgentLoopConfig, SessionState
+from .models import AgentLoopConfig, AppContext
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -82,37 +81,37 @@ if TYPE_CHECKING:
 
     from .config import ModelConfig
 
-session_state = SessionState()
-
-console = Console(width=None, force_terminal=True)
+app_context = AppContext()
 
 
 def init_session_log(project_root: Path) -> Path:
     log_dir = project_root / TMP_DIR
     log_dir.mkdir(exist_ok=True)
-    session_state.log_file = log_dir / f"{SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}.log"
-    with open(session_state.log_file, "w") as f:
+    app_context.session.log_file = (
+        log_dir / f"{SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}.log"
+    )
+    with open(app_context.session.log_file, "w") as f:
         f.write(SESSION_LOG_HEADER)
-    return session_state.log_file
+    return app_context.session.log_file
 
 
 def log_session_event(event: str) -> None:
-    if session_state.log_file:
-        with open(session_state.log_file, "a") as f:
+    if app_context.session.log_file:
+        with open(app_context.session.log_file, "a") as f:
             f.write(f"{event}\n")
 
 
 def get_session_context() -> str:
-    if session_state.log_file and session_state.log_file.exists():
-        content = session_state.log_file.read_text()
+    if app_context.session.log_file and app_context.session.log_file.exists():
+        content = app_context.session.log_file.read_text()
         return f"{SESSION_CONTEXT_START}{content}{SESSION_CONTEXT_END}"
     return ""
 
 
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:
     separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
-    console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
-    console.print(separator)
+    app_context.console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
+    app_context.console.print(separator)
 
     diff = difflib.unified_diff(
         target.splitlines(keepends=True),
@@ -126,28 +125,28 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
         line = line.rstrip("\n")
         match line[:1]:
             case "+" | "-" if line.startswith("+++") or line.startswith("---"):
-                console.print(f"[dim]{line}[/dim]")
+                app_context.console.print(f"[dim]{line}[/dim]")
             case "@":
-                console.print(f"[cyan]{line}[/cyan]")
+                app_context.console.print(f"[cyan]{line}[/cyan]")
             case "+":
-                console.print(f"[green]{line}[/green]")
+                app_context.console.print(f"[green]{line}[/green]")
             case "-":
-                console.print(f"[red]{line}[/red]")
+                app_context.console.print(f"[red]{line}[/red]")
             case _:
-                console.print(line)
+                app_context.console.print(line)
 
-    console.print(separator)
+    app_context.console.print(separator)
 
 
 def _print_new_file_content(path: str, content: str) -> None:
     separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
-    console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
-    console.print(separator)
+    app_context.console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
+    app_context.console.print(separator)
 
     for line in content.splitlines():
-        console.print(f"[green]+ {line}[/green]")
+        app_context.console.print(f"[green]+ {line}[/green]")
 
-    console.print(separator)
+    app_context.console.print(separator)
 
 
 def _display_tool_call_diff(
@@ -167,11 +166,13 @@ def _display_tool_call_diff(
 
         case ToolName.SHELL_COMMAND:
             command = tool_args.get("command", "")
-            console.print("\n[bold cyan]Shell command:[/bold cyan]")
-            console.print(f"[yellow]$ {command}[/yellow]")
+            app_context.console.print("\n[bold cyan]Shell command:[/bold cyan]")
+            app_context.console.print(f"[yellow]$ {command}[/yellow]")
 
         case _:
-            console.print(f"    Arguments: {json.dumps(tool_args, indent=2)}")
+            app_context.console.print(
+                f"    Arguments: {json.dumps(tool_args, indent=2)}"
+            )
 
 
 def _process_tool_approvals(
@@ -181,12 +182,12 @@ def _process_tool_approvals(
 
     for call in requests.approvals:
         tool_args = call.args_as_dict()
-        console.print(
+        app_context.console.print(
             f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
         )
         _display_tool_call_diff(call.tool_name, tool_args)
 
-        if session_state.confirm_edits:
+        if app_context.session.confirm_edits:
             if Confirm.ask(f"[bold cyan]{approval_prompt}[/bold cyan]"):
                 deferred_results.approvals[call.tool_call_id] = True
             else:
@@ -260,7 +261,7 @@ def _create_configuration_table(
             table.add_row(TABLE_ROW_OLLAMA_CYPHER, cypher_endpoint)
 
     confirmation_status = (
-        CONFIRM_ENABLED if session_state.confirm_edits else CONFIRM_DISABLED
+        CONFIRM_ENABLED if app_context.session.confirm_edits else CONFIRM_DISABLED
     )
     table.add_row(TABLE_ROW_EDIT_CONFIRMATION, confirmation_status)
     table.add_row(TABLE_ROW_TARGET_REPOSITORY, repo_path)
@@ -309,7 +310,7 @@ async def run_optimization_loop(
     language: str,
     reference_document: str | None = None,
 ) -> None:
-    console.print(
+    app_context.console.print(
         f"[bold green]Starting {language} optimization session...[/bold green]"
     )
     document_info = (
@@ -317,7 +318,7 @@ async def run_optimization_loop(
         if reference_document
         else ""
     )
-    console.print(
+    app_context.console.print(
         Panel(
             f"[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
             f" You'll be asked to approve each suggestion before implementation."
@@ -339,7 +340,7 @@ async def run_optimization_loop(
 
 
 async def run_with_cancellation[T](
-    console: Console, coro: Coroutine[None, None, T], timeout: float | None = None
+    coro: Coroutine[None, None, T], timeout: float | None = None
 ) -> T | CancelledResult:
     task = asyncio.create_task(coro)
 
@@ -351,7 +352,7 @@ async def run_with_cancellation[T](
             await task
         except asyncio.CancelledError:
             pass
-        console.print(
+        app_context.console.print(
             f"\n[bold yellow]{MSG_TIMEOUT_FORMAT.format(timeout=timeout)}[/bold yellow]"
         )
         return CancelledResult(cancelled=True)
@@ -362,7 +363,9 @@ async def run_with_cancellation[T](
                 await task
             except asyncio.CancelledError:
                 pass
-        console.print(f"\n[bold yellow]{MSG_THINKING_CANCELLED}[/bold yellow]")
+        app_context.console.print(
+            f"\n[bold yellow]{MSG_THINKING_CANCELLED}[/bold yellow]"
+        )
         return CancelledResult(cancelled=True)
 
 
@@ -375,9 +378,8 @@ async def _run_agent_response_loop(
     deferred_results: DeferredToolResults | None = None
 
     while True:
-        with console.status(config.status_message):
+        with app_context.console.status(config.status_message):
             response = await run_with_cancellation(
-                console,
                 rag_agent.run(
                     question_with_context,
                     message_history=message_history,
@@ -387,7 +389,7 @@ async def _run_agent_response_loop(
 
         if isinstance(response, CancelledResult):
             log_session_event(config.cancelled_log)
-            session_state.cancelled = True
+            app_context.session.cancelled = True
             break
 
         if isinstance(response.output, DeferredToolRequests):
@@ -403,7 +405,7 @@ async def _run_agent_response_loop(
         if not isinstance(output_text, str):
             continue
         markdown_response = Markdown(output_text)
-        console.print(
+        app_context.console.print(
             Panel(
                 markdown_response,
                 title=config.panel_title,
@@ -537,9 +539,9 @@ async def _run_interactive_loop(
 
             log_session_event(f"{SESSION_PREFIX_USER}{question}")
 
-            if session_state.cancelled:
+            if app_context.session.cancelled:
                 question_with_context = question + get_session_context()
-                session_state.reset_cancelled()
+                app_context.session.reset_cancelled()
             else:
                 question_with_context = question
 
@@ -557,7 +559,9 @@ async def _run_interactive_loop(
             break
         except Exception as e:
             logger.error("An unexpected error occurred: {}", e, exc_info=True)
-            console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+            app_context.console.print(
+                f"[bold red]An unexpected error occurred: {e}[/bold red]"
+            )
 
 
 async def run_chat_loop(
@@ -635,16 +639,16 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
     try:
         graph_data = _write_graph_json(ingestor, output_path)
-        console.print(
+        app_context.console.print(
             f"[bold green]Graph exported successfully to: {output_path.absolute()}[/bold green]"
         )
-        console.print(
+        app_context.console.print(
             f"[bold cyan]Export contains {graph_data['metadata']['total_nodes']} nodes and {graph_data['metadata']['total_relationships']} relationships[/bold cyan]"
         )
         return True
 
     except Exception as e:
-        console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
+        app_context.console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
         logger.error(f"Export error: {e}", exc_info=True)
         return False
 
@@ -687,7 +691,7 @@ def _initialize_services_and_agent(
     directory_lister = DirectoryLister(project_root=repo_path)
     document_analyzer = DocumentAnalyzer(project_root=repo_path)
 
-    query_tool = create_query_tool(ingestor, cypher_generator, console)
+    query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
     code_tool = create_code_retrieval_tool(code_retriever)
     file_reader_tool = create_file_reader_tool(file_reader)
     file_writer_tool = create_file_writer_tool(file_writer)
@@ -719,11 +723,11 @@ async def main_async(repo_path: str, batch_size: int) -> None:
     project_root = _setup_common_initialization(repo_path)
 
     table = _create_configuration_table(repo_path)
-    console.print(table)
+    app_context.console.print(table)
 
     with _connect_memgraph(batch_size) as ingestor:
-        console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
-        console.print(
+        app_context.console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
+        app_context.console.print(
             Panel(
                 f"[bold yellow]{MSG_CHAT_INSTRUCTIONS}[/bold yellow]",
                 border_style="yellow",
@@ -746,19 +750,19 @@ async def main_optimize_async(
 
     _update_model_settings(orchestrator, cypher)
 
-    console.print(
+    app_context.console.print(
         f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
     )
 
     table = _create_configuration_table(
         str(project_root), "Optimization Session Configuration", language
     )
-    console.print(table)
+    app_context.console.print(table)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     with _connect_memgraph(effective_batch_size) as ingestor:
-        console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
+        app_context.console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
 
         rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
         await run_optimization_loop(
