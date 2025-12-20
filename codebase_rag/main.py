@@ -106,7 +106,14 @@ from .tools.semantic_search import (
     create_semantic_search_tool,
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
-from .types_defs import CancelledResult, GraphData, ToolArgValue
+from .types_defs import (
+    CancelledResult,
+    CreateFileArgs,
+    GraphData,
+    ReplaceCodeArgs,
+    ShellCommandArgs,
+    ToolArgs,
+)
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -183,8 +190,27 @@ def _print_new_file_content(path: str, content: str) -> None:
     app_context.console.print(separator)
 
 
+def _to_tool_args(tool_name: str, raw_args: dict[str, str]) -> ToolArgs:
+    match tool_name:
+        case ToolName.REPLACE_CODE:
+            return ReplaceCodeArgs(
+                file_path=raw_args.get(ARG_FILE_PATH, ""),
+                target_code=raw_args.get(ARG_TARGET_CODE, ""),
+                replacement_code=raw_args.get(ARG_REPLACEMENT_CODE, ""),
+            )
+        case ToolName.CREATE_FILE:
+            return CreateFileArgs(
+                file_path=raw_args.get(ARG_FILE_PATH, ""),
+                content=raw_args.get(ARG_CONTENT, ""),
+            )
+        case ToolName.SHELL_COMMAND:
+            return ShellCommandArgs(command=raw_args.get(ARG_COMMAND, ""))
+        case _:
+            return ShellCommandArgs()
+
+
 def _display_tool_call_diff(
-    tool_name: str, tool_args: dict[str, ToolArgValue], file_path: str | None = None
+    tool_name: str, tool_args: ToolArgs, file_path: str | None = None
 ) -> None:
     match tool_name:
         case ToolName.REPLACE_CODE:
@@ -215,7 +241,7 @@ def _process_tool_approvals(
     deferred_results = DeferredToolResults()
 
     for call in requests.approvals:
-        tool_args = call.args_as_dict()
+        tool_args = _to_tool_args(call.tool_name, call.args_as_dict())
         app_context.console.print(
             f"\n{UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
         )

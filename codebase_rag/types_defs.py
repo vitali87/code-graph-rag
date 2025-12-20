@@ -80,4 +80,19 @@ class CancelledResult(NamedTuple):
     cancelled: bool
 
 
-ToolArgValue = str | int | float | bool | list[str] | None
+class ReplaceCodeArgs(TypedDict, total=False):
+    file_path: str
+    target_code: str
+    replacement_code: str
+
+
+class CreateFileArgs(TypedDict, total=False):
+    file_path: str
+    content: str
+
+
+class ShellCommandArgs(TypedDict, total=False):
+    command: str
+
+
+ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs
