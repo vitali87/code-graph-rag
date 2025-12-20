@@ -118,6 +118,35 @@ LOG_EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 LOG_EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 LOG_IMAGE_COPIED = "Copied image to temporary path: {path}"
 
+# (H) CLI error and info messages
+CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
+    "Error: --output/-o option requires --update-graph to be specified."
+)
+CLI_ERR_ONLY_JSON = "Error: Currently only JSON format is supported."
+CLI_ERR_STARTUP = "Startup Error: {error}"
+CLI_ERR_CONFIG = "Configuration Error: {error}"
+CLI_ERR_INDEXING = "An error occurred during indexing: {error}"
+CLI_ERR_EXPORT_FAILED = "Failed to export graph: {error}"
+CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
+CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
+
+CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
+CLI_MSG_CLEANING_DB = "Cleaning database..."
+CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
+CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
+CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
+CLI_MSG_INDEXING_AT = "Indexing codebase at: {path}"
+CLI_MSG_OUTPUT_TO = "Output will be written to: {path}"
+CLI_MSG_INDEXING_DONE = "Indexing process completed successfully!"
+CLI_MSG_CONNECTING_MEMGRAPH = "Connecting to Memgraph to export graph..."
+CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
+CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
+CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
+CLI_MSG_HINT_TARGET_REPO = (
+    "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
+)
+CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
+
 # (H) UI format strings for main.py
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
