@@ -123,6 +123,7 @@ from .types_defs import (
     CancelledResult,
     CreateFileArgs,
     GraphData,
+    RawToolArgs,
     ReplaceCodeArgs,
     ShellCommandArgs,
     ToolArgs,
@@ -218,21 +219,21 @@ def _print_new_file_content(path: str, content: str) -> None:
     app_context.console.print(separator)
 
 
-def _to_tool_args(tool_name: str, raw_args: dict[str, str]) -> ToolArgs:
+def _to_tool_args(tool_name: str, raw_args: RawToolArgs) -> ToolArgs:
     match tool_name:
         case ToolName.REPLACE_CODE:
             return ReplaceCodeArgs(
-                file_path=raw_args.get(ARG_FILE_PATH, ""),
-                target_code=raw_args.get(ARG_TARGET_CODE, ""),
-                replacement_code=raw_args.get(ARG_REPLACEMENT_CODE, ""),
+                file_path=raw_args.file_path,
+                target_code=raw_args.target_code,
+                replacement_code=raw_args.replacement_code,
             )
         case ToolName.CREATE_FILE:
             return CreateFileArgs(
-                file_path=raw_args.get(ARG_FILE_PATH, ""),
-                content=raw_args.get(ARG_CONTENT, ""),
+                file_path=raw_args.file_path,
+                content=raw_args.content,
             )
         case ToolName.SHELL_COMMAND:
-            return ShellCommandArgs(command=raw_args.get(ARG_COMMAND, ""))
+            return ShellCommandArgs(command=raw_args.command)
         case _:
             return ShellCommandArgs()
 
@@ -273,7 +274,7 @@ def _process_tool_approvals(
     deferred_results = DeferredToolResults()
 
     for call in requests.approvals:
-        tool_args = _to_tool_args(call.tool_name, call.args_as_dict())
+        tool_args = _to_tool_args(call.tool_name, RawToolArgs(**call.args_as_dict()))
         app_context.console.print(
             f"\n{UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
         )
@@ -476,13 +477,13 @@ async def _run_agent_response_loop(
         break
 
 
-def _find_image_paths(question: str) -> list[str]:
+def _find_image_paths(question: str) -> list[Path]:
     try:
         tokens = shlex.split(question)
     except ValueError:
         tokens = question.split()
     return [
-        token
+        Path(token)
         for token in tokens
         if token.startswith("/") and token.lower().endswith(IMAGE_EXTENSIONS)
     ]
@@ -514,11 +515,9 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     tmp_dir.mkdir(exist_ok=True)
     updated_question = question
 
-    for original_path_str in image_files:
-        original_path = Path(original_path_str)
-
+    for original_path in image_files:
         if not original_path.exists() or not original_path.is_file():
-            logger.warning(ERR_IMAGE_NOT_FOUND.format(path=original_path_str))
+            logger.warning(ERR_IMAGE_NOT_FOUND.format(path=original_path))
             continue
 
         try:
@@ -526,7 +525,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             shutil.copy(original_path, new_path)
             new_relative = str(new_path.relative_to(project_root))
             updated_question = _replace_path_in_question(
-                updated_question, original_path_str, new_relative
+                updated_question, str(original_path), new_relative
             )
             logger.info(LOG_IMAGE_COPIED.format(path=new_relative))
         except Exception as e:

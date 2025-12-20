@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import NamedTuple, TypedDict
 
@@ -93,6 +94,15 @@ class CreateFileArgs(TypedDict, total=False):
 
 class ShellCommandArgs(TypedDict, total=False):
     command: str
+
+
+@dataclass
+class RawToolArgs:
+    file_path: str = ""
+    target_code: str = ""
+    replacement_code: str = ""
+    content: str = ""
+    command: str = ""
 
 
 ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs
