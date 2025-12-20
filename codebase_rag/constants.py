@@ -19,6 +19,13 @@ class Provider(StrEnum):
     GOOGLE = "google"
 
 
+class Color(StrEnum):
+    GREEN = "green"
+    YELLOW = "yellow"
+    CYAN = "cyan"
+    RED = "red"
+
+
 DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_API_KEY = "ollama"

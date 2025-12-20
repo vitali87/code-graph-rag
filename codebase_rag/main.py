@@ -86,6 +86,7 @@ from .constants import (
     UI_OPTIMIZATION_START,
     UI_SHELL_COMMAND_HEADER,
     UI_TOOL_APPROVAL,
+    Color,
     ModelRole,
     Provider,
     ToolName,
@@ -121,6 +122,11 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
     from .config import ModelConfig
+
+
+def style(text: str, color: Color) -> str:
+    return f"[bold {color}]{text}[/bold {color}]"
+
 
 app_context = AppContext()
 
@@ -248,7 +254,7 @@ def _process_tool_approvals(
         _display_tool_call_diff(call.tool_name, tool_args)
 
         if app_context.session.confirm_edits:
-            if Confirm.ask(f"[bold cyan]{approval_prompt}[/bold cyan]"):
+            if Confirm.ask(style(approval_prompt, Color.CYAN)):
                 deferred_results.approvals[call.tool_call_id] = True
             else:
                 feedback = Prompt.ask(
@@ -284,7 +290,7 @@ def _create_configuration_table(
     title: str = DEFAULT_TABLE_TITLE,
     language: str | None = None,
 ) -> Table:
-    table = Table(title=f"[bold green]{title}[/bold green]")
+    table = Table(title=style(title, Color.GREEN))
     table.add_column(TABLE_COL_CONFIGURATION, style="cyan")
     table.add_column(TABLE_COL_VALUE, style="magenta")
 
@@ -390,7 +396,7 @@ async def run_optimization_loop(
         message_history,
         project_root,
         OPTIMIZATION_LOOP_CONFIG,
-        f"[bold cyan]{PROMPT_YOUR_RESPONSE}[/bold cyan]",
+        style(PROMPT_YOUR_RESPONSE, Color.CYAN),
         initial_question,
     )
 
@@ -409,7 +415,7 @@ async def run_with_cancellation[T](
         except asyncio.CancelledError:
             pass
         app_context.console.print(
-            f"\n[bold yellow]{MSG_TIMEOUT_FORMAT.format(timeout=timeout)}[/bold yellow]"
+            f"\n{style(MSG_TIMEOUT_FORMAT.format(timeout=timeout), Color.YELLOW)}"
         )
         return CancelledResult(cancelled=True)
     except (asyncio.CancelledError, KeyboardInterrupt):
@@ -419,9 +425,7 @@ async def run_with_cancellation[T](
                 await task
             except asyncio.CancelledError:
                 pass
-        app_context.console.print(
-            f"\n[bold yellow]{MSG_THINKING_CANCELLED}[/bold yellow]"
-        )
+        app_context.console.print(f"\n{style(MSG_THINKING_CANCELLED, Color.YELLOW)}")
         return CancelledResult(cancelled=True)
 
 
@@ -626,7 +630,7 @@ async def run_chat_loop(
         message_history,
         project_root,
         CHAT_LOOP_CONFIG,
-        f"[bold cyan]{PROMPT_ASK_QUESTION}[/bold cyan]",
+        style(PROMPT_ASK_QUESTION, Color.CYAN),
     )
 
 
@@ -774,10 +778,10 @@ async def main_async(repo_path: str, batch_size: int) -> None:
     app_context.console.print(table)
 
     with _connect_memgraph(batch_size) as ingestor:
-        app_context.console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
+        app_context.console.print(style(MSG_CONNECTED_MEMGRAPH, Color.GREEN))
         app_context.console.print(
             Panel(
-                f"[bold yellow]{MSG_CHAT_INSTRUCTIONS}[/bold yellow]",
+                style(MSG_CHAT_INSTRUCTIONS, Color.YELLOW),
                 border_style="yellow",
             )
         )
@@ -810,7 +814,7 @@ async def main_optimize_async(
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     with _connect_memgraph(effective_batch_size) as ingestor:
-        app_context.console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
+        app_context.console.print(style(MSG_CONNECTED_MEMGRAPH, Color.GREEN))
 
         rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
         await run_optimization_loop(
