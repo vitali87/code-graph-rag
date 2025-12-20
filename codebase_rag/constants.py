@@ -26,6 +26,12 @@ class Color(StrEnum):
     RED = "red"
 
 
+class KeyBinding(StrEnum):
+    CTRL_J = "c-j"
+    ENTER = "enter"
+    CTRL_C = "c-c"
+
+
 DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_API_KEY = "ollama"

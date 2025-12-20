@@ -87,6 +87,7 @@ from .constants import (
     UI_SHELL_COMMAND_HEADER,
     UI_TOOL_APPROVAL,
     Color,
+    KeyBinding,
     ModelRole,
     Provider,
     ToolName,
@@ -540,15 +541,15 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
 def get_multiline_input(prompt_text: str = PROMPT_ASK_QUESTION) -> str:
     bindings = KeyBindings()
 
-    @bindings.add("c-j")
+    @bindings.add(KeyBinding.CTRL_J)
     def submit(event: "KeyPressEvent") -> None:
         event.app.exit(result=event.app.current_buffer.text)
 
-    @bindings.add("enter")
+    @bindings.add(KeyBinding.ENTER)
     def new_line(event: "KeyPressEvent") -> None:
         event.current_buffer.insert_text("\n")
 
-    @bindings.add("c-c")
+    @bindings.add(KeyBinding.CTRL_C)
     def keyboard_interrupt(event: "KeyPressEvent") -> None:
         event.app.exit(exception=KeyboardInterrupt)
 
