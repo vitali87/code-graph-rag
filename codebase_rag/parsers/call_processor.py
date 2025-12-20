@@ -5,10 +5,10 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
-from ..constants import SEPARATOR_DOT
+from ..constants import SEPARATOR_DOT, SupportedLanguage
 from ..language_config import LanguageConfig
 from ..services import IngestorProtocol
-from ..types_defs import NodeType
+from ..types_defs import LanguageQueries, NodeType
 from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
 from .import_processor import ImportProcessor
 from .python_utils import resolve_class_name
@@ -94,7 +94,11 @@ class CallProcessor:
         self.class_inheritance = class_inheritance
 
     def process_calls_in_file(
-        self, file_path: Path, root_node: Node, language: str, queries: dict[str, Any]
+        self,
+        file_path: Path,
+        root_node: Node,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Process function calls in a specific file using its cached AST."""
         relative_path = file_path.relative_to(self.repo_path)
@@ -117,13 +121,19 @@ class CallProcessor:
             logger.error(f"Failed to process calls in {file_path}: {e}")
 
     def _process_calls_in_functions(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Process calls within top-level functions."""
         lang_queries = queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
         query = lang_queries["functions"]
+        if not query:
+            return
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
         func_nodes = captures.get("function", [])
@@ -133,7 +143,7 @@ class CallProcessor:
             if self._is_method(func_node, lang_config):
                 continue
 
-            if language == "cpp":
+            if language == SupportedLanguage.CPP:
                 func_name = extract_cpp_function_name(func_node)
                 if not func_name:
                     continue
@@ -155,14 +165,18 @@ class CallProcessor:
                 )
 
     def _process_calls_in_classes(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Process calls within class methods."""
         lang_queries = queries[language]
-        if not lang_queries.get("classes"):
+        query = lang_queries["classes"]
+        if not query:
             return
 
-        query = lang_queries["classes"]
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
         class_nodes = captures.get("class", [])
@@ -171,7 +185,7 @@ class CallProcessor:
             if not isinstance(class_node, Node):
                 continue
 
-            if language == "rust" and class_node.type == "impl_item":
+            if language == SupportedLanguage.RUST and class_node.type == "impl_item":
                 type_node = class_node.child_by_field_name("type")
                 if not type_node:
                     for child in class_node.children:
@@ -197,6 +211,8 @@ class CallProcessor:
                 continue
 
             method_query = lang_queries["functions"]
+            if not method_query:
+                continue
             method_cursor = QueryCursor(method_query)
             method_captures = method_cursor.captures(body_node)
             method_nodes = method_captures.get("function", [])
@@ -223,7 +239,11 @@ class CallProcessor:
                 )
 
     def _process_module_level_calls(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Process top-level calls in the module (like IIFE calls)."""
         self._ingest_function_calls(
@@ -308,8 +328,8 @@ class CallProcessor:
         caller_qn: str,
         caller_type: str,
         module_qn: str,
-        language: str,
-        queries: dict[str, Any],
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
         class_context: str | None = None,
     ) -> None:
         """Find and ingest function calls within a caller node."""
@@ -342,7 +362,10 @@ class CallProcessor:
             if not call_name:
                 continue
 
-            if language == "java" and call_node.type == "method_invocation":
+            if (
+                language == SupportedLanguage.JAVA
+                and call_node.type == "method_invocation"
+            ):
                 callee_info = self._resolve_java_method_call(
                     call_node, module_qn, local_var_types
                 )

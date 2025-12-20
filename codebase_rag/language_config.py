@@ -307,7 +307,7 @@ PHP_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_generic_file_to_module,
 )
 
-LANGUAGE_FQN_CONFIGS: dict[str, FQNConfig] = {
+LANGUAGE_FQN_CONFIGS: dict[SupportedLanguage, FQNConfig] = {
     SupportedLanguage.PYTHON: PYTHON_FQN_CONFIG,
     SupportedLanguage.JS: JS_FQN_CONFIG,
     SupportedLanguage.TS: TS_FQN_CONFIG,
@@ -322,7 +322,7 @@ LANGUAGE_FQN_CONFIGS: dict[str, FQNConfig] = {
 }
 
 
-LANGUAGE_CONFIGS: dict[str, LanguageConfig] = {
+LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
     SupportedLanguage.PYTHON: LanguageConfig(
         language=SupportedLanguage.PYTHON,
         file_extensions=(".py",),
@@ -629,4 +629,8 @@ def get_language_config(file_extension: str) -> LanguageConfig | None:
 
 
 def get_language_config_by_name(language_name: str) -> LanguageConfig | None:
-    return LANGUAGE_CONFIGS.get(language_name.lower())
+    try:
+        lang_key = SupportedLanguage(language_name.lower())
+        return LANGUAGE_CONFIGS.get(lang_key)
+    except ValueError:
+        return None

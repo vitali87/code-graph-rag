@@ -401,6 +401,79 @@ MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
 # (H) JSON formatting
 JSON_INDENT = 2
 
+# (H) Parser loader paths and args
+GRAMMARS_DIR = "grammars"
+TREE_SITTER_PREFIX = "tree-sitter-"
+TREE_SITTER_MODULE_PREFIX = "tree_sitter_"
+BINDINGS_DIR = "bindings"
+SETUP_PY = "setup.py"
+BUILD_EXT_CMD = "build_ext"
+INPLACE_FLAG = "--inplace"
+LANG_ATTR_PREFIX = "language_"
+LANG_ATTR_TYPESCRIPT = "language_typescript"
+
+# (H) Parser loader log messages
+LOG_BUILDING_BINDINGS = "Building Python bindings for {lang}..."
+LOG_BUILD_FAILED = "Failed to build {lang} bindings: stdout={stdout}, stderr={stderr}"
+LOG_BUILD_SUCCESS = "Successfully built {lang} bindings"
+LOG_IMPORTING_MODULE = "Attempting to import module: {module}"
+LOG_LOADED_FROM_SUBMODULE = (
+    "Successfully loaded {lang} from submodule bindings using {attr}"
+)
+LOG_NO_LANG_ATTR = (
+    "Module {module} imported but has no language attribute. Available: {available}"
+)
+LOG_SUBMODULE_LOAD_FAILED = "Failed to load {lang} from submodule bindings: {error}"
+LOG_LIB_NOT_AVAILABLE = "Tree-sitter library for {lang} not available."
+LOG_LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
+LOG_GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
+LOG_GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
+LOG_INITIALIZED_PARSERS = "Initialized parsers for: {languages}"
+ERR_NO_LANGUAGES = "No Tree-sitter languages available."
+
+# (H) Query dict keys
+QUERY_FUNCTIONS = "functions"
+QUERY_CLASSES = "classes"
+QUERY_CALLS = "calls"
+QUERY_IMPORTS = "imports"
+QUERY_LOCALS = "locals"
+QUERY_CONFIG = "config"
+QUERY_LANGUAGE = "language"
+
+# (H) Query capture names
+CAPTURE_FUNCTION = "function"
+CAPTURE_CLASS = "class"
+CAPTURE_CALL = "call"
+CAPTURE_IMPORT = "import"
+CAPTURE_IMPORT_FROM = "import_from"
+
+# (H) Locals query patterns for JS/TS
+JS_LOCALS_PATTERN = """
+; Variable definitions
+(variable_declarator name: (identifier) @local.definition)
+(function_declaration name: (identifier) @local.definition)
+(class_declaration name: (identifier) @local.definition)
+
+; Variable references
+(identifier) @local.reference
+"""
+
+TS_LOCALS_PATTERN = """
+; Variable definitions (TypeScript has multiple declaration types)
+(variable_declarator name: (identifier) @local.definition)
+(lexical_declaration (variable_declarator name: (identifier) @local.definition))
+(variable_declaration (variable_declarator name: (identifier) @local.definition))
+
+; Function definitions
+(function_declaration name: (identifier) @local.definition)
+
+; Class definitions (uses type_identifier for class names)
+(class_declaration name: (type_identifier) @local.definition)
+
+; Variable references
+(identifier) @local.reference
+"""
+
 # (H) File/directory ignore patterns
 IGNORE_PATTERNS = frozenset(
     {

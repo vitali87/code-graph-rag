@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
-from ..constants import SEPARATOR_DOT
-from ..types_defs import NodeType, SimpleNameLookup
+from ..constants import SEPARATOR_DOT, SupportedLanguage
+from ..types_defs import LanguageQueries, NodeType, SimpleNameLookup
 from .import_processor import ImportProcessor
 from .java_type_inference import JavaTypeInferenceEngine
 from .js_type_inference import JsTypeInferenceEngine
@@ -17,7 +17,7 @@ from .utils import safe_decode_text
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
 
-_JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
+_JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
 
 
 class TypeInferenceEngine:
@@ -30,7 +30,7 @@ class TypeInferenceEngine:
         repo_path: Path,
         project_name: str,
         ast_cache: "ASTCacheProtocol",
-        queries: dict[str, Any],
+        queries: dict[SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
@@ -93,30 +93,27 @@ class TypeInferenceEngine:
         return self._js_type_inference
 
     def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str, language: str
+        self, caller_node: Node, module_qn: str, language: SupportedLanguage
     ) -> dict[str, str]:
-        """
-        Build a map of local variable names to their inferred types within a function.
-        This enables resolution of instance method calls like user.get_name().
-        """
         local_var_types: dict[str, str] = {}
 
-        if language == "python":
-            pass
-        elif language in _JS_TYPESCRIPT_LANGUAGES:
-            return self.js_type_inference.build_js_local_variable_type_map(
-                caller_node, module_qn, language
-            )
-        elif language == "java":
-            return self.java_type_inference.build_java_variable_type_map(
-                caller_node, module_qn
-            )
-        elif language == "lua":
-            return self.lua_type_inference.build_lua_local_variable_type_map(
-                caller_node, module_qn
-            )
-        else:
-            return local_var_types
+        match language:
+            case SupportedLanguage.PYTHON:
+                pass
+            case SupportedLanguage.JS | SupportedLanguage.TS:
+                return self.js_type_inference.build_js_local_variable_type_map(
+                    caller_node, module_qn, language
+                )
+            case SupportedLanguage.JAVA:
+                return self.java_type_inference.build_java_variable_type_map(
+                    caller_node, module_qn
+                )
+            case SupportedLanguage.LUA:
+                return self.lua_type_inference.build_lua_local_variable_type_map(
+                    caller_node, module_qn
+                )
+            case _:
+                return local_var_types
 
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
@@ -1014,7 +1011,7 @@ class TypeInferenceEngine:
                 file_path = self.module_qn_to_file_path[module_qn]
                 if file_path in self.ast_cache:
                     root_node, language = self.ast_cache[file_path]
-                    if language == "python":
+                    if language == SupportedLanguage.PYTHON:
                         instance_vars: dict[str, str] = {}
                         self._analyze_self_assignments(
                             root_node, instance_vars, module_qn
@@ -1085,23 +1082,32 @@ class TypeInferenceEngine:
         return None
 
     def _find_method_in_ast(
-        self, root_node: Node, class_name: str, method_name: str, language: str
+        self,
+        root_node: Node,
+        class_name: str,
+        method_name: str,
+        language: SupportedLanguage,
     ) -> Node | None:
-        """Find a specific method within a class in the AST."""
-        if language == "python":
-            return self._find_python_method_in_ast(root_node, class_name, method_name)
-        elif language in ("javascript", "typescript"):
-            return self.js_type_inference.find_js_method_in_ast(
-                root_node, class_name, method_name
-            )
-        return None
+        match language:
+            case SupportedLanguage.PYTHON:
+                return self._find_python_method_in_ast(
+                    root_node, class_name, method_name
+                )
+            case SupportedLanguage.JS | SupportedLanguage.TS:
+                return self.js_type_inference.find_js_method_in_ast(
+                    root_node, class_name, method_name
+                )
+            case _:
+                return None
 
     def _find_python_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:
         """Find a specific method within a Python class in the AST."""
-        lang_queries = self.queries["python"]
+        lang_queries = self.queries[SupportedLanguage.PYTHON]
         class_query = lang_queries["classes"]
+        if not class_query:
+            return None
         cursor = QueryCursor(class_query)
         captures = cursor.captures(root_node)
 
@@ -1122,10 +1128,10 @@ class TypeInferenceEngine:
                 continue
 
             body_node = class_node.child_by_field_name("body")
-            if not body_node:
+            method_query = lang_queries["functions"]
+            if not body_node or not method_query:
                 continue
 
-            method_query = lang_queries["functions"]
             method_cursor = QueryCursor(method_query)
             method_captures = method_cursor.captures(body_node)
 
@@ -1227,7 +1233,7 @@ class TypeInferenceEngine:
                     method_node = self._find_method_ast_node(method_qn)
                     if method_node:
                         local_vars = self.build_local_variable_type_map(
-                            method_node, module_qn, "python"
+                            method_node, module_qn, SupportedLanguage.PYTHON
                         )
                         if identifier in local_vars:
                             logger.debug(

@@ -1,7 +1,17 @@
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import NamedTuple, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
+
+from .constants import SupportedLanguage
+
+if TYPE_CHECKING:
+    from tree_sitter import Language, Parser, Query
+
+    from .models import LanguageConfig
+
+type LanguageLoader = Callable[[], "Language"] | None
 
 PropertyValue = str | int | float | bool | None
 
@@ -81,6 +91,13 @@ class CancelledResult(NamedTuple):
     cancelled: bool
 
 
+class LanguageImport(NamedTuple):
+    lang_key: SupportedLanguage
+    module_path: str
+    attr_name: str
+    submodule_name: SupportedLanguage
+
+
 class ReplaceCodeArgs(TypedDict, total=False):
     file_path: str
     target_code: str
@@ -106,3 +123,14 @@ class RawToolArgs:
 
 
 ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs
+
+
+class LanguageQueries(TypedDict):
+    functions: "Query | None"
+    classes: "Query | None"
+    calls: "Query | None"
+    imports: "Query | None"
+    locals: "Query | None"
+    config: "LanguageConfig"
+    language: "Language"
+    parser: "Parser"

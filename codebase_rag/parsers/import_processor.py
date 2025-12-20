@@ -6,8 +6,9 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node
 
-from ..constants import SEPARATOR_DOT
+from ..constants import SEPARATOR_DOT, SupportedLanguage
 from ..language_config import LanguageConfig
+from ..types_defs import LanguageQueries
 from .lua_utils import (
     extract_lua_assigned_name,
     extract_lua_pcall_second_identifier,
@@ -15,7 +16,7 @@ from .lua_utils import (
 from .rust_utils import extract_rust_use_imports
 from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
-_JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
+_JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
 
 _STDLIB_CACHE: dict[str, dict[str, str]] = {}
 _CACHE_TTL = 3600
@@ -164,7 +165,11 @@ class ImportProcessor:
         }
 
     def parse_imports(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Parse import statements and build import mapping for the module."""
         if language not in queries or not queries[language].get("imports"):
@@ -179,22 +184,23 @@ class ImportProcessor:
             cursor = get_query_cursor(imports_query)
             captures = cursor.captures(root_node)
 
-            if language == "python":
-                self._parse_python_imports(captures, module_qn)
-            elif language in _JS_TYPESCRIPT_LANGUAGES:
-                self._parse_js_ts_imports(captures, module_qn)
-            elif language == "java":
-                self._parse_java_imports(captures, module_qn)
-            elif language == "rust":
-                self._parse_rust_imports(captures, module_qn)
-            elif language == "go":
-                self._parse_go_imports(captures, module_qn)
-            elif language == "cpp":
-                self._parse_cpp_imports(captures, module_qn)
-            elif language == "lua":
-                self._parse_lua_imports(captures, module_qn)
-            else:
-                self._parse_generic_imports(captures, module_qn, lang_config)
+            match language:
+                case SupportedLanguage.PYTHON:
+                    self._parse_python_imports(captures, module_qn)
+                case SupportedLanguage.JS | SupportedLanguage.TS:
+                    self._parse_js_ts_imports(captures, module_qn)
+                case SupportedLanguage.JAVA:
+                    self._parse_java_imports(captures, module_qn)
+                case SupportedLanguage.RUST:
+                    self._parse_rust_imports(captures, module_qn)
+                case SupportedLanguage.GO:
+                    self._parse_go_imports(captures, module_qn)
+                case SupportedLanguage.CPP:
+                    self._parse_cpp_imports(captures, module_qn)
+                case SupportedLanguage.LUA:
+                    self._parse_lua_imports(captures, module_qn)
+                case _:
+                    self._parse_generic_imports(captures, module_qn, lang_config)
 
             logger.debug(
                 f"Parsed {len(self.import_mapping[module_qn])} imports in {module_qn}"
@@ -919,7 +925,9 @@ class ImportProcessor:
         return None
 
     def _extract_module_path(
-        self, full_qualified_name: str, language: str = "python"
+        self,
+        full_qualified_name: str,
+        language: SupportedLanguage = SupportedLanguage.PYTHON,
     ) -> str:
         """Extract module path from a full qualified name using tree-sitter knowledge.
 
@@ -947,22 +955,23 @@ class ImportProcessor:
                 if len(parts) == 2:
                     return parts[0]
 
-        if language == "python":
-            return self._extract_python_stdlib_path(full_qualified_name)
-        elif language in ["javascript", "typescript"]:
-            return self._extract_js_stdlib_path(full_qualified_name)
-        elif language == "go":
-            return self._extract_go_stdlib_path(full_qualified_name)
-        elif language == "rust":
-            return self._extract_rust_stdlib_path(full_qualified_name)
-        elif language == "cpp":
-            return self._extract_cpp_stdlib_path(full_qualified_name)
-        elif language == "java":
-            return self._extract_java_stdlib_path(full_qualified_name)
-        elif language == "lua":
-            return self._extract_lua_stdlib_path(full_qualified_name)
-        else:
-            return self._extract_generic_stdlib_path(full_qualified_name)
+        match language:
+            case SupportedLanguage.PYTHON:
+                return self._extract_python_stdlib_path(full_qualified_name)
+            case SupportedLanguage.JS | SupportedLanguage.TS:
+                return self._extract_js_stdlib_path(full_qualified_name)
+            case SupportedLanguage.GO:
+                return self._extract_go_stdlib_path(full_qualified_name)
+            case SupportedLanguage.RUST:
+                return self._extract_rust_stdlib_path(full_qualified_name)
+            case SupportedLanguage.CPP:
+                return self._extract_cpp_stdlib_path(full_qualified_name)
+            case SupportedLanguage.JAVA:
+                return self._extract_java_stdlib_path(full_qualified_name)
+            case SupportedLanguage.LUA:
+                return self._extract_lua_stdlib_path(full_qualified_name)
+            case _:
+                return self._extract_generic_stdlib_path(full_qualified_name)
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
         """Extract Python stdlib module path using runtime introspection."""

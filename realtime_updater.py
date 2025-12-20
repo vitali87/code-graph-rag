@@ -10,7 +10,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from codebase_rag.config import settings
-from codebase_rag.constants import IGNORE_PATTERNS, IGNORE_SUFFIXES
+from codebase_rag.constants import IGNORE_PATTERNS, IGNORE_SUFFIXES, SupportedLanguage
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_config import get_language_config
 from codebase_rag.parser_loader import load_parsers
@@ -78,7 +78,11 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # (H) Step 3
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_config(path.suffix)
-            if lang_config and lang_config.language in self.updater.parsers:
+            if (
+                lang_config
+                and isinstance(lang_config.language, SupportedLanguage)
+                and lang_config.language in self.updater.parsers
+            ):
                 if result := self.updater.factory.definition_processor.process_file(
                     path,
                     lang_config.language,

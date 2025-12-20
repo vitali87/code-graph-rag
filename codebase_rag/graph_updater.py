@@ -2,7 +2,6 @@ import sys
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from tree_sitter import Node, Parser
@@ -22,7 +21,6 @@ from .constants import (
     KEY_END_LINE,
     KEY_NAME,
     KEY_NODE_ID,
-    KEY_PARSER,
     KEY_PATH,
     KEY_QUALIFIED_NAME,
     KEY_START_LINE,
@@ -51,6 +49,7 @@ from .constants import (
     TRIE_INTERNAL_PREFIX,
     TRIE_QN_KEY,
     TRIE_TYPE_KEY,
+    SupportedLanguage,
 )
 from .language_config import LANGUAGE_FQN_CONFIGS, get_language_config
 from .parsers.factory import ProcessorFactory
@@ -58,6 +57,7 @@ from .services import IngestorProtocol, QueryProtocol
 from .types_defs import (
     EmbeddingQueryResult,
     FunctionRegistry,
+    LanguageQueries,
     NodeType,
     QualifiedName,
     SimpleNameLookup,
@@ -205,11 +205,11 @@ class BoundedASTCache:
         max_entries: int = DEFAULT_CACHE_ENTRIES,
         max_memory_mb: int = DEFAULT_CACHE_MEMORY_MB,
     ):
-        self.cache: OrderedDict[Path, tuple[Node, str]] = OrderedDict()
+        self.cache: OrderedDict[Path, tuple[Node, SupportedLanguage]] = OrderedDict()
         self.max_entries = max_entries
         self.max_memory_bytes = max_memory_mb * BYTES_PER_MB
 
-    def __setitem__(self, key: Path, value: tuple[Node, str]) -> None:
+    def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None:
         if key in self.cache:
             del self.cache[key]
 
@@ -217,7 +217,7 @@ class BoundedASTCache:
 
         self._enforce_limits()
 
-    def __getitem__(self, key: Path) -> tuple[Node, str]:
+    def __getitem__(self, key: Path) -> tuple[Node, SupportedLanguage]:
         value = self.cache[key]
         self.cache.move_to_end(key)
         return value
@@ -229,7 +229,7 @@ class BoundedASTCache:
     def __contains__(self, key: Path) -> bool:
         return key in self.cache
 
-    def items(self) -> Any:
+    def items(self) -> ItemsView[Path, tuple[Node, SupportedLanguage]]:
         return self.cache.items()
 
     def _enforce_limits(self) -> None:
@@ -255,13 +255,13 @@ class GraphUpdater:
         self,
         ingestor: IngestorProtocol,
         repo_path: Path,
-        parsers: dict[str, Parser],
-        queries: dict[str, Any],
+        parsers: dict[SupportedLanguage, Parser],
+        queries: dict[SupportedLanguage, LanguageQueries],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.parsers = parsers
-        self.queries = self._prepare_queries_with_parsers(queries, parsers)
+        self.queries = queries
         self.project_name = repo_path.name
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
@@ -285,18 +285,6 @@ class GraphUpdater:
             file_name.lower() in DEPENDENCY_FILES
             or filepath.suffix.lower() == CSPROJ_SUFFIX
         )
-
-    def _prepare_queries_with_parsers(
-        self, queries: dict[str, Any], parsers: dict[str, Parser]
-    ) -> dict[str, Any]:
-        return {
-            lang: (
-                {**query_data, KEY_PARSER: parsers[lang]}
-                if lang in parsers
-                else query_data
-            )
-            for lang, query_data in queries.items()
-        }
 
     def run(self) -> None:
         self.ingestor.ensure_node_batch(NODE_PROJECT, {KEY_NAME: self.project_name})
@@ -361,7 +349,11 @@ class GraphUpdater:
         for filepath in self.repo_path.rglob("*"):
             if filepath.is_file() and not should_skip_path(filepath):
                 lang_config = get_language_config(filepath.suffix)
-                if lang_config and lang_config.language in self.parsers:
+                if (
+                    lang_config
+                    and isinstance(lang_config.language, SupportedLanguage)
+                    and lang_config.language in self.parsers
+                ):
                     result = self.factory.definition_processor.process_file(
                         filepath,
                         lang_config.language,

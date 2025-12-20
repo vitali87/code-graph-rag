@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from rich.console import Console
 
+from .constants import SupportedLanguage
 from .types_defs import PropertyValue
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class FQNConfig(NamedTuple):
 
 @dataclass(frozen=True)
 class LanguageConfig:
-    language: str
+    language: SupportedLanguage | str
     file_extensions: tuple[str, ...]
     function_node_types: tuple[str, ...]
     class_node_types: tuple[str, ...]

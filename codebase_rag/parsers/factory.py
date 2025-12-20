@@ -3,8 +3,9 @@ from typing import Any, Protocol
 
 from tree_sitter import Node
 
+from ..constants import SupportedLanguage
 from ..services import IngestorProtocol
-from ..types_defs import SimpleNameLookup
+from ..types_defs import LanguageQueries, SimpleNameLookup
 from .call_processor import CallProcessor
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
@@ -13,8 +14,8 @@ from .type_inference import TypeInferenceEngine
 
 
 class ASTCacheProtocol(Protocol):
-    def __setitem__(self, key: Path, value: tuple[Node, str]) -> None: ...
-    def __getitem__(self, key: Path) -> tuple[Node, str]: ...
+    def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None: ...
+    def __getitem__(self, key: Path) -> tuple[Node, SupportedLanguage]: ...
     def __delitem__(self, key: Path) -> None: ...
     def __contains__(self, key: Path) -> bool: ...
     def items(self) -> Any: ...
@@ -26,7 +27,7 @@ class ProcessorFactory:
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        queries: dict[str, Any],
+        queries: dict[SupportedLanguage, LanguageQueries],
         function_registry: Any,
         simple_name_lookup: SimpleNameLookup,
         ast_cache: ASTCacheProtocol,

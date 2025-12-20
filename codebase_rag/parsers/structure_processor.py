@@ -1,10 +1,10 @@
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 
-from ..constants import IGNORE_PATTERNS, SEPARATOR_DOT
+from ..constants import IGNORE_PATTERNS, SEPARATOR_DOT, SupportedLanguage
 from ..services import IngestorProtocol
+from ..types_defs import LanguageQueries
 
 
 class StructureProcessor:
@@ -15,7 +15,7 @@ class StructureProcessor:
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        queries: dict[str, Any],
+        queries: dict[SupportedLanguage, LanguageQueries],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
-from ..constants import ENCODING_UTF8, SEPARATOR_DOT
+from ..constants import ENCODING_UTF8, SEPARATOR_DOT, SupportedLanguage
 from ..language_config import get_language_config
 from ..parser_loader import load_parsers
 
@@ -21,22 +21,22 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
-LANGUAGE_EXTENSIONS = {
-    ".py": "python",
-    ".js": "javascript",
-    ".ts": "typescript",
-    ".rs": "rust",
-    ".go": "go",
-    ".java": "java",
-    ".scala": "scala",
-    ".cpp": "cpp",
-    ".h": "cpp",
-    ".hpp": "cpp",
-    ".cc": "cpp",
-    ".cxx": "cpp",
-    ".hxx": "cpp",
-    ".hh": "cpp",
-    ".lua": "lua",
+LANGUAGE_EXTENSIONS: dict[str, SupportedLanguage] = {
+    ".py": SupportedLanguage.PYTHON,
+    ".js": SupportedLanguage.JS,
+    ".ts": SupportedLanguage.TS,
+    ".rs": SupportedLanguage.RUST,
+    ".go": SupportedLanguage.GO,
+    ".java": SupportedLanguage.JAVA,
+    ".scala": SupportedLanguage.SCALA,
+    ".cpp": SupportedLanguage.CPP,
+    ".h": SupportedLanguage.CPP,
+    ".hpp": SupportedLanguage.CPP,
+    ".cc": SupportedLanguage.CPP,
+    ".cxx": SupportedLanguage.CPP,
+    ".hxx": SupportedLanguage.CPP,
+    ".hh": SupportedLanguage.CPP,
+    ".lua": SupportedLanguage.LUA,
 }
 
 

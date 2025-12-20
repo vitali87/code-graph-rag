@@ -6,10 +6,10 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
-from ..constants import SEPARATOR_DOT
+from ..constants import SEPARATOR_DOT, SupportedLanguage
 from ..language_config import LANGUAGE_FQN_CONFIGS, LanguageConfig
 from ..services import IngestorProtocol
-from ..types_defs import NodeType, SimpleNameLookup
+from ..types_defs import LanguageQueries, NodeType, SimpleNameLookup
 from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp_utils import (
     build_cpp_qualified_name,
@@ -30,7 +30,7 @@ from .utils import (
     safe_decode_with_fallback,
 )
 
-_JS_TYPESCRIPT_LANGUAGES = {"javascript", "typescript"}
+_JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
 
 
 class DefinitionProcessor:
@@ -80,10 +80,10 @@ class DefinitionProcessor:
     def process_file(
         self,
         file_path: Path,
-        language: str,
-        queries: dict[str, Any],
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
-    ) -> tuple[Node, str] | None:
+    ) -> tuple[Node, SupportedLanguage] | None:
         """
         Parses a file, ingests its structure and definitions,
         and returns the AST for caching.
@@ -153,7 +153,7 @@ class DefinitionProcessor:
             self._ingest_missing_import_patterns(
                 root_node, module_qn, language, queries
             )
-            if language == "cpp":
+            if language == SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(
                     root_node, module_qn, file_path, queries
                 )
@@ -167,7 +167,7 @@ class DefinitionProcessor:
             )
             self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
 
-            return root_node, language
+            return (root_node, language)
 
         except Exception as e:
             logger.error(f"Failed to parse or ingest {file_path}: {e}")
@@ -347,13 +347,19 @@ class DefinitionProcessor:
         )
 
     def _ingest_all_functions(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Extract and ingest all functions (including nested ones)."""
         lang_queries = queries[language]
         lang_config: LanguageConfig = lang_queries["config"]
 
         query = lang_queries["functions"]
+        if not query:
+            return
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
 
@@ -381,12 +387,12 @@ class DefinitionProcessor:
                 )
                 if func_qn:
                     func_name = func_qn.split(SEPARATOR_DOT)[-1]
-                    if language == "cpp":
+                    if language == SupportedLanguage.CPP:
                         is_exported = is_cpp_exported(func_node)
 
             # (H) Fallback to legacy logic if resolution failed (e.g. anonymous functions, specific language patterns)
             if not func_qn:
-                if language == "cpp":
+                if language == SupportedLanguage.CPP:
                     func_name = extract_cpp_function_name(func_node)
                     if not func_name:
                         if func_node.type == "lambda_expression":
@@ -401,7 +407,7 @@ class DefinitionProcessor:
 
                     if (
                         not func_name
-                        and language == "lua"
+                        and language == SupportedLanguage.LUA
                         and func_node.type == "function_definition"
                     ):
                         func_name = self._extract_lua_assignment_function_name(
@@ -413,7 +419,7 @@ class DefinitionProcessor:
                             func_node, module_qn
                         )
 
-                    if language == "rust":
+                    if language == SupportedLanguage.RUST:
                         func_qn = self._build_rust_function_qualified_name(
                             func_node, module_qn, func_name
                         )
@@ -451,7 +457,7 @@ class DefinitionProcessor:
                 ("Function", "qualified_name", func_qn),
             )
 
-            if is_exported and language == "cpp":
+            if is_exported and language == SupportedLanguage.CPP:
                 self.ingestor.ensure_relationship_batch(
                     ("Module", "qualified_name", module_qn),
                     "EXPORTS",
@@ -459,7 +465,11 @@ class DefinitionProcessor:
                 )
 
     def _ingest_top_level_functions(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Extract and ingest top-level functions. (Legacy method, replaced by _ingest_all_functions)"""
         self._ingest_all_functions(root_node, module_qn, language, queries)
@@ -600,7 +610,11 @@ class DefinitionProcessor:
         return "Module", module_qn
 
     def _ingest_cpp_module_declarations(
-        self, root_node: Node, module_qn: str, file_path: Path, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        file_path: Path,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Process C++20 module declarations and create appropriate Module nodes."""
         module_declarations = []
@@ -722,22 +736,26 @@ class DefinitionProcessor:
         return exported_class_nodes
 
     def _ingest_classes_and_methods(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Extract and ingest classes and their methods."""
         lang_queries = queries[language]
-        if not lang_queries.get("classes"):
+        query = lang_queries["classes"]
+        if not query:
             return
 
         lang_config: LanguageConfig = lang_queries["config"]
 
-        query = lang_queries["classes"]
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
         class_nodes = captures.get("class", [])
         module_nodes = captures.get("module", [])
 
-        if language == "cpp":
+        if language == SupportedLanguage.CPP:
             additional_class_nodes = self._find_cpp_exported_classes(root_node)
             class_nodes.extend(additional_class_nodes)
 
@@ -751,7 +769,7 @@ class DefinitionProcessor:
             class_name = None
             is_exported = False
 
-            if language == "rust" and class_node.type == "impl_item":
+            if language == SupportedLanguage.RUST and class_node.type == "impl_item":
                 impl_target = extract_rust_impl_target(class_node)
                 if not impl_target:
                     continue
@@ -759,8 +777,8 @@ class DefinitionProcessor:
                 class_qn = f"{module_qn}.{impl_target}"
 
                 body_node = class_node.child_by_field_name("body")
-                if body_node:
-                    method_query = lang_queries["functions"]
+                method_query = lang_queries["functions"]
+                if body_node and method_query:
                     method_cursor = QueryCursor(method_query)
                     method_captures = method_cursor.captures(body_node)
                     method_nodes = method_captures.get("function", [])
@@ -789,14 +807,14 @@ class DefinitionProcessor:
                 )
                 if class_qn:
                     class_name = class_qn.split(SEPARATOR_DOT)[-1]
-                    if language == "cpp":
+                    if language == SupportedLanguage.CPP:
                         if class_node.type == "function_definition":
                             is_exported = True
                         else:
                             is_exported = is_cpp_exported(class_node)
 
             if not class_qn:
-                if language == "cpp":
+                if language == SupportedLanguage.CPP:
                     if class_node.type == "function_definition":
                         class_name = extract_cpp_exported_class_name(class_node)
                         is_exported = True
@@ -854,7 +872,10 @@ class DefinitionProcessor:
                 logger.info(
                     f"  Found Template {node_type}: {class_name} (qn: {class_qn})"
                 )
-            elif class_node.type == "function_definition" and language == "cpp":
+            elif (
+                class_node.type == "function_definition"
+                and language == SupportedLanguage.CPP
+            ):
                 node_text = (
                     safe_decode_with_fallback(class_node) if class_node.text else ""
                 )
@@ -897,7 +918,7 @@ class DefinitionProcessor:
                 (node_type, "qualified_name", class_qn),
             )
 
-            if is_exported and language == "cpp":
+            if is_exported and language == SupportedLanguage.CPP:
                 self.ingestor.ensure_relationship_batch(
                     ("Module", "qualified_name", module_qn),
                     "EXPORTS",
@@ -919,10 +940,10 @@ class DefinitionProcessor:
                     )
 
             body_node = class_node.child_by_field_name("body")
-            if not body_node:
+            method_query = lang_queries["functions"]
+            if not body_node or not method_query:
                 continue
 
-            method_query = lang_queries["functions"]
             method_cursor = QueryCursor(method_query)
             method_captures = method_cursor.captures(body_node)
             method_nodes = method_captures.get("function", [])
@@ -931,7 +952,7 @@ class DefinitionProcessor:
                     continue
 
                 method_qualified_name = None
-                if language == "java":
+                if language == SupportedLanguage.JAVA:
                     method_info = extract_java_method_info(method_node)
                     method_name = method_info.get("name")
                     parameters = method_info.get("parameters", [])
@@ -1256,7 +1277,11 @@ class DefinitionProcessor:
         )
 
     def _ingest_prototype_inheritance(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect JavaScript prototype inheritance patterns using tree-sitter queries."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
@@ -1271,7 +1296,11 @@ class DefinitionProcessor:
         )
 
     def _ingest_prototype_inheritance_links(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect prototype inheritance links (Child.prototype = Object.create(Parent.prototype))."""
         lang_queries = queries[language]
@@ -1332,7 +1361,11 @@ class DefinitionProcessor:
             logger.debug(f"Failed to detect prototype inheritance: {e}")
 
     def _ingest_prototype_method_assignments(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect prototype method assignments (Constructor.prototype.method = function() {})."""
         lang_queries = queries[language]
@@ -1405,7 +1438,11 @@ class DefinitionProcessor:
             logger.debug(f"Failed to detect prototype methods: {e}")
 
     def _ingest_missing_import_patterns(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect import patterns not handled by the existing import_processor."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
@@ -1555,7 +1592,11 @@ class DefinitionProcessor:
             logger.debug(f"Failed to process CommonJS import {imported_name}: {e}")
 
     def _ingest_object_literal_methods(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect and ingest methods defined in object literals."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
@@ -1653,7 +1694,11 @@ class DefinitionProcessor:
             logger.debug(f"Failed to detect object literal methods: {e}")
 
     def _ingest_commonjs_exports(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect and ingest CommonJS exports as function definitions."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
@@ -1753,7 +1798,11 @@ class DefinitionProcessor:
             logger.debug(f"Failed to detect CommonJS exports: {e}")
 
     def _ingest_es6_exports(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect and ingest ES6 export statements as function definitions."""
         try:
@@ -1828,7 +1877,11 @@ class DefinitionProcessor:
             logger.debug(f"Failed to detect ES6 exports: {e}")
 
     def _ingest_assignment_arrow_functions(
-        self, root_node: Node, module_qn: str, language: str, queries: dict[str, Any]
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
         """Detect arrow functions in assignment expressions and object literals."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:

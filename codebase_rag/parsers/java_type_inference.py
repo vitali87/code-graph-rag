@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node
 
-from ..constants import SEPARATOR_DOT
-from ..types_defs import NodeType, SimpleNameLookup
+from ..constants import SEPARATOR_DOT, SupportedLanguage
+from ..types_defs import LanguageQueries, NodeType, SimpleNameLookup
 from .import_processor import ImportProcessor
 from .java_utils import (
     extract_java_class_info,
@@ -30,7 +30,7 @@ class JavaTypeInferenceEngine:
         repo_path: Path,
         project_name: str,
         ast_cache: "ASTCacheProtocol",
-        queries: dict[str, Any],
+        queries: dict[SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,

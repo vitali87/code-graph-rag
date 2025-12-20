@@ -381,8 +381,6 @@ def add_grammar(
         call_node_types=tuple(calls),
     )
 
-    LANGUAGE_CONFIGS[language_name] = new_language_config
-
     config_file_path = "codebase_rag/language_config.py"
     try:
         config_content = pathlib.Path(config_file_path).read_text()
