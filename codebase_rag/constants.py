@@ -6,6 +6,12 @@ class ModelRole(StrEnum):
     CYPHER = "cypher"
 
 
+class ToolName(StrEnum):
+    REPLACE_CODE = "replace_code_surgically"
+    CREATE_FILE = "create_new_file"
+    SHELL_COMMAND = "execute_shell_command"
+
+
 class Provider(StrEnum):
     OLLAMA = "ollama"
     ANTHROPIC = "anthropic"
@@ -226,6 +232,23 @@ HORIZONTAL_SEPARATOR = "─" * 60
 # (H) Session log header
 SESSION_LOG_HEADER = "=== CODE-GRAPH RAG SESSION LOG ===\n\n"
 
-# (H) Model roles
-ROLE_ORCHESTRATOR = "orchestrator"
-ROLE_CYPHER = "cypher"
+# (H) File/directory ignore patterns
+IGNORE_PATTERNS = frozenset(
+    {
+        ".git",
+        "venv",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "build",
+        "dist",
+        ".eggs",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".claude",
+        ".idea",
+        ".vscode",
+    }
+)
+IGNORE_SUFFIXES = frozenset({".tmp", "~"})

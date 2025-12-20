@@ -9,6 +9,14 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
 
+class AgentLoopConfig(NamedTuple):
+    status_message: str
+    cancelled_log: str
+    approval_prompt: str
+    denial_default: str
+    panel_title: str
+
+
 @dataclass
 class SessionState:
     confirm_edits: bool = True

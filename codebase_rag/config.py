@@ -17,6 +17,7 @@ from .constants import (
     ModelRole,
     Provider,
 )
+from .models import AgentLoopConfig
 
 load_dotenv()
 
@@ -149,74 +150,20 @@ class AppConfig(BaseSettings):
 
 settings = AppConfig()
 
-IGNORE_PATTERNS = {
-    ".git",
-    "venv",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    "build",
-    "dist",
-    ".eggs",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".claude",
-    ".idea",
-    ".vscode",
-}
-IGNORE_SUFFIXES = {".tmp", "~"}
-
-EDIT_REQUEST_KEYWORDS = frozenset(
-    {
-        "modify",
-        "update",
-        "change",
-        "edit",
-        "fix",
-        "refactor",
-        "optimize",
-        "add",
-        "remove",
-        "delete",
-        "create",
-        "write",
-        "implement",
-        "replace",
-    }
-)
-
-EDIT_TOOLS = frozenset(
-    {
-        "edit_file",
-        "write_file",
-        "file_editor",
-        "file_writer",
-        "create_file",
-        "replace_code_surgically",
-    }
-)
-
-EDIT_INDICATORS = frozenset(
-    {
-        "modifying",
-        "updating",
-        "changing",
-        "replacing",
-        "adding to",
-        "deleting from",
-        "created file",
-        "editing",
-        "writing to",
-        "file has been",
-        "successfully modified",
-        "successfully updated",
-        "successfully created",
-        "changes have been made",
-        "file modified",
-        "file updated",
-        "file created",
-    }
-)
-
 ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})
+
+OPTIMIZATION_LOOP_CONFIG = AgentLoopConfig(
+    status_message="[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]",
+    cancelled_log="ASSISTANT: [Analysis was cancelled]",
+    approval_prompt="Do you approve this optimization?",
+    denial_default="User rejected this optimization without feedback",
+    panel_title="[bold green]Optimization Agent[/bold green]",
+)
+
+CHAT_LOOP_CONFIG = AgentLoopConfig(
+    status_message="[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]",
+    cancelled_log="ASSISTANT: [Thinking was cancelled]",
+    approval_prompt="Do you approve this change?",
+    denial_default="User rejected this change without feedback",
+    panel_title="[bold green]Assistant[/bold green]",
+)

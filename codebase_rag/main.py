@@ -23,17 +23,18 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from .config import ORANGE_STYLE, settings
+from .config import CHAT_LOOP_CONFIG, OPTIMIZATION_LOOP_CONFIG, ORANGE_STYLE, settings
 from .constants import (
     EXIT_COMMANDS,
     HORIZONTAL_SEPARATOR,
     IMAGE_EXTENSIONS,
-    ROLE_CYPHER,
-    ROLE_ORCHESTRATOR,
     SESSION_LOG_HEADER,
+    ModelRole,
+    Provider,
+    ToolName,
 )
 from .graph_updater import GraphUpdater
-from .models import SessionState
+from .models import AgentLoopConfig, SessionState
 from .parser_loader import load_parsers
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
@@ -142,18 +143,18 @@ def _display_tool_call_diff(
     tool_name: str, tool_args: dict[str, ToolArgValue], file_path: str | None = None
 ) -> None:
     match tool_name:
-        case "replace_code_surgically":
+        case ToolName.REPLACE_CODE:
             target = str(tool_args.get("target_code", ""))
             replacement = str(tool_args.get("replacement_code", ""))
             path = str(tool_args.get("file_path", file_path or "file"))
             _print_unified_diff(target, replacement, path)
 
-        case "create_new_file":
+        case ToolName.CREATE_FILE:
             path = str(tool_args.get("file_path", ""))
             content = str(tool_args.get("content", ""))
             _print_new_file_content(path, content)
 
-        case "execute_shell_command":
+        case ToolName.SHELL_COMMAND:
             command = tool_args.get("command", "")
             console.print("\n[bold cyan]Shell command:[/bold cyan]")
             console.print(f"[yellow]$ {command}[/yellow]")
@@ -231,11 +232,11 @@ def _create_configuration_table(
 
     orch_endpoint = (
         orchestrator_config.endpoint
-        if orchestrator_config.provider == "ollama"
+        if orchestrator_config.provider == Provider.OLLAMA
         else None
     )
     cypher_endpoint = (
-        cypher_config.endpoint if cypher_config.provider == "ollama" else None
+        cypher_config.endpoint if cypher_config.provider == Provider.OLLAMA else None
     )
 
     if orch_endpoint and cypher_endpoint and orch_endpoint == cypher_endpoint:
@@ -339,50 +340,12 @@ Remember: Propose changes first, wait for my approval, then implement.
                 question_with_context, project_root
             )
 
-            deferred_results: DeferredToolResults | None = None
-
-            while True:
-                with console.status(
-                    "[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]"
-                ):
-                    response = await run_with_cancellation(
-                        console,
-                        rag_agent.run(
-                            question_with_context,
-                            message_history=message_history,
-                            deferred_tool_results=deferred_results,
-                        ),
-                    )
-
-                if isinstance(response, CancelledResult):
-                    log_session_event("ASSISTANT: [Analysis was cancelled]")
-                    session_state.cancelled = True
-                    break
-
-                if isinstance(response.output, DeferredToolRequests):
-                    deferred_results = _process_tool_approvals(
-                        response.output,
-                        "Do you approve this optimization?",
-                        "User rejected this optimization without feedback",
-                    )
-                    message_history.extend(response.new_messages())
-                    continue
-
-                output_text = response.output
-                if not isinstance(output_text, str):
-                    continue
-                markdown_response = Markdown(output_text)
-                console.print(
-                    Panel(
-                        markdown_response,
-                        title="[bold green]Optimization Agent[/bold green]",
-                        border_style="green",
-                    )
-                )
-
-                log_session_event(f"ASSISTANT: {output_text}")
-                message_history.extend(response.new_messages())
-                break
+            await _run_agent_response_loop(
+                rag_agent,
+                message_history,
+                question_with_context,
+                OPTIMIZATION_LOOP_CONFIG,
+            )
 
             first_run = False
 
@@ -419,6 +382,56 @@ async def run_with_cancellation[T](
                 pass
         console.print("\n[bold yellow]Thinking cancelled.[/bold yellow]")
         return CancelledResult(cancelled=True)
+
+
+async def _run_agent_response_loop(
+    rag_agent: "Agent[None, str | DeferredToolRequests]",
+    message_history: list["ModelMessage"],
+    question_with_context: str,
+    config: AgentLoopConfig,
+) -> None:
+    deferred_results: DeferredToolResults | None = None
+
+    while True:
+        with console.status(config.status_message):
+            response = await run_with_cancellation(
+                console,
+                rag_agent.run(
+                    question_with_context,
+                    message_history=message_history,
+                    deferred_tool_results=deferred_results,
+                ),
+            )
+
+        if isinstance(response, CancelledResult):
+            log_session_event(config.cancelled_log)
+            session_state.cancelled = True
+            break
+
+        if isinstance(response.output, DeferredToolRequests):
+            deferred_results = _process_tool_approvals(
+                response.output,
+                config.approval_prompt,
+                config.denial_default,
+            )
+            message_history.extend(response.new_messages())
+            continue
+
+        output_text = response.output
+        if not isinstance(output_text, str):
+            continue
+        markdown_response = Markdown(output_text)
+        console.print(
+            Panel(
+                markdown_response,
+                title=config.panel_title,
+                border_style="green",
+            )
+        )
+
+        log_session_event(f"ASSISTANT: {output_text}")
+        message_history.extend(response.new_messages())
+        break
 
 
 def _handle_chat_images(question: str, project_root: Path) -> str:
@@ -546,50 +559,9 @@ async def run_chat_loop(
                 question_with_context, project_root
             )
 
-            deferred_results: DeferredToolResults | None = None
-
-            while True:
-                with console.status(
-                    "[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]"
-                ):
-                    response = await run_with_cancellation(
-                        console,
-                        rag_agent.run(
-                            question_with_context,
-                            message_history=message_history,
-                            deferred_tool_results=deferred_results,
-                        ),
-                    )
-
-                if isinstance(response, CancelledResult):
-                    log_session_event("ASSISTANT: [Thinking was cancelled]")
-                    session_state.cancelled = True
-                    break
-
-                if isinstance(response.output, DeferredToolRequests):
-                    deferred_results = _process_tool_approvals(
-                        response.output,
-                        "Do you approve this change?",
-                        "User rejected this change without feedback",
-                    )
-                    message_history.extend(response.new_messages())
-                    continue
-
-                output_text = response.output
-                if not isinstance(output_text, str):
-                    continue
-                markdown_response = Markdown(output_text)
-                console.print(
-                    Panel(
-                        markdown_response,
-                        title="[bold green]Assistant[/bold green]",
-                        border_style="green",
-                    )
-                )
-
-                log_session_event(f"ASSISTANT: {output_text}")
-                message_history.extend(response.new_messages())
-                break
+            await _run_agent_response_loop(
+                rag_agent, message_history, question_with_context, CHAT_LOOP_CONFIG
+            )
 
         except KeyboardInterrupt:
             break
@@ -598,18 +570,16 @@ async def run_chat_loop(
             console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
 
 
-def _update_single_model_setting(role: str, model_string: str) -> None:
+def _update_single_model_setting(role: ModelRole, model_string: str) -> None:
     provider, model = settings.parse_model_string(model_string)
 
     match role:
-        case "orchestrator":
+        case ModelRole.ORCHESTRATOR:
             current_config = settings.active_orchestrator_config
             set_method = settings.set_orchestrator
-        case "cypher":
+        case ModelRole.CYPHER:
             current_config = settings.active_cypher_config
             set_method = settings.set_cypher
-        case _:
-            return
 
     kwargs = {
         "api_key": current_config.api_key,
@@ -621,9 +591,9 @@ def _update_single_model_setting(role: str, model_string: str) -> None:
         "service_account_file": current_config.service_account_file,
     }
 
-    if provider == "ollama" and not kwargs["endpoint"]:
+    if provider == Provider.OLLAMA and not kwargs["endpoint"]:
         kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
-        kwargs["api_key"] = "ollama"
+        kwargs["api_key"] = Provider.OLLAMA
 
     set_method(provider, model, **kwargs)
 
@@ -633,9 +603,9 @@ def _update_model_settings(
     cypher: str | None,
 ) -> None:
     if orchestrator:
-        _update_single_model_setting(ROLE_ORCHESTRATOR, orchestrator)
+        _update_single_model_setting(ModelRole.ORCHESTRATOR, orchestrator)
     if cypher:
-        _update_single_model_setting(ROLE_CYPHER, cypher)
+        _update_single_model_setting(ModelRole.CYPHER, cypher)
 
 
 def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> dict:

@@ -3,8 +3,7 @@ from typing import Any
 
 from loguru import logger
 
-from ..config import IGNORE_PATTERNS
-from ..constants import SEPARATOR_DOT
+from ..constants import IGNORE_PATTERNS, SEPARATOR_DOT
 from ..services import IngestorProtocol
 
 

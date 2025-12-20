@@ -7,7 +7,6 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node, Parser
 
-from .config import IGNORE_PATTERNS
 from .constants import (
     BYTES_PER_MB,
     CACHE_EVICTION_DIVISOR,
@@ -18,6 +17,7 @@ from .constants import (
     DEFAULT_CACHE_MEMORY_MB,
     DEPENDENCY_FILES,
     EMBEDDING_PROGRESS_INTERVAL,
+    IGNORE_PATTERNS,
     INIT_PY,
     KEY_END_LINE,
     KEY_NAME,
