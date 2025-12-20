@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import Unpack
 
 from dotenv import load_dotenv
 from prompt_toolkit.styles import Style
@@ -14,10 +14,13 @@ from .constants import (
     DEFAULT_REGION,
     ERR_BATCH_SIZE_POSITIVE,
     ERR_PROVIDER_EMPTY,
+    FIELD_MODEL_ID,
+    FIELD_PROVIDER,
     ModelRole,
     Provider,
 )
 from .models import AgentLoopConfig
+from .types_defs import ModelConfigKwargs
 
 load_dotenv()
 
@@ -33,6 +36,12 @@ class ModelConfig:
     provider_type: str | None = None
     thinking_budget: int | None = None
     service_account_file: str | None = None
+
+    def to_update_kwargs(self) -> ModelConfigKwargs:
+        result = asdict(self)
+        del result[FIELD_PROVIDER]
+        del result[FIELD_MODEL_ID]
+        return ModelConfigKwargs(**result)
 
 
 class AppConfig(BaseSettings):
@@ -123,12 +132,16 @@ class AppConfig(BaseSettings):
     def active_cypher_config(self) -> ModelConfig:
         return self._active_cypher or self._get_default_cypher_config()
 
-    def set_orchestrator(self, provider: str, model: str, **kwargs: Any) -> None:
+    def set_orchestrator(
+        self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
+    ) -> None:
         self._active_orchestrator = ModelConfig(
             provider=provider.lower(), model_id=model, **kwargs
         )
 
-    def set_cypher(self, provider: str, model: str, **kwargs: Any) -> None:
+    def set_cypher(
+        self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
+    ) -> None:
         self._active_cypher = ModelConfig(
             provider=provider.lower(), model_id=model, **kwargs
         )

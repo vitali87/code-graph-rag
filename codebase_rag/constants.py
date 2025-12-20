@@ -129,6 +129,12 @@ UI_GRAPH_EXPORT_STATS = "[bold cyan]Export contains {nodes} nodes and {relations
 UI_ERR_UNEXPECTED = "[bold red]An unexpected error occurred: {error}[/bold red]"
 UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
 
+# (H) ModelConfig field names
+FIELD_PROVIDER = "provider"
+FIELD_MODEL_ID = "model_id"
+FIELD_API_KEY = "api_key"
+FIELD_ENDPOINT = "endpoint"
+
 # (H) Qualified name separators
 SEPARATOR_DOT = "."
 

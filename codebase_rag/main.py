@@ -35,6 +35,8 @@ from .constants import (
     ERR_PATH_NOT_IN_QUESTION,
     ERR_UNEXPECTED,
     EXIT_COMMANDS,
+    FIELD_API_KEY,
+    FIELD_ENDPOINT,
     HORIZONTAL_SEPARATOR,
     IMAGE_EXTENSIONS,
     JSON_INDENT,
@@ -608,19 +610,11 @@ def _update_single_model_setting(role: ModelRole, model_string: str) -> None:
             current_config = settings.active_cypher_config
             set_method = settings.set_cypher
 
-    kwargs = {
-        "api_key": current_config.api_key,
-        "endpoint": current_config.endpoint,
-        "project_id": current_config.project_id,
-        "region": current_config.region,
-        "provider_type": current_config.provider_type,
-        "thinking_budget": current_config.thinking_budget,
-        "service_account_file": current_config.service_account_file,
-    }
+    kwargs = current_config.to_update_kwargs()
 
-    if provider == Provider.OLLAMA and not kwargs["endpoint"]:
-        kwargs["endpoint"] = str(settings.LOCAL_MODEL_ENDPOINT)
-        kwargs["api_key"] = Provider.OLLAMA
+    if provider == Provider.OLLAMA and not kwargs[FIELD_ENDPOINT]:
+        kwargs[FIELD_ENDPOINT] = str(settings.LOCAL_MODEL_ENDPOINT)
+        kwargs[FIELD_API_KEY] = Provider.OLLAMA
 
     set_method(provider, model, **kwargs)
 

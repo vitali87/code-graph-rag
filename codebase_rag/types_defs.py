@@ -25,6 +25,16 @@ type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
 type FunctionRegistry = dict[QualifiedName, NodeType]
 
 
+class ModelConfigKwargs(TypedDict, total=False):
+    api_key: str | None
+    endpoint: str | None
+    project_id: str | None
+    region: str | None
+    provider_type: str | None
+    thinking_budget: int | None
+    service_account_file: str | None
+
+
 class GraphMetadata(TypedDict):
     total_nodes: int
     total_relationships: int
