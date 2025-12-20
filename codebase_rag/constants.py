@@ -216,3 +216,16 @@ NAME_FIELDS = ("identifier", "name", "id")
 
 # (H) Image file extensions for chat image handling
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
+
+# (H) CLI exit commands
+EXIT_COMMANDS = frozenset({"exit", "quit"})
+
+# (H) UI separators and formatting
+HORIZONTAL_SEPARATOR = "─" * 60
+
+# (H) Session log header
+SESSION_LOG_HEADER = "=== CODE-GRAPH RAG SESSION LOG ===\n\n"
+
+# (H) Model roles
+ROLE_ORCHESTRATOR = "orchestrator"
+ROLE_CYPHER = "cypher"

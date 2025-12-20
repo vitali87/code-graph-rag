@@ -6,6 +6,7 @@ import shutil
 import sys
 import uuid
 from collections.abc import Coroutine
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
@@ -24,7 +25,14 @@ from rich.table import Table
 from rich.text import Text
 
 from .config import ORANGE_STYLE, settings
-from .constants import IMAGE_EXTENSIONS
+from .constants import (
+    EXIT_COMMANDS,
+    HORIZONTAL_SEPARATOR,
+    IMAGE_EXTENSIONS,
+    ROLE_CYPHER,
+    ROLE_ORCHESTRATOR,
+    SESSION_LOG_HEADER,
+)
 from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
 from .services import QueryProtocol
@@ -59,7 +67,18 @@ class CancelledResult(TypedDict):
 
 ToolArgValue = str | int | float | bool | list[str] | None
 
-confirm_edits_globally = True
+
+@dataclass
+class SessionState:
+    confirm_edits: bool = True
+    log_file: Path | None = None
+    cancelled: bool = False
+
+    def reset_cancelled(self) -> None:
+        self.cancelled = False
+
+
+session_state = SessionState()
 
 app = typer.Typer(
     name="graph-code",
@@ -73,31 +92,25 @@ app = typer.Typer(
 
 console = Console(width=None, force_terminal=True)
 
-session_log_file = None
-session_cancelled = False
-
 
 def init_session_log(project_root: Path) -> Path:
-    global session_log_file
     log_dir = project_root / ".tmp"
     log_dir.mkdir(exist_ok=True)
-    session_log_file = log_dir / f"session_{uuid.uuid4().hex[:8]}.log"
-    with open(session_log_file, "w") as f:
-        f.write("=== CODE-GRAPH RAG SESSION LOG ===\n\n")
-    return session_log_file
+    session_state.log_file = log_dir / f"session_{uuid.uuid4().hex[:8]}.log"
+    with open(session_state.log_file, "w") as f:
+        f.write(SESSION_LOG_HEADER)
+    return session_state.log_file
 
 
 def log_session_event(event: str) -> None:
-    global session_log_file
-    if session_log_file:
-        with open(session_log_file, "a") as f:
+    if session_state.log_file:
+        with open(session_state.log_file, "a") as f:
             f.write(f"{event}\n")
 
 
 def get_session_context() -> str:
-    global session_log_file
-    if session_log_file and session_log_file.exists():
-        content = Path(session_log_file).read_text()
+    if session_state.log_file and session_state.log_file.exists():
+        content = session_state.log_file.read_text()
         return f"\n\n[SESSION CONTEXT - Previous conversation in this session]:\n{content}\n[END SESSION CONTEXT]\n\n"
     return ""
 
@@ -105,6 +118,8 @@ def get_session_context() -> str:
 def _display_tool_call_diff(
     tool_name: str, tool_args: dict[str, ToolArgValue], file_path: str | None = None
 ) -> None:
+    separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
+
     match tool_name:
         case "replace_code_surgically":
             target = str(tool_args.get("target_code", ""))
@@ -112,7 +127,7 @@ def _display_tool_call_diff(
             path = tool_args.get("file_path", file_path or "file")
 
             console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
-            console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print(separator)
 
             diff = difflib.unified_diff(
                 target.splitlines(keepends=True),
@@ -135,19 +150,19 @@ def _display_tool_call_diff(
                 else:
                     console.print(line)
 
-            console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print(separator)
 
         case "create_new_file":
             path = tool_args.get("file_path", "")
             content = str(tool_args.get("content", ""))
 
             console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
-            console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print(separator)
 
             for line in content.splitlines():
                 console.print(f"[green]+ {line}[/green]")
 
-            console.print("[dim]" + "─" * 60 + "[/dim]")
+            console.print(separator)
 
         case "execute_shell_command":
             command = tool_args.get("command", "")
@@ -156,6 +171,34 @@ def _display_tool_call_diff(
 
         case _:
             console.print(f"    Arguments: {json.dumps(tool_args, indent=2)}")
+
+
+def _process_tool_approvals(
+    requests: DeferredToolRequests, approval_prompt: str, denial_default: str
+) -> DeferredToolResults:
+    deferred_results = DeferredToolResults()
+
+    for call in requests.approvals:
+        tool_args = call.args_as_dict()
+        console.print(
+            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
+        )
+        _display_tool_call_diff(call.tool_name, tool_args)
+
+        if session_state.confirm_edits:
+            if Confirm.ask(f"[bold cyan]{approval_prompt}[/bold cyan]"):
+                deferred_results.approvals[call.tool_call_id] = True
+            else:
+                feedback = Prompt.ask(
+                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
+                    default="",
+                )
+                denial_msg = feedback.strip() or denial_default
+                deferred_results.approvals[call.tool_call_id] = ToolDenied(denial_msg)
+        else:
+            deferred_results.approvals[call.tool_call_id] = True
+
+    return deferred_results
 
 
 def _setup_common_initialization(repo_path: str) -> Path:
@@ -215,7 +258,7 @@ def _create_configuration_table(
             table.add_row("Ollama Endpoint (Cypher)", cypher_endpoint)
 
     confirmation_status = (
-        "Enabled" if confirm_edits_globally else "Disabled (YOLO Mode)"
+        "Enabled" if session_state.confirm_edits else "Disabled (YOLO Mode)"
     )
     table.add_row("Edit Confirmation", confirmation_status)
     table.add_row("Target Repository", repo_path)
@@ -230,8 +273,6 @@ async def run_optimization_loop(
     language: str,
     reference_document: str | None = None,
 ) -> None:
-    global session_cancelled
-
     init_session_log(project_root)
     console.print(
         f"[bold green]Starting {language} optimization session...[/bold green]"
@@ -292,16 +333,16 @@ Remember: Propose changes first, wait for my approval, then implement.
                     get_multiline_input, "[bold cyan]Your response[/bold cyan]"
                 )
 
-            if question.lower() in ["exit", "quit"]:
+            if question.lower() in EXIT_COMMANDS:
                 break
             if not question.strip():
                 continue
 
             log_session_event(f"USER: {question}")
 
-            if session_cancelled:
+            if session_state.cancelled:
                 question_with_context = question + get_session_context()
-                session_cancelled = False
+                session_state.reset_cancelled()
             else:
                 question_with_context = question
 
@@ -326,40 +367,15 @@ Remember: Propose changes first, wait for my approval, then implement.
 
                     if not hasattr(response, "output"):
                         log_session_event("ASSISTANT: [Analysis was cancelled]")
-                        session_cancelled = True
+                        session_state.cancelled = True
                         break
 
                 if isinstance(response.output, DeferredToolRequests):
-                    requests = response.output
-                    deferred_results = DeferredToolResults()
-
-                    for call in requests.approvals:
-                        tool_args = call.args_as_dict()
-                        console.print(
-                            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
-                        )
-                        _display_tool_call_diff(call.tool_name, tool_args)
-
-                        if confirm_edits_globally:
-                            if Confirm.ask(
-                                "[bold cyan]Do you approve this optimization?[/bold cyan]"
-                            ):
-                                deferred_results.approvals[call.tool_call_id] = True
-                            else:
-                                feedback = Prompt.ask(
-                                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
-                                    default="",
-                                )
-                                denial_msg = (
-                                    feedback.strip()
-                                    or "User rejected this optimization without feedback"
-                                )
-                                deferred_results.approvals[call.tool_call_id] = (
-                                    ToolDenied(denial_msg)
-                                )
-                        else:
-                            deferred_results.approvals[call.tool_call_id] = True
-
+                    deferred_results = _process_tool_approvals(
+                        response.output,
+                        "Do you approve this optimization?",
+                        "User rejected this optimization without feedback",
+                    )
                     message_history.extend(response.new_messages())
                     continue
 
@@ -516,8 +532,6 @@ async def run_chat_loop(
     message_history: list["ModelMessage"],
     project_root: Path,
 ) -> None:
-    global session_cancelled
-
     init_session_log(project_root)
 
     while True:
@@ -526,16 +540,16 @@ async def run_chat_loop(
                 get_multiline_input, "[bold cyan]Ask a question[/bold cyan]"
             )
 
-            if question.lower() in ["exit", "quit"]:
+            if question.lower() in EXIT_COMMANDS:
                 break
             if not question.strip():
                 continue
 
             log_session_event(f"USER: {question}")
 
-            if session_cancelled:
+            if session_state.cancelled:
                 question_with_context = question + get_session_context()
-                session_cancelled = False
+                session_state.reset_cancelled()
             else:
                 question_with_context = question
 
@@ -560,41 +574,15 @@ async def run_chat_loop(
 
                     if not hasattr(response, "output"):
                         log_session_event("ASSISTANT: [Thinking was cancelled]")
-                        session_cancelled = True
+                        session_state.cancelled = True
                         break
 
                 if isinstance(response.output, DeferredToolRequests):
-                    requests = response.output
-                    deferred_results = DeferredToolResults()
-
-                    for call in requests.approvals:
-                        tool_args = call.args_as_dict()
-                        console.print(
-                            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
-                        )
-                        _display_tool_call_diff(call.tool_name, tool_args)
-
-                        if confirm_edits_globally:
-                            if Confirm.ask(
-                                "[bold cyan]Do you approve this change?[/bold cyan]"
-                            ):
-                                deferred_results.approvals[call.tool_call_id] = True
-                            else:
-                                feedback = Prompt.ask(
-                                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
-                                    default="",
-                                )
-                                denial_msg = (
-                                    feedback.strip()
-                                    if feedback.strip()
-                                    else "User rejected this change without feedback"
-                                )
-                                deferred_results.approvals[call.tool_call_id] = (
-                                    ToolDenied(denial_msg)
-                                )
-                        else:
-                            deferred_results.approvals[call.tool_call_id] = True
-
+                    deferred_results = _process_tool_approvals(
+                        response.output,
+                        "Do you approve this change?",
+                        "User rejected this change without feedback",
+                    )
                     message_history.extend(response.new_messages())
                     continue
 
@@ -624,12 +612,15 @@ async def run_chat_loop(
 def _update_single_model_setting(role: str, model_string: str) -> None:
     provider, model = settings.parse_model_string(model_string)
 
-    if role == "orchestrator":
-        current_config = settings.active_orchestrator_config
-        set_method = settings.set_orchestrator
-    else:
-        current_config = settings.active_cypher_config
-        set_method = settings.set_cypher
+    match role:
+        case "orchestrator":
+            current_config = settings.active_orchestrator_config
+            set_method = settings.set_orchestrator
+        case "cypher":
+            current_config = settings.active_cypher_config
+            set_method = settings.set_cypher
+        case _:
+            return
 
     kwargs = {
         "api_key": current_config.api_key,
@@ -653,9 +644,9 @@ def _update_model_settings(
     cypher: str | None,
 ) -> None:
     if orchestrator:
-        _update_single_model_setting("orchestrator", orchestrator)
+        _update_single_model_setting(ROLE_ORCHESTRATOR, orchestrator)
     if cypher:
-        _update_single_model_setting("cypher", cypher)
+        _update_single_model_setting(ROLE_CYPHER, cypher)
 
 
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -811,9 +802,7 @@ def start(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    global confirm_edits_globally
-
-    confirm_edits_globally = not no_confirm
+    session_state.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
@@ -1020,9 +1009,7 @@ def optimize(
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
 ) -> None:
-    global confirm_edits_globally
-
-    confirm_edits_globally = not no_confirm
+    session_state.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
