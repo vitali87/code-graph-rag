@@ -1,6 +1,6 @@
 from collections import defaultdict
 from enum import StrEnum
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 PropertyValue = str | int | float | bool | None
 
@@ -64,3 +64,10 @@ class EmbeddingQueryResult(TypedDict):
     start_line: int | None
     end_line: int | None
     path: str | None
+
+
+class CancelledResult(NamedTuple):
+    cancelled: bool
+
+
+ToolArgValue = str | int | float | bool | list[str] | None

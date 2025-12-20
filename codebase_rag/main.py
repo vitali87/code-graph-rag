@@ -6,9 +6,8 @@ import shutil
 import sys
 import uuid
 from collections.abc import Coroutine
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 import typer
 from loguru import logger
@@ -34,6 +33,7 @@ from .constants import (
     SESSION_LOG_HEADER,
 )
 from .graph_updater import GraphUpdater
+from .models import SessionState
 from .parser_loader import load_parsers
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
@@ -52,6 +52,7 @@ from .tools.semantic_search import (
     create_semantic_search_tool,
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
+from .types_defs import CancelledResult, ToolArgValue
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -59,24 +60,6 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
     from .config import ModelConfig
-
-
-class CancelledResult(TypedDict):
-    cancelled: bool
-
-
-ToolArgValue = str | int | float | bool | list[str] | None
-
-
-@dataclass
-class SessionState:
-    confirm_edits: bool = True
-    log_file: Path | None = None
-    cancelled: bool = False
-
-    def reset_cancelled(self) -> None:
-        self.cancelled = False
-
 
 session_state = SessionState()
 
@@ -115,54 +98,60 @@ def get_session_context() -> str:
     return ""
 
 
+def _print_unified_diff(target: str, replacement: str, path: str) -> None:
+    separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
+    console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
+    console.print(separator)
+
+    diff = difflib.unified_diff(
+        target.splitlines(keepends=True),
+        replacement.splitlines(keepends=True),
+        fromfile="before",
+        tofile="after",
+        lineterm="",
+    )
+
+    for line in diff:
+        line = line.rstrip("\n")
+        if line.startswith("+++") or line.startswith("---"):
+            console.print(f"[dim]{line}[/dim]")
+        elif line.startswith("@@"):
+            console.print(f"[cyan]{line}[/cyan]")
+        elif line.startswith("+"):
+            console.print(f"[green]{line}[/green]")
+        elif line.startswith("-"):
+            console.print(f"[red]{line}[/red]")
+        else:
+            console.print(line)
+
+    console.print(separator)
+
+
+def _print_new_file_content(path: str, content: str) -> None:
+    separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
+    console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
+    console.print(separator)
+
+    for line in content.splitlines():
+        console.print(f"[green]+ {line}[/green]")
+
+    console.print(separator)
+
+
 def _display_tool_call_diff(
     tool_name: str, tool_args: dict[str, ToolArgValue], file_path: str | None = None
 ) -> None:
-    separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
-
     match tool_name:
         case "replace_code_surgically":
             target = str(tool_args.get("target_code", ""))
             replacement = str(tool_args.get("replacement_code", ""))
-            path = tool_args.get("file_path", file_path or "file")
-
-            console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
-            console.print(separator)
-
-            diff = difflib.unified_diff(
-                target.splitlines(keepends=True),
-                replacement.splitlines(keepends=True),
-                fromfile="before",
-                tofile="after",
-                lineterm="",
-            )
-
-            for line in diff:
-                line = line.rstrip("\n")
-                if line.startswith("+++") or line.startswith("---"):
-                    console.print(f"[dim]{line}[/dim]")
-                elif line.startswith("@@"):
-                    console.print(f"[cyan]{line}[/cyan]")
-                elif line.startswith("+"):
-                    console.print(f"[green]{line}[/green]")
-                elif line.startswith("-"):
-                    console.print(f"[red]{line}[/red]")
-                else:
-                    console.print(line)
-
-            console.print(separator)
+            path = str(tool_args.get("file_path", file_path or "file"))
+            _print_unified_diff(target, replacement, path)
 
         case "create_new_file":
-            path = tool_args.get("file_path", "")
+            path = str(tool_args.get("file_path", ""))
             content = str(tool_args.get("content", ""))
-
-            console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
-            console.print(separator)
-
-            for line in content.splitlines():
-                console.print(f"[green]+ {line}[/green]")
-
-            console.print(separator)
+            _print_new_file_content(path, content)
 
         case "execute_shell_command":
             command = tool_args.get("command", "")
@@ -365,10 +354,10 @@ Remember: Propose changes first, wait for my approval, then implement.
                         ),
                     )
 
-                    if not hasattr(response, "output"):
-                        log_session_event("ASSISTANT: [Analysis was cancelled]")
-                        session_state.cancelled = True
-                        break
+                if isinstance(response, CancelledResult):
+                    log_session_event("ASSISTANT: [Analysis was cancelled]")
+                    session_state.cancelled = True
+                    break
 
                 if isinstance(response.output, DeferredToolRequests):
                     deferred_results = _process_tool_approvals(
@@ -572,10 +561,10 @@ async def run_chat_loop(
                         ),
                     )
 
-                    if not hasattr(response, "output"):
-                        log_session_event("ASSISTANT: [Thinking was cancelled]")
-                        session_state.cancelled = True
-                        break
+                if isinstance(response, CancelledResult):
+                    log_session_event("ASSISTANT: [Thinking was cancelled]")
+                    session_state.cancelled = True
+                    break
 
                 if isinstance(response.output, DeferredToolRequests):
                     deferred_results = _process_tool_approvals(
@@ -649,16 +638,21 @@ def _update_model_settings(
         _update_single_model_setting(ROLE_CYPHER, cypher)
 
 
+def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> dict:
+    graph_data = ingestor.export_graph_to_dict()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(graph_data, f, indent=2, ensure_ascii=False)
+
+    return graph_data
+
+
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
+    output_path = Path(output)
+
     try:
-        graph_data = ingestor.export_graph_to_dict()
-        output_path = Path(output)
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(graph_data, f, indent=2, ensure_ascii=False)
-
+        graph_data = _write_graph_json(ingestor, output_path)
         console.print(
             f"[bold green]Graph exported successfully to: {output_path.absolute()}[/bold green]"
         )
@@ -893,7 +887,7 @@ def index(
     except Exception as e:
         console.print(f"[bold red]An error occurred during indexing: {e}[/bold red]")
         logger.error("Indexing failed", exc_info=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -1068,7 +1062,7 @@ def graph_loader_command(
 
     except Exception as e:
         console.print(f"[bold red]Failed to load graph: {e}[/bold red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command(

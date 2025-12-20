@@ -10,6 +10,16 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class SessionState:
+    confirm_edits: bool = True
+    log_file: Path | None = None
+    cancelled: bool = False
+
+    def reset_cancelled(self) -> None:
+        self.cancelled = False
+
+
+@dataclass
 class GraphNode:
     node_id: int
     labels: list[str]
