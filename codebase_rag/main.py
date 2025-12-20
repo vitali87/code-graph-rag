@@ -28,6 +28,12 @@ from .constants import (
     DEFAULT_TABLE_TITLE,
     DIFF_LABEL_AFTER,
     DIFF_LABEL_BEFORE,
+    ERR_CONFIG,
+    ERR_EXPORT_ERROR,
+    ERR_IMAGE_COPY_FAILED,
+    ERR_IMAGE_NOT_FOUND,
+    ERR_PATH_NOT_IN_QUESTION,
+    ERR_UNEXPECTED,
     EXIT_COMMANDS,
     HORIZONTAL_SEPARATOR,
     IMAGE_EXTENSIONS,
@@ -36,6 +42,7 @@ from .constants import (
     KEY_TOTAL_NODES,
     KEY_TOTAL_RELATIONSHIPS,
     LOG_FORMAT,
+    LOG_IMAGE_COPIED,
     MSG_CHAT_INSTRUCTIONS,
     MSG_CONNECTED_MEMGRAPH,
     MSG_THINKING_CANCELLED,
@@ -60,6 +67,18 @@ from .constants import (
     TABLE_ROW_TARGET_LANGUAGE,
     TABLE_ROW_TARGET_REPOSITORY,
     TMP_DIR,
+    UI_DIFF_FILE_HEADER,
+    UI_ERR_EXPORT_FAILED,
+    UI_ERR_UNEXPECTED,
+    UI_FEEDBACK_PROMPT,
+    UI_GRAPH_EXPORT_STATS,
+    UI_GRAPH_EXPORT_SUCCESS,
+    UI_NEW_FILE_HEADER,
+    UI_OPTIMIZATION_INIT,
+    UI_OPTIMIZATION_PANEL,
+    UI_OPTIMIZATION_START,
+    UI_SHELL_COMMAND_HEADER,
+    UI_TOOL_APPROVAL,
     ModelRole,
     Provider,
     ToolName,
@@ -118,7 +137,7 @@ def get_session_context() -> str:
 
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:
     separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
-    app_context.console.print(f"\n[bold cyan]File: {path}[/bold cyan]")
+    app_context.console.print(f"\n{UI_DIFF_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
 
     diff = difflib.unified_diff(
@@ -148,7 +167,7 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
 
 def _print_new_file_content(path: str, content: str) -> None:
     separator = f"[dim]{HORIZONTAL_SEPARATOR}[/dim]"
-    app_context.console.print(f"\n[bold cyan]New file: {path}[/bold cyan]")
+    app_context.console.print(f"\n{UI_NEW_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
 
     for line in content.splitlines():
@@ -174,7 +193,7 @@ def _display_tool_call_diff(
 
         case ToolName.SHELL_COMMAND:
             command = tool_args.get("command", "")
-            app_context.console.print("\n[bold cyan]Shell command:[/bold cyan]")
+            app_context.console.print(f"\n{UI_SHELL_COMMAND_HEADER}")
             app_context.console.print(f"[yellow]$ {command}[/yellow]")
 
         case _:
@@ -191,7 +210,7 @@ def _process_tool_approvals(
     for call in requests.approvals:
         tool_args = call.args_as_dict()
         app_context.console.print(
-            f"\n[bold yellow]⚠️  Tool '{call.tool_name}' requires approval:[/bold yellow]"
+            f"\n{UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
         )
         _display_tool_call_diff(call.tool_name, tool_args)
 
@@ -200,7 +219,7 @@ def _process_tool_approvals(
                 deferred_results.approvals[call.tool_call_id] = True
             else:
                 feedback = Prompt.ask(
-                    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]",
+                    UI_FEEDBACK_PROMPT,
                     default="",
                 )
                 denial_msg = feedback.strip() or denial_default
@@ -318,9 +337,7 @@ async def run_optimization_loop(
     language: str,
     reference_document: str | None = None,
 ) -> None:
-    app_context.console.print(
-        f"[bold green]Starting {language} optimization session...[/bold green]"
-    )
+    app_context.console.print(UI_OPTIMIZATION_START.format(language=language))
     document_info = (
         f" using the reference document: {reference_document}"
         if reference_document
@@ -328,9 +345,7 @@ async def run_optimization_loop(
     )
     app_context.console.print(
         Panel(
-            f"[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
-            f" You'll be asked to approve each suggestion before implementation."
-            f" Type 'exit' or 'quit' to end the session.[/bold yellow]",
+            UI_OPTIMIZATION_PANEL.format(document_info=document_info),
             border_style="yellow",
         )
     )
@@ -451,9 +466,7 @@ def _replace_path_in_question(question: str, old_path: str, new_path: str) -> st
     for variant in _get_path_variants(old_path):
         if variant in question:
             return question.replace(variant, new_path)
-    logger.warning(
-        f"Could not find original path in question for replacement: {old_path}"
-    )
+    logger.warning(ERR_PATH_NOT_IN_QUESTION.format(path=old_path))
     return question
 
 
@@ -470,7 +483,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
         original_path = Path(original_path_str)
 
         if not original_path.exists() or not original_path.is_file():
-            logger.warning(f"Image path found, but does not exist: {original_path_str}")
+            logger.warning(ERR_IMAGE_NOT_FOUND.format(path=original_path_str))
             continue
 
         try:
@@ -480,9 +493,9 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             updated_question = _replace_path_in_question(
                 updated_question, original_path_str, new_relative
             )
-            logger.info(f"Copied image to temporary path: {new_relative}")
+            logger.info(LOG_IMAGE_COPIED.format(path=new_relative))
         except Exception as e:
-            logger.error(f"Failed to copy image to temporary directory: {e}")
+            logger.error(ERR_IMAGE_COPY_FAILED.format(error=e))
 
     return updated_question
 
@@ -566,10 +579,8 @@ async def _run_interactive_loop(
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error("An unexpected error occurred: {}", e, exc_info=True)
-            app_context.console.print(
-                f"[bold red]An unexpected error occurred: {e}[/bold red]"
-            )
+            logger.error(ERR_UNEXPECTED.format(error=e), exc_info=True)
+            app_context.console.print(UI_ERR_UNEXPECTED.format(error=e))
 
 
 async def run_chat_loop(
@@ -649,16 +660,19 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         graph_data = _write_graph_json(ingestor, output_path)
         metadata = graph_data[KEY_METADATA]
         app_context.console.print(
-            f"[bold green]Graph exported successfully to: {output_path.absolute()}[/bold green]"
+            UI_GRAPH_EXPORT_SUCCESS.format(path=output_path.absolute())
         )
         app_context.console.print(
-            f"[bold cyan]Export contains {metadata[KEY_TOTAL_NODES]} nodes and {metadata[KEY_TOTAL_RELATIONSHIPS]} relationships[/bold cyan]"
+            UI_GRAPH_EXPORT_STATS.format(
+                nodes=metadata[KEY_TOTAL_NODES],
+                relationships=metadata[KEY_TOTAL_RELATIONSHIPS],
+            )
         )
         return True
 
     except Exception as e:
-        app_context.console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
-        logger.error(f"Export error: {e}", exc_info=True)
+        app_context.console.print(UI_ERR_EXPORT_FAILED.format(error=e))
+        logger.error(ERR_EXPORT_ERROR.format(error=e), exc_info=True)
         return False
 
 
@@ -678,7 +692,7 @@ def _validate_provider_config(role: ModelRole, config: "ModelConfig") -> None:
         )
         provider.validate_config()
     except Exception as e:
-        raise ValueError(f"{role.value.title()} configuration error: {e}") from e
+        raise ValueError(ERR_CONFIG.format(role=role.value.title(), error=e)) from e
 
 
 def _initialize_services_and_agent(
@@ -760,7 +774,7 @@ async def main_optimize_async(
     _update_model_settings(orchestrator, cypher)
 
     app_context.console.print(
-        f"[bold cyan]Initializing optimization session for {language} codebase: {project_root}[/bold cyan]"
+        UI_OPTIMIZATION_INIT.format(language=language, path=project_root)
     )
 
     table = _create_configuration_table(

@@ -62,6 +62,15 @@ ERR_RELATIONSHIPS_NOT_LOADED = "Relationships should be loaded"
 ERR_DATA_NOT_LOADED = "Data should be loaded"
 ERR_PROVIDER_EMPTY = "Provider name cannot be empty in 'provider:model' format."
 ERR_BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
+ERR_UNEXPECTED = "An unexpected error occurred: {error}"
+ERR_EXPORT_FAILED = "Failed to export graph: {error}"
+ERR_EXPORT_ERROR = "Export error: {error}"
+ERR_CONFIG = "{role} configuration error: {error}"
+ERR_PATH_NOT_IN_QUESTION = (
+    "Could not find original path in question for replacement: {path}"
+)
+ERR_IMAGE_NOT_FOUND = "Image path found, but does not exist: {path}"
+ERR_IMAGE_COPY_FAILED = "Failed to copy image to temporary directory: {error}"
 
 # (H) Log messages
 LOG_LOADING_GRAPH = "Loading graph from {path}"
@@ -94,6 +103,31 @@ LOG_EMBEDDING_FAILED = "Failed to embed {name}: {error}"
 LOG_NO_SOURCE_FOR = "No source code found for {name}"
 LOG_EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 LOG_EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
+LOG_IMAGE_COPIED = "Copied image to temporary path: {path}"
+
+# (H) UI format strings for main.py
+UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
+UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
+UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
+UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
+UI_FEEDBACK_PROMPT = (
+    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]"
+)
+UI_OPTIMIZATION_START = (
+    "[bold green]Starting {language} optimization session...[/bold green]"
+)
+UI_OPTIMIZATION_PANEL = (
+    "[bold yellow]The agent will analyze your codebase{document_info} and propose specific optimizations."
+    " You'll be asked to approve each suggestion before implementation."
+    " Type 'exit' or 'quit' to end the session.[/bold yellow]"
+)
+UI_OPTIMIZATION_INIT = "[bold cyan]Initializing optimization session for {language} codebase: {path}[/bold cyan]"
+UI_GRAPH_EXPORT_SUCCESS = (
+    "[bold green]Graph exported successfully to: {path}[/bold green]"
+)
+UI_GRAPH_EXPORT_STATS = "[bold cyan]Export contains {nodes} nodes and {relationships} relationships[/bold cyan]"
+UI_ERR_UNEXPECTED = "[bold red]An unexpected error occurred: {error}[/bold red]"
+UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
 
 # (H) Qualified name separators
 SEPARATOR_DOT = "."
