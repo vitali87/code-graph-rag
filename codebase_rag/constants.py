@@ -377,6 +377,7 @@ MSG_CHAT_INSTRUCTIONS = (
 
 # (H) Default titles and prompts
 DEFAULT_TABLE_TITLE = "Graph-Code Initializing..."
+OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
 PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
 MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"

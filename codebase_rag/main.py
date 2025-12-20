@@ -58,6 +58,7 @@ from .constants import (
     MSG_THINKING_CANCELLED,
     MSG_TIMEOUT_FORMAT,
     MULTILINE_INPUT_HINT,
+    OPTIMIZATION_TABLE_TITLE,
     PROMPT_ASK_QUESTION,
     PROMPT_YOUR_RESPONSE,
     SESSION_CONTEXT_END,
@@ -793,7 +794,7 @@ async def main_optimize_async(
     )
 
     table = _create_configuration_table(
-        str(project_root), "Optimization Session Configuration", language
+        str(project_root), OPTIMIZATION_TABLE_TITLE, language
     )
     app_context.console.print(table)
 
