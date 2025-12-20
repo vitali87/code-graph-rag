@@ -388,7 +388,7 @@ async def run_optimization_loop(
     app_context.console.print(
         Panel(
             UI_OPTIMIZATION_PANEL.format(document_info=document_info),
-            border_style="yellow",
+            border_style=Color.YELLOW,
         )
     )
 
@@ -472,7 +472,7 @@ async def _run_agent_response_loop(
             Panel(
                 markdown_response,
                 title=config.panel_title,
-                border_style="green",
+                border_style=Color.GREEN,
             )
         )
 
@@ -785,7 +785,7 @@ async def main_async(repo_path: str, batch_size: int) -> None:
         app_context.console.print(
             Panel(
                 style(MSG_CHAT_INSTRUCTIONS, Color.YELLOW),
-                border_style="yellow",
+                border_style=Color.YELLOW,
             )
         )
 
