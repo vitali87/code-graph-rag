@@ -85,12 +85,15 @@ from .constants import (
     UI_FEEDBACK_PROMPT,
     UI_GRAPH_EXPORT_STATS,
     UI_GRAPH_EXPORT_SUCCESS,
+    UI_INPUT_PROMPT_HTML,
     UI_NEW_FILE_HEADER,
     UI_OPTIMIZATION_INIT,
     UI_OPTIMIZATION_PANEL,
     UI_OPTIMIZATION_START,
+    UI_REFERENCE_DOC_INFO,
     UI_SHELL_COMMAND_HEADER,
     UI_TOOL_APPROVAL,
+    UI_TOOL_ARGS_FORMAT,
     Color,
     DiffMarker,
     KeyBinding,
@@ -258,7 +261,9 @@ def _display_tool_call_diff(
 
         case _:
             app_context.console.print(
-                f"    Arguments: {json.dumps(tool_args, indent=JSON_INDENT)}"
+                UI_TOOL_ARGS_FORMAT.format(
+                    args=json.dumps(tool_args, indent=JSON_INDENT)
+                )
             )
 
 
@@ -365,7 +370,7 @@ async def run_optimization_loop(
 ) -> None:
     app_context.console.print(UI_OPTIMIZATION_START.format(language=language))
     document_info = (
-        f" using the reference document: {reference_document}"
+        UI_REFERENCE_DOC_INFO.format(reference_document=reference_document)
         if reference_document
         else ""
     )
@@ -549,7 +554,7 @@ def get_multiline_input(prompt_text: str = PROMPT_ASK_QUESTION) -> str:
 
     print_formatted_text(
         HTML(
-            f"<ansigreen><b>{clean_prompt}</b></ansigreen> <ansiyellow>{MULTILINE_INPUT_HINT}</ansiyellow>: "
+            UI_INPUT_PROMPT_HTML.format(prompt=clean_prompt, hint=MULTILINE_INPUT_HINT)
         )
     )
 

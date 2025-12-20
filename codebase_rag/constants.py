@@ -177,6 +177,11 @@ UI_GRAPH_EXPORT_SUCCESS = (
 UI_GRAPH_EXPORT_STATS = "[bold cyan]Export contains {nodes} nodes and {relationships} relationships[/bold cyan]"
 UI_ERR_UNEXPECTED = "[bold red]An unexpected error occurred: {error}[/bold red]"
 UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
+UI_TOOL_ARGS_FORMAT = "    Arguments: {args}"
+UI_REFERENCE_DOC_INFO = " using the reference document: {reference_document}"
+UI_INPUT_PROMPT_HTML = (
+    "<ansigreen><b>{prompt}</b></ansigreen> <ansiyellow>{hint}</ansiyellow>: "
+)
 
 # (H) ModelConfig field names
 FIELD_PROVIDER = "provider"
