@@ -232,6 +232,10 @@ HORIZONTAL_SEPARATOR = "─" * 60
 # (H) Session log header
 SESSION_LOG_HEADER = "=== CODE-GRAPH RAG SESSION LOG ===\n\n"
 
+# (H) Temporary directory
+TMP_DIR = ".tmp"
+SESSION_LOG_PREFIX = "session_"
+
 # (H) File/directory ignore patterns
 IGNORE_PATTERNS = frozenset(
     {

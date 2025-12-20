@@ -18,14 +18,16 @@ class GraphData(BaseModel):
 
         clean_results = []
         for row in v:
-            clean_row = {}
-            for k, val in row.items():
-                if not isinstance(
-                    val, str | int | float | bool | list | dict | type(None)
-                ):
-                    clean_row[k] = str(val)
-                else:
-                    clean_row[k] = val  # type: ignore
+            clean_row = {
+                k: (
+                    val
+                    if isinstance(
+                        val, str | int | float | bool | list | dict | type(None)
+                    )
+                    else str(val)
+                )
+                for k, val in row.items()
+            }
             clean_results.append(clean_row)
         return clean_results
 

@@ -9,7 +9,6 @@ from collections.abc import Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import typer
 from loguru import logger
 from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
@@ -29,17 +28,16 @@ from .constants import (
     HORIZONTAL_SEPARATOR,
     IMAGE_EXTENSIONS,
     SESSION_LOG_HEADER,
+    SESSION_LOG_PREFIX,
+    TMP_DIR,
     ModelRole,
     Provider,
     ToolName,
 )
-from .graph_updater import GraphUpdater
 from .models import AgentLoopConfig, SessionState
-from .parser_loader import load_parsers
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
-from .services.protobuf_service import ProtobufFileIngestor
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
@@ -47,7 +45,6 @@ from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
-from .tools.language import cli as language_cli
 from .tools.semantic_search import (
     create_get_function_source_tool,
     create_semantic_search_tool,
@@ -64,23 +61,13 @@ if TYPE_CHECKING:
 
 session_state = SessionState()
 
-app = typer.Typer(
-    name="graph-code",
-    help="An accurate Retrieval-Augmented Generation (RAG) system that analyzes "
-    "multi-language codebases using Tree-sitter, builds comprehensive knowledge "
-    "graphs, and enables natural language querying of codebase structure and "
-    "relationships.",
-    no_args_is_help=True,
-    add_completion=False,
-)
-
 console = Console(width=None, force_terminal=True)
 
 
 def init_session_log(project_root: Path) -> Path:
-    log_dir = project_root / ".tmp"
+    log_dir = project_root / TMP_DIR
     log_dir.mkdir(exist_ok=True)
-    session_state.log_file = log_dir / f"session_{uuid.uuid4().hex[:8]}.log"
+    session_state.log_file = log_dir / f"{SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}.log"
     with open(session_state.log_file, "w") as f:
         f.write(SESSION_LOG_HEADER)
     return session_state.log_file
@@ -196,7 +183,7 @@ def _setup_common_initialization(repo_path: str) -> Path:
     logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
     project_root = Path(repo_path).resolve()
-    tmp_dir = project_root / ".tmp"
+    tmp_dir = project_root / TMP_DIR
     if tmp_dir.exists():
         if tmp_dir.is_dir():
             shutil.rmtree(tmp_dir)
@@ -450,7 +437,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
         return question
 
     updated_question = question
-    tmp_dir = project_root / ".tmp"
+    tmp_dir = project_root / TMP_DIR
     tmp_dir.mkdir(exist_ok=True)
 
     for original_path_str in image_files:
@@ -618,6 +605,14 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> dict:
     return graph_data
 
 
+def _connect_memgraph(batch_size: int) -> MemgraphIngestor:
+    return MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        batch_size=batch_size,
+    )
+
+
 def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
     output_path = Path(output)
 
@@ -637,29 +632,32 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
+def _validate_provider_config(role: ModelRole, config: "ModelConfig") -> None:
+    from .providers.base import get_provider
+
+    try:
+        provider = get_provider(
+            config.provider,
+            api_key=config.api_key,
+            endpoint=config.endpoint,
+            project_id=config.project_id,
+            region=config.region,
+            provider_type=config.provider_type,
+            thinking_budget=config.thinking_budget,
+            service_account_file=config.service_account_file,
+        )
+        provider.validate_config()
+    except Exception as e:
+        raise ValueError(f"{role.value.title()} configuration error: {e}") from e
+
+
 def _initialize_services_and_agent(
     repo_path: str, ingestor: QueryProtocol
 ) -> "Agent[None, str | DeferredToolRequests]":
-    from .providers.base import get_provider
-
-    def _validate_provider_config(role: str, config: "ModelConfig") -> None:
-        try:
-            provider = get_provider(
-                config.provider,
-                api_key=config.api_key,
-                endpoint=config.endpoint,
-                project_id=config.project_id,
-                region=config.region,
-                provider_type=config.provider_type,
-                thinking_budget=config.thinking_budget,
-                service_account_file=config.service_account_file,
-            )
-            provider.validate_config()
-        except Exception as e:
-            raise ValueError(f"{role.title()} configuration error: {e}") from e
-
-    _validate_provider_config("orchestrator", settings.active_orchestrator_config)
-    _validate_provider_config("cypher", settings.active_cypher_config)
+    _validate_provider_config(
+        ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
+    )
+    _validate_provider_config(ModelRole.CYPHER, settings.active_cypher_config)
 
     cypher_generator = CypherGenerator()
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
@@ -706,11 +704,7 @@ async def main_async(repo_path: str, batch_size: int) -> None:
     table = _create_configuration_table(repo_path)
     console.print(table)
 
-    with MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size,
-    ) as ingestor:
+    with _connect_memgraph(batch_size) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
         console.print(
             Panel(
@@ -721,184 +715,6 @@ async def main_async(repo_path: str, batch_size: int) -> None:
 
         rag_agent = _initialize_services_and_agent(repo_path, ingestor)
         await run_chat_loop(rag_agent, [], project_root)
-
-
-@app.command()
-def start(
-    repo_path: str | None = typer.Option(
-        None, "--repo-path", help="Path to the target repository for code retrieval"
-    ),
-    update_graph: bool = typer.Option(
-        False,
-        "--update-graph",
-        help="Update the knowledge graph by parsing the repository",
-    ),
-    clean: bool = typer.Option(
-        False,
-        "--clean",
-        help="Clean the database before updating (use when adding first repo)",
-    ),
-    output: str | None = typer.Option(
-        None,
-        "-o",
-        "--output",
-        help="Export graph to JSON file after updating (requires --update-graph)",
-    ),
-    orchestrator: str | None = typer.Option(
-        None,
-        "--orchestrator",
-        help="Specify orchestrator as provider:model (e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)",
-    ),
-    cypher: str | None = typer.Option(
-        None,
-        "--cypher",
-        help="Specify cypher model as provider:model (e.g., ollama:codellama, google:gemini-2.5-flash)",
-    ),
-    no_confirm: bool = typer.Option(
-        False,
-        "--no-confirm",
-        help="Disable confirmation prompts for edit operations (YOLO mode)",
-    ),
-    batch_size: int | None = typer.Option(
-        None,
-        "--batch-size",
-        min=1,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
-    ),
-) -> None:
-    session_state.confirm_edits = not no_confirm
-
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
-
-    if output and not update_graph:
-        console.print(
-            "[bold red]Error: --output/-o option requires --update-graph to be specified.[/bold red]"
-        )
-        raise typer.Exit(1)
-
-    _update_model_settings(orchestrator, cypher)
-
-    effective_batch_size = settings.resolve_batch_size(batch_size)
-
-    if update_graph:
-        repo_to_update = Path(target_repo_path)
-        console.print(
-            f"[bold green]Updating knowledge graph for: {repo_to_update}[/bold green]"
-        )
-
-        with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST,
-            port=settings.MEMGRAPH_PORT,
-            batch_size=effective_batch_size,
-        ) as ingestor:
-            if clean:
-                console.print("[bold yellow]Cleaning database...[/bold yellow]")
-                ingestor.clean_database()
-            ingestor.ensure_constraints()
-
-            parsers, queries = load_parsers()
-
-            updater = GraphUpdater(ingestor, repo_to_update, parsers, queries)
-            updater.run()
-
-            if output:
-                console.print(f"[bold cyan]Exporting graph to: {output}[/bold cyan]")
-                if not _export_graph_to_file(ingestor, output):
-                    raise typer.Exit(1)
-
-        console.print("[bold green]Graph update completed![/bold green]")
-        return
-
-    try:
-        asyncio.run(main_async(target_repo_path, effective_batch_size))
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Application terminated by user.[/bold red]")
-    except ValueError as e:
-        console.print(f"[bold red]Startup Error: {e}[/bold red]")
-
-
-@app.command()
-def index(
-    repo_path: str | None = typer.Option(
-        None, "--repo-path", help="Path to the target repository to index."
-    ),
-    output_proto_dir: str = typer.Option(
-        ...,
-        "-o",
-        "--output-proto-dir",
-        help="Required. Path to the output directory for the protobuf index file(s).",
-    ),
-    split_index: bool = typer.Option(
-        False,
-        "--split-index",
-        help="Write index to separate nodes.bin and relationships.bin files.",
-    ),
-) -> None:
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
-    repo_to_index = Path(target_repo_path)
-
-    console.print(f"[bold green]Indexing codebase at: {repo_to_index}[/bold green]")
-    console.print(
-        f"[bold cyan]Output will be written to: {output_proto_dir}[/bold cyan]"
-    )
-
-    try:
-        ingestor = ProtobufFileIngestor(
-            output_path=output_proto_dir, split_index=split_index
-        )
-        parsers, queries = load_parsers()
-        updater = GraphUpdater(ingestor, repo_to_index, parsers, queries)
-
-        updater.run()
-
-        console.print(
-            "[bold green]Indexing process completed successfully![/bold green]"
-        )
-    except Exception as e:
-        console.print(f"[bold red]An error occurred during indexing: {e}[/bold red]")
-        logger.error("Indexing failed", exc_info=True)
-        raise typer.Exit(1) from e
-
-
-@app.command()
-def export(
-    output: str = typer.Option(
-        ..., "-o", "--output", help="Output file path for the exported graph"
-    ),
-    format_json: bool = typer.Option(
-        True, "--json/--no-json", help="Export in JSON format"
-    ),
-    batch_size: int | None = typer.Option(
-        None,
-        "--batch-size",
-        min=1,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
-    ),
-) -> None:
-    if not format_json:
-        console.print(
-            "[bold red]Error: Currently only JSON format is supported.[/bold red]"
-        )
-        raise typer.Exit(1)
-
-    console.print("[bold cyan]Connecting to Memgraph to export graph...[/bold cyan]")
-
-    effective_batch_size = settings.resolve_batch_size(batch_size)
-
-    try:
-        with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST,
-            port=settings.MEMGRAPH_PORT,
-            batch_size=effective_batch_size,
-        ) as ingestor:
-            console.print("[bold cyan]Exporting graph data...[/bold cyan]")
-            if not _export_graph_to_file(ingestor, output):
-                raise typer.Exit(1)
-
-    except Exception as e:
-        console.print(f"[bold red]Failed to export graph: {e}[/bold red]")
-        logger.error(f"Export error: {e}", exc_info=True)
-        raise typer.Exit(1) from e
 
 
 async def main_optimize_async(
@@ -924,125 +740,10 @@ async def main_optimize_async(
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
-    with MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=effective_batch_size,
-    ) as ingestor:
+    with _connect_memgraph(effective_batch_size) as ingestor:
         console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
 
         rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
         await run_optimization_loop(
             rag_agent, [], project_root, language, reference_document
         )
-
-
-@app.command()
-def optimize(
-    language: str = typer.Argument(
-        ...,
-        help="Programming language to optimize for (e.g., python, java, javascript, cpp)",
-    ),
-    repo_path: str | None = typer.Option(
-        None, "--repo-path", help="Path to the repository to optimize"
-    ),
-    reference_document: str | None = typer.Option(
-        None,
-        "--reference-document",
-        help="Path to reference document/book for optimization guidance",
-    ),
-    orchestrator: str | None = typer.Option(
-        None,
-        "--orchestrator",
-        help="Specify orchestrator as provider:model (e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)",
-    ),
-    cypher: str | None = typer.Option(
-        None,
-        "--cypher",
-        help="Specify cypher model as provider:model (e.g., ollama:codellama, google:gemini-2.5-flash)",
-    ),
-    no_confirm: bool = typer.Option(
-        False,
-        "--no-confirm",
-        help="Disable confirmation prompts for edit operations (YOLO mode)",
-    ),
-    batch_size: int | None = typer.Option(
-        None,
-        "--batch-size",
-        min=1,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
-    ),
-) -> None:
-    session_state.confirm_edits = not no_confirm
-
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
-
-    try:
-        asyncio.run(
-            main_optimize_async(
-                language,
-                target_repo_path,
-                reference_document,
-                orchestrator,
-                cypher,
-                batch_size,
-            )
-        )
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Optimization session terminated by user.[/bold red]")
-    except ValueError as e:
-        console.print(f"[bold red]Startup Error: {e}[/bold red]")
-
-
-@app.command(name="mcp-server", help="Start the MCP server for Claude Code integration")
-def mcp_server() -> None:
-    try:
-        from codebase_rag.mcp import main as mcp_main
-
-        asyncio.run(mcp_main())
-    except KeyboardInterrupt:
-        console.print("\n[bold red]MCP server terminated by user.[/bold red]")
-    except ValueError as e:
-        console.print(f"[bold red]Configuration Error: {e}[/bold red]")
-        console.print(
-            "\n[yellow]Hint: Make sure TARGET_REPO_PATH environment variable is set.[/yellow]"
-        )
-    except Exception as e:
-        console.print(f"[bold red]MCP Server Error: {e}[/bold red]")
-
-
-@app.command(name="graph-loader")
-def graph_loader_command(
-    graph_file: str = typer.Argument(..., help="Path to the exported graph JSON file"),
-) -> None:
-    from .graph_loader import load_graph
-
-    try:
-        graph = load_graph(graph_file)
-        summary = graph.summary()
-
-        console.print("[bold green]Graph Summary:[/bold green]")
-        console.print(f"  Total nodes: {summary['total_nodes']}")
-        console.print(f"  Total relationships: {summary['total_relationships']}")
-        console.print(f"  Node types: {list(summary['node_labels'].keys())}")
-        console.print(
-            f"  Relationship types: {list(summary['relationship_types'].keys())}"
-        )
-        console.print(f"  Exported at: {summary['metadata']['exported_at']}")
-
-    except Exception as e:
-        console.print(f"[bold red]Failed to load graph: {e}[/bold red]")
-        raise typer.Exit(1) from e
-
-
-@app.command(
-    name="language",
-    help="Manage language grammars (add, remove, list)",
-    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
-)
-def language_command(ctx: typer.Context) -> None:
-    language_cli(ctx.args, standalone_mode=False)
-
-
-if __name__ == "__main__":
-    app()

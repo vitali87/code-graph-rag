@@ -25,8 +25,8 @@ dependencies = [
 ]
 
 [project.scripts]
-graph-code = "codebase_rag.main:app"
-cgr = "codebase_rag.main:app"
+graph-code = "codebase_rag.cli:app"
+cgr = "codebase_rag.cli:app"
 
 [tool.uv]
 package = true
@@ -67,6 +67,7 @@ semantic = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+exclude = ["codec/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP"]
