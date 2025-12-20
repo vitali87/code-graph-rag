@@ -339,6 +339,7 @@ LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}"
 # (H) Temporary directory
 TMP_DIR = ".tmp"
 SESSION_LOG_PREFIX = "session_"
+SESSION_LOG_EXT = ".log"
 
 # (H) Session log prefixes
 SESSION_PREFIX_USER = "USER: "

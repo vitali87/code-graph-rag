@@ -64,6 +64,7 @@ from .constants import (
     PROMPT_YOUR_RESPONSE,
     SESSION_CONTEXT_END,
     SESSION_CONTEXT_START,
+    SESSION_LOG_EXT,
     SESSION_LOG_HEADER,
     SESSION_LOG_PREFIX,
     SESSION_PREFIX_ASSISTANT,
@@ -154,7 +155,7 @@ def init_session_log(project_root: Path) -> Path:
     log_dir = project_root / TMP_DIR
     log_dir.mkdir(exist_ok=True)
     app_context.session.log_file = (
-        log_dir / f"{SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}.log"
+        log_dir / f"{SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}{SESSION_LOG_EXT}"
     )
     with open(app_context.session.log_file, "w") as f:
         f.write(SESSION_LOG_HEADER)
