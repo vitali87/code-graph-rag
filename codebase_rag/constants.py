@@ -24,6 +24,7 @@ class Color(StrEnum):
     YELLOW = "yellow"
     CYAN = "cyan"
     RED = "red"
+    MAGENTA = "magenta"
 
 
 class KeyBinding(StrEnum):

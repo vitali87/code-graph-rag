@@ -304,8 +304,8 @@ def _create_configuration_table(
     language: str | None = None,
 ) -> Table:
     table = Table(title=style(title, Color.GREEN))
-    table.add_column(TABLE_COL_CONFIGURATION, style="cyan")
-    table.add_column(TABLE_COL_VALUE, style="magenta")
+    table.add_column(TABLE_COL_CONFIGURATION, style=Color.CYAN)
+    table.add_column(TABLE_COL_VALUE, style=Color.MAGENTA)
 
     if language:
         table.add_row(TABLE_ROW_TARGET_LANGUAGE, language)
