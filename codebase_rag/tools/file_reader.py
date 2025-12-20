@@ -4,6 +4,8 @@ from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Tool
 
+from ..constants import ENCODING_UTF8
+
 
 class FileReadResult(BaseModel):
     """Data model for file read results."""
@@ -61,7 +63,7 @@ class FileReader:
                 return FileReadResult(file_path=file_path, error_message=error_msg)
 
             try:
-                content = full_path.read_text(encoding="utf-8")
+                content = full_path.read_text(encoding=ENCODING_UTF8)
                 logger.info(f"[FileReader] Successfully read text from {file_path}")
                 return FileReadResult(file_path=file_path, content=content)
             except UnicodeDecodeError:

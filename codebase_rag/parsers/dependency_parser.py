@@ -7,6 +7,8 @@ from pathlib import Path
 import toml
 from loguru import logger
 
+from ..constants import ENCODING_UTF8
+
 
 @dataclass
 class Dependency:
@@ -72,7 +74,7 @@ class RequirementsTxtParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies = []
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding=ENCODING_UTF8) as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#") or line.startswith("-"):
@@ -104,7 +106,7 @@ class PackageJsonParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies = []
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding=ENCODING_UTF8) as f:
                 data = json.load(f)
 
             deps = data.get("dependencies", {})
@@ -155,7 +157,7 @@ class GoModParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies = []
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding=ENCODING_UTF8) as f:
                 in_require_block = False
                 for line in f:
                     line = line.strip()
@@ -186,7 +188,7 @@ class GemfileParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies = []
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding=ENCODING_UTF8) as f:
                 for line in f:
                     line = line.strip()
                     if line.startswith("gem "):
@@ -207,7 +209,7 @@ class ComposerJsonParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies = []
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding=ENCODING_UTF8) as f:
                 data = json.load(f)
 
             deps = data.get("require", {})

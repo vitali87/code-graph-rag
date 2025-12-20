@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
+from ..constants import ENCODING_UTF8
 from ..types_defs import NodeType, SimpleNameLookup
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     Returns:
         Decoded UTF-8 string
     """
-    return text_bytes.decode("utf-8")
+    return text_bytes.decode(ENCODING_UTF8)
 
 
 def safe_decode_text(node: Node | None) -> str | None:

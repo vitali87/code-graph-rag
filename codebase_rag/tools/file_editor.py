@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
-from ..constants import SEPARATOR_DOT
+from ..constants import ENCODING_UTF8, SEPARATOR_DOT
 from ..language_config import get_language_config
 from ..parser_loader import load_parsers
 
@@ -106,7 +106,7 @@ class FileEditor:
             if node.type in lang_config.function_node_types:
                 name_node = node.child_by_field_name("name")
                 if name_node and name_node.text:
-                    func_name = name_node.text.decode("utf-8")
+                    func_name = name_node.text.decode(ENCODING_UTF8)
 
                     qualified_name = (
                         f"{parent_class}.{func_name}" if parent_class else func_name
@@ -129,7 +129,7 @@ class FileEditor:
             if node.type in lang_config.class_node_types:
                 name_node = node.child_by_field_name("name")
                 if name_node and name_node.text:
-                    current_class = name_node.text.decode("utf-8")
+                    current_class = name_node.text.decode(ENCODING_UTF8)
 
             for child in node.children:
                 find_function_nodes(child, current_class)
@@ -142,7 +142,7 @@ class FileEditor:
             node_text = matching_functions[0]["node"].text
             if node_text is None:
                 return None
-            return str(node_text.decode("utf-8"))
+            return str(node_text.decode(ENCODING_UTF8))
         else:
             if line_number is not None:
                 for func in matching_functions:
@@ -150,7 +150,7 @@ class FileEditor:
                         node_text = func["node"].text
                         if node_text is None:
                             return None
-                        return str(node_text.decode("utf-8"))
+                        return str(node_text.decode(ENCODING_UTF8))
                 logger.warning(
                     f"No function '{function_name}' found at line {line_number}"
                 )
@@ -162,7 +162,7 @@ class FileEditor:
                         node_text = func["node"].text
                         if node_text is None:
                             return None
-                        return str(node_text.decode("utf-8"))
+                        return str(node_text.decode(ENCODING_UTF8))
                 logger.warning(
                     f"No function found with qualified name '{function_name}'"
                 )
@@ -183,7 +183,7 @@ class FileEditor:
             node_text = matching_functions[0]["node"].text
             if node_text is None:
                 return None
-            return str(node_text.decode("utf-8"))
+            return str(node_text.decode(ENCODING_UTF8))
 
     def replace_function_source_code(
         self,
@@ -199,7 +199,7 @@ class FileEditor:
             logger.error(f"Function '{function_name}' not found in {file_path}.")
             return False
 
-        with open(file_path, encoding="utf-8") as f:
+        with open(file_path, encoding=ENCODING_UTF8) as f:
             original_content = f.read()
 
         patches = self.dmp.patch_make(original_code, new_code)
@@ -216,7 +216,7 @@ class FileEditor:
             logger.warning("No changes detected after replacement.")
             return False
 
-        with open(file_path, "w", encoding="utf-8") as f:
+        with open(file_path, "w", encoding=ENCODING_UTF8) as f:
             f.write(new_content)
 
         logger.success(
@@ -251,7 +251,7 @@ class FileEditor:
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
         """Apply a patch to a file using diff-match-patch."""
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open(file_path, encoding=ENCODING_UTF8) as f:
                 original_content = f.read()
 
             patches = self.dmp.patch_fromText(patch_text)
@@ -262,7 +262,7 @@ class FileEditor:
                 logger.warning(f"Some patches failed to apply cleanly to {file_path}")
                 return False
 
-            with open(file_path, "w", encoding="utf-8") as f:
+            with open(file_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(new_content)
 
             logger.success(f"Successfully applied patch to {file_path}")
@@ -287,7 +287,7 @@ class FileEditor:
                 logger.error(f"File not found: {file_path}")
                 return False
 
-            with open(full_path, encoding="utf-8") as f:
+            with open(full_path, encoding=ENCODING_UTF8) as f:
                 original_content = f.read()
 
             if target_block not in original_content:
@@ -317,7 +317,7 @@ class FileEditor:
                 logger.error("Surgical patches failed to apply cleanly")
                 return False
 
-            with open(full_path, "w", encoding="utf-8") as f:
+            with open(full_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(patched_content)
 
             logger.success(
@@ -348,7 +348,7 @@ class FileEditor:
                     file_path=file_path, success=False, error_message=error_msg
                 )
 
-            with open(full_path, "w", encoding="utf-8") as f:
+            with open(full_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(new_content)
 
             logger.success(

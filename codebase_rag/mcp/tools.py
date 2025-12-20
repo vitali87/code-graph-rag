@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from loguru import logger
 
+from codebase_rag.constants import ENCODING_UTF8
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -355,7 +356,7 @@ class MCPToolsRegistry:
                 full_path = Path(self.project_root) / file_path
                 start = offset if offset is not None else 0
 
-                with open(full_path, encoding="utf-8") as f:
+                with open(full_path, encoding=ENCODING_UTF8) as f:
                     skipped_count = sum(1 for _ in itertools.islice(f, start))
 
                     if limit is not None:

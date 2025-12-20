@@ -3,6 +3,7 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import Tool
 
+from ..constants import ENCODING_UTF8
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
 
@@ -57,7 +58,7 @@ class CodeRetriever:
                 )
 
             full_path = self.project_root / file_path_str
-            with full_path.open("r", encoding="utf-8") as f:
+            with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
             snippet_lines = all_lines[start_line - 1 : end_line]

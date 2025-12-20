@@ -35,6 +35,7 @@ from .constants import (
     DEFAULT_TABLE_TITLE,
     DIFF_LABEL_AFTER,
     DIFF_LABEL_BEFORE,
+    ENCODING_UTF8,
     ERR_CONFIG,
     ERR_EXPORT_ERROR,
     ERR_IMAGE_COPY_FAILED,
@@ -671,7 +672,7 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
     graph_data: GraphData = ingestor.export_graph_to_dict()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding=ENCODING_UTF8) as f:
         json.dump(graph_data, f, indent=JSON_INDENT, ensure_ascii=False)
 
     return graph_data

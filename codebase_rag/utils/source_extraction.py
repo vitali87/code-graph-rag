@@ -3,9 +3,11 @@ from pathlib import Path
 
 from loguru import logger
 
+from ..constants import ENCODING_UTF8
+
 
 def extract_source_lines(
-    file_path: Path, start_line: int, end_line: int, encoding: str = "utf-8"
+    file_path: Path, start_line: int, end_line: int, encoding: str = ENCODING_UTF8
 ) -> str | None:
     if not file_path.exists():
         logger.warning(f"Source file not found: {file_path}")
@@ -40,7 +42,7 @@ def extract_source_with_fallback(
     end_line: int,
     qualified_name: str | None = None,
     ast_extractor: Callable | None = None,
-    encoding: str = "utf-8",
+    encoding: str = ENCODING_UTF8,
 ) -> str | None:
     if ast_extractor and qualified_name:
         try:

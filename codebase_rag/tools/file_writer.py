@@ -4,6 +4,8 @@ from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Tool
 
+from ..constants import ENCODING_UTF8
+
 
 class FileCreationResult(BaseModel):
     """Data model for file creation results."""
@@ -29,7 +31,7 @@ class FileWriter:
             full_path.relative_to(self.project_root)
 
             full_path.parent.mkdir(parents=True, exist_ok=True)
-            full_path.write_text(content, encoding="utf-8")
+            full_path.write_text(content, encoding=ENCODING_UTF8)
             logger.info(
                 f"[FileWriter] Successfully wrote {len(content)} characters to {file_path}"
             )

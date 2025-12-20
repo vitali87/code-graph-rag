@@ -9,6 +9,7 @@ from typing import Any, cast
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
 
+from ..constants import ENCODING_UTF8
 from ..schemas import ShellCommandResult
 
 COMMAND_ALLOWLIST = frozenset(
@@ -128,8 +129,8 @@ class ShellCommander:
                 process.communicate(), timeout=self.timeout
             )
 
-            stdout_str = stdout.decode("utf-8", errors="replace").strip()
-            stderr_str = stderr.decode("utf-8", errors="replace").strip()
+            stdout_str = stdout.decode(ENCODING_UTF8, errors="replace").strip()
+            stderr_str = stderr.decode(ENCODING_UTF8, errors="replace").strip()
 
             logger.info(f"Return code: {process.returncode}")
             if stdout_str:
