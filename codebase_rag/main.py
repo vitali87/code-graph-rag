@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import difflib
 import json
@@ -371,8 +373,8 @@ Remember: Propose changes first, wait for my approval, then implement.
 
 
 async def run_optimization_loop(
-    rag_agent: "Agent[None, str | DeferredToolRequests]",
-    message_history: list["ModelMessage"],
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
     project_root: Path,
     language: str,
     reference_document: str | None = None,
@@ -431,8 +433,8 @@ async def run_with_cancellation[T](
 
 
 async def _run_agent_response_loop(
-    rag_agent: "Agent[None, str | DeferredToolRequests]",
-    message_history: list["ModelMessage"],
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
     question_with_context: str,
     config: AgentLoopConfig,
 ) -> None:
@@ -542,15 +544,15 @@ def get_multiline_input(prompt_text: str = PROMPT_ASK_QUESTION) -> str:
     bindings = KeyBindings()
 
     @bindings.add(KeyBinding.CTRL_J)
-    def submit(event: "KeyPressEvent") -> None:
+    def submit(event: KeyPressEvent) -> None:
         event.app.exit(result=event.app.current_buffer.text)
 
     @bindings.add(KeyBinding.ENTER)
-    def new_line(event: "KeyPressEvent") -> None:
+    def new_line(event: KeyPressEvent) -> None:
         event.current_buffer.insert_text("\n")
 
     @bindings.add(KeyBinding.CTRL_C)
-    def keyboard_interrupt(event: "KeyPressEvent") -> None:
+    def keyboard_interrupt(event: KeyPressEvent) -> None:
         event.app.exit(exception=KeyboardInterrupt)
 
     clean_prompt = Text.from_markup(prompt_text).plain
@@ -575,8 +577,8 @@ def get_multiline_input(prompt_text: str = PROMPT_ASK_QUESTION) -> str:
 
 
 async def _run_interactive_loop(
-    rag_agent: "Agent[None, str | DeferredToolRequests]",
-    message_history: list["ModelMessage"],
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
     project_root: Path,
     config: AgentLoopConfig,
     input_prompt: str,
@@ -622,8 +624,8 @@ async def _run_interactive_loop(
 
 
 async def run_chat_loop(
-    rag_agent: "Agent[None, str | DeferredToolRequests]",
-    message_history: list["ModelMessage"],
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
     project_root: Path,
 ) -> None:
     await _run_interactive_loop(
@@ -706,7 +708,7 @@ def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-def _validate_provider_config(role: ModelRole, config: "ModelConfig") -> None:
+def _validate_provider_config(role: ModelRole, config: ModelConfig) -> None:
     from .providers.base import get_provider
 
     try:
@@ -727,7 +729,7 @@ def _validate_provider_config(role: ModelRole, config: "ModelConfig") -> None:
 
 def _initialize_services_and_agent(
     repo_path: str, ingestor: QueryProtocol
-) -> "Agent[None, str | DeferredToolRequests]":
+) -> Agent[None, str | DeferredToolRequests]:
     _validate_provider_config(
         ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
