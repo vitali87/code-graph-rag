@@ -10,7 +10,6 @@ if has_qdrant_client():
     _COLLECTION = "code_embeddings"
 
     def get_qdrant_client() -> QdrantClient:
-        """Get or create Qdrant client instance."""
         global _CLIENT
         if _CLIENT is None:
             _CLIENT = QdrantClient(path="./.qdrant_code_embeddings")
@@ -24,13 +23,6 @@ if has_qdrant_client():
     def store_embedding(
         node_id: int, embedding: list[float], qualified_name: str
     ) -> None:
-        """Store code embedding in Qdrant vector database.
-
-        Args:
-            node_id: Memgraph node ID
-            embedding: 768-dimensional embedding vector
-            qualified_name: Function/method qualified name
-        """
         try:
             client = get_qdrant_client()
             client.upsert(
@@ -49,15 +41,6 @@ if has_qdrant_client():
     def search_embeddings(
         query_embedding: list[float], top_k: int = 5
     ) -> list[tuple[int, float]]:
-        """Search for similar code embeddings.
-
-        Args:
-            query_embedding: Query embedding vector
-            top_k: Number of results to return
-
-        Returns:
-            List of (node_id, similarity_score) tuples ordered by relevance
-        """
         try:
             client = get_qdrant_client()
             result = client.query_points(
@@ -77,11 +60,9 @@ else:
     def store_embedding(
         node_id: int, embedding: list[float], qualified_name: str
     ) -> None:
-        """No-op when Qdrant not available."""
         pass
 
     def search_embeddings(
         query_embedding: list[float], top_k: int = 5
     ) -> list[tuple[int, float]]:
-        """Return empty list when Qdrant not available."""
         return []

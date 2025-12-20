@@ -7,23 +7,6 @@ from loguru import logger
 def extract_source_lines(
     file_path: Path, start_line: int, end_line: int, encoding: str = "utf-8"
 ) -> str | None:
-    """Extract source code lines from a file.
-
-    This utility function provides the common line-based source extraction
-    logic used by multiple components in the codebase.
-
-    Args:
-        file_path: Path to the source file
-        start_line: Start line number (1-based indexing)
-        end_line: End line number (1-based indexing, inclusive)
-        encoding: File encoding (default: utf-8)
-
-    Returns:
-        Extracted source code as string, or None if extraction fails
-
-    Raises:
-        None - All exceptions are caught and logged
-    """
     if not file_path.exists():
         logger.warning(f"Source file not found: {file_path}")
         return None
@@ -59,27 +42,9 @@ def extract_source_with_fallback(
     ast_extractor: Callable | None = None,
     encoding: str = "utf-8",
 ) -> str | None:
-    """Extract source code with AST-based extraction and line-based fallback.
-
-    This function provides a pattern commonly used across the codebase:
-    1. Try AST-based extraction (if ast_extractor provided)
-    2. Fall back to line-based extraction
-
-    Args:
-        file_path: Path to the source file
-        start_line: Start line number (1-based indexing)
-        end_line: End line number (1-based indexing, inclusive)
-        qualified_name: Function qualified name (for AST extraction)
-        ast_extractor: Optional function for AST-based extraction
-        encoding: File encoding (default: utf-8)
-
-    Returns:
-        Extracted source code as string, or None if extraction fails
-    """
     if ast_extractor and qualified_name:
         try:
-            ast_result = ast_extractor(qualified_name, file_path)
-            if ast_result:
+            if ast_result := ast_extractor(qualified_name, file_path):
                 return str(ast_result)
         except Exception as e:
             logger.debug(f"AST extraction failed for {qualified_name}: {e}")
@@ -90,16 +55,6 @@ def extract_source_with_fallback(
 def validate_source_location(
     file_path: str | None, start_line: int | None, end_line: int | None
 ) -> tuple[bool, Path | None]:
-    """Validate source location parameters.
-
-    Args:
-        file_path: File path string (may be None)
-        start_line: Start line number (may be None)
-        end_line: End line number (may be None)
-
-    Returns:
-        Tuple of (is_valid, path_object)
-    """
     if not all([file_path, start_line, end_line]):
         return False, None
 
