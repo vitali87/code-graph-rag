@@ -206,3 +206,53 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1
     ```
 """
+
+# ======================================================================================
+#  OPTIMIZATION PROMPT
+# ======================================================================================
+OPTIMIZATION_INSTRUCTIONS_BASE = (
+    "Use your code retrieval and graph querying tools to understand the codebase structure",
+    "Read relevant source files to identify optimization opportunities",
+)
+
+OPTIMIZATION_INSTRUCTION_REFERENCE_DOC = "Use the analyze_document tool to reference best practices from {reference_document}"
+
+OPTIMIZATION_INSTRUCTIONS_EXTENDED = (
+    "Reference established patterns and best practices for {language}",
+    "Propose specific, actionable optimizations with file references",
+    "IMPORTANT: Do not make any changes yet - just propose them and wait for approval",
+    "After approval, use your file editing tools to implement the changes",
+)
+
+OPTIMIZATION_PROMPT_TEMPLATE = """
+I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
+
+Please:
+{numbered_instructions}
+
+Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
+Remember: Propose changes first, wait for my approval, then implement.
+"""
+
+
+def build_optimization_prompt(language: str, reference_document: str | None) -> str:
+    instructions = list(OPTIMIZATION_INSTRUCTIONS_BASE)
+
+    if reference_document:
+        instructions.append(
+            OPTIMIZATION_INSTRUCTION_REFERENCE_DOC.format(
+                reference_document=reference_document
+            )
+        )
+
+    instructions.extend(
+        inst.format(language=language) for inst in OPTIMIZATION_INSTRUCTIONS_EXTENDED
+    )
+
+    numbered_instructions = "\n".join(
+        f"{i + 1}. {inst}" for i, inst in enumerate(instructions)
+    )
+
+    return OPTIMIZATION_PROMPT_TEMPLATE.format(
+        language=language, numbered_instructions=numbered_instructions
+    )

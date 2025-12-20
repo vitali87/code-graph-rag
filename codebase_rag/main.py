@@ -97,6 +97,7 @@ from .constants import (
     ToolName,
 )
 from .models import AgentLoopConfig, AppContext
+from .prompts import build_optimization_prompt
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -348,40 +349,6 @@ def _create_configuration_table(
     return table
 
 
-def _build_optimization_prompt(language: str, reference_document: str | None) -> str:
-    instructions = [
-        "Use your code retrieval and graph querying tools to understand the codebase structure",
-        "Read relevant source files to identify optimization opportunities",
-    ]
-    if reference_document:
-        instructions.append(
-            f"Use the analyze_document tool to reference best practices from {reference_document}"
-        )
-
-    instructions.extend(
-        [
-            f"Reference established patterns and best practices for {language}",
-            "Propose specific, actionable optimizations with file references",
-            "IMPORTANT: Do not make any changes yet - just propose them and wait for approval",
-            "After approval, use your file editing tools to implement the changes",
-        ]
-    )
-
-    numbered_instructions = "\n".join(
-        f"{i + 1}. {inst}" for i, inst in enumerate(instructions)
-    )
-
-    return f"""
-I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
-
-Please:
-{numbered_instructions}
-
-Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
-Remember: Propose changes first, wait for my approval, then implement.
-"""
-
-
 async def run_optimization_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -402,7 +369,7 @@ async def run_optimization_loop(
         )
     )
 
-    initial_question = _build_optimization_prompt(language, reference_document)
+    initial_question = build_optimization_prompt(language, reference_document)
 
     await _run_interactive_loop(
         rag_agent,
