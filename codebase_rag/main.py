@@ -393,24 +393,45 @@ async def _run_agent_response_loop(
         break
 
 
-def _handle_chat_images(question: str, project_root: Path) -> str:
+def _find_image_paths(question: str) -> list[str]:
     try:
         tokens = shlex.split(question)
     except ValueError:
         tokens = question.split()
-
-    image_files = [
+    return [
         token
         for token in tokens
         if token.startswith("/") and token.lower().endswith(IMAGE_EXTENSIONS)
     ]
 
+
+def _get_path_variants(path_str: str) -> tuple[str, ...]:
+    return (
+        path_str.replace(" ", r"\ "),
+        f"'{path_str}'",
+        f'"{path_str}"',
+        path_str,
+    )
+
+
+def _replace_path_in_question(question: str, old_path: str, new_path: str) -> str:
+    for variant in _get_path_variants(old_path):
+        if variant in question:
+            return question.replace(variant, new_path)
+    logger.warning(
+        f"Could not find original path in question for replacement: {old_path}"
+    )
+    return question
+
+
+def _handle_chat_images(question: str, project_root: Path) -> str:
+    image_files = _find_image_paths(question)
     if not image_files:
         return question
 
-    updated_question = question
     tmp_dir = project_root / TMP_DIR
     tmp_dir.mkdir(exist_ok=True)
+    updated_question = question
 
     for original_path_str in image_files:
         original_path = Path(original_path_str)
@@ -422,30 +443,11 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
         try:
             new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
             shutil.copy(original_path, new_path)
-            new_relative_path = new_path.relative_to(project_root)
-
-            path_variants = [
-                original_path_str.replace(" ", r"\ "),
-                f"'{original_path_str}'",
-                f'"{original_path_str}"',
-                original_path_str,
-            ]
-
-            replaced = False
-            for variant in path_variants:
-                if variant in updated_question:
-                    updated_question = updated_question.replace(
-                        variant, str(new_relative_path)
-                    )
-                    replaced = True
-                    break
-
-            if not replaced:
-                logger.warning(
-                    f"Could not find original path in question for replacement: {original_path_str}"
-                )
-
-            logger.info(f"Copied image to temporary path: {new_relative_path}")
+            new_relative = str(new_path.relative_to(project_root))
+            updated_question = _replace_path_in_question(
+                updated_question, original_path_str, new_relative
+            )
+            logger.info(f"Copied image to temporary path: {new_relative}")
         except Exception as e:
             logger.error(f"Failed to copy image to temporary directory: {e}")
 
