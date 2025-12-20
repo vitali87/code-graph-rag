@@ -373,12 +373,12 @@ def add_grammar(
             calls = ["invocation_expression"]
 
     new_language_config = LanguageConfig(
-        name=language_name,
-        file_extensions=file_extension,
-        function_node_types=functions,
-        class_node_types=classes,
-        module_node_types=modules,
-        call_node_types=calls,
+        language=language_name,
+        file_extensions=tuple(file_extension),
+        function_node_types=tuple(functions),
+        class_node_types=tuple(classes),
+        module_node_types=tuple(modules),
+        call_node_types=tuple(calls),
     )
 
     LANGUAGE_CONFIGS[language_name] = new_language_config
@@ -387,7 +387,7 @@ def add_grammar(
     try:
         config_content = pathlib.Path(config_file_path).read_text()
         config_entry = f"""    "{language_name}": LanguageConfig(
-        name="{new_language_config.name}",
+        language="{new_language_config.language}",
         file_extensions={new_language_config.file_extensions},
         function_node_types={new_language_config.function_node_types},
         class_node_types={new_language_config.class_node_types},

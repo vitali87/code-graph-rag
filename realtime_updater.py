@@ -77,10 +77,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # (H) Step 3
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_config(path.suffix)
-            if lang_config and lang_config.name in self.updater.parsers:
+            if lang_config and lang_config.language in self.updater.parsers:
                 if result := self.updater.factory.definition_processor.process_file(
                     path,
-                    lang_config.name,
+                    lang_config.language,
                     self.updater.queries,
                     self.updater.factory.structure_processor.structural_elements,
                 ):

@@ -134,3 +134,82 @@ RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
        m.path AS path
 ORDER BY n.qualified_name
 """
+
+
+class SupportedLanguage(StrEnum):
+    PYTHON = "python"
+    JS = "javascript"
+    TS = "typescript"
+    RUST = "rust"
+    GO = "go"
+    SCALA = "scala"
+    JAVA = "java"
+    CPP = "cpp"
+    CSHARP = "c-sharp"
+    PHP = "php"
+    LUA = "lua"
+
+
+# (H) Tree-sitter AST node type constants
+FUNCTION_NODES_BASIC = ("function_declaration", "function_definition")
+FUNCTION_NODES_LAMBDA = (
+    "lambda_expression",
+    "arrow_function",
+    "anonymous_function",
+    "closure_expression",
+)
+FUNCTION_NODES_METHOD = (
+    "method_declaration",
+    "constructor_declaration",
+    "destructor_declaration",
+)
+FUNCTION_NODES_TEMPLATE = (
+    "template_declaration",
+    "function_signature_item",
+    "function_signature",
+)
+FUNCTION_NODES_GENERATOR = ("generator_function_declaration", "function_expression")
+
+CLASS_NODES_BASIC = ("class_declaration", "class_definition")
+CLASS_NODES_STRUCT = ("struct_declaration", "struct_specifier", "struct_item")
+CLASS_NODES_INTERFACE = ("interface_declaration", "trait_declaration", "trait_item")
+CLASS_NODES_ENUM = ("enum_declaration", "enum_item", "enum_specifier")
+CLASS_NODES_TYPE_ALIAS = ("type_alias_declaration", "type_item")
+CLASS_NODES_UNION = ("union_specifier", "union_item")
+
+CALL_NODES_BASIC = ("call_expression", "function_call")
+CALL_NODES_METHOD = (
+    "method_invocation",
+    "member_call_expression",
+    "field_expression",
+)
+CALL_NODES_OPERATOR = ("binary_expression", "unary_expression", "update_expression")
+CALL_NODES_SPECIAL = ("new_expression", "delete_expression", "macro_invocation")
+
+IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
+IMPORT_NODES_FROM = ("import_from_statement",)
+IMPORT_NODES_MODULE = ("lexical_declaration", "export_statement")
+IMPORT_NODES_INCLUDE = ("preproc_include",)
+IMPORT_NODES_USING = ("using_directive",)
+
+# (H) JS/TS specific node types
+JS_TS_FUNCTION_NODES = (
+    "function_declaration",
+    "generator_function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+)
+JS_TS_CLASS_NODES = ("class_declaration", "class")
+JS_TS_IMPORT_NODES = ("import_statement", "lexical_declaration", "export_statement")
+
+# (H) C++ import node types
+CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
+
+# (H) Index file names
+INDEX_INIT = "__init__"
+INDEX_INDEX = "index"
+INDEX_MOD = "mod"
+
+# (H) AST field names for name extraction
+NAME_FIELDS = ("identifier", "name", "id")

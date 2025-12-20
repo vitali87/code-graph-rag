@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from tree_sitter import Node
 
 from .utils import safe_decode_text
@@ -308,7 +310,7 @@ def build_rust_module_path(
     node: Node,
     include_impl_targets: bool = False,
     include_classes: bool = False,
-    class_node_types: list[str] | None = None,
+    class_node_types: Sequence[str] | None = None,
 ) -> list[str]:
     """Build a path of containing modules/types for a Rust node.
 

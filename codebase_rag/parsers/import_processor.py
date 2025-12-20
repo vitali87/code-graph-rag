@@ -746,7 +746,7 @@ class ImportProcessor:
 
         for import_node in captures.get("import", []):
             logger.debug(
-                f"Generic import parsing for {lang_config.name}: {import_node.type}"
+                f"Generic import parsing for {lang_config.language}: {import_node.type}"
             )
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:

@@ -361,10 +361,10 @@ class GraphUpdater:
         for filepath in self.repo_path.rglob("*"):
             if filepath.is_file() and not should_skip_path(filepath):
                 lang_config = get_language_config(filepath.suffix)
-                if lang_config and lang_config.name in self.parsers:
+                if lang_config and lang_config.language in self.parsers:
                     result = self.factory.definition_processor.process_file(
                         filepath,
-                        lang_config.name,
+                        lang_config.language,
                         self.queries,
                         self.factory.structure_processor.structural_elements,
                     )
