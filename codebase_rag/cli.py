@@ -55,7 +55,7 @@ app = typer.Typer(
 )
 
 
-@app.command()
+@app.command(help="Start interactive chat session with your codebase")
 def start(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help="Path to the target repository for code retrieval"
@@ -145,7 +145,7 @@ def start(
         app_context.console.print(style(CLI_ERR_STARTUP.format(error=e), Color.RED))
 
 
-@app.command()
+@app.command(help="Index codebase to protobuf files for offline use")
 def index(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help="Path to the target repository to index."
@@ -188,7 +188,7 @@ def index(
         raise typer.Exit(1) from e
 
 
-@app.command()
+@app.command(help="Export knowledge graph from Memgraph to JSON file")
 def export(
     output: str = typer.Option(
         ..., "-o", "--output", help="Output file path for the exported graph"
@@ -225,7 +225,7 @@ def export(
         raise typer.Exit(1) from e
 
 
-@app.command()
+@app.command(help="AI-guided codebase optimization session")
 def optimize(
     language: str = typer.Argument(
         ...,
@@ -297,7 +297,9 @@ def mcp_server() -> None:
         app_context.console.print(style(CLI_ERR_MCP_SERVER.format(error=e), Color.RED))
 
 
-@app.command(name="graph-loader")
+@app.command(
+    name="graph-loader", help="Load and display summary of exported graph JSON"
+)
 def graph_loader_command(
     graph_file: str = typer.Argument(..., help="Path to the exported graph JSON file"),
 ) -> None:
