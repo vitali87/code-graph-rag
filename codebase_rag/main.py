@@ -24,12 +24,34 @@ from rich.text import Text
 
 from .config import CHAT_LOOP_CONFIG, OPTIMIZATION_LOOP_CONFIG, ORANGE_STYLE, settings
 from .constants import (
+    CONFIRM_DISABLED,
+    CONFIRM_ENABLED,
+    DIFF_LABEL_AFTER,
+    DIFF_LABEL_BEFORE,
     EXIT_COMMANDS,
     HORIZONTAL_SEPARATOR,
     IMAGE_EXTENSIONS,
     LOG_FORMAT,
+    MSG_CHAT_INSTRUCTIONS,
+    MSG_CONNECTED_MEMGRAPH,
+    MSG_THINKING_CANCELLED,
+    MSG_TIMEOUT_FORMAT,
+    SESSION_CONTEXT_END,
+    SESSION_CONTEXT_START,
     SESSION_LOG_HEADER,
     SESSION_LOG_PREFIX,
+    SESSION_PREFIX_ASSISTANT,
+    SESSION_PREFIX_USER,
+    TABLE_COL_CONFIGURATION,
+    TABLE_COL_VALUE,
+    TABLE_ROW_CYPHER_MODEL,
+    TABLE_ROW_EDIT_CONFIRMATION,
+    TABLE_ROW_OLLAMA_CYPHER,
+    TABLE_ROW_OLLAMA_ENDPOINT,
+    TABLE_ROW_OLLAMA_ORCHESTRATOR,
+    TABLE_ROW_ORCHESTRATOR_MODEL,
+    TABLE_ROW_TARGET_LANGUAGE,
+    TABLE_ROW_TARGET_REPOSITORY,
     TMP_DIR,
     ModelRole,
     Provider,
@@ -83,7 +105,7 @@ def log_session_event(event: str) -> None:
 def get_session_context() -> str:
     if session_state.log_file and session_state.log_file.exists():
         content = session_state.log_file.read_text()
-        return f"\n\n[SESSION CONTEXT - Previous conversation in this session]:\n{content}\n[END SESSION CONTEXT]\n\n"
+        return f"{SESSION_CONTEXT_START}{content}{SESSION_CONTEXT_END}"
     return ""
 
 
@@ -95,8 +117,8 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
     diff = difflib.unified_diff(
         target.splitlines(keepends=True),
         replacement.splitlines(keepends=True),
-        fromfile="before",
-        tofile="after",
+        fromfile=DIFF_LABEL_BEFORE,
+        tofile=DIFF_LABEL_AFTER,
         lineterm="",
     )
 
@@ -202,21 +224,22 @@ def _create_configuration_table(
     language: str | None = None,
 ) -> Table:
     table = Table(title=f"[bold green]{title}[/bold green]")
-    table.add_column("Configuration", style="cyan")
-    table.add_column("Value", style="magenta")
+    table.add_column(TABLE_COL_CONFIGURATION, style="cyan")
+    table.add_column(TABLE_COL_VALUE, style="magenta")
 
     if language:
-        table.add_row("Target Language", language)
+        table.add_row(TABLE_ROW_TARGET_LANGUAGE, language)
 
     orchestrator_config = settings.active_orchestrator_config
     table.add_row(
-        "Orchestrator Model",
+        TABLE_ROW_ORCHESTRATOR_MODEL,
         f"{orchestrator_config.model_id} ({orchestrator_config.provider})",
     )
 
     cypher_config = settings.active_cypher_config
     table.add_row(
-        "Cypher Model", f"{cypher_config.model_id} ({cypher_config.provider})"
+        TABLE_ROW_CYPHER_MODEL,
+        f"{cypher_config.model_id} ({cypher_config.provider})",
     )
 
     orch_endpoint = (
@@ -229,18 +252,18 @@ def _create_configuration_table(
     )
 
     if orch_endpoint and cypher_endpoint and orch_endpoint == cypher_endpoint:
-        table.add_row("Ollama Endpoint", orch_endpoint)
+        table.add_row(TABLE_ROW_OLLAMA_ENDPOINT, orch_endpoint)
     else:
         if orch_endpoint:
-            table.add_row("Ollama Endpoint (Orchestrator)", orch_endpoint)
+            table.add_row(TABLE_ROW_OLLAMA_ORCHESTRATOR, orch_endpoint)
         if cypher_endpoint:
-            table.add_row("Ollama Endpoint (Cypher)", cypher_endpoint)
+            table.add_row(TABLE_ROW_OLLAMA_CYPHER, cypher_endpoint)
 
     confirmation_status = (
-        "Enabled" if session_state.confirm_edits else "Disabled (YOLO Mode)"
+        CONFIRM_ENABLED if session_state.confirm_edits else CONFIRM_DISABLED
     )
-    table.add_row("Edit Confirmation", confirmation_status)
-    table.add_row("Target Repository", repo_path)
+    table.add_row(TABLE_ROW_EDIT_CONFIRMATION, confirmation_status)
+    table.add_row(TABLE_ROW_TARGET_REPOSITORY, repo_path)
 
     return table
 
@@ -329,7 +352,7 @@ async def run_with_cancellation[T](
         except asyncio.CancelledError:
             pass
         console.print(
-            f"\n[bold yellow]Operation timed out after {timeout} seconds.[/bold yellow]"
+            f"\n[bold yellow]{MSG_TIMEOUT_FORMAT.format(timeout=timeout)}[/bold yellow]"
         )
         return CancelledResult(cancelled=True)
     except (asyncio.CancelledError, KeyboardInterrupt):
@@ -339,7 +362,7 @@ async def run_with_cancellation[T](
                 await task
             except asyncio.CancelledError:
                 pass
-        console.print("\n[bold yellow]Thinking cancelled.[/bold yellow]")
+        console.print(f"\n[bold yellow]{MSG_THINKING_CANCELLED}[/bold yellow]")
         return CancelledResult(cancelled=True)
 
 
@@ -388,7 +411,7 @@ async def _run_agent_response_loop(
             )
         )
 
-        log_session_event(f"ASSISTANT: {output_text}")
+        log_session_event(f"{SESSION_PREFIX_ASSISTANT}{output_text}")
         message_history.extend(response.new_messages())
         break
 
@@ -512,7 +535,7 @@ async def _run_interactive_loop(
                 initial_question = None
                 continue
 
-            log_session_event(f"USER: {question}")
+            log_session_event(f"{SESSION_PREFIX_USER}{question}")
 
             if session_state.cancelled:
                 question_with_context = question + get_session_context()
@@ -699,10 +722,10 @@ async def main_async(repo_path: str, batch_size: int) -> None:
     console.print(table)
 
     with _connect_memgraph(batch_size) as ingestor:
-        console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
+        console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
         console.print(
             Panel(
-                "[bold yellow]Ask questions about your codebase graph. Type 'exit' or 'quit' to end.[/bold yellow]",
+                f"[bold yellow]{MSG_CHAT_INSTRUCTIONS}[/bold yellow]",
                 border_style="yellow",
             )
         )
@@ -735,7 +758,7 @@ async def main_optimize_async(
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     with _connect_memgraph(effective_batch_size) as ingestor:
-        console.print("[bold green]Successfully connected to Memgraph.[/bold green]")
+        console.print(f"[bold green]{MSG_CONNECTED_MEMGRAPH}[/bold green]")
 
         rag_agent = _initialize_services_and_agent(target_repo_path, ingestor)
         await run_optimization_loop(

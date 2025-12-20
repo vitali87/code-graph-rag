@@ -239,6 +239,46 @@ LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}"
 TMP_DIR = ".tmp"
 SESSION_LOG_PREFIX = "session_"
 
+# (H) Session log prefixes
+SESSION_PREFIX_USER = "USER: "
+SESSION_PREFIX_ASSISTANT = "ASSISTANT: "
+
+# (H) Session context format
+SESSION_CONTEXT_START = (
+    "\n\n[SESSION CONTEXT - Previous conversation in this session]:\n"
+)
+SESSION_CONTEXT_END = "\n[END SESSION CONTEXT]\n\n"
+
+# (H) Confirmation status display
+CONFIRM_ENABLED = "Enabled"
+CONFIRM_DISABLED = "Disabled (YOLO Mode)"
+
+# (H) Diff labels
+DIFF_LABEL_BEFORE = "before"
+DIFF_LABEL_AFTER = "after"
+
+# (H) Table column headers
+TABLE_COL_CONFIGURATION = "Configuration"
+TABLE_COL_VALUE = "Value"
+
+# (H) Table row labels
+TABLE_ROW_TARGET_LANGUAGE = "Target Language"
+TABLE_ROW_ORCHESTRATOR_MODEL = "Orchestrator Model"
+TABLE_ROW_CYPHER_MODEL = "Cypher Model"
+TABLE_ROW_OLLAMA_ENDPOINT = "Ollama Endpoint"
+TABLE_ROW_OLLAMA_ORCHESTRATOR = "Ollama Endpoint (Orchestrator)"
+TABLE_ROW_OLLAMA_CYPHER = "Ollama Endpoint (Cypher)"
+TABLE_ROW_EDIT_CONFIRMATION = "Edit Confirmation"
+TABLE_ROW_TARGET_REPOSITORY = "Target Repository"
+
+# (H) UI status messages
+MSG_CONNECTED_MEMGRAPH = "Successfully connected to Memgraph."
+MSG_THINKING_CANCELLED = "Thinking cancelled."
+MSG_TIMEOUT_FORMAT = "Operation timed out after {timeout} seconds."
+MSG_CHAT_INSTRUCTIONS = (
+    "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
+)
+
 # (H) File/directory ignore patterns
 IGNORE_PATTERNS = frozenset(
     {
