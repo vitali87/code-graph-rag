@@ -86,7 +86,6 @@ ERR_PATH_NOT_IN_QUESTION = (
 ERR_IMAGE_NOT_FOUND = "Image path found, but does not exist: {path}"
 ERR_IMAGE_COPY_FAILED = "Failed to copy image to temporary directory: {error}"
 
-# (H) Log messages
 LOG_LOADING_GRAPH = "Loading graph from {path}"
 LOG_LOADED_GRAPH = "Loaded {nodes} nodes and {relationships} relationships with indexes"
 LOG_ENSURING_PROJECT = "Ensuring Project: {name}"
@@ -148,7 +147,6 @@ CLI_MSG_HINT_TARGET_REPO = (
 )
 CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
 
-# (H) UI format strings for main.py
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"

@@ -15,6 +15,10 @@ type LanguageLoader = Callable[[], "Language"] | None
 
 PropertyValue = str | int | float | bool | None
 
+type ResultScalar = str | int | float | bool | None
+type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
+type ResultRow = dict[str, ResultValue]
+
 type SimpleName = str
 type QualifiedName = str
 type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]

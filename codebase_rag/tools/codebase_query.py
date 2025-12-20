@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from ..schemas import GraphData
+from ..schemas import QueryGraphData
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator, LLMGenerationError
 
@@ -27,7 +27,9 @@ def create_query_tool(
     if console is None:
         console = Console(width=None, force_terminal=True)
 
-    async def query_codebase_knowledge_graph(natural_language_query: str) -> GraphData:
+    async def query_codebase_knowledge_graph(
+        natural_language_query: str,
+    ) -> QueryGraphData:
         """
         Queries the codebase knowledge graph using natural language.
 
@@ -80,9 +82,11 @@ def create_query_tool(
                 )
 
             summary = f"Successfully retrieved {len(results)} item(s) from the graph."
-            return GraphData(query_used=cypher_query, results=results, summary=summary)
+            return QueryGraphData(
+                query_used=cypher_query, results=results, summary=summary
+            )
         except LLMGenerationError as e:
-            return GraphData(
+            return QueryGraphData(
                 query_used="N/A",
                 results=[],
                 summary=f"I couldn't translate your request into a database query. Error: {e}",
@@ -91,7 +95,7 @@ def create_query_tool(
             logger.error(
                 f"[Tool:QueryGraph] Error during query execution: {e}", exc_info=True
             )
-            return GraphData(
+            return QueryGraphData(
                 query_used=cypher_query,
                 results=[],
                 summary=f"There was an error querying the database: {e}",
