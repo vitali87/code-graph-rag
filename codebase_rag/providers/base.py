@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -9,28 +10,45 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
+from ..config import settings
+from ..constants import (
+    DEFAULT_API_KEY,
+    DEFAULT_REGION,
+    ERR_GOOGLE_GLA_NO_KEY,
+    ERR_GOOGLE_VERTEX_NO_PROJECT,
+    ERR_OLLAMA_NOT_RUNNING,
+    ERR_OPENAI_NO_KEY,
+    ERR_UNKNOWN_PROVIDER,
+    GOOGLE_CLOUD_SCOPE,
+    HTTP_OK,
+    LOG_PROVIDER_REGISTERED,
+    OLLAMA_DEFAULT_BASE_URL,
+    OLLAMA_DEFAULT_ENDPOINT,
+    OLLAMA_HEALTH_PATH,
+    OPENAI_DEFAULT_ENDPOINT,
+    V1_PATH,
+    GoogleProviderType,
+    Provider,
+)
+
 
 class ModelProvider(ABC):
-    """Abstract base class for all model providers."""
-
-    def __init__(self, **config: Any) -> None:
-        """Initialize provider with configuration."""
+    def __init__(self, **config: str | int | None) -> None:
         self.config = config
 
     @abstractmethod
-    def create_model(self, model_id: str, **kwargs: Any) -> Any:
-        """Create a model instance for this provider."""
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel:
         pass
 
     @abstractmethod
     def validate_config(self) -> None:
-        """Validate provider configuration and raise ValueError if invalid."""
         pass
 
     @property
     @abstractmethod
-    def provider_name(self) -> str:
-        """Return the provider name."""
+    def provider_name(self) -> Provider:
         pass
 
 
@@ -38,12 +56,12 @@ class GoogleProvider(ModelProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        provider_type: str = "gla",
+        provider_type: GoogleProviderType = GoogleProviderType.GLA,
         project_id: str | None = None,
-        region: str = "us-central1",
+        region: str = DEFAULT_REGION,
         service_account_file: str | None = None,
         thinking_budget: int | None = None,
-        **kwargs: Any,
+        **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
         self.api_key = api_key
@@ -54,25 +72,19 @@ class GoogleProvider(ModelProvider):
         self.thinking_budget = thinking_budget
 
     @property
-    def provider_name(self) -> str:
-        return "google"
+    def provider_name(self) -> Provider:
+        return Provider.GOOGLE
 
     def validate_config(self) -> None:
-        if self.provider_type == "gla" and not self.api_key:
-            raise ValueError(
-                "Gemini GLA provider requires api_key. "
-                "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
-            )
-        if self.provider_type == "vertex" and not self.project_id:
-            raise ValueError(
-                "Gemini Vertex provider requires project_id. "
-                "Set ORCHESTRATOR_PROJECT_ID or CYPHER_PROJECT_ID in .env file."
-            )
+        if self.provider_type == GoogleProviderType.GLA and not self.api_key:
+            raise ValueError(ERR_GOOGLE_GLA_NO_KEY)
+        if self.provider_type == GoogleProviderType.VERTEX and not self.project_id:
+            raise ValueError(ERR_GOOGLE_VERTEX_NO_PROJECT)
 
-    def create_model(self, model_id: str, **kwargs: Any) -> GoogleModel:
+    def create_model(self, model_id: str, **kwargs: str | int | None) -> GoogleModel:
         self.validate_config()
 
-        if self.provider_type == "vertex":
+        if self.provider_type == GoogleProviderType.VERTEX:
             credentials = None
             if self.service_account_file:
                 # (H) Convert service account file to credentials object for pydantic-ai
@@ -80,7 +92,7 @@ class GoogleProvider(ModelProvider):
 
                 credentials = service_account.Credentials.from_service_account_file(
                     self.service_account_file,
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                    scopes=[GOOGLE_CLOUD_SCOPE],
                 )
             provider = PydanticGoogleProvider(
                 project=self.project_id,
@@ -89,118 +101,110 @@ class GoogleProvider(ModelProvider):
             )
         else:
             # (H) api_key is guaranteed to be set by validate_config for gla type
-            provider = PydanticGoogleProvider(api_key=self.api_key)  # type: ignore[arg-type]
+            assert self.api_key is not None
+            provider = PydanticGoogleProvider(api_key=self.api_key)
 
         if self.thinking_budget is None:
-            return GoogleModel(model_id, provider=provider, **kwargs)
+            return GoogleModel(model_id, provider=provider)
         model_settings = GoogleModelSettings(
             google_thinking_config={"thinking_budget": int(self.thinking_budget)}
         )
-        return GoogleModel(
-            model_id, provider=provider, settings=model_settings, **kwargs
-        )
+        return GoogleModel(model_id, provider=provider, settings=model_settings)
 
 
 class OpenAIProvider(ModelProvider):
-    """OpenAI provider."""
-
     def __init__(
         self,
         api_key: str | None = None,
-        endpoint: str = "https://api.openai.com/v1",
-        **kwargs: Any,
+        endpoint: str = OPENAI_DEFAULT_ENDPOINT,
+        **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
         self.api_key = api_key
         self.endpoint = endpoint
 
     @property
-    def provider_name(self) -> str:
-        return "openai"
+    def provider_name(self) -> Provider:
+        return Provider.OPENAI
 
     def validate_config(self) -> None:
         if not self.api_key:
-            raise ValueError(
-                "OpenAI provider requires api_key. "
-                "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
-            )
+            raise ValueError(ERR_OPENAI_NO_KEY)
 
-    def create_model(self, model_id: str, **kwargs: Any) -> OpenAIResponsesModel:
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIResponsesModel:
         self.validate_config()
 
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
-        return OpenAIResponsesModel(model_id, provider=provider, **kwargs)
+        return OpenAIResponsesModel(model_id, provider=provider)
 
 
 class OllamaProvider(ModelProvider):
-    """Ollama local provider."""
-
     def __init__(
         self,
-        endpoint: str = "http://localhost:11434/v1",
-        api_key: str = "ollama",
-        **kwargs: Any,
+        endpoint: str = OLLAMA_DEFAULT_ENDPOINT,
+        api_key: str = DEFAULT_API_KEY,
+        **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
         self.endpoint = endpoint
         self.api_key = api_key
 
     @property
-    def provider_name(self) -> str:
-        return "ollama"
+    def provider_name(self) -> Provider:
+        return Provider.OLLAMA
 
     def validate_config(self) -> None:
-        base_url = self.endpoint.rstrip("/v1").rstrip("/")
+        base_url = self.endpoint.rstrip(V1_PATH).rstrip("/")
 
         if not check_ollama_running(base_url):
-            raise ValueError(
-                f"Ollama server not responding at {base_url}. "
-                f"Make sure Ollama is running: ollama serve"
-            )
+            raise ValueError(ERR_OLLAMA_NOT_RUNNING.format(endpoint=base_url))
 
-    def create_model(self, model_id: str, **kwargs: Any) -> OpenAIChatModel:
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel:
         self.validate_config()
 
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
-        return OpenAIChatModel(model_id, provider=provider, **kwargs)
+        return OpenAIChatModel(model_id, provider=provider)
 
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
-    "google": GoogleProvider,
-    "openai": OpenAIProvider,
-    "ollama": OllamaProvider,
+    Provider.GOOGLE: GoogleProvider,
+    Provider.OPENAI: OpenAIProvider,
+    Provider.OLLAMA: OllamaProvider,
 }
 
 
-def get_provider(provider_name: str, **config: Any) -> ModelProvider:
-    """Factory function to create a provider instance."""
-    if provider_name not in PROVIDER_REGISTRY:
+def get_provider(
+    provider_name: str | Provider, **config: str | int | None
+) -> ModelProvider:
+    provider_key = str(provider_name)
+    if provider_key not in PROVIDER_REGISTRY:
         available = ", ".join(PROVIDER_REGISTRY.keys())
         raise ValueError(
-            f"Unknown provider '{provider_name}'. Available providers: {available}"
+            ERR_UNKNOWN_PROVIDER.format(provider=provider_name, available=available)
         )
 
-    provider_class = PROVIDER_REGISTRY[provider_name]
+    provider_class = PROVIDER_REGISTRY[provider_key]
     return provider_class(**config)
 
 
 def register_provider(name: str, provider_class: type[ModelProvider]) -> None:
-    """Register a new provider class."""
     PROVIDER_REGISTRY[name] = provider_class
-    logger.info(f"Registered provider: {name}")
+    logger.info(LOG_PROVIDER_REGISTERED.format(name=name))
 
 
 def list_providers() -> list[str]:
-    """List all available provider names."""
     return list(PROVIDER_REGISTRY.keys())
 
 
-def check_ollama_running(endpoint: str = "http://localhost:11434") -> bool:
-    """Check if Ollama is running and accessible."""
+def check_ollama_running(endpoint: str = OLLAMA_DEFAULT_BASE_URL) -> bool:
     try:
-        health_url = urljoin(endpoint, "/api/tags")
-        with httpx.Client(timeout=5.0) as client:
+        health_url = urljoin(endpoint, OLLAMA_HEALTH_PATH)
+        with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
             response = client.get(health_url)
-            return bool(response.status_code == 200)
+            return response.status_code == HTTP_OK
     except (httpx.RequestError, httpx.TimeoutException):
         return False

@@ -41,6 +41,43 @@ DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_API_KEY = "ollama"
 
+
+class GoogleProviderType(StrEnum):
+    GLA = "gla"
+    VERTEX = "vertex"
+
+
+# (H) Provider endpoints
+OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
+OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
+OLLAMA_DEFAULT_ENDPOINT = f"{OLLAMA_DEFAULT_BASE_URL}/v1"
+OLLAMA_HEALTH_PATH = "/api/tags"
+GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+V1_PATH = "/v1"
+
+# (H) HTTP status codes
+HTTP_OK = 200
+
+# (H) Provider error messages
+ERR_GOOGLE_GLA_NO_KEY = (
+    "Gemini GLA provider requires api_key. "
+    "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
+)
+ERR_GOOGLE_VERTEX_NO_PROJECT = (
+    "Gemini Vertex provider requires project_id. "
+    "Set ORCHESTRATOR_PROJECT_ID or CYPHER_PROJECT_ID in .env file."
+)
+ERR_OPENAI_NO_KEY = (
+    "OpenAI provider requires api_key. "
+    "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
+)
+ERR_OLLAMA_NOT_RUNNING = (
+    "Ollama server not responding at {endpoint}. "
+    "Make sure Ollama is running: ollama serve"
+)
+ERR_UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
+LOG_PROVIDER_REGISTERED = "Registered provider: {name}"
+
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
 SEMANTIC_EXTRA_ERROR = (
     "Semantic search requires 'semantic' extra: uv sync --extra semantic"

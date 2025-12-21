@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
+from codebase_rag.constants import GoogleProviderType, Provider
 from codebase_rag.providers.base import (
     GoogleProvider,
     ModelProvider,
@@ -15,50 +20,47 @@ from codebase_rag.providers.base import (
 
 
 class TestProviderRegistry:
-    """Test provider registry functionality."""
-
     def test_get_valid_providers(self) -> None:
-        """Test getting valid provider instances."""
         google_provider = get_provider(
-            "google", api_key="test-key", provider_type="gla"
+            Provider.GOOGLE, api_key="test-key", provider_type=GoogleProviderType.GLA
         )
         assert isinstance(google_provider, GoogleProvider)
-        assert google_provider.provider_name == "google"
+        assert google_provider.provider_name == Provider.GOOGLE
 
-        openai_provider = get_provider("openai", api_key="test-key")
+        openai_provider = get_provider(Provider.OPENAI, api_key="test-key")
         assert isinstance(openai_provider, OpenAIProvider)
-        assert openai_provider.provider_name == "openai"
+        assert openai_provider.provider_name == Provider.OPENAI
 
-        ollama_provider = get_provider("ollama", endpoint="http://localhost:11434/v1")
+        ollama_provider = get_provider(
+            Provider.OLLAMA, endpoint="http://localhost:11434/v1"
+        )
         assert isinstance(ollama_provider, OllamaProvider)
-        assert ollama_provider.provider_name == "ollama"
+        assert ollama_provider.provider_name == Provider.OLLAMA
 
     def test_get_invalid_provider(self) -> None:
-        """Test that invalid provider names raise ValueError."""
         with pytest.raises(ValueError, match="Unknown provider 'invalid_provider'"):
             get_provider("invalid_provider")
 
     def test_list_providers(self) -> None:
-        """Test listing available providers."""
         providers = list_providers()
-        assert "google" in providers
-        assert "openai" in providers
-        assert "ollama" in providers
+        assert Provider.GOOGLE in providers
+        assert Provider.OPENAI in providers
+        assert Provider.OLLAMA in providers
         assert len(providers) >= 3
 
     def test_register_custom_provider(self) -> None:
-        """Test registering a custom provider."""
-
         class CustomProvider(ModelProvider):
             @property
-            def provider_name(self) -> str:
-                return "custom"
+            def provider_name(self) -> Provider:
+                return Provider.GOOGLE
 
             def validate_config(self) -> None:
                 pass
 
-            def create_model(self, model_id: str, **kwargs: Any) -> str:
-                return f"custom_model:{model_id}"
+            def create_model(
+                self, model_id: str, **kwargs: str | int | None
+            ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel:
+                return MagicMock(spec=GoogleModel)
 
         register_provider("custom", CustomProvider)
 
@@ -67,45 +69,40 @@ class TestProviderRegistry:
 
         custom_provider = get_provider("custom")
         assert isinstance(custom_provider, CustomProvider)
-        assert custom_provider.provider_name == "custom"
 
 
 class TestGoogleProvider:
-    """Test Google provider functionality."""
-
     def test_google_gla_configuration(self) -> None:
-        """Test Google GLA provider configuration."""
-        provider = GoogleProvider(api_key="test-key", provider_type="gla")
-        assert provider.provider_name == "google"
+        provider = GoogleProvider(
+            api_key="test-key", provider_type=GoogleProviderType.GLA
+        )
+        assert provider.provider_name == Provider.GOOGLE
         assert provider.api_key == "test-key"
-        assert provider.provider_type == "gla"
+        assert provider.provider_type == GoogleProviderType.GLA
 
         provider.validate_config()
 
     def test_google_vertex_configuration(self) -> None:
-        """Test Google Vertex AI provider configuration."""
         provider = GoogleProvider(
-            provider_type="vertex",
+            provider_type=GoogleProviderType.VERTEX,
             project_id="test-project",
             region="us-central1",
             service_account_file="/path/to/service-account.json",
         )
-        assert provider.provider_name == "google"
-        assert provider.provider_type == "vertex"
+        assert provider.provider_name == Provider.GOOGLE
+        assert provider.provider_type == GoogleProviderType.VERTEX
         assert provider.project_id == "test-project"
 
         provider.validate_config()
 
     def test_google_gla_validation_error(self) -> None:
-        """Test that GLA provider validation fails without API key."""
-        provider = GoogleProvider(provider_type="gla")
+        provider = GoogleProvider(provider_type=GoogleProviderType.GLA)
 
         with pytest.raises(ValueError, match="Gemini GLA provider requires api_key"):
             provider.validate_config()
 
     def test_google_vertex_validation_error(self) -> None:
-        """Test that Vertex provider validation fails without project_id."""
-        provider = GoogleProvider(provider_type="vertex")
+        provider = GoogleProvider(provider_type=GoogleProviderType.VERTEX)
 
         with pytest.raises(
             ValueError, match="Gemini Vertex provider requires project_id"
@@ -113,36 +110,32 @@ class TestGoogleProvider:
             provider.validate_config()
 
     def test_google_thinking_budget(self) -> None:
-        """Test Google provider with thinking budget."""
         provider = GoogleProvider(
-            api_key="test-key", provider_type="gla", thinking_budget=5000
+            api_key="test-key",
+            provider_type=GoogleProviderType.GLA,
+            thinking_budget=5000,
         )
         assert provider.thinking_budget == 5000
 
 
 class TestOpenAIProvider:
-    """Test OpenAI provider functionality."""
-
     def test_openai_configuration(self) -> None:
-        """Test OpenAI provider configuration."""
         provider = OpenAIProvider(
             api_key="sk-test-key", endpoint="https://api.openai.com/v1"
         )
-        assert provider.provider_name == "openai"
+        assert provider.provider_name == Provider.OPENAI
         assert provider.api_key == "sk-test-key"
         assert provider.endpoint == "https://api.openai.com/v1"
 
         provider.validate_config()
 
     def test_openai_validation_error(self) -> None:
-        """Test that OpenAI provider validation fails without API key."""
         provider = OpenAIProvider()
 
         with pytest.raises(ValueError, match="OpenAI provider requires api_key"):
             provider.validate_config()
 
     def test_openai_custom_endpoint(self) -> None:
-        """Test OpenAI provider with custom endpoint."""
         provider = OpenAIProvider(
             api_key="sk-test-key", endpoint="https://api.custom-openai.com/v1"
         )
@@ -150,19 +143,15 @@ class TestOpenAIProvider:
 
 
 class TestOllamaProvider:
-    """Test Ollama provider functionality."""
-
     def test_ollama_configuration(self) -> None:
-        """Test Ollama provider configuration."""
         provider = OllamaProvider(
             endpoint="http://localhost:11434/v1", api_key="ollama"
         )
-        assert provider.provider_name == "ollama"
+        assert provider.provider_name == Provider.OLLAMA
         assert provider.endpoint == "http://localhost:11434/v1"
         assert provider.api_key == "ollama"
 
     def test_ollama_custom_endpoint(self) -> None:
-        """Test Ollama provider with custom endpoint."""
         provider = OllamaProvider(
             endpoint="http://remote-ollama:11434/v1", api_key="custom-key"
         )
@@ -171,7 +160,6 @@ class TestOllamaProvider:
 
     @patch("httpx.Client")
     def test_ollama_validation_success(self, mock_client: Any) -> None:
-        """Test Ollama validation when server is running."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_client.return_value.__enter__.return_value.get.return_value = mock_response
@@ -181,7 +169,6 @@ class TestOllamaProvider:
 
     @patch("httpx.Client")
     def test_ollama_validation_server_not_running(self, mock_client: Any) -> None:
-        """Test Ollama validation when server is not running."""
         mock_response = MagicMock()
         mock_response.status_code = 404
         mock_client.return_value.__enter__.return_value.get.return_value = mock_response
@@ -192,7 +179,6 @@ class TestOllamaProvider:
 
     @patch("httpx.Client")
     def test_ollama_validation_connection_error(self, mock_client: Any) -> None:
-        """Test Ollama validation when connection fails."""
         import httpx
 
         mock_client.return_value.__enter__.return_value.get.side_effect = (
@@ -205,15 +191,14 @@ class TestOllamaProvider:
 
 
 class TestModelCreation:
-    """Test model creation through providers."""
-
     @patch("codebase_rag.providers.base.PydanticGoogleProvider")
     @patch("codebase_rag.providers.base.GoogleModel")
     def test_google_model_creation_without_thinking_budget(
         self, mock_google_model: Any, mock_google_provider: Any
     ) -> None:
-        """Test Google model creation without thinking budget."""
-        provider = GoogleProvider(api_key="test-key", provider_type="gla")
+        provider = GoogleProvider(
+            api_key="test-key", provider_type=GoogleProviderType.GLA
+        )
 
         mock_model = MagicMock()
         mock_google_model.return_value = mock_model
@@ -233,9 +218,10 @@ class TestModelCreation:
         mock_google_model: Any,
         mock_google_provider: Any,
     ) -> None:
-        """Test Google model creation with thinking budget."""
         provider = GoogleProvider(
-            api_key="test-key", provider_type="gla", thinking_budget=5000
+            api_key="test-key",
+            provider_type=GoogleProviderType.GLA,
+            thinking_budget=5000,
         )
 
         mock_model = MagicMock()
@@ -259,7 +245,6 @@ class TestModelCreation:
     def test_openai_model_creation(
         self, mock_openai_model: Any, mock_openai_provider: Any
     ) -> None:
-        """Test OpenAI model creation."""
         provider = OpenAIProvider(api_key="sk-test-key")
 
         mock_model = MagicMock()
@@ -279,7 +264,6 @@ class TestModelCreation:
     def test_ollama_model_creation(
         self, mock_openai_chat_model: Any, mock_openai_provider: Any
     ) -> None:
-        """Test Ollama model creation (uses OpenAI interface)."""
         with patch.object(OllamaProvider, "validate_config"):
             provider = OllamaProvider()
 
