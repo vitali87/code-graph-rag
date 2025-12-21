@@ -3,17 +3,9 @@ from __future__ import annotations
 from loguru import logger
 from pydantic_ai import Tool
 
+from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs
-from ..constants import (
-    MSG_SEMANTIC_NO_RESULTS,
-    MSG_SEMANTIC_RESULT_FOOTER,
-    MSG_SEMANTIC_RESULT_HEADER,
-    MSG_SEMANTIC_SOURCE_FORMAT,
-    MSG_SEMANTIC_SOURCE_UNAVAILABLE,
-    SEMANTIC_BATCH_SIZE,
-    SEMANTIC_TYPE_UNKNOWN,
-)
 from ..cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     build_nodes_by_ids_query,
@@ -46,7 +38,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResul
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST,
             port=settings.MEMGRAPH_PORT,
-            batch_size=SEMANTIC_BATCH_SIZE,
+            batch_size=cs.SEMANTIC_BATCH_SIZE,
         ) as ingestor:
             cypher_query = build_nodes_by_ids_query(node_ids)
             params = {str(i): node_id for i, node_id in enumerate(node_ids)}
@@ -62,7 +54,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResul
                     type_str = (
                         result_type[0]
                         if isinstance(result_type, list) and result_type
-                        else SEMANTIC_TYPE_UNKNOWN
+                        else cs.SEMANTIC_TYPE_UNKNOWN
                     )
                     formatted_results.append(
                         SemanticSearchResult(
@@ -96,7 +88,7 @@ def get_function_source_code(node_id: int) -> str | None:
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST,
             port=settings.MEMGRAPH_PORT,
-            batch_size=SEMANTIC_BATCH_SIZE,
+            batch_size=cs.SEMANTIC_BATCH_SIZE,
         ) as ingestor:
             results = ingestor._execute_query(
                 CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
@@ -132,7 +124,7 @@ def create_semantic_search_tool() -> Tool:
         results = semantic_code_search(query, top_k)
 
         if not results:
-            return MSG_SEMANTIC_NO_RESULTS.format(query=query)
+            return cs.MSG_SEMANTIC_NO_RESULTS.format(query=query)
 
         formatted_results = []
         for i, result in enumerate(results, 1):
@@ -140,9 +132,9 @@ def create_semantic_search_tool() -> Tool:
                 f"{i}. {result['qualified_name']} (type: {result['type']}, score: {result['score']})"
             )
 
-        response = MSG_SEMANTIC_RESULT_HEADER.format(count=len(results), query=query)
+        response = cs.MSG_SEMANTIC_RESULT_HEADER.format(count=len(results), query=query)
         response += "\n".join(formatted_results)
-        response += MSG_SEMANTIC_RESULT_FOOTER
+        response += cs.MSG_SEMANTIC_RESULT_FOOTER
 
         return response
 
@@ -156,8 +148,8 @@ def create_get_function_source_tool() -> Tool:
         source_code = get_function_source_code(node_id)
 
         if source_code is None:
-            return MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
+            return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
 
-        return MSG_SEMANTIC_SOURCE_FORMAT.format(id=node_id, code=source_code)
+        return cs.MSG_SEMANTIC_SOURCE_FORMAT.format(id=node_id, code=source_code)
 
     return Tool(get_function_source_by_id, name="get_function_source_by_id")

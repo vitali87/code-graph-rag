@@ -10,17 +10,9 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
 
+from .. import constants as cs
 from .. import logs
 from .. import tool_errors as te
-from ..constants import (
-    ENCODING_UTF8,
-    GREP_SUGGESTION,
-    SHELL_CMD_GIT,
-    SHELL_CMD_GREP,
-    SHELL_CMD_RM,
-    SHELL_RETURN_CODE_ERROR,
-    SHELL_RM_RF_FLAG,
-)
 from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
 
@@ -55,7 +47,7 @@ SAFE_GIT_SUBCOMMANDS = frozenset(
 
 def _is_dangerous_command(cmd_parts: list[str]) -> bool:
     command = cmd_parts[0]
-    return command == SHELL_CMD_RM and SHELL_RM_RF_FLAG in cmd_parts
+    return command == cs.SHELL_CMD_RM and cs.SHELL_RM_RF_FLAG in cmd_parts
 
 
 def _requires_approval(command: str) -> bool:
@@ -72,7 +64,7 @@ def _requires_approval(command: str) -> bool:
     if base_cmd in READ_ONLY_COMMANDS:
         return False
 
-    if base_cmd == SHELL_CMD_GIT and len(cmd_parts) > 1:
+    if base_cmd == cs.SHELL_CMD_GIT and len(cmd_parts) > 1:
         return cmd_parts[1] not in SAFE_GIT_SUBCOMMANDS
 
     return True
@@ -107,14 +99,16 @@ class ShellCommander:
             cmd_parts = shlex.split(command)
             if not cmd_parts:
                 return ShellCommandResult(
-                    return_code=SHELL_RETURN_CODE_ERROR,
+                    return_code=cs.SHELL_RETURN_CODE_ERROR,
                     stdout="",
                     stderr=te.COMMAND_EMPTY,
                 )
 
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
                 available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
-                suggestion = GREP_SUGGESTION if cmd_parts[0] == SHELL_CMD_GREP else ""
+                suggestion = (
+                    cs.GREP_SUGGESTION if cmd_parts[0] == cs.SHELL_CMD_GREP else ""
+                )
 
                 err_msg = te.COMMAND_NOT_ALLOWED.format(
                     cmd=cmd_parts[0],
@@ -123,14 +117,14 @@ class ShellCommander:
                 )
                 logger.error(err_msg)
                 return ShellCommandResult(
-                    return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+                    return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
 
             if _is_dangerous_command(cmd_parts):
                 err_msg = te.COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
                 logger.error(err_msg)
                 return ShellCommandResult(
-                    return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+                    return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
 
             process = await asyncio.create_subprocess_exec(
@@ -143,8 +137,8 @@ class ShellCommander:
                 process.communicate(), timeout=self.timeout
             )
 
-            stdout_str = stdout.decode(ENCODING_UTF8, errors="replace").strip()
-            stderr_str = stderr.decode(ENCODING_UTF8, errors="replace").strip()
+            stdout_str = stdout.decode(cs.ENCODING_UTF8, errors="replace").strip()
+            stderr_str = stderr.decode(cs.ENCODING_UTF8, errors="replace").strip()
 
             logger.info(logs.TOOL_SHELL_RETURN.format(code=process.returncode))
             if stdout_str:
@@ -156,7 +150,7 @@ class ShellCommander:
                 return_code=(
                     process.returncode
                     if process.returncode is not None
-                    else SHELL_RETURN_CODE_ERROR
+                    else cs.SHELL_RETURN_CODE_ERROR
                 ),
                 stdout=stdout_str,
                 stderr=stderr_str,
@@ -171,12 +165,12 @@ class ShellCommander:
             except ProcessLookupError:
                 logger.warning(logs.TOOL_SHELL_ALREADY_TERMINATED)
             return ShellCommandResult(
-                return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
+                return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
             )
         except Exception as e:
             logger.error(logs.TOOL_SHELL_ERROR.format(error=e))
             return ShellCommandResult(
-                return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=str(e)
+                return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=str(e)
             )
 
 

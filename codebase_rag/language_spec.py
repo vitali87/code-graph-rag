@@ -1,19 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .constants import (
-    CPP_IMPORT_NODES,
-    ENCODING_UTF8,
-    IMPORT_NODES_USING,
-    INDEX_INDEX,
-    INDEX_INIT,
-    INDEX_MOD,
-    JS_TS_CLASS_NODES,
-    JS_TS_FUNCTION_NODES,
-    JS_TS_IMPORT_NODES,
-    NAME_FIELDS,
-    SupportedLanguage,
-)
+from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 
 if TYPE_CHECKING:
@@ -23,7 +11,9 @@ if TYPE_CHECKING:
 def _python_get_name(node: "Node") -> str | None:
     name_node = node.child_by_field_name("name")
     return (
-        name_node.text.decode(ENCODING_UTF8) if name_node and name_node.text else None
+        name_node.text.decode(cs.ENCODING_UTF8)
+        if name_node and name_node.text
+        else None
     )
 
 
@@ -31,7 +21,7 @@ def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
     try:
         rel = file_path.relative_to(repo_root)
         parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == INDEX_INIT:
+        if parts and parts[-1] == cs.INDEX_INIT:
             parts = parts[:-1]
         return parts
     except ValueError:
@@ -42,7 +32,7 @@ def _js_get_name(node: "Node") -> str | None:
     if node.type in ("function_declaration", "class_declaration", "method_definition"):
         name_node = node.child_by_field_name("name")
         return (
-            name_node.text.decode(ENCODING_UTF8)
+            name_node.text.decode(cs.ENCODING_UTF8)
             if name_node and name_node.text
             else None
         )
@@ -53,7 +43,7 @@ def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
     try:
         rel = file_path.relative_to(repo_root)
         parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == INDEX_INDEX:
+        if parts and parts[-1] == cs.INDEX_INDEX:
             parts = parts[:-1]
         return parts
     except ValueError:
@@ -63,12 +53,12 @@ def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 def _generic_get_name(node: "Node") -> str | None:
     name_node = node.child_by_field_name("name")
     if name_node and name_node.text:
-        return name_node.text.decode(ENCODING_UTF8)
+        return name_node.text.decode(cs.ENCODING_UTF8)
 
-    for field_name in NAME_FIELDS:
+    for field_name in cs.NAME_FIELDS:
         name_node = node.child_by_field_name(field_name)
         if name_node and name_node.text:
-            return name_node.text.decode(ENCODING_UTF8)
+            return name_node.text.decode(cs.ENCODING_UTF8)
 
     return None
 
@@ -85,11 +75,11 @@ def _rust_get_name(node: "Node") -> str | None:
     if node.type in ("struct_item", "enum_item", "trait_item", "type_item"):
         name_node = node.child_by_field_name("name")
         if name_node and name_node.type == "type_identifier" and name_node.text:
-            return name_node.text.decode(ENCODING_UTF8)
+            return name_node.text.decode(cs.ENCODING_UTF8)
     elif node.type in ("function_item", "mod_item"):
         name_node = node.child_by_field_name("name")
         if name_node and name_node.type == "identifier" and name_node.text:
-            return name_node.text.decode(ENCODING_UTF8)
+            return name_node.text.decode(cs.ENCODING_UTF8)
 
     return _generic_get_name(node)
 
@@ -98,7 +88,7 @@ def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
     try:
         rel = file_path.relative_to(repo_root)
         parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == INDEX_MOD:
+        if parts and parts[-1] == cs.INDEX_MOD:
             parts = parts[:-1]
         return parts
     except ValueError:
@@ -109,13 +99,13 @@ def _cpp_get_name(node: "Node") -> str | None:
     if node.type in ("class_specifier", "struct_specifier", "enum_specifier"):
         name_node = node.child_by_field_name("name")
         if name_node and name_node.text:
-            return name_node.text.decode(ENCODING_UTF8)
+            return name_node.text.decode(cs.ENCODING_UTF8)
     elif node.type == "function_definition":
         declarator = node.child_by_field_name("declarator")
         if declarator and declarator.type == "function_declarator":
             name_node = declarator.child_by_field_name("declarator")
             if name_node and name_node.type == "identifier" and name_node.text:
-                return name_node.text.decode(ENCODING_UTF8)
+                return name_node.text.decode(cs.ENCODING_UTF8)
 
     return _generic_get_name(node)
 
@@ -307,24 +297,24 @@ PHP_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
-LANGUAGE_FQN_SPECS: dict[SupportedLanguage, FQNSpec] = {
-    SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
-    SupportedLanguage.JS: JS_FQN_SPEC,
-    SupportedLanguage.TS: TS_FQN_SPEC,
-    SupportedLanguage.RUST: RUST_FQN_SPEC,
-    SupportedLanguage.JAVA: JAVA_FQN_SPEC,
-    SupportedLanguage.CPP: CPP_FQN_SPEC,
-    SupportedLanguage.LUA: LUA_FQN_SPEC,
-    SupportedLanguage.GO: GO_FQN_SPEC,
-    SupportedLanguage.SCALA: SCALA_FQN_SPEC,
-    SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
-    SupportedLanguage.PHP: PHP_FQN_SPEC,
+LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
+    cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
+    cs.SupportedLanguage.JS: JS_FQN_SPEC,
+    cs.SupportedLanguage.TS: TS_FQN_SPEC,
+    cs.SupportedLanguage.RUST: RUST_FQN_SPEC,
+    cs.SupportedLanguage.JAVA: JAVA_FQN_SPEC,
+    cs.SupportedLanguage.CPP: CPP_FQN_SPEC,
+    cs.SupportedLanguage.LUA: LUA_FQN_SPEC,
+    cs.SupportedLanguage.GO: GO_FQN_SPEC,
+    cs.SupportedLanguage.SCALA: SCALA_FQN_SPEC,
+    cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
+    cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
 }
 
 
-LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
-    SupportedLanguage.PYTHON: LanguageSpec(
-        language=SupportedLanguage.PYTHON,
+LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
+    cs.SupportedLanguage.PYTHON: LanguageSpec(
+        language=cs.SupportedLanguage.PYTHON,
         file_extensions=(".py",),
         function_node_types=("function_definition",),
         class_node_types=("class_definition",),
@@ -334,21 +324,21 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
         import_from_node_types=("import_from_statement",),
         package_indicators=("__init__.py",),
     ),
-    SupportedLanguage.JS: LanguageSpec(
-        language=SupportedLanguage.JS,
+    cs.SupportedLanguage.JS: LanguageSpec(
+        language=cs.SupportedLanguage.JS,
         file_extensions=(".js", ".jsx"),
-        function_node_types=JS_TS_FUNCTION_NODES,
-        class_node_types=JS_TS_CLASS_NODES,
+        function_node_types=cs.JS_TS_FUNCTION_NODES,
+        class_node_types=cs.JS_TS_CLASS_NODES,
         module_node_types=("program",),
         call_node_types=("call_expression",),
-        import_node_types=JS_TS_IMPORT_NODES,
-        import_from_node_types=JS_TS_IMPORT_NODES,
+        import_node_types=cs.JS_TS_IMPORT_NODES,
+        import_from_node_types=cs.JS_TS_IMPORT_NODES,
     ),
-    SupportedLanguage.TS: LanguageSpec(
-        language=SupportedLanguage.TS,
+    cs.SupportedLanguage.TS: LanguageSpec(
+        language=cs.SupportedLanguage.TS,
         file_extensions=(".ts", ".tsx"),
-        function_node_types=JS_TS_FUNCTION_NODES + ("function_signature",),
-        class_node_types=JS_TS_CLASS_NODES
+        function_node_types=cs.JS_TS_FUNCTION_NODES + ("function_signature",),
+        class_node_types=cs.JS_TS_CLASS_NODES
         + (
             "abstract_class_declaration",
             "enum_declaration",
@@ -358,11 +348,11 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
         ),
         module_node_types=("program",),
         call_node_types=("call_expression",),
-        import_node_types=JS_TS_IMPORT_NODES,
-        import_from_node_types=JS_TS_IMPORT_NODES,
+        import_node_types=cs.JS_TS_IMPORT_NODES,
+        import_from_node_types=cs.JS_TS_IMPORT_NODES,
     ),
-    SupportedLanguage.RUST: LanguageSpec(
-        language=SupportedLanguage.RUST,
+    cs.SupportedLanguage.RUST: LanguageSpec(
+        language=cs.SupportedLanguage.RUST,
         file_extensions=(".rs",),
         function_node_types=(
             "function_item",
@@ -418,8 +408,8 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
             macro: (identifier) @name) @call
         """,
     ),
-    SupportedLanguage.GO: LanguageSpec(
-        language=SupportedLanguage.GO,
+    cs.SupportedLanguage.GO: LanguageSpec(
+        language=cs.SupportedLanguage.GO,
         file_extensions=(".go",),
         function_node_types=("function_declaration", "method_declaration"),
         class_node_types=("type_declaration",),
@@ -428,8 +418,8 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
         import_node_types=("import_declaration",),
         import_from_node_types=("import_declaration",),
     ),
-    SupportedLanguage.SCALA: LanguageSpec(
-        language=SupportedLanguage.SCALA,
+    cs.SupportedLanguage.SCALA: LanguageSpec(
+        language=cs.SupportedLanguage.SCALA,
         file_extensions=(".scala", ".sc"),
         function_node_types=("function_definition", "function_declaration"),
         class_node_types=(
@@ -447,8 +437,8 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
         import_node_types=("import_declaration",),
         import_from_node_types=("import_declaration",),
     ),
-    SupportedLanguage.JAVA: LanguageSpec(
-        language=SupportedLanguage.JAVA,
+    cs.SupportedLanguage.JAVA: LanguageSpec(
+        language=cs.SupportedLanguage.JAVA,
         file_extensions=(".java",),
         function_node_types=("method_declaration", "constructor_declaration"),
         class_node_types=(
@@ -487,8 +477,8 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
             type: (type_identifier) @name) @call
         """,
     ),
-    SupportedLanguage.CPP: LanguageSpec(
-        language=SupportedLanguage.CPP,
+    cs.SupportedLanguage.CPP: LanguageSpec(
+        language=cs.SupportedLanguage.CPP,
         file_extensions=(
             ".cpp",
             ".h",
@@ -530,8 +520,8 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
             "unary_expression",
             "update_expression",
         ),
-        import_node_types=CPP_IMPORT_NODES,
-        import_from_node_types=CPP_IMPORT_NODES,
+        import_node_types=cs.CPP_IMPORT_NODES,
+        import_from_node_types=cs.CPP_IMPORT_NODES,
         package_indicators=("CMakeLists.txt", "Makefile", "*.vcxproj", "conanfile.txt"),
         function_query="""
     (function_definition) @function
@@ -561,8 +551,8 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
     (delete_expression) @call
     """,
     ),
-    SupportedLanguage.CSHARP: LanguageSpec(
-        language=SupportedLanguage.CSHARP,
+    cs.SupportedLanguage.CSHARP: LanguageSpec(
+        language=cs.SupportedLanguage.CSHARP,
         file_extensions=(".cs",),
         function_node_types=(
             "destructor_declaration",
@@ -581,11 +571,11 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
         ),
         module_node_types=("compilation_unit",),
         call_node_types=("invocation_expression",),
-        import_node_types=IMPORT_NODES_USING,
-        import_from_node_types=IMPORT_NODES_USING,
+        import_node_types=cs.IMPORT_NODES_USING,
+        import_from_node_types=cs.IMPORT_NODES_USING,
     ),
-    SupportedLanguage.PHP: LanguageSpec(
-        language=SupportedLanguage.PHP,
+    cs.SupportedLanguage.PHP: LanguageSpec(
+        language=cs.SupportedLanguage.PHP,
         file_extensions=(".php",),
         function_node_types=(
             "function_static_declaration",
@@ -607,8 +597,8 @@ LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
             "nullsafe_member_call_expression",
         ),
     ),
-    SupportedLanguage.LUA: LanguageSpec(
-        language=SupportedLanguage.LUA,
+    cs.SupportedLanguage.LUA: LanguageSpec(
+        language=cs.SupportedLanguage.LUA,
         file_extensions=(".lua",),
         function_node_types=("function_declaration", "function_definition"),
         class_node_types=(),
@@ -630,7 +620,7 @@ def get_language_spec(file_extension: str) -> LanguageSpec | None:
 
 def get_language_spec_by_name(language_name: str) -> LanguageSpec | None:
     try:
-        lang_key = SupportedLanguage(language_name.lower())
+        lang_key = cs.SupportedLanguage(language_name.lower())
         return LANGUAGE_SPECS.get(lang_key)
     except ValueError:
         return None

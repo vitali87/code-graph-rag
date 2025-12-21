@@ -5,16 +5,10 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 
+from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs
 from ..config import ModelConfig, settings
-from ..constants import (
-    CYPHER_BACKTICK,
-    CYPHER_MATCH_KEYWORD,
-    CYPHER_PREFIX,
-    CYPHER_SEMICOLON,
-    Provider,
-)
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
@@ -40,11 +34,11 @@ def _create_provider_model(config: ModelConfig) -> Model:
 
 
 def _clean_cypher_response(response_text: str) -> str:
-    query = response_text.strip().replace(CYPHER_BACKTICK, "")
-    if query.startswith(CYPHER_PREFIX):
-        query = query[len(CYPHER_PREFIX) :].strip()
-    if not query.endswith(CYPHER_SEMICOLON):
-        query += CYPHER_SEMICOLON
+    query = response_text.strip().replace(cs.CYPHER_BACKTICK, "")
+    if query.startswith(cs.CYPHER_PREFIX):
+        query = query[len(cs.CYPHER_PREFIX) :].strip()
+    if not query.endswith(cs.CYPHER_SEMICOLON):
+        query += cs.CYPHER_SEMICOLON
     return query
 
 
@@ -56,7 +50,7 @@ class CypherGenerator:
 
             system_prompt = (
                 LOCAL_CYPHER_SYSTEM_PROMPT
-                if config.provider == Provider.OLLAMA
+                if config.provider == cs.Provider.OLLAMA
                 else CYPHER_SYSTEM_PROMPT
             )
 
@@ -75,7 +69,7 @@ class CypherGenerator:
             result = await self.agent.run(natural_language_query)
             if (
                 not isinstance(result.output, str)
-                or CYPHER_MATCH_KEYWORD not in result.output.upper()
+                or cs.CYPHER_MATCH_KEYWORD not in result.output.upper()
             ):
                 raise ex.LLMGenerationError(
                     ex.LLM_INVALID_QUERY.format(output=result.output)

@@ -12,19 +12,11 @@ from google.genai.errors import ClientError
 from loguru import logger
 from pydantic_ai import Tool
 
+from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs
 from .. import tool_errors as te
 from ..config import settings
-from ..constants import (
-    DOC_PROMPT_PREFIX,
-    MIME_TYPE_DEFAULT,
-    MSG_DOC_NO_CANDIDATES,
-    MSG_DOC_NO_CONTENT,
-    TMP_DIR,
-    GoogleProviderType,
-    Provider,
-)
 from . import tool_descriptions as td
 
 
@@ -40,8 +32,8 @@ class DocumentAnalyzer:
         orchestrator_config = settings.active_orchestrator_config
         orchestrator_provider = orchestrator_config.provider
 
-        if orchestrator_provider == Provider.GOOGLE:
-            if orchestrator_config.provider_type == GoogleProviderType.VERTEX:
+        if orchestrator_provider == cs.Provider.GOOGLE:
+            if orchestrator_config.provider_type == cs.GoogleProviderType.VERTEX:
                 self.client = genai.Client(
                     project=orchestrator_config.project_id,
                     location=orchestrator_config.region,
@@ -64,7 +56,7 @@ class DocumentAnalyzer:
                 if not source_path.is_file():
                     return te.DOC_FILE_NOT_FOUND.format(path=file_path)
 
-                tmp_dir = self.project_root / TMP_DIR
+                tmp_dir = self.project_root / cs.TMP_DIR
                 tmp_dir.mkdir(exist_ok=True)
 
                 tmp_file = tmp_dir / f"{uuid.uuid4()}-{source_path.name}"
@@ -86,13 +78,13 @@ class DocumentAnalyzer:
 
             mime_type, _ = mimetypes.guess_type(full_path)
             if not mime_type:
-                mime_type = MIME_TYPE_DEFAULT
+                mime_type = cs.MIME_TYPE_DEFAULT
 
             file_bytes = full_path.read_bytes()
 
             prompt_parts = [
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-                DOC_PROMPT_PREFIX.format(question=question),
+                cs.DOC_PROMPT_PREFIX.format(question=question),
             ]
 
             orchestrator_config = settings.active_orchestrator_config
@@ -110,10 +102,10 @@ class DocumentAnalyzer:
                         parts = candidate.content.parts
                         if parts and hasattr(parts[0], "text"):
                             return str(parts[0].text)
-                return MSG_DOC_NO_CANDIDATES
+                return cs.MSG_DOC_NO_CANDIDATES
             else:
                 logger.warning(logs.DOC_NO_TEXT.format(response=response))
-                return MSG_DOC_NO_CONTENT
+                return cs.MSG_DOC_NO_CONTENT
 
         except ValueError as e:
             if "does not start with" in str(e):

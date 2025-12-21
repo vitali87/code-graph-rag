@@ -10,22 +10,10 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
+from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs
 from ..config import settings
-from ..constants import (
-    DEFAULT_API_KEY,
-    DEFAULT_REGION,
-    GOOGLE_CLOUD_SCOPE,
-    HTTP_OK,
-    OLLAMA_DEFAULT_BASE_URL,
-    OLLAMA_DEFAULT_ENDPOINT,
-    OLLAMA_HEALTH_PATH,
-    OPENAI_DEFAULT_ENDPOINT,
-    V1_PATH,
-    GoogleProviderType,
-    Provider,
-)
 
 
 class ModelProvider(ABC):
@@ -44,7 +32,7 @@ class ModelProvider(ABC):
 
     @property
     @abstractmethod
-    def provider_name(self) -> Provider:
+    def provider_name(self) -> cs.Provider:
         pass
 
 
@@ -52,9 +40,9 @@ class GoogleProvider(ModelProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        provider_type: GoogleProviderType = GoogleProviderType.GLA,
+        provider_type: cs.GoogleProviderType = cs.GoogleProviderType.GLA,
         project_id: str | None = None,
-        region: str = DEFAULT_REGION,
+        region: str = cs.DEFAULT_REGION,
         service_account_file: str | None = None,
         thinking_budget: int | None = None,
         **kwargs: str | int | None,
@@ -68,19 +56,19 @@ class GoogleProvider(ModelProvider):
         self.thinking_budget = thinking_budget
 
     @property
-    def provider_name(self) -> Provider:
-        return Provider.GOOGLE
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.GOOGLE
 
     def validate_config(self) -> None:
-        if self.provider_type == GoogleProviderType.GLA and not self.api_key:
+        if self.provider_type == cs.GoogleProviderType.GLA and not self.api_key:
             raise ValueError(ex.GOOGLE_GLA_NO_KEY)
-        if self.provider_type == GoogleProviderType.VERTEX and not self.project_id:
+        if self.provider_type == cs.GoogleProviderType.VERTEX and not self.project_id:
             raise ValueError(ex.GOOGLE_VERTEX_NO_PROJECT)
 
     def create_model(self, model_id: str, **kwargs: str | int | None) -> GoogleModel:
         self.validate_config()
 
-        if self.provider_type == GoogleProviderType.VERTEX:
+        if self.provider_type == cs.GoogleProviderType.VERTEX:
             credentials = None
             if self.service_account_file:
                 # (H) Convert service account file to credentials object for pydantic-ai
@@ -88,7 +76,7 @@ class GoogleProvider(ModelProvider):
 
                 credentials = service_account.Credentials.from_service_account_file(
                     self.service_account_file,
-                    scopes=[GOOGLE_CLOUD_SCOPE],
+                    scopes=[cs.GOOGLE_CLOUD_SCOPE],
                 )
             provider = PydanticGoogleProvider(
                 project=self.project_id,
@@ -112,7 +100,7 @@ class OpenAIProvider(ModelProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        endpoint: str = OPENAI_DEFAULT_ENDPOINT,
+        endpoint: str = cs.OPENAI_DEFAULT_ENDPOINT,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
@@ -120,8 +108,8 @@ class OpenAIProvider(ModelProvider):
         self.endpoint = endpoint
 
     @property
-    def provider_name(self) -> Provider:
-        return Provider.OPENAI
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.OPENAI
 
     def validate_config(self) -> None:
         if not self.api_key:
@@ -139,8 +127,8 @@ class OpenAIProvider(ModelProvider):
 class OllamaProvider(ModelProvider):
     def __init__(
         self,
-        endpoint: str = OLLAMA_DEFAULT_ENDPOINT,
-        api_key: str = DEFAULT_API_KEY,
+        endpoint: str = cs.OLLAMA_DEFAULT_ENDPOINT,
+        api_key: str = cs.DEFAULT_API_KEY,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
@@ -148,11 +136,11 @@ class OllamaProvider(ModelProvider):
         self.api_key = api_key
 
     @property
-    def provider_name(self) -> Provider:
-        return Provider.OLLAMA
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.OLLAMA
 
     def validate_config(self) -> None:
-        base_url = self.endpoint.rstrip(V1_PATH).rstrip("/")
+        base_url = self.endpoint.rstrip(cs.V1_PATH).rstrip("/")
 
         if not check_ollama_running(base_url):
             raise ValueError(ex.OLLAMA_NOT_RUNNING.format(endpoint=base_url))
@@ -167,14 +155,14 @@ class OllamaProvider(ModelProvider):
 
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
-    Provider.GOOGLE: GoogleProvider,
-    Provider.OPENAI: OpenAIProvider,
-    Provider.OLLAMA: OllamaProvider,
+    cs.Provider.GOOGLE: GoogleProvider,
+    cs.Provider.OPENAI: OpenAIProvider,
+    cs.Provider.OLLAMA: OllamaProvider,
 }
 
 
 def get_provider(
-    provider_name: str | Provider, **config: str | int | None
+    provider_name: str | cs.Provider, **config: str | int | None
 ) -> ModelProvider:
     provider_key = str(provider_name)
     if provider_key not in PROVIDER_REGISTRY:
@@ -196,11 +184,11 @@ def list_providers() -> list[str]:
     return list(PROVIDER_REGISTRY.keys())
 
 
-def check_ollama_running(endpoint: str = OLLAMA_DEFAULT_BASE_URL) -> bool:
+def check_ollama_running(endpoint: str = cs.OLLAMA_DEFAULT_BASE_URL) -> bool:
     try:
-        health_url = urljoin(endpoint, OLLAMA_HEALTH_PATH)
+        health_url = urljoin(endpoint, cs.OLLAMA_HEALTH_PATH)
         with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
             response = client.get(health_url)
-            return response.status_code == HTTP_OK
+            return response.status_code == cs.HTTP_OK
     except (httpx.RequestError, httpx.TimeoutException):
         return False

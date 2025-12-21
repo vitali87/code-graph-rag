@@ -4,32 +4,8 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from . import constants as cs
 from .config import settings
-from .constants import (
-    CLI_ERR_CONFIG,
-    CLI_ERR_EXPORT_FAILED,
-    CLI_ERR_INDEXING,
-    CLI_ERR_LOAD_GRAPH,
-    CLI_ERR_MCP_SERVER,
-    CLI_ERR_ONLY_JSON,
-    CLI_ERR_OUTPUT_REQUIRES_UPDATE,
-    CLI_ERR_STARTUP,
-    CLI_MSG_APP_TERMINATED,
-    CLI_MSG_CLEANING_DB,
-    CLI_MSG_CONNECTING_MEMGRAPH,
-    CLI_MSG_EXPORTING_DATA,
-    CLI_MSG_EXPORTING_TO,
-    CLI_MSG_GRAPH_SUMMARY,
-    CLI_MSG_GRAPH_UPDATED,
-    CLI_MSG_HINT_TARGET_REPO,
-    CLI_MSG_INDEXING_AT,
-    CLI_MSG_INDEXING_DONE,
-    CLI_MSG_MCP_TERMINATED,
-    CLI_MSG_OPTIMIZATION_TERMINATED,
-    CLI_MSG_OUTPUT_TO,
-    CLI_MSG_UPDATING_GRAPH,
-    Color,
-)
 from .graph_updater import GraphUpdater
 from .main import (
     app_context,
@@ -103,7 +79,9 @@ def start(
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
     if output and not update_graph:
-        app_context.console.print(style(CLI_ERR_OUTPUT_REQUIRES_UPDATE, Color.RED))
+        app_context.console.print(
+            style(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE, cs.Color.RED)
+        )
         raise typer.Exit(1)
 
     update_model_settings(orchestrator, cypher)
@@ -113,12 +91,14 @@ def start(
     if update_graph:
         repo_to_update = Path(target_repo_path)
         app_context.console.print(
-            style(CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), Color.GREEN)
+            style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
         )
 
         with connect_memgraph(effective_batch_size) as ingestor:
             if clean:
-                app_context.console.print(style(CLI_MSG_CLEANING_DB, Color.YELLOW))
+                app_context.console.print(
+                    style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW)
+                )
                 ingestor.clean_database()
             ingestor.ensure_constraints()
 
@@ -129,20 +109,22 @@ def start(
 
             if output:
                 app_context.console.print(
-                    style(CLI_MSG_EXPORTING_TO.format(path=output), Color.CYAN)
+                    style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN)
                 )
                 if not export_graph_to_file(ingestor, output):
                     raise typer.Exit(1)
 
-        app_context.console.print(style(CLI_MSG_GRAPH_UPDATED, Color.GREEN))
+        app_context.console.print(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
 
     try:
         asyncio.run(main_async(target_repo_path, effective_batch_size))
     except KeyboardInterrupt:
-        app_context.console.print(style(CLI_MSG_APP_TERMINATED, Color.RED))
+        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
-        app_context.console.print(style(CLI_ERR_STARTUP.format(error=e), Color.RED))
+        app_context.console.print(
+            style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
+        )
 
 
 @app.command(help="Index codebase to protobuf files for offline use")
@@ -166,10 +148,10 @@ def index(
     repo_to_index = Path(target_repo_path)
 
     app_context.console.print(
-        style(CLI_MSG_INDEXING_AT.format(path=repo_to_index), Color.GREEN)
+        style(cs.CLI_MSG_INDEXING_AT.format(path=repo_to_index), cs.Color.GREEN)
     )
     app_context.console.print(
-        style(CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), Color.CYAN)
+        style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN)
     )
 
     try:
@@ -181,9 +163,11 @@ def index(
 
         updater.run()
 
-        app_context.console.print(style(CLI_MSG_INDEXING_DONE, Color.GREEN))
+        app_context.console.print(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
     except Exception as e:
-        app_context.console.print(style(CLI_ERR_INDEXING.format(error=e), Color.RED))
+        app_context.console.print(
+            style(cs.CLI_ERR_INDEXING.format(error=e), cs.Color.RED)
+        )
         logger.error("Indexing failed", exc_info=True)
         raise typer.Exit(1) from e
 
@@ -204,22 +188,22 @@ def export(
     ),
 ) -> None:
     if not format_json:
-        app_context.console.print(style(CLI_ERR_ONLY_JSON, Color.RED))
+        app_context.console.print(style(cs.CLI_ERR_ONLY_JSON, cs.Color.RED))
         raise typer.Exit(1)
 
-    app_context.console.print(style(CLI_MSG_CONNECTING_MEMGRAPH, Color.CYAN))
+    app_context.console.print(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     try:
         with connect_memgraph(effective_batch_size) as ingestor:
-            app_context.console.print(style(CLI_MSG_EXPORTING_DATA, Color.CYAN))
+            app_context.console.print(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
             if not export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
 
     except Exception as e:
         app_context.console.print(
-            style(CLI_ERR_EXPORT_FAILED.format(error=e), Color.RED)
+            style(cs.CLI_ERR_EXPORT_FAILED.format(error=e), cs.Color.RED)
         )
         logger.error(f"Export error: {e}", exc_info=True)
         raise typer.Exit(1) from e
@@ -277,9 +261,13 @@ def optimize(
             )
         )
     except KeyboardInterrupt:
-        app_context.console.print(style(CLI_MSG_OPTIMIZATION_TERMINATED, Color.RED))
+        app_context.console.print(
+            style(cs.CLI_MSG_OPTIMIZATION_TERMINATED, cs.Color.RED)
+        )
     except ValueError as e:
-        app_context.console.print(style(CLI_ERR_STARTUP.format(error=e), Color.RED))
+        app_context.console.print(
+            style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
+        )
 
 
 @app.command(name="mcp-server", help="Start the MCP server for Claude Code integration")
@@ -289,12 +277,16 @@ def mcp_server() -> None:
 
         asyncio.run(mcp_main())
     except KeyboardInterrupt:
-        app_context.console.print(style(CLI_MSG_MCP_TERMINATED, Color.RED))
+        app_context.console.print(style(cs.CLI_MSG_MCP_TERMINATED, cs.Color.RED))
     except ValueError as e:
-        app_context.console.print(style(CLI_ERR_CONFIG.format(error=e), Color.RED))
-        app_context.console.print(style(CLI_MSG_HINT_TARGET_REPO, Color.YELLOW))
+        app_context.console.print(
+            style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
+        )
+        app_context.console.print(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
     except Exception as e:
-        app_context.console.print(style(CLI_ERR_MCP_SERVER.format(error=e), Color.RED))
+        app_context.console.print(
+            style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)
+        )
 
 
 @app.command(
@@ -309,7 +301,7 @@ def graph_loader_command(
         graph = load_graph(graph_file)
         summary = graph.summary()
 
-        app_context.console.print(style(CLI_MSG_GRAPH_SUMMARY, Color.GREEN))
+        app_context.console.print(style(cs.CLI_MSG_GRAPH_SUMMARY, cs.Color.GREEN))
         app_context.console.print(f"  Total nodes: {summary['total_nodes']}")
         app_context.console.print(
             f"  Total relationships: {summary['total_relationships']}"
@@ -325,7 +317,9 @@ def graph_loader_command(
         )
 
     except Exception as e:
-        app_context.console.print(style(CLI_ERR_LOAD_GRAPH.format(error=e), Color.RED))
+        app_context.console.print(
+            style(cs.CLI_ERR_LOAD_GRAPH.format(error=e), cs.Color.RED)
+        )
         raise typer.Exit(1) from e
 
 

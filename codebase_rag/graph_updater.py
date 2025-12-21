@@ -6,28 +6,9 @@ from pathlib import Path
 from loguru import logger
 from tree_sitter import Node, Parser
 
+from . import constants as cs
 from . import logs
 from .config import settings
-from .constants import (
-    BYTES_PER_MB,
-    CSPROJ_SUFFIX,
-    CYPHER_QUERY_EMBEDDINGS,
-    DEPENDENCY_FILES,
-    IGNORE_PATTERNS,
-    INIT_PY,
-    KEY_END_LINE,
-    KEY_NAME,
-    KEY_NODE_ID,
-    KEY_PATH,
-    KEY_QUALIFIED_NAME,
-    KEY_START_LINE,
-    NODE_PROJECT,
-    SEPARATOR_DOT,
-    TRIE_INTERNAL_PREFIX,
-    TRIE_QN_KEY,
-    TRIE_TYPE_KEY,
-    SupportedLanguage,
-)
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
 from .parsers.factory import ProcessorFactory
 from .services import IngestorProtocol, QueryProtocol
@@ -54,7 +35,7 @@ class FunctionRegistryTrie:
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self._entries[qualified_name] = func_type
 
-        parts = qualified_name.split(SEPARATOR_DOT)
+        parts = qualified_name.split(cs.SEPARATOR_DOT)
         current: TrieNode = self.root
 
         for part in parts:
@@ -64,8 +45,8 @@ class FunctionRegistryTrie:
             assert isinstance(child, dict)
             current = child
 
-        current[TRIE_TYPE_KEY] = func_type
-        current[TRIE_QN_KEY] = qualified_name
+        current[cs.TRIE_TYPE_KEY] = func_type
+        current[cs.TRIE_QN_KEY] = qualified_name
 
     def get(
         self, qualified_name: QualifiedName, default: NodeType | None = None
@@ -87,13 +68,13 @@ class FunctionRegistryTrie:
 
         del self._entries[qualified_name]
 
-        parts = qualified_name.split(SEPARATOR_DOT)
+        parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
 
     def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
         if not parts:
-            node.pop(TRIE_QN_KEY, None)
-            node.pop(TRIE_TYPE_KEY, None)
+            node.pop(cs.TRIE_QN_KEY, None)
+            node.pop(cs.TRIE_TYPE_KEY, None)
             return not node
 
         part = parts[0]
@@ -105,12 +86,12 @@ class FunctionRegistryTrie:
         if self._cleanup_trie_path(parts[1:], child):
             del node[part]
 
-        is_endpoint = TRIE_QN_KEY in node
-        has_children = any(not key.startswith(TRIE_INTERNAL_PREFIX) for key in node)
+        is_endpoint = cs.TRIE_QN_KEY in node
+        has_children = any(not key.startswith(cs.TRIE_INTERNAL_PREFIX) for key in node)
         return not has_children and not is_endpoint
 
     def _navigate_to_prefix(self, prefix: str) -> TrieNode | None:
-        parts = prefix.split(SEPARATOR_DOT) if prefix else []
+        parts = prefix.split(cs.SEPARATOR_DOT) if prefix else []
         current: TrieNode = self.root
         for part in parts:
             if part not in current:
@@ -128,15 +109,15 @@ class FunctionRegistryTrie:
         results: list[tuple[QualifiedName, NodeType]] = []
 
         def dfs(n: TrieNode) -> None:
-            if TRIE_QN_KEY in n:
-                qn = n[TRIE_QN_KEY]
-                func_type = n[TRIE_TYPE_KEY]
+            if cs.TRIE_QN_KEY in n:
+                qn = n[cs.TRIE_QN_KEY]
+                func_type = n[cs.TRIE_TYPE_KEY]
                 assert isinstance(qn, str) and isinstance(func_type, NodeType)
                 if filter_fn is None or filter_fn(qn):
                     results.append((qn, func_type))
 
             for key, child in n.items():
-                if not key.startswith(TRIE_INTERNAL_PREFIX):
+                if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
                     assert isinstance(child, dict)
                     dfs(child)
 
@@ -182,16 +163,16 @@ class BoundedASTCache:
         max_entries: int | None = None,
         max_memory_mb: int | None = None,
     ):
-        self.cache: OrderedDict[Path, tuple[Node, SupportedLanguage]] = OrderedDict()
+        self.cache: OrderedDict[Path, tuple[Node, cs.SupportedLanguage]] = OrderedDict()
         self.max_entries = (
             max_entries if max_entries is not None else settings.CACHE_MAX_ENTRIES
         )
         max_mem = (
             max_memory_mb if max_memory_mb is not None else settings.CACHE_MAX_MEMORY_MB
         )
-        self.max_memory_bytes = max_mem * BYTES_PER_MB
+        self.max_memory_bytes = max_mem * cs.BYTES_PER_MB
 
-    def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None:
+    def __setitem__(self, key: Path, value: tuple[Node, cs.SupportedLanguage]) -> None:
         if key in self.cache:
             del self.cache[key]
 
@@ -199,7 +180,7 @@ class BoundedASTCache:
 
         self._enforce_limits()
 
-    def __getitem__(self, key: Path) -> tuple[Node, SupportedLanguage]:
+    def __getitem__(self, key: Path) -> tuple[Node, cs.SupportedLanguage]:
         value = self.cache[key]
         self.cache.move_to_end(key)
         return value
@@ -211,7 +192,7 @@ class BoundedASTCache:
     def __contains__(self, key: Path) -> bool:
         return key in self.cache
 
-    def items(self) -> ItemsView[Path, tuple[Node, SupportedLanguage]]:
+    def items(self) -> ItemsView[Path, tuple[Node, cs.SupportedLanguage]]:
         return self.cache.items()
 
     def _enforce_limits(self) -> None:
@@ -242,8 +223,8 @@ class GraphUpdater:
         self,
         ingestor: IngestorProtocol,
         repo_path: Path,
-        parsers: dict[SupportedLanguage, Parser],
-        queries: dict[SupportedLanguage, LanguageQueries],
+        parsers: dict[cs.SupportedLanguage, Parser],
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -255,7 +236,7 @@ class GraphUpdater:
             simple_name_lookup=self.simple_name_lookup
         )
         self.ast_cache = BoundedASTCache()
-        self.ignore_dirs = IGNORE_PATTERNS
+        self.ignore_dirs = cs.IGNORE_PATTERNS
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -269,12 +250,14 @@ class GraphUpdater:
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
         return (
-            file_name.lower() in DEPENDENCY_FILES
-            or filepath.suffix.lower() == CSPROJ_SUFFIX
+            file_name.lower() in cs.DEPENDENCY_FILES
+            or filepath.suffix.lower() == cs.CSPROJ_SUFFIX
         )
 
     def run(self) -> None:
-        self.ingestor.ensure_node_batch(NODE_PROJECT, {KEY_NAME: self.project_name})
+        self.ingestor.ensure_node_batch(
+            cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
+        )
         logger.info(logs.ENSURING_PROJECT.format(name=self.project_name))
 
         logger.info(logs.PASS_1_STRUCTURE)
@@ -304,10 +287,10 @@ class GraphUpdater:
         relative_path = file_path.relative_to(self.repo_path)
         path_parts = (
             relative_path.parent.parts
-            if file_path.name == INIT_PY
+            if file_path.name == cs.INIT_PY
             else relative_path.with_suffix("").parts
         )
-        module_qn_prefix = SEPARATOR_DOT.join([self.project_name, *path_parts])
+        module_qn_prefix = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
 
         qns_to_remove = set()
 
@@ -338,7 +321,7 @@ class GraphUpdater:
                 lang_config = get_language_spec(filepath.suffix)
                 if (
                     lang_config
-                    and isinstance(lang_config.language, SupportedLanguage)
+                    and isinstance(lang_config.language, cs.SupportedLanguage)
                     and lang_config.language in self.parsers
                 ):
                     result = self.factory.definition_processor.process_file(
@@ -379,7 +362,7 @@ class GraphUpdater:
 
             logger.info(logs.PASS_4_EMBEDDINGS)
 
-            results = self.ingestor.fetch_all(CYPHER_QUERY_EMBEDDINGS)
+            results = self.ingestor.fetch_all(cs.CYPHER_QUERY_EMBEDDINGS)
 
             if not results:
                 logger.info(logs.NO_FUNCTIONS_FOR_EMBEDDING)
@@ -390,11 +373,11 @@ class GraphUpdater:
             embedded_count = 0
             for result in results:
                 result: EmbeddingQueryResult
-                node_id = result[KEY_NODE_ID]
-                qualified_name = result[KEY_QUALIFIED_NAME]
-                start_line = result.get(KEY_START_LINE)
-                end_line = result.get(KEY_END_LINE)
-                file_path = result.get(KEY_PATH)
+                node_id = result[cs.KEY_NODE_ID]
+                qualified_name = result[cs.KEY_QUALIFIED_NAME]
+                start_line = result.get(cs.KEY_START_LINE)
+                end_line = result.get(cs.KEY_END_LINE)
+                file_path = result.get(cs.KEY_PATH)
 
                 if source_code := self._extract_source_code(
                     qualified_name, file_path, start_line, end_line

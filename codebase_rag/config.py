@@ -7,16 +7,8 @@ from dotenv import load_dotenv
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import constants as cs
 from . import exceptions as ex
-from .constants import (
-    DEFAULT_API_KEY,
-    DEFAULT_MODEL,
-    DEFAULT_REGION,
-    FIELD_MODEL_ID,
-    FIELD_PROVIDER,
-    ModelRole,
-    Provider,
-)
 from .types_defs import ModelConfigKwargs
 
 load_dotenv()
@@ -36,8 +28,8 @@ class ModelConfig:
 
     def to_update_kwargs(self) -> ModelConfigKwargs:
         result = asdict(self)
-        del result[FIELD_PROVIDER]
-        del result[FIELD_MODEL_ID]
+        del result[cs.FIELD_PROVIDER]
+        del result[cs.FIELD_MODEL_ID]
         return ModelConfigKwargs(**result)
 
 
@@ -65,7 +57,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_API_KEY: str | None = None
     ORCHESTRATOR_ENDPOINT: str | None = None
     ORCHESTRATOR_PROJECT_ID: str | None = None
-    ORCHESTRATOR_REGION: str = DEFAULT_REGION
+    ORCHESTRATOR_REGION: str = cs.DEFAULT_REGION
     ORCHESTRATOR_PROVIDER_TYPE: str | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
@@ -75,7 +67,7 @@ class AppConfig(BaseSettings):
     CYPHER_API_KEY: str | None = None
     CYPHER_ENDPOINT: str | None = None
     CYPHER_PROJECT_ID: str | None = None
-    CYPHER_REGION: str = DEFAULT_REGION
+    CYPHER_REGION: str = cs.DEFAULT_REGION
     CYPHER_PROVIDER_TYPE: str | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
@@ -115,7 +107,7 @@ class AppConfig(BaseSettings):
                 api_key=getattr(self, f"{role_upper}_API_KEY", None),
                 endpoint=getattr(self, f"{role_upper}_ENDPOINT", None),
                 project_id=getattr(self, f"{role_upper}_PROJECT_ID", None),
-                region=getattr(self, f"{role_upper}_REGION", DEFAULT_REGION),
+                region=getattr(self, f"{role_upper}_REGION", cs.DEFAULT_REGION),
                 provider_type=getattr(self, f"{role_upper}_PROVIDER_TYPE", None),
                 thinking_budget=getattr(self, f"{role_upper}_THINKING_BUDGET", None),
                 service_account_file=getattr(
@@ -124,17 +116,17 @@ class AppConfig(BaseSettings):
             )
 
         return ModelConfig(
-            provider=Provider.OLLAMA,
-            model_id=DEFAULT_MODEL,
+            provider=cs.Provider.OLLAMA,
+            model_id=cs.DEFAULT_MODEL,
             endpoint=str(self.LOCAL_MODEL_ENDPOINT),
-            api_key=DEFAULT_API_KEY,
+            api_key=cs.DEFAULT_API_KEY,
         )
 
     def _get_default_orchestrator_config(self) -> ModelConfig:
-        return self._get_default_config(ModelRole.ORCHESTRATOR)
+        return self._get_default_config(cs.ModelRole.ORCHESTRATOR)
 
     def _get_default_cypher_config(self) -> ModelConfig:
-        return self._get_default_config(ModelRole.CYPHER)
+        return self._get_default_config(cs.ModelRole.CYPHER)
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:
@@ -160,7 +152,7 @@ class AppConfig(BaseSettings):
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
         if ":" not in model_string:
-            return Provider.OLLAMA, model_string
+            return cs.Provider.OLLAMA, model_string
         provider, model = model_string.split(":", 1)
         if not provider:
             raise ValueError(ex.PROVIDER_EMPTY)

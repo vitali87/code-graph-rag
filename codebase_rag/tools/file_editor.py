@@ -10,16 +10,9 @@ from pydantic import BaseModel
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
+from .. import constants as cs
 from .. import logs
 from .. import tool_errors as te
-from ..constants import (
-    ENCODING_UTF8,
-    MSG_SURGICAL_FAILED,
-    MSG_SURGICAL_SUCCESS,
-    SEPARATOR_DOT,
-    TMP_EXTENSION,
-    SupportedLanguage,
-)
 from ..language_spec import get_language_spec
 from ..parser_loader import load_parsers
 from . import tool_descriptions as td
@@ -33,22 +26,22 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
-LANGUAGE_EXTENSIONS: dict[str, SupportedLanguage] = {
-    ".py": SupportedLanguage.PYTHON,
-    ".js": SupportedLanguage.JS,
-    ".ts": SupportedLanguage.TS,
-    ".rs": SupportedLanguage.RUST,
-    ".go": SupportedLanguage.GO,
-    ".java": SupportedLanguage.JAVA,
-    ".scala": SupportedLanguage.SCALA,
-    ".cpp": SupportedLanguage.CPP,
-    ".h": SupportedLanguage.CPP,
-    ".hpp": SupportedLanguage.CPP,
-    ".cc": SupportedLanguage.CPP,
-    ".cxx": SupportedLanguage.CPP,
-    ".hxx": SupportedLanguage.CPP,
-    ".hh": SupportedLanguage.CPP,
-    ".lua": SupportedLanguage.LUA,
+LANGUAGE_EXTENSIONS: dict[str, cs.SupportedLanguage] = {
+    ".py": cs.SupportedLanguage.PYTHON,
+    ".js": cs.SupportedLanguage.JS,
+    ".ts": cs.SupportedLanguage.TS,
+    ".rs": cs.SupportedLanguage.RUST,
+    ".go": cs.SupportedLanguage.GO,
+    ".java": cs.SupportedLanguage.JAVA,
+    ".scala": cs.SupportedLanguage.SCALA,
+    ".cpp": cs.SupportedLanguage.CPP,
+    ".h": cs.SupportedLanguage.CPP,
+    ".hpp": cs.SupportedLanguage.CPP,
+    ".cc": cs.SupportedLanguage.CPP,
+    ".cxx": cs.SupportedLanguage.CPP,
+    ".hxx": cs.SupportedLanguage.CPP,
+    ".hh": cs.SupportedLanguage.CPP,
+    ".lua": cs.SupportedLanguage.LUA,
 }
 
 
@@ -67,10 +60,10 @@ class FileEditor:
 
     def _get_real_extension(self, file_path_obj: Path) -> str:
         extension = file_path_obj.suffix
-        if extension == TMP_EXTENSION:
+        if extension == cs.TMP_EXTENSION:
             base_name = file_path_obj.stem
-            if SEPARATOR_DOT in base_name:
-                return SEPARATOR_DOT + base_name.split(SEPARATOR_DOT)[-1]
+            if cs.SEPARATOR_DOT in base_name:
+                return cs.SEPARATOR_DOT + base_name.split(cs.SEPARATOR_DOT)[-1]
         return extension
 
     def get_parser(self, file_path: str) -> Parser | None:
@@ -113,7 +106,7 @@ class FileEditor:
             if node.type in lang_config.function_node_types:
                 name_node = node.child_by_field_name("name")
                 if name_node and name_node.text:
-                    func_name = name_node.text.decode(ENCODING_UTF8)
+                    func_name = name_node.text.decode(cs.ENCODING_UTF8)
 
                     qualified_name = (
                         f"{parent_class}.{func_name}" if parent_class else func_name
@@ -136,7 +129,7 @@ class FileEditor:
             if node.type in lang_config.class_node_types:
                 name_node = node.child_by_field_name("name")
                 if name_node and name_node.text:
-                    current_class = name_node.text.decode(ENCODING_UTF8)
+                    current_class = name_node.text.decode(cs.ENCODING_UTF8)
 
             for child in node.children:
                 find_function_nodes(child, current_class)
@@ -149,7 +142,7 @@ class FileEditor:
             node_text = matching_functions[0]["node"].text
             if node_text is None:
                 return None
-            return str(node_text.decode(ENCODING_UTF8))
+            return str(node_text.decode(cs.ENCODING_UTF8))
         else:
             if line_number is not None:
                 for func in matching_functions:
@@ -157,7 +150,7 @@ class FileEditor:
                         node_text = func["node"].text
                         if node_text is None:
                             return None
-                        return str(node_text.decode(ENCODING_UTF8))
+                        return str(node_text.decode(cs.ENCODING_UTF8))
                 logger.warning(
                     logs.EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
                         name=function_name, line=line_number
@@ -165,13 +158,13 @@ class FileEditor:
                 )
                 return None
 
-            if SEPARATOR_DOT in function_name:
+            if cs.SEPARATOR_DOT in function_name:
                 for func in matching_functions:
                     if func["qualified_name"] == function_name:
                         node_text = func["node"].text
                         if node_text is None:
                             return None
-                        return str(node_text.decode(ENCODING_UTF8))
+                        return str(node_text.decode(cs.ENCODING_UTF8))
                 logger.warning(logs.EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
                 return None
 
@@ -192,7 +185,7 @@ class FileEditor:
             node_text = matching_functions[0]["node"].text
             if node_text is None:
                 return None
-            return str(node_text.decode(ENCODING_UTF8))
+            return str(node_text.decode(cs.ENCODING_UTF8))
 
     def replace_function_source_code(
         self,
@@ -210,7 +203,7 @@ class FileEditor:
             )
             return False
 
-        with open(file_path, encoding=ENCODING_UTF8) as f:
+        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             original_content = f.read()
 
         patches = self.dmp.patch_make(original_code, new_code)
@@ -225,7 +218,7 @@ class FileEditor:
             logger.warning(logs.EDITOR_NO_CHANGES)
             return False
 
-        with open(file_path, "w", encoding=ENCODING_UTF8) as f:
+        with open(file_path, "w", encoding=cs.ENCODING_UTF8) as f:
             f.write(new_content)
 
         logger.success(
@@ -259,7 +252,7 @@ class FileEditor:
 
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
         try:
-            with open(file_path, encoding=ENCODING_UTF8) as f:
+            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 original_content = f.read()
 
             patches = self.dmp.patch_fromText(patch_text)
@@ -270,7 +263,7 @@ class FileEditor:
                 logger.warning(logs.EDITOR_PATCH_FAILED.format(path=file_path))
                 return False
 
-            with open(file_path, "w", encoding=ENCODING_UTF8) as f:
+            with open(file_path, "w", encoding=cs.ENCODING_UTF8) as f:
                 f.write(new_content)
 
             logger.success(logs.EDITOR_PATCH_SUCCESS.format(path=file_path))
@@ -292,7 +285,7 @@ class FileEditor:
                 logger.error(logs.EDITOR_FILE_NOT_FOUND.format(path=file_path))
                 return False
 
-            with open(full_path, encoding=ENCODING_UTF8) as f:
+            with open(full_path, encoding=cs.ENCODING_UTF8) as f:
                 original_content = f.read()
 
             if target_block not in original_content:
@@ -318,7 +311,7 @@ class FileEditor:
                 logger.error(logs.EDITOR_SURGICAL_FAILED)
                 return False
 
-            with open(full_path, "w", encoding=ENCODING_UTF8) as f:
+            with open(full_path, "w", encoding=cs.ENCODING_UTF8) as f:
                 f.write(patched_content)
 
             logger.success(logs.TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
@@ -344,7 +337,7 @@ class FileEditor:
                     file_path=file_path, success=False, error_message=error_msg
                 )
 
-            with open(full_path, "w", encoding=ENCODING_UTF8) as f:
+            with open(full_path, "w", encoding=cs.ENCODING_UTF8) as f:
                 f.write(new_content)
 
             logger.success(logs.TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
@@ -372,9 +365,9 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
             file_path, target_code, replacement_code
         )
         if success:
-            return MSG_SURGICAL_SUCCESS.format(path=file_path)
+            return cs.MSG_SURGICAL_SUCCESS.format(path=file_path)
         else:
-            return MSG_SURGICAL_FAILED.format(path=file_path)
+            return cs.MSG_SURGICAL_FAILED.format(path=file_path)
 
     return Tool(
         function=replace_code_surgically,

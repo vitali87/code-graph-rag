@@ -23,80 +23,10 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
+from . import constants as cs
 from . import exceptions as ex
 from . import logs
 from .config import settings
-from .constants import (
-    ARG_COMMAND,
-    ARG_CONTENT,
-    ARG_FILE_PATH,
-    ARG_REPLACEMENT_CODE,
-    ARG_TARGET_CODE,
-    CONFIRM_DISABLED,
-    CONFIRM_ENABLED,
-    DEFAULT_TABLE_TITLE,
-    DIFF_FALLBACK_PATH,
-    DIFF_LABEL_AFTER,
-    DIFF_LABEL_BEFORE,
-    ENCODING_UTF8,
-    EXIT_COMMANDS,
-    FIELD_API_KEY,
-    FIELD_ENDPOINT,
-    HORIZONTAL_SEPARATOR,
-    IMAGE_EXTENSIONS,
-    JSON_INDENT,
-    KEY_METADATA,
-    KEY_TOTAL_NODES,
-    KEY_TOTAL_RELATIONSHIPS,
-    LOG_FORMAT,
-    MSG_CHAT_INSTRUCTIONS,
-    MSG_CONNECTED_MEMGRAPH,
-    MSG_THINKING_CANCELLED,
-    MSG_TIMEOUT_FORMAT,
-    MULTILINE_INPUT_HINT,
-    OPTIMIZATION_TABLE_TITLE,
-    PROMPT_ASK_QUESTION,
-    PROMPT_YOUR_RESPONSE,
-    SESSION_CONTEXT_END,
-    SESSION_CONTEXT_START,
-    SESSION_LOG_EXT,
-    SESSION_LOG_HEADER,
-    SESSION_LOG_PREFIX,
-    SESSION_PREFIX_ASSISTANT,
-    SESSION_PREFIX_USER,
-    TABLE_COL_CONFIGURATION,
-    TABLE_COL_VALUE,
-    TABLE_ROW_CYPHER_MODEL,
-    TABLE_ROW_EDIT_CONFIRMATION,
-    TABLE_ROW_OLLAMA_CYPHER,
-    TABLE_ROW_OLLAMA_ENDPOINT,
-    TABLE_ROW_OLLAMA_ORCHESTRATOR,
-    TABLE_ROW_ORCHESTRATOR_MODEL,
-    TABLE_ROW_TARGET_LANGUAGE,
-    TABLE_ROW_TARGET_REPOSITORY,
-    TMP_DIR,
-    UI_DIFF_FILE_HEADER,
-    UI_ERR_EXPORT_FAILED,
-    UI_ERR_UNEXPECTED,
-    UI_FEEDBACK_PROMPT,
-    UI_GRAPH_EXPORT_STATS,
-    UI_GRAPH_EXPORT_SUCCESS,
-    UI_INPUT_PROMPT_HTML,
-    UI_NEW_FILE_HEADER,
-    UI_OPTIMIZATION_INIT,
-    UI_OPTIMIZATION_PANEL,
-    UI_OPTIMIZATION_START,
-    UI_REFERENCE_DOC_INFO,
-    UI_SHELL_COMMAND_HEADER,
-    UI_TOOL_APPROVAL,
-    UI_TOOL_ARGS_FORMAT,
-    Color,
-    DiffMarker,
-    KeyBinding,
-    ModelRole,
-    Provider,
-    StyleModifier,
-)
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .services import QueryProtocol
@@ -137,27 +67,29 @@ if TYPE_CHECKING:
     from .config import ModelConfig
 
 
-def style(text: str, color: Color, modifier: StyleModifier = StyleModifier.BOLD) -> str:
-    if modifier == StyleModifier.NONE:
+def style(
+    text: str, color: cs.Color, modifier: cs.StyleModifier = cs.StyleModifier.BOLD
+) -> str:
+    if modifier == cs.StyleModifier.NONE:
         return f"[{color}]{text}[/{color}]"
     return f"[{modifier} {color}]{text}[/{modifier} {color}]"
 
 
 def dim(text: str) -> str:
-    return f"[{StyleModifier.DIM}]{text}[/{StyleModifier.DIM}]"
+    return f"[{cs.StyleModifier.DIM}]{text}[/{cs.StyleModifier.DIM}]"
 
 
 app_context = AppContext()
 
 
 def init_session_log(project_root: Path) -> Path:
-    log_dir = project_root / TMP_DIR
+    log_dir = project_root / cs.TMP_DIR
     log_dir.mkdir(exist_ok=True)
     app_context.session.log_file = (
-        log_dir / f"{SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}{SESSION_LOG_EXT}"
+        log_dir / f"{cs.SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}{cs.SESSION_LOG_EXT}"
     )
     with open(app_context.session.log_file, "w") as f:
-        f.write(SESSION_LOG_HEADER)
+        f.write(cs.SESSION_LOG_HEADER)
     return app_context.session.log_file
 
 
@@ -170,36 +102,42 @@ def log_session_event(event: str) -> None:
 def get_session_context() -> str:
     if app_context.session.log_file and app_context.session.log_file.exists():
         content = app_context.session.log_file.read_text()
-        return f"{SESSION_CONTEXT_START}{content}{SESSION_CONTEXT_END}"
+        return f"{cs.SESSION_CONTEXT_START}{content}{cs.SESSION_CONTEXT_END}"
     return ""
 
 
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:
-    separator = dim(HORIZONTAL_SEPARATOR)
-    app_context.console.print(f"\n{UI_DIFF_FILE_HEADER.format(path=path)}")
+    separator = dim(cs.HORIZONTAL_SEPARATOR)
+    app_context.console.print(f"\n{cs.UI_DIFF_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
 
     diff = difflib.unified_diff(
         target.splitlines(keepends=True),
         replacement.splitlines(keepends=True),
-        fromfile=DIFF_LABEL_BEFORE,
-        tofile=DIFF_LABEL_AFTER,
+        fromfile=cs.DIFF_LABEL_BEFORE,
+        tofile=cs.DIFF_LABEL_AFTER,
         lineterm="",
     )
 
     for line in diff:
         line = line.rstrip("\n")
         match line[:1]:
-            case DiffMarker.ADD | DiffMarker.DEL if line.startswith(
-                DiffMarker.HEADER_ADD
-            ) or line.startswith(DiffMarker.HEADER_DEL):
+            case cs.DiffMarker.ADD | cs.DiffMarker.DEL if line.startswith(
+                cs.DiffMarker.HEADER_ADD
+            ) or line.startswith(cs.DiffMarker.HEADER_DEL):
                 app_context.console.print(dim(line))
-            case DiffMarker.HUNK:
-                app_context.console.print(style(line, Color.CYAN, StyleModifier.NONE))
-            case DiffMarker.ADD:
-                app_context.console.print(style(line, Color.GREEN, StyleModifier.NONE))
-            case DiffMarker.DEL:
-                app_context.console.print(style(line, Color.RED, StyleModifier.NONE))
+            case cs.DiffMarker.HUNK:
+                app_context.console.print(
+                    style(line, cs.Color.CYAN, cs.StyleModifier.NONE)
+                )
+            case cs.DiffMarker.ADD:
+                app_context.console.print(
+                    style(line, cs.Color.GREEN, cs.StyleModifier.NONE)
+                )
+            case cs.DiffMarker.DEL:
+                app_context.console.print(
+                    style(line, cs.Color.RED, cs.StyleModifier.NONE)
+                )
             case _:
                 app_context.console.print(line)
 
@@ -207,13 +145,13 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
 
 
 def _print_new_file_content(path: str, content: str) -> None:
-    separator = dim(HORIZONTAL_SEPARATOR)
-    app_context.console.print(f"\n{UI_NEW_FILE_HEADER.format(path=path)}")
+    separator = dim(cs.HORIZONTAL_SEPARATOR)
+    app_context.console.print(f"\n{cs.UI_NEW_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
 
     for line in content.splitlines():
         app_context.console.print(
-            style(f"{DiffMarker.ADD} {line}", Color.GREEN, StyleModifier.NONE)
+            style(f"{cs.DiffMarker.ADD} {line}", cs.Color.GREEN, cs.StyleModifier.NONE)
         )
 
     app_context.console.print(separator)
@@ -248,27 +186,29 @@ def _display_tool_call_diff(
 ) -> None:
     match tool_name:
         case tool_names.replace_code:
-            target = str(tool_args.get(ARG_TARGET_CODE, ""))
-            replacement = str(tool_args.get(ARG_REPLACEMENT_CODE, ""))
-            path = str(tool_args.get(ARG_FILE_PATH, file_path or DIFF_FALLBACK_PATH))
+            target = str(tool_args.get(cs.ARG_TARGET_CODE, ""))
+            replacement = str(tool_args.get(cs.ARG_REPLACEMENT_CODE, ""))
+            path = str(
+                tool_args.get(cs.ARG_FILE_PATH, file_path or cs.DIFF_FALLBACK_PATH)
+            )
             _print_unified_diff(target, replacement, path)
 
         case tool_names.create_file:
-            path = str(tool_args.get(ARG_FILE_PATH, ""))
-            content = str(tool_args.get(ARG_CONTENT, ""))
+            path = str(tool_args.get(cs.ARG_FILE_PATH, ""))
+            content = str(tool_args.get(cs.ARG_CONTENT, ""))
             _print_new_file_content(path, content)
 
         case tool_names.shell_command:
-            command = tool_args.get(ARG_COMMAND, "")
-            app_context.console.print(f"\n{UI_SHELL_COMMAND_HEADER}")
+            command = tool_args.get(cs.ARG_COMMAND, "")
+            app_context.console.print(f"\n{cs.UI_SHELL_COMMAND_HEADER}")
             app_context.console.print(
-                style(f"$ {command}", Color.YELLOW, StyleModifier.NONE)
+                style(f"$ {command}", cs.Color.YELLOW, cs.StyleModifier.NONE)
             )
 
         case _:
             app_context.console.print(
-                UI_TOOL_ARGS_FORMAT.format(
-                    args=json.dumps(tool_args, indent=JSON_INDENT)
+                cs.UI_TOOL_ARGS_FORMAT.format(
+                    args=json.dumps(tool_args, indent=cs.JSON_INDENT)
                 )
             )
 
@@ -286,16 +226,16 @@ def _process_tool_approvals(
             call.tool_name, RawToolArgs(**call.args_as_dict()), tool_names
         )
         app_context.console.print(
-            f"\n{UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
+            f"\n{cs.UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
         )
         _display_tool_call_diff(call.tool_name, tool_args, tool_names)
 
         if app_context.session.confirm_edits:
-            if Confirm.ask(style(approval_prompt, Color.CYAN)):
+            if Confirm.ask(style(approval_prompt, cs.Color.CYAN)):
                 deferred_results.approvals[call.tool_call_id] = True
             else:
                 feedback = Prompt.ask(
-                    UI_FEEDBACK_PROMPT,
+                    cs.UI_FEEDBACK_PROMPT,
                     default="",
                 )
                 denial_msg = feedback.strip() or denial_default
@@ -308,10 +248,10 @@ def _process_tool_approvals(
 
 def _setup_common_initialization(repo_path: str) -> Path:
     logger.remove()
-    logger.add(sys.stdout, format=LOG_FORMAT)
+    logger.add(sys.stdout, format=cs.LOG_FORMAT)
 
     project_root = Path(repo_path).resolve()
-    tmp_dir = project_root / TMP_DIR
+    tmp_dir = project_root / cs.TMP_DIR
     if tmp_dir.exists():
         if tmp_dir.is_dir():
             shutil.rmtree(tmp_dir)
@@ -324,50 +264,50 @@ def _setup_common_initialization(repo_path: str) -> Path:
 
 def _create_configuration_table(
     repo_path: str,
-    title: str = DEFAULT_TABLE_TITLE,
+    title: str = cs.DEFAULT_TABLE_TITLE,
     language: str | None = None,
 ) -> Table:
-    table = Table(title=style(title, Color.GREEN))
-    table.add_column(TABLE_COL_CONFIGURATION, style=Color.CYAN)
-    table.add_column(TABLE_COL_VALUE, style=Color.MAGENTA)
+    table = Table(title=style(title, cs.Color.GREEN))
+    table.add_column(cs.TABLE_COL_CONFIGURATION, style=cs.Color.CYAN)
+    table.add_column(cs.TABLE_COL_VALUE, style=cs.Color.MAGENTA)
 
     if language:
-        table.add_row(TABLE_ROW_TARGET_LANGUAGE, language)
+        table.add_row(cs.TABLE_ROW_TARGET_LANGUAGE, language)
 
     orchestrator_config = settings.active_orchestrator_config
     table.add_row(
-        TABLE_ROW_ORCHESTRATOR_MODEL,
+        cs.TABLE_ROW_ORCHESTRATOR_MODEL,
         f"{orchestrator_config.model_id} ({orchestrator_config.provider})",
     )
 
     cypher_config = settings.active_cypher_config
     table.add_row(
-        TABLE_ROW_CYPHER_MODEL,
+        cs.TABLE_ROW_CYPHER_MODEL,
         f"{cypher_config.model_id} ({cypher_config.provider})",
     )
 
     orch_endpoint = (
         orchestrator_config.endpoint
-        if orchestrator_config.provider == Provider.OLLAMA
+        if orchestrator_config.provider == cs.Provider.OLLAMA
         else None
     )
     cypher_endpoint = (
-        cypher_config.endpoint if cypher_config.provider == Provider.OLLAMA else None
+        cypher_config.endpoint if cypher_config.provider == cs.Provider.OLLAMA else None
     )
 
     if orch_endpoint and cypher_endpoint and orch_endpoint == cypher_endpoint:
-        table.add_row(TABLE_ROW_OLLAMA_ENDPOINT, orch_endpoint)
+        table.add_row(cs.TABLE_ROW_OLLAMA_ENDPOINT, orch_endpoint)
     else:
         if orch_endpoint:
-            table.add_row(TABLE_ROW_OLLAMA_ORCHESTRATOR, orch_endpoint)
+            table.add_row(cs.TABLE_ROW_OLLAMA_ORCHESTRATOR, orch_endpoint)
         if cypher_endpoint:
-            table.add_row(TABLE_ROW_OLLAMA_CYPHER, cypher_endpoint)
+            table.add_row(cs.TABLE_ROW_OLLAMA_CYPHER, cypher_endpoint)
 
     confirmation_status = (
-        CONFIRM_ENABLED if app_context.session.confirm_edits else CONFIRM_DISABLED
+        cs.CONFIRM_ENABLED if app_context.session.confirm_edits else cs.CONFIRM_DISABLED
     )
-    table.add_row(TABLE_ROW_EDIT_CONFIRMATION, confirmation_status)
-    table.add_row(TABLE_ROW_TARGET_REPOSITORY, repo_path)
+    table.add_row(cs.TABLE_ROW_EDIT_CONFIRMATION, confirmation_status)
+    table.add_row(cs.TABLE_ROW_TARGET_REPOSITORY, repo_path)
 
     return table
 
@@ -380,16 +320,16 @@ async def run_optimization_loop(
     tool_names: ConfirmationToolNames,
     reference_document: str | None = None,
 ) -> None:
-    app_context.console.print(UI_OPTIMIZATION_START.format(language=language))
+    app_context.console.print(cs.UI_OPTIMIZATION_START.format(language=language))
     document_info = (
-        UI_REFERENCE_DOC_INFO.format(reference_document=reference_document)
+        cs.UI_REFERENCE_DOC_INFO.format(reference_document=reference_document)
         if reference_document
         else ""
     )
     app_context.console.print(
         Panel(
-            UI_OPTIMIZATION_PANEL.format(document_info=document_info),
-            border_style=Color.YELLOW,
+            cs.UI_OPTIMIZATION_PANEL.format(document_info=document_info),
+            border_style=cs.Color.YELLOW,
         )
     )
 
@@ -406,7 +346,7 @@ async def run_optimization_loop(
         message_history,
         project_root,
         OPTIMIZATION_LOOP_UI,
-        style(PROMPT_YOUR_RESPONSE, Color.CYAN),
+        style(cs.PROMPT_YOUR_RESPONSE, cs.Color.CYAN),
         tool_names,
         initial_question,
     )
@@ -426,7 +366,7 @@ async def run_with_cancellation[T](
         except asyncio.CancelledError:
             pass
         app_context.console.print(
-            f"\n{style(MSG_TIMEOUT_FORMAT.format(timeout=timeout), Color.YELLOW)}"
+            f"\n{style(cs.MSG_TIMEOUT_FORMAT.format(timeout=timeout), cs.Color.YELLOW)}"
         )
         return CancelledResult(cancelled=True)
     except (asyncio.CancelledError, KeyboardInterrupt):
@@ -436,7 +376,9 @@ async def run_with_cancellation[T](
                 await task
             except asyncio.CancelledError:
                 pass
-        app_context.console.print(f"\n{style(MSG_THINKING_CANCELLED, Color.YELLOW)}")
+        app_context.console.print(
+            f"\n{style(cs.MSG_THINKING_CANCELLED, cs.Color.YELLOW)}"
+        )
         return CancelledResult(cancelled=True)
 
 
@@ -482,11 +424,11 @@ async def _run_agent_response_loop(
             Panel(
                 markdown_response,
                 title=config.panel_title,
-                border_style=Color.GREEN,
+                border_style=cs.Color.GREEN,
             )
         )
 
-        log_session_event(f"{SESSION_PREFIX_ASSISTANT}{output_text}")
+        log_session_event(f"{cs.SESSION_PREFIX_ASSISTANT}{output_text}")
         message_history.extend(response.new_messages())
         break
 
@@ -499,7 +441,7 @@ def _find_image_paths(question: str) -> list[Path]:
     return [
         Path(token)
         for token in tokens
-        if token.startswith("/") and token.lower().endswith(IMAGE_EXTENSIONS)
+        if token.startswith("/") and token.lower().endswith(cs.IMAGE_EXTENSIONS)
     ]
 
 
@@ -525,7 +467,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     if not image_files:
         return question
 
-    tmp_dir = project_root / TMP_DIR
+    tmp_dir = project_root / cs.TMP_DIR
     tmp_dir.mkdir(exist_ok=True)
     updated_question = question
 
@@ -548,18 +490,18 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     return updated_question
 
 
-def get_multiline_input(prompt_text: str = PROMPT_ASK_QUESTION) -> str:
+def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     bindings = KeyBindings()
 
-    @bindings.add(KeyBinding.CTRL_J)
+    @bindings.add(cs.KeyBinding.CTRL_J)
     def submit(event: KeyPressEvent) -> None:
         event.app.exit(result=event.app.current_buffer.text)
 
-    @bindings.add(KeyBinding.ENTER)
+    @bindings.add(cs.KeyBinding.ENTER)
     def new_line(event: KeyPressEvent) -> None:
         event.current_buffer.insert_text("\n")
 
-    @bindings.add(KeyBinding.CTRL_C)
+    @bindings.add(cs.KeyBinding.CTRL_C)
     def keyboard_interrupt(event: KeyPressEvent) -> None:
         event.app.exit(exception=KeyboardInterrupt)
 
@@ -567,7 +509,9 @@ def get_multiline_input(prompt_text: str = PROMPT_ASK_QUESTION) -> str:
 
     print_formatted_text(
         HTML(
-            UI_INPUT_PROMPT_HTML.format(prompt=clean_prompt, hint=MULTILINE_INPUT_HINT)
+            cs.UI_INPUT_PROMPT_HTML.format(
+                prompt=clean_prompt, hint=cs.MULTILINE_INPUT_HINT
+            )
         )
     )
 
@@ -601,13 +545,13 @@ async def _run_interactive_loop(
             if not initial_question or question != initial_question:
                 question = await asyncio.to_thread(get_multiline_input, input_prompt)
 
-            if question.lower() in EXIT_COMMANDS:
+            if question.lower() in cs.EXIT_COMMANDS:
                 break
             if not question.strip():
                 initial_question = None
                 continue
 
-            log_session_event(f"{SESSION_PREFIX_USER}{question}")
+            log_session_event(f"{cs.SESSION_PREFIX_USER}{question}")
 
             if app_context.session.cancelled:
                 question_with_context = question + get_session_context()
@@ -629,7 +573,7 @@ async def _run_interactive_loop(
             break
         except Exception as e:
             logger.error(logs.UNEXPECTED.format(error=e), exc_info=True)
-            app_context.console.print(UI_ERR_UNEXPECTED.format(error=e))
+            app_context.console.print(cs.UI_ERR_UNEXPECTED.format(error=e))
 
 
 async def run_chat_loop(
@@ -643,27 +587,27 @@ async def run_chat_loop(
         message_history,
         project_root,
         CHAT_LOOP_UI,
-        style(PROMPT_ASK_QUESTION, Color.CYAN),
+        style(cs.PROMPT_ASK_QUESTION, cs.Color.CYAN),
         tool_names,
     )
 
 
-def _update_single_model_setting(role: ModelRole, model_string: str) -> None:
+def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
     provider, model = settings.parse_model_string(model_string)
 
     match role:
-        case ModelRole.ORCHESTRATOR:
+        case cs.ModelRole.ORCHESTRATOR:
             current_config = settings.active_orchestrator_config
             set_method = settings.set_orchestrator
-        case ModelRole.CYPHER:
+        case cs.ModelRole.CYPHER:
             current_config = settings.active_cypher_config
             set_method = settings.set_cypher
 
     kwargs = current_config.to_update_kwargs()
 
-    if provider == Provider.OLLAMA and not kwargs[FIELD_ENDPOINT]:
-        kwargs[FIELD_ENDPOINT] = str(settings.LOCAL_MODEL_ENDPOINT)
-        kwargs[FIELD_API_KEY] = Provider.OLLAMA
+    if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
+        kwargs[cs.FIELD_ENDPOINT] = str(settings.LOCAL_MODEL_ENDPOINT)
+        kwargs[cs.FIELD_API_KEY] = cs.Provider.OLLAMA
 
     set_method(provider, model, **kwargs)
 
@@ -673,17 +617,17 @@ def update_model_settings(
     cypher: str | None,
 ) -> None:
     if orchestrator:
-        _update_single_model_setting(ModelRole.ORCHESTRATOR, orchestrator)
+        _update_single_model_setting(cs.ModelRole.ORCHESTRATOR, orchestrator)
     if cypher:
-        _update_single_model_setting(ModelRole.CYPHER, cypher)
+        _update_single_model_setting(cs.ModelRole.CYPHER, cypher)
 
 
 def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphData:
     graph_data: GraphData = ingestor.export_graph_to_dict()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, "w", encoding=ENCODING_UTF8) as f:
-        json.dump(graph_data, f, indent=JSON_INDENT, ensure_ascii=False)
+    with open(output_path, "w", encoding=cs.ENCODING_UTF8) as f:
+        json.dump(graph_data, f, indent=cs.JSON_INDENT, ensure_ascii=False)
 
     return graph_data
 
@@ -701,25 +645,25 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
     try:
         graph_data = _write_graph_json(ingestor, output_path)
-        metadata = graph_data[KEY_METADATA]
+        metadata = graph_data[cs.KEY_METADATA]
         app_context.console.print(
-            UI_GRAPH_EXPORT_SUCCESS.format(path=output_path.absolute())
+            cs.UI_GRAPH_EXPORT_SUCCESS.format(path=output_path.absolute())
         )
         app_context.console.print(
-            UI_GRAPH_EXPORT_STATS.format(
-                nodes=metadata[KEY_TOTAL_NODES],
-                relationships=metadata[KEY_TOTAL_RELATIONSHIPS],
+            cs.UI_GRAPH_EXPORT_STATS.format(
+                nodes=metadata[cs.KEY_TOTAL_NODES],
+                relationships=metadata[cs.KEY_TOTAL_RELATIONSHIPS],
             )
         )
         return True
 
     except Exception as e:
-        app_context.console.print(UI_ERR_EXPORT_FAILED.format(error=e))
+        app_context.console.print(cs.UI_ERR_EXPORT_FAILED.format(error=e))
         logger.error(logs.EXPORT_ERROR.format(error=e), exc_info=True)
         return False
 
 
-def _validate_provider_config(role: ModelRole, config: ModelConfig) -> None:
+def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
     from .providers.base import get_provider
 
     try:
@@ -742,9 +686,9 @@ def _initialize_services_and_agent(
     repo_path: str, ingestor: QueryProtocol
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames]:
     _validate_provider_config(
-        ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
+        cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
-    _validate_provider_config(ModelRole.CYPHER, settings.active_cypher_config)
+    _validate_provider_config(cs.ModelRole.CYPHER, settings.active_cypher_config)
 
     cypher_generator = CypherGenerator()
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
@@ -798,11 +742,11 @@ async def main_async(repo_path: str, batch_size: int) -> None:
     app_context.console.print(table)
 
     with connect_memgraph(batch_size) as ingestor:
-        app_context.console.print(style(MSG_CONNECTED_MEMGRAPH, Color.GREEN))
+        app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
         app_context.console.print(
             Panel(
-                style(MSG_CHAT_INSTRUCTIONS, Color.YELLOW),
-                border_style=Color.YELLOW,
+                style(cs.MSG_CHAT_INSTRUCTIONS, cs.Color.YELLOW),
+                border_style=cs.Color.YELLOW,
             )
         )
 
@@ -823,18 +767,18 @@ async def main_optimize_async(
     update_model_settings(orchestrator, cypher)
 
     app_context.console.print(
-        UI_OPTIMIZATION_INIT.format(language=language, path=project_root)
+        cs.UI_OPTIMIZATION_INIT.format(language=language, path=project_root)
     )
 
     table = _create_configuration_table(
-        str(project_root), OPTIMIZATION_TABLE_TITLE, language
+        str(project_root), cs.OPTIMIZATION_TABLE_TITLE, language
     )
     app_context.console.print(table)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     with connect_memgraph(effective_batch_size) as ingestor:
-        app_context.console.print(style(MSG_CONNECTED_MEMGRAPH, Color.GREEN))
+        app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
 
         rag_agent, tool_names = _initialize_services_and_agent(
             target_repo_path, ingestor

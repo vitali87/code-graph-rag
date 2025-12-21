@@ -6,49 +6,30 @@ from loguru import logger
 
 import codec.schema_pb2 as pb
 
+from .. import constants as cs
 from .. import logs
-from ..constants import (
-    KEY_NAME,
-    KEY_PATH,
-    KEY_QUALIFIED_NAME,
-    ONEOF_CLASS,
-    ONEOF_EXTERNAL_PACKAGE,
-    ONEOF_FILE,
-    ONEOF_FOLDER,
-    ONEOF_FUNCTION,
-    ONEOF_METHOD,
-    ONEOF_MODULE,
-    ONEOF_MODULE_IMPLEMENTATION,
-    ONEOF_MODULE_INTERFACE,
-    ONEOF_PACKAGE,
-    ONEOF_PROJECT,
-    PROTOBUF_INDEX_FILE,
-    PROTOBUF_NODES_FILE,
-    PROTOBUF_RELS_FILE,
-    NodeLabel,
-)
 from ..types_defs import PropertyDict, PropertyValue
 
-LABEL_TO_ONEOF_FIELD: dict[NodeLabel, str] = {
-    NodeLabel.PROJECT: ONEOF_PROJECT,
-    NodeLabel.PACKAGE: ONEOF_PACKAGE,
-    NodeLabel.FOLDER: ONEOF_FOLDER,
-    NodeLabel.MODULE: ONEOF_MODULE,
-    NodeLabel.CLASS: ONEOF_CLASS,
-    NodeLabel.FUNCTION: ONEOF_FUNCTION,
-    NodeLabel.METHOD: ONEOF_METHOD,
-    NodeLabel.FILE: ONEOF_FILE,
-    NodeLabel.EXTERNAL_PACKAGE: ONEOF_EXTERNAL_PACKAGE,
-    NodeLabel.MODULE_IMPLEMENTATION: ONEOF_MODULE_IMPLEMENTATION,
-    NodeLabel.MODULE_INTERFACE: ONEOF_MODULE_INTERFACE,
+LABEL_TO_ONEOF_FIELD: dict[cs.NodeLabel, str] = {
+    cs.NodeLabel.PROJECT: cs.ONEOF_PROJECT,
+    cs.NodeLabel.PACKAGE: cs.ONEOF_PACKAGE,
+    cs.NodeLabel.FOLDER: cs.ONEOF_FOLDER,
+    cs.NodeLabel.MODULE: cs.ONEOF_MODULE,
+    cs.NodeLabel.CLASS: cs.ONEOF_CLASS,
+    cs.NodeLabel.FUNCTION: cs.ONEOF_FUNCTION,
+    cs.NodeLabel.METHOD: cs.ONEOF_METHOD,
+    cs.NodeLabel.FILE: cs.ONEOF_FILE,
+    cs.NodeLabel.EXTERNAL_PACKAGE: cs.ONEOF_EXTERNAL_PACKAGE,
+    cs.NodeLabel.MODULE_IMPLEMENTATION: cs.ONEOF_MODULE_IMPLEMENTATION,
+    cs.NodeLabel.MODULE_INTERFACE: cs.ONEOF_MODULE_INTERFACE,
 }
 
-ONEOF_FIELD_TO_LABEL: dict[str, NodeLabel] = {
+ONEOF_FIELD_TO_LABEL: dict[str, cs.NodeLabel] = {
     v: k for k, v in LABEL_TO_ONEOF_FIELD.items()
 }
 
-PATH_BASED_LABELS = frozenset({NodeLabel.FOLDER, NodeLabel.FILE})
-NAME_BASED_LABELS = frozenset({NodeLabel.EXTERNAL_PACKAGE, NodeLabel.PROJECT})
+PATH_BASED_LABELS = frozenset({cs.NodeLabel.FOLDER, cs.NodeLabel.FILE})
+NAME_BASED_LABELS = frozenset({cs.NodeLabel.EXTERNAL_PACKAGE, cs.NodeLabel.PROJECT})
 
 
 class ProtobufFileIngestor:
@@ -59,16 +40,16 @@ class ProtobufFileIngestor:
         self.split_index = split_index
         logger.info(logs.PROTOBUF_INIT.format(path=self.output_dir))
 
-    def _get_node_id(self, label: NodeLabel, properties: PropertyDict) -> str:
+    def _get_node_id(self, label: cs.NodeLabel, properties: PropertyDict) -> str:
         if label in PATH_BASED_LABELS:
-            return str(properties.get(KEY_PATH, ""))
+            return str(properties.get(cs.KEY_PATH, ""))
         elif label in NAME_BASED_LABELS:
-            return str(properties.get(KEY_NAME, ""))
+            return str(properties.get(cs.KEY_NAME, ""))
         else:
-            return str(properties.get(KEY_QUALIFIED_NAME, ""))
+            return str(properties.get(cs.KEY_QUALIFIED_NAME, ""))
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
-        node_label = NodeLabel(label)
+        node_label = cs.NodeLabel(label)
         node_id = self._get_node_id(node_label, properties)
         if not node_id or node_id in self._nodes:
             return
@@ -152,7 +133,7 @@ class ProtobufFileIngestor:
 
         serialised_file = index.SerializeToString()
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self.output_dir / PROTOBUF_INDEX_FILE
+        out_path = self.output_dir / cs.PROTOBUF_INDEX_FILE
         with open(out_path, "wb") as f:
             f.write(serialised_file)
 
@@ -174,8 +155,8 @@ class ProtobufFileIngestor:
         serialised_rels = rels_index.SerializeToString()
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        nodes_path = self.output_dir / PROTOBUF_NODES_FILE
-        rels_path = self.output_dir / PROTOBUF_RELS_FILE
+        nodes_path = self.output_dir / cs.PROTOBUF_NODES_FILE
+        rels_path = self.output_dir / cs.PROTOBUF_RELS_FILE
 
         with open(nodes_path, "wb") as f:
             f.write(serialised_nodes)

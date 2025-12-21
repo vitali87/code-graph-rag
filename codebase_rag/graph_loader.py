@@ -4,20 +4,9 @@ from pathlib import Path
 
 from loguru import logger
 
+from . import constants as cs
 from . import exceptions as ex
 from . import logs
-from .constants import (
-    ENCODING_UTF8,
-    KEY_FROM_ID,
-    KEY_LABELS,
-    KEY_METADATA,
-    KEY_NODE_ID,
-    KEY_NODES,
-    KEY_PROPERTIES,
-    KEY_RELATIONSHIPS,
-    KEY_TO_ID,
-    KEY_TYPE,
-)
 from .models import GraphNode, GraphRelationship
 from .types_defs import GraphData, GraphMetadata, GraphSummary, PropertyValue
 
@@ -48,18 +37,18 @@ class GraphLoader:
             raise FileNotFoundError(ex.GRAPH_FILE_NOT_FOUND.format(path=self.file_path))
 
         logger.info(logs.LOADING_GRAPH.format(path=self.file_path))
-        with open(self.file_path, encoding=ENCODING_UTF8) as f:
+        with open(self.file_path, encoding=cs.ENCODING_UTF8) as f:
             self._data = json.load(f)
 
         if self._data is None:
             raise RuntimeError(ex.FAILED_TO_LOAD_DATA)
 
         self._nodes = []
-        for node_data in self._data[KEY_NODES]:
+        for node_data in self._data[cs.KEY_NODES]:
             node = GraphNode(
-                node_id=node_data[KEY_NODE_ID],
-                labels=node_data[KEY_LABELS],
-                properties=node_data[KEY_PROPERTIES],
+                node_id=node_data[cs.KEY_NODE_ID],
+                labels=node_data[cs.KEY_LABELS],
+                properties=node_data[cs.KEY_PROPERTIES],
             )
             self._nodes.append(node)
 
@@ -68,12 +57,12 @@ class GraphLoader:
                 self._nodes_by_label[label].append(node)
 
         self._relationships = []
-        for rel_data in self._data[KEY_RELATIONSHIPS]:
+        for rel_data in self._data[cs.KEY_RELATIONSHIPS]:
             rel = GraphRelationship(
-                from_id=rel_data[KEY_FROM_ID],
-                to_id=rel_data[KEY_TO_ID],
-                type=rel_data[KEY_TYPE],
-                properties=rel_data[KEY_PROPERTIES],
+                from_id=rel_data[cs.KEY_FROM_ID],
+                to_id=rel_data[cs.KEY_TO_ID],
+                type=rel_data[cs.KEY_TYPE],
+                properties=rel_data[cs.KEY_PROPERTIES],
             )
             self._relationships.append(rel)
 
@@ -113,7 +102,7 @@ class GraphLoader:
     def metadata(self) -> GraphMetadata:
         self._ensure_loaded()
         assert self._data is not None, ex.DATA_NOT_LOADED
-        return self._data[KEY_METADATA]
+        return self._data[cs.KEY_METADATA]
 
     def find_nodes_by_label(self, label: str) -> list[GraphNode]:
         self._ensure_loaded()

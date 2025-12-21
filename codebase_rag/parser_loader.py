@@ -7,35 +7,18 @@ from pathlib import Path
 from loguru import logger
 from tree_sitter import Language, Parser, Query
 
+from . import constants as cs
 from . import exceptions as ex
 from . import logs
-from .constants import (
-    BINDINGS_DIR,
-    BUILD_EXT_CMD,
-    CAPTURE_CALL,
-    CAPTURE_CLASS,
-    CAPTURE_FUNCTION,
-    CAPTURE_IMPORT,
-    CAPTURE_IMPORT_FROM,
-    GRAMMARS_DIR,
-    INPLACE_FLAG,
-    JS_LOCALS_PATTERN,
-    LANG_ATTR_PREFIX,
-    LANG_ATTR_TYPESCRIPT,
-    QUERY_LANGUAGE,
-    SETUP_PY,
-    TREE_SITTER_MODULE_PREFIX,
-    TREE_SITTER_PREFIX,
-    TS_LOCALS_PATTERN,
-    SupportedLanguage,
-)
 from .language_spec import LANGUAGE_SPECS
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
-def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
-    submodule_path = Path(GRAMMARS_DIR) / f"{TREE_SITTER_PREFIX}{lang_name}"
-    python_bindings_path = submodule_path / BINDINGS_DIR / SupportedLanguage.PYTHON
+def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
+    submodule_path = Path(cs.GRAMMARS_DIR) / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
+    python_bindings_path = (
+        submodule_path / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
+    )
 
     if not python_bindings_path.exists():
         return None
@@ -46,13 +29,13 @@ def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
             sys.path.insert(0, python_bindings_str)
 
         try:
-            module_name = f"{TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
+            module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
 
-            setup_py_path = submodule_path / SETUP_PY
+            setup_py_path = submodule_path / cs.SETUP_PY
             if setup_py_path.exists():
                 logger.debug(logs.BUILDING_BINDINGS.format(lang=lang_name))
                 result = subprocess.run(
-                    [sys.executable, SETUP_PY, BUILD_EXT_CMD, INPLACE_FLAG],
+                    [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
                     cwd=str(submodule_path),
                     capture_output=True,
                     text=True,
@@ -71,9 +54,9 @@ def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
             module = importlib.import_module(module_name)
 
             language_attrs: list[str] = [
-                QUERY_LANGUAGE,
-                f"{LANG_ATTR_PREFIX}{lang_name}",
-                f"{LANG_ATTR_PREFIX}{lang_name.replace('-', '_')}",
+                cs.QUERY_LANGUAGE,
+                f"{cs.LANG_ATTR_PREFIX}{lang_name}",
+                f"{cs.LANG_ATTR_PREFIX}{lang_name.replace('-', '_')}",
             ]
 
             for attr_name in language_attrs:
@@ -101,7 +84,7 @@ def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
 
 
 def _try_import_language(
-    module_path: str, attr_name: str, lang_name: SupportedLanguage
+    module_path: str, attr_name: str, lang_name: cs.SupportedLanguage
 ) -> LanguageLoader:
     try:
         module = importlib.import_module(module_path)
@@ -111,62 +94,65 @@ def _try_import_language(
         return _try_load_from_submodule(lang_name)
 
 
-def _import_language_loaders() -> dict[SupportedLanguage, LanguageLoader]:
+def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
     language_imports: list[LanguageImport] = [
         LanguageImport(
-            SupportedLanguage.PYTHON,
+            cs.SupportedLanguage.PYTHON,
             "tree_sitter_python",
-            QUERY_LANGUAGE,
-            SupportedLanguage.PYTHON,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.PYTHON,
         ),
         LanguageImport(
-            SupportedLanguage.JS,
+            cs.SupportedLanguage.JS,
             "tree_sitter_javascript",
-            QUERY_LANGUAGE,
-            SupportedLanguage.JS,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.JS,
         ),
         LanguageImport(
-            SupportedLanguage.TS,
+            cs.SupportedLanguage.TS,
             "tree_sitter_typescript",
-            LANG_ATTR_TYPESCRIPT,
-            SupportedLanguage.TS,
+            cs.LANG_ATTR_TYPESCRIPT,
+            cs.SupportedLanguage.TS,
         ),
         LanguageImport(
-            SupportedLanguage.RUST,
+            cs.SupportedLanguage.RUST,
             "tree_sitter_rust",
-            QUERY_LANGUAGE,
-            SupportedLanguage.RUST,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.RUST,
         ),
         LanguageImport(
-            SupportedLanguage.GO, "tree_sitter_go", QUERY_LANGUAGE, SupportedLanguage.GO
+            cs.SupportedLanguage.GO,
+            "tree_sitter_go",
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.GO,
         ),
         LanguageImport(
-            SupportedLanguage.SCALA,
+            cs.SupportedLanguage.SCALA,
             "tree_sitter_scala",
-            QUERY_LANGUAGE,
-            SupportedLanguage.SCALA,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.SCALA,
         ),
         LanguageImport(
-            SupportedLanguage.JAVA,
+            cs.SupportedLanguage.JAVA,
             "tree_sitter_java",
-            QUERY_LANGUAGE,
-            SupportedLanguage.JAVA,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.JAVA,
         ),
         LanguageImport(
-            SupportedLanguage.CPP,
+            cs.SupportedLanguage.CPP,
             "tree_sitter_cpp",
-            QUERY_LANGUAGE,
-            SupportedLanguage.CPP,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.CPP,
         ),
         LanguageImport(
-            SupportedLanguage.LUA,
+            cs.SupportedLanguage.LUA,
             "tree_sitter_lua",
-            QUERY_LANGUAGE,
-            SupportedLanguage.LUA,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.LUA,
         ),
     ]
 
-    loaders: dict[SupportedLanguage, LanguageLoader] = {
+    loaders: dict[cs.SupportedLanguage, LanguageLoader] = {
         lang_import.lang_key: _try_import_language(
             lang_import.module_path,
             lang_import.attr_name,
@@ -175,7 +161,7 @@ def _import_language_loaders() -> dict[SupportedLanguage, LanguageLoader]:
         for lang_import in language_imports
     }
     for lang_key in LANGUAGE_SPECS:
-        lang_name = SupportedLanguage(lang_key)
+        lang_name = cs.SupportedLanguage(lang_key)
         if lang_name not in loaders or loaders[lang_name] is None:
             loaders[lang_name] = _try_load_from_submodule(lang_name)
 
@@ -184,34 +170,34 @@ def _import_language_loaders() -> dict[SupportedLanguage, LanguageLoader]:
 
 _language_loaders = _import_language_loaders()
 
-LANGUAGE_LIBRARIES: dict[SupportedLanguage, LanguageLoader] = _language_loaders
+LANGUAGE_LIBRARIES: dict[cs.SupportedLanguage, LanguageLoader] = _language_loaders
 
 
 def _build_query_pattern(node_types: tuple[str, ...], capture_name: str) -> str:
     return " ".join([f"({node_type}) @{capture_name}" for node_type in node_types])
 
 
-def _get_locals_pattern(lang_name: SupportedLanguage) -> str | None:
+def _get_locals_pattern(lang_name: cs.SupportedLanguage) -> str | None:
     match lang_name:
-        case SupportedLanguage.JS:
-            return JS_LOCALS_PATTERN
-        case SupportedLanguage.TS:
-            return TS_LOCALS_PATTERN
+        case cs.SupportedLanguage.JS:
+            return cs.JS_LOCALS_PATTERN
+        case cs.SupportedLanguage.TS:
+            return cs.TS_LOCALS_PATTERN
         case _:
             return None
 
 
 def load_parsers() -> tuple[
-    dict[SupportedLanguage, Parser], dict[SupportedLanguage, LanguageQueries]
+    dict[cs.SupportedLanguage, Parser], dict[cs.SupportedLanguage, LanguageQueries]
 ]:
-    parsers: dict[SupportedLanguage, Parser] = {}
-    queries: dict[SupportedLanguage, LanguageQueries] = {}
-    available_languages: list[SupportedLanguage] = []
+    parsers: dict[cs.SupportedLanguage, Parser] = {}
+    queries: dict[cs.SupportedLanguage, LanguageQueries] = {}
+    available_languages: list[cs.SupportedLanguage] = []
 
     configs = deepcopy(LANGUAGE_SPECS)
 
     for lang_key, lang_config in configs.items():
-        lang_name = SupportedLanguage(lang_key)
+        lang_name = cs.SupportedLanguage(lang_key)
         lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
         if not lang_lib:
             logger.debug(logs.LIB_NOT_AVAILABLE.format(lang=lang_name))
@@ -223,20 +209,20 @@ def load_parsers() -> tuple[
             parsers[lang_name] = parser
 
             function_patterns = lang_config.function_query or _build_query_pattern(
-                lang_config.function_node_types, CAPTURE_FUNCTION
+                lang_config.function_node_types, cs.CAPTURE_FUNCTION
             )
             class_patterns = lang_config.class_query or _build_query_pattern(
-                lang_config.class_node_types, CAPTURE_CLASS
+                lang_config.class_node_types, cs.CAPTURE_CLASS
             )
             call_patterns = lang_config.call_query or _build_query_pattern(
-                lang_config.call_node_types, CAPTURE_CALL
+                lang_config.call_node_types, cs.CAPTURE_CALL
             )
 
             import_patterns = _build_query_pattern(
-                lang_config.import_node_types, CAPTURE_IMPORT
+                lang_config.import_node_types, cs.CAPTURE_IMPORT
             )
             import_from_patterns = _build_query_pattern(
-                lang_config.import_from_node_types, CAPTURE_IMPORT_FROM
+                lang_config.import_from_node_types, cs.CAPTURE_IMPORT_FROM
             )
 
             all_import_patterns: list[str] = []
