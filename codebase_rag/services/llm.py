@@ -11,13 +11,10 @@ from ..providers.base import get_provider
 
 
 class LLMGenerationError(Exception):
-    """Custom exception for LLM generation failures."""
-
     pass
 
 
 def _clean_cypher_response(response_text: str) -> str:
-    """Utility to clean up common LLM formatting artifacts from a Cypher query."""
     query = response_text.strip().replace("`", "")
     if query.startswith("cypher"):
         query = query[6:].strip()
@@ -27,8 +24,6 @@ def _clean_cypher_response(response_text: str) -> str:
 
 
 class CypherGenerator:
-    """Generates Cypher queries from natural language."""
-
     def __init__(self) -> None:
         try:
             config = settings.active_cypher_config
@@ -85,7 +80,6 @@ class CypherGenerator:
 
 
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
-    """Factory function to create the main RAG orchestrator agent."""
     try:
         config = settings.active_orchestrator_config
 

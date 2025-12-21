@@ -1,83 +1,122 @@
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
-from ..types_defs import GraphData, GraphMetadata, NodeData, RelationshipData
+from ..constants import (
+    BATCH_SIZE_ERROR,
+    CONN_ERROR,
+    LOG_MG_BATCH_ERROR,
+    LOG_MG_BATCH_PARAMS_TRUNCATED,
+    LOG_MG_CALLS_FAILED,
+    LOG_MG_CALLS_SAMPLE,
+    LOG_MG_CLEANING_DB,
+    LOG_MG_CONNECTED,
+    LOG_MG_CONNECTING,
+    LOG_MG_CONSTRAINTS_DONE,
+    LOG_MG_CYPHER_ERROR,
+    LOG_MG_CYPHER_PARAMS,
+    LOG_MG_CYPHER_QUERY,
+    LOG_MG_DB_CLEANED,
+    LOG_MG_DISCONNECTED,
+    LOG_MG_ENSURING_CONSTRAINTS,
+    LOG_MG_EXCEPTION,
+    LOG_MG_EXPORTED,
+    LOG_MG_EXPORTING,
+    LOG_MG_FETCH_QUERY,
+    LOG_MG_FLUSH_COMPLETE,
+    LOG_MG_FLUSH_START,
+    LOG_MG_MISSING_PROP,
+    LOG_MG_NO_CONSTRAINT,
+    LOG_MG_NODE_BUFFER_FLUSH,
+    LOG_MG_NODES_FLUSHED,
+    LOG_MG_NODES_SKIPPED,
+    LOG_MG_REL_BUFFER_FLUSH,
+    LOG_MG_RELS_FLUSHED,
+    LOG_MG_WRITE_QUERY,
+    NODE_UNIQUE_CONSTRAINTS,
+    REL_TYPE_CALLS,
+)
+from ..types_defs import (
+    BatchParams,
+    GraphData,
+    GraphMetadata,
+    NodeBatchRow,
+    PropertyDict,
+    PropertyValue,
+    RelBatchRow,
+    ResultRow,
+)
 
 
 class MemgraphIngestor:
-    """Handles all communication and query execution with the Memgraph database."""
-
     def __init__(self, host: str, port: int, batch_size: int = 1000):
         self._host = host
         self._port = port
         if batch_size < 1:
-            raise ValueError("batch_size must be a positive integer")
+            raise ValueError(BATCH_SIZE_ERROR)
         self.batch_size = batch_size
         self.conn: mgclient.Connection | None = None
-        self.node_buffer: list[tuple[str, dict[str, Any]]] = []
-        self.relationship_buffer: list[tuple[tuple, str, tuple, dict | None]] = []
-        self.unique_constraints = {
-            "Project": "name",
-            "Package": "qualified_name",
-            "Folder": "path",
-            "Module": "qualified_name",
-            "Class": "qualified_name",
-            "Function": "qualified_name",
-            "Method": "qualified_name",
-            "File": "path",
-            "ExternalPackage": "name",
-        }
+        self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
+        self.relationship_buffer: list[
+            tuple[
+                tuple[str, str, PropertyValue],
+                str,
+                tuple[str, str, PropertyValue],
+                dict[str, PropertyValue] | None,
+            ]
+        ] = []
 
     def __enter__(self) -> "MemgraphIngestor":
-        logger.info(f"Connecting to Memgraph at {self._host}:{self._port}...")
+        logger.info(LOG_MG_CONNECTING.format(host=self._host, port=self._port))
         self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
-        logger.info("Successfully connected to Memgraph.")
+        logger.info(LOG_MG_CONNECTED)
         return self
 
     def __exit__(
-        self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any
+        self, exc_type: type | None, exc_val: Exception | None, exc_tb: object
     ) -> None:
         if exc_type:
-            logger.error(
-                f"An exception occurred: {exc_val}. Flushing remaining items...",
-                exc_info=True,
-            )
+            logger.error(LOG_MG_EXCEPTION.format(error=exc_val), exc_info=True)
         self.flush_all()
         if self.conn:
             self.conn.close()
-            logger.info("\nDisconnected from Memgraph.")
+            logger.info(LOG_MG_DISCONNECTED)
 
-    def _execute_query(self, query: str, params: dict[str, Any] | None = None) -> list:
+    def _cursor_to_results(self, cursor: mgclient.Cursor) -> list[ResultRow]:
+        if not cursor.description:
+            return []
+        column_names = [desc.name for desc in cursor.description]
+        return [dict(zip(column_names, row)) for row in cursor.fetchall()]
+
+    def _execute_query(
+        self, query: str, params: dict[str, PropertyValue] | None = None
+    ) -> list[ResultRow]:
         if not self.conn:
-            raise ConnectionError("Not connected to Memgraph.")
+            raise ConnectionError(CONN_ERROR)
         params = params or {}
         cursor = None
         try:
             cursor = self.conn.cursor()
             cursor.execute(query, params)
-            if not cursor.description:
-                return []
-            column_names = [desc.name for desc in cursor.description]
-            return [dict(zip(column_names, row)) for row in cursor.fetchall()]
+            return self._cursor_to_results(cursor)
         except Exception as e:
             if (
                 "already exists" not in str(e).lower()
                 and "constraint" not in str(e).lower()
             ):
-                logger.error(f"!!! Cypher Error: {e}")
-                logger.error(f"    Query: {query}")
-                logger.error(f"    Params: {params}")
+                logger.error(LOG_MG_CYPHER_ERROR.format(error=e))
+                logger.error(LOG_MG_CYPHER_QUERY.format(query=query))
+                logger.error(LOG_MG_CYPHER_PARAMS.format(params=params))
             raise
         finally:
             if cursor:
                 cursor.close()
 
-    def _execute_batch(self, query: str, params_list: list[dict[str, Any]]) -> None:
+    def _execute_batch(self, query: str, params_list: Sequence[BatchParams]) -> None:
         if not self.conn or not params_list:
             return
         cursor = None
@@ -87,25 +126,24 @@ class MemgraphIngestor:
             cursor.execute(batch_query, {"batch": params_list})
         except Exception as e:
             if "already exists" not in str(e).lower():
-                logger.error(f"!!! Batch Cypher Error: {e}")
-                logger.error(f"    Query: {query}")
+                logger.error(LOG_MG_BATCH_ERROR.format(error=e))
+                logger.error(LOG_MG_CYPHER_QUERY.format(query=query))
                 if len(params_list) > 10:
                     logger.error(
-                        "    Params (first 10 of {}): {}...",
-                        len(params_list),
-                        params_list[:10],
+                        LOG_MG_BATCH_PARAMS_TRUNCATED.format(
+                            count=len(params_list), params=params_list[:10]
+                        )
                     )
                 else:
-                    logger.error(f"    Params: {params_list}")
+                    logger.error(LOG_MG_CYPHER_PARAMS.format(params=params_list))
             raise
         finally:
             if cursor:
                 cursor.close()
 
     def _execute_batch_with_return(
-        self, query: str, params_list: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Execute a batch query that returns results."""
+        self, query: str, params_list: Sequence[BatchParams]
+    ) -> list[ResultRow]:
         if not self.conn or not params_list:
             return []
         cursor = None
@@ -113,52 +151,46 @@ class MemgraphIngestor:
             cursor = self.conn.cursor()
             batch_query = f"UNWIND $batch AS row\n{query}"
             cursor.execute(batch_query, {"batch": params_list})
-            if not cursor.description:
-                return []
-            column_names = [desc.name for desc in cursor.description]
-            return [dict(zip(column_names, row)) for row in cursor.fetchall()]
+            return self._cursor_to_results(cursor)
         except Exception as e:
-            logger.error(f"!!! Batch Cypher Error: {e}")
-            logger.error(f"    Query: {query}")
+            logger.error(LOG_MG_BATCH_ERROR.format(error=e))
+            logger.error(LOG_MG_CYPHER_QUERY.format(query=query))
             raise
         finally:
             if cursor:
                 cursor.close()
 
     def clean_database(self) -> None:
-        logger.info("--- Cleaning database... ---")
+        logger.info(LOG_MG_CLEANING_DB)
         self._execute_query("MATCH (n) DETACH DELETE n;")
-        logger.info("--- Database cleaned. ---")
+        logger.info(LOG_MG_DB_CLEANED)
 
     def ensure_constraints(self) -> None:
-        logger.info("Ensuring constraints...")
-        for label, prop in self.unique_constraints.items():
+        logger.info(LOG_MG_ENSURING_CONSTRAINTS)
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(
                     f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
                 )
             except Exception:
                 pass
-        logger.info("Constraints checked/created.")
+        logger.info(LOG_MG_CONSTRAINTS_DONE)
 
-    def ensure_node_batch(self, label: str, properties: dict[str, Any]) -> None:
-        """Adds a node to the buffer."""
+    def ensure_node_batch(
+        self, label: str, properties: dict[str, PropertyValue]
+    ) -> None:
         self.node_buffer.append((label, properties))
         if len(self.node_buffer) >= self.batch_size:
-            logger.debug(
-                "Node buffer reached batch size ({}). Performing incremental flush.",
-                self.batch_size,
-            )
+            logger.debug(LOG_MG_NODE_BUFFER_FLUSH.format(size=self.batch_size))
             self.flush_nodes()
 
     def ensure_relationship_batch(
         self,
-        from_spec: tuple[str, str, Any],
+        from_spec: tuple[str, str, PropertyValue],
         rel_type: str,
-        to_spec: tuple[str, str, Any],
-        properties: dict[str, Any] | None = None,
+        to_spec: tuple[str, str, PropertyValue],
+        properties: dict[str, PropertyValue] | None = None,
     ) -> None:
-        """Adds a relationship to the buffer."""
         from_label, from_key, from_val = from_spec
         to_label, to_key, to_val = to_spec
         self.relationship_buffer.append(
@@ -170,20 +202,18 @@ class MemgraphIngestor:
             )
         )
         if len(self.relationship_buffer) >= self.batch_size:
-            logger.debug(
-                "Relationship buffer reached batch size ({}). Performing incremental flush.",
-                self.batch_size,
-            )
+            logger.debug(LOG_MG_REL_BUFFER_FLUSH.format(size=self.batch_size))
             self.flush_nodes()
             self.flush_relationships()
 
     def flush_nodes(self) -> None:
-        """Flushes the buffered nodes to the database."""
         if not self.node_buffer:
             return
 
         buffer_size = len(self.node_buffer)
-        nodes_by_label = defaultdict(list)
+        nodes_by_label: defaultdict[str, list[dict[str, PropertyValue]]] = defaultdict(
+            list
+        )
         for label, props in self.node_buffer:
             nodes_by_label[label].append(props)
         flushed_total = 0
@@ -191,27 +221,24 @@ class MemgraphIngestor:
         for label, props_list in nodes_by_label.items():
             if not props_list:
                 continue
-            id_key = self.unique_constraints.get(label)
+            id_key = NODE_UNIQUE_CONSTRAINTS.get(label)
             if not id_key:
-                logger.warning(
-                    f"No unique constraint defined for label '{label}'. Skipping flush."
-                )
+                logger.warning(LOG_MG_NO_CONSTRAINT.format(label=label))
                 skipped_total += len(props_list)
                 continue
 
-            batch_rows: list[dict[str, Any]] = []
+            batch_rows: list[NodeBatchRow] = []
             for props in props_list:
                 if id_key not in props:
                     logger.warning(
-                        "Skipping {} node missing required '{}' property: {}",
-                        label,
-                        id_key,
-                        props,
+                        LOG_MG_MISSING_PROP.format(label=label, key=id_key, props=props)
                     )
                     skipped_total += 1
                     continue
-                row_props = {k: v for k, v in props.items() if k != id_key}
-                batch_rows.append({"id": props[id_key], "props": row_props})
+                row_props: PropertyDict = {
+                    k: v for k, v in props.items() if k != id_key
+                }
+                batch_rows.append(NodeBatchRow(id=props[id_key], props=row_props))
 
             if not batch_rows:
                 continue
@@ -220,23 +247,24 @@ class MemgraphIngestor:
 
             query = f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
             self._execute_batch(query, batch_rows)
-        logger.info("Flushed {} of {} buffered nodes.", flushed_total, buffer_size)
+        logger.info(
+            LOG_MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
+        )
         if skipped_total:
-            logger.info(
-                "Skipped {} buffered nodes due to missing identifiers or constraints.",
-                skipped_total,
-            )
+            logger.info(LOG_MG_NODES_SKIPPED.format(count=skipped_total))
         self.node_buffer.clear()
 
     def flush_relationships(self) -> None:
         if not self.relationship_buffer:
             return
 
-        rels_by_pattern = defaultdict(list)
+        rels_by_pattern: defaultdict[
+            tuple[str, str, str, str, str], list[RelBatchRow]
+        ] = defaultdict(list)
         for from_node, rel_type, to_node, props in self.relationship_buffer:
             pattern = (from_node[0], from_node[1], rel_type, to_node[0], to_node[1])
             rels_by_pattern[pattern].append(
-                {"from_val": from_node[2], "to_val": to_node[2], "props": props or {}}
+                RelBatchRow(from_val=from_node[2], to_val=to_node[2], props=props or {})
             )
 
         total_attempted = 0
@@ -258,57 +286,69 @@ class MemgraphIngestor:
 
             total_attempted += len(params_list)
             results = self._execute_batch_with_return(query, params_list)
-            batch_successful = (
-                sum(r.get("created", 0) for r in results) if results else 0
-            )
+            batch_successful = 0
+            for r in results:
+                created = r.get("created", 0)
+                if isinstance(created, int):
+                    batch_successful += created
             total_successful += batch_successful
 
-            if rel_type == "CALLS":
+            if rel_type == REL_TYPE_CALLS:
                 failed = len(params_list) - batch_successful
                 if failed > 0:
-                    logger.warning(
-                        f"Failed to create {failed} CALLS relationships - nodes may not exist"
-                    )
+                    logger.warning(LOG_MG_CALLS_FAILED.format(count=failed))
                     for i, sample in enumerate(params_list[:3]):
                         logger.warning(
-                            f"  Sample {i + 1}: {from_label}.{sample['from_val']} -> {to_label}.{sample['to_val']}"
+                            LOG_MG_CALLS_SAMPLE.format(
+                                index=i + 1,
+                                from_label=from_label,
+                                from_val=sample["from_val"],
+                                to_label=to_label,
+                                to_val=sample["to_val"],
+                            )
                         )
 
         logger.info(
-            f"Flushed {len(self.relationship_buffer)} relationships ({total_successful} successful, {total_attempted - total_successful} failed)."
+            LOG_MG_RELS_FLUSHED.format(
+                total=len(self.relationship_buffer),
+                success=total_successful,
+                failed=total_attempted - total_successful,
+            )
         )
         self.relationship_buffer.clear()
 
     def flush_all(self) -> None:
-        logger.info("--- Flushing all pending writes to database... ---")
+        logger.info(LOG_MG_FLUSH_START)
         self.flush_nodes()
         self.flush_relationships()
-        logger.info("--- Flushing complete. ---")
+        logger.info(LOG_MG_FLUSH_COMPLETE)
 
-    def fetch_all(self, query: str, params: dict[str, Any] | None = None) -> list:
-        """Executes a query and fetches all results."""
-        logger.debug(f"Executing fetch query: {query} with params: {params}")
+    def fetch_all(
+        self, query: str, params: dict[str, PropertyValue] | None = None
+    ) -> list[ResultRow]:
+        logger.debug(LOG_MG_FETCH_QUERY.format(query=query, params=params))
         return self._execute_query(query, params)
 
-    def execute_write(self, query: str, params: dict[str, Any] | None = None) -> None:
-        """Executes a write query without returning results."""
-        logger.debug(f"Executing write query: {query} with params: {params}")
+    def execute_write(
+        self, query: str, params: dict[str, PropertyValue] | None = None
+    ) -> None:
+        logger.debug(LOG_MG_WRITE_QUERY.format(query=query, params=params))
         self._execute_query(query, params)
 
     def export_graph_to_dict(self) -> GraphData:
-        logger.info("Exporting graph data...")
+        logger.info(LOG_MG_EXPORTING)
 
         nodes_query = """
         MATCH (n)
         RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
         """
-        nodes_data: list[NodeData] = self.fetch_all(nodes_query)
+        nodes_data = self.fetch_all(nodes_query)
 
         relationships_query = """
         MATCH (a)-[r]->(b)
         RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
         """
-        relationships_data: list[RelationshipData] = self.fetch_all(relationships_query)
+        relationships_data = self.fetch_all(relationships_query)
 
         metadata = GraphMetadata(
             total_nodes=len(nodes_data),
@@ -317,7 +357,7 @@ class MemgraphIngestor:
         )
 
         logger.info(
-            f"Exported {len(nodes_data)} nodes and {len(relationships_data)} relationships"
+            LOG_MG_EXPORTED.format(nodes=len(nodes_data), rels=len(relationships_data))
         )
         return GraphData(
             nodes=nodes_data,
@@ -326,5 +366,4 @@ class MemgraphIngestor:
         )
 
     def _get_current_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
         return datetime.now(UTC).isoformat()

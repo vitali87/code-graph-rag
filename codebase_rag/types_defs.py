@@ -13,11 +13,26 @@ if TYPE_CHECKING:
 
 type LanguageLoader = Callable[[], "Language"] | None
 
-PropertyValue = str | int | float | bool | None
+PropertyValue = str | int | float | bool | list[str] | None
+PropertyDict = dict[str, PropertyValue]
 
 type ResultScalar = str | int | float | bool | None
 type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
 type ResultRow = dict[str, ResultValue]
+
+
+class NodeBatchRow(TypedDict):
+    id: PropertyValue
+    props: PropertyDict
+
+
+class RelBatchRow(TypedDict):
+    from_val: PropertyValue
+    to_val: PropertyValue
+    props: PropertyDict
+
+
+BatchParams = NodeBatchRow | RelBatchRow | PropertyDict
 
 type SimpleName = str
 type QualifiedName = str
@@ -70,8 +85,8 @@ class RelationshipData(TypedDict):
 
 
 class GraphData(TypedDict):
-    nodes: list[NodeData]
-    relationships: list[RelationshipData]
+    nodes: list[NodeData] | list[ResultRow]
+    relationships: list[RelationshipData] | list[ResultRow]
     metadata: GraphMetadata
 
 

@@ -654,3 +654,61 @@ LOG_SOURCE_RANGE_EXCEEDS = (
 )
 LOG_SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
 LOG_SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
+
+LOG_MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
+LOG_MG_CONNECTED = "Successfully connected to Memgraph."
+LOG_MG_EXCEPTION = "An exception occurred: {error}. Flushing remaining items..."
+LOG_MG_DISCONNECTED = "\nDisconnected from Memgraph."
+LOG_MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
+LOG_MG_CYPHER_QUERY = "    Query: {query}"
+LOG_MG_CYPHER_PARAMS = "    Params: {params}"
+LOG_MG_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
+LOG_MG_BATCH_PARAMS_TRUNCATED = "    Params (first 10 of {count}): {params}..."
+LOG_MG_CLEANING_DB = "--- Cleaning database... ---"
+LOG_MG_DB_CLEANED = "--- Database cleaned. ---"
+LOG_MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
+LOG_MG_CONSTRAINTS_DONE = "Constraints checked/created."
+LOG_MG_NODE_BUFFER_FLUSH = (
+    "Node buffer reached batch size ({size}). Performing incremental flush."
+)
+LOG_MG_REL_BUFFER_FLUSH = (
+    "Relationship buffer reached batch size ({size}). Performing incremental flush."
+)
+LOG_MG_NO_CONSTRAINT = (
+    "No unique constraint defined for label '{label}'. Skipping flush."
+)
+LOG_MG_MISSING_PROP = "Skipping {label} node missing required '{key}' property: {props}"
+LOG_MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
+LOG_MG_NODES_SKIPPED = (
+    "Skipped {count} buffered nodes due to missing identifiers or constraints."
+)
+LOG_MG_CALLS_FAILED = (
+    "Failed to create {count} CALLS relationships - nodes may not exist"
+)
+LOG_MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
+LOG_MG_RELS_FLUSHED = (
+    "Flushed {total} relationships ({success} successful, {failed} failed)."
+)
+LOG_MG_FLUSH_START = "--- Flushing all pending writes to database... ---"
+LOG_MG_FLUSH_COMPLETE = "--- Flushing complete. ---"
+LOG_MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
+LOG_MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
+LOG_MG_EXPORTING = "Exporting graph data..."
+LOG_MG_EXPORTED = "Exported {nodes} nodes and {rels} relationships"
+
+BATCH_SIZE_ERROR = "batch_size must be a positive integer"
+CONN_ERROR = "Not connected to Memgraph."
+
+REL_TYPE_CALLS = "CALLS"
+
+NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
+    "Project": "name",
+    "Package": "qualified_name",
+    "Folder": "path",
+    "Module": "qualified_name",
+    "Class": "qualified_name",
+    "Function": "qualified_name",
+    "Method": "qualified_name",
+    "File": "path",
+    "ExternalPackage": "name",
+}
