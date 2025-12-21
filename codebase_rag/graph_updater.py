@@ -234,7 +234,7 @@ class GraphUpdater:
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries
-        self.project_name = repo_path.name
+        self.project_name = repo_path.resolve().name
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
