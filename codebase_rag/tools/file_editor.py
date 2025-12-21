@@ -34,6 +34,10 @@ from ..constants import (
     LOG_EDITOR_REPLACE_SUCCESS,
     LOG_EDITOR_SURGICAL_ERROR,
     LOG_EDITOR_SURGICAL_FAILED,
+    LOG_FILE_EDITOR_ERR,
+    LOG_FILE_EDITOR_ERR_EDIT,
+    LOG_FILE_EDITOR_INIT,
+    LOG_FILE_EDITOR_WARN,
     LOG_TOOL_FILE_EDIT,
     LOG_TOOL_FILE_EDIT_SUCCESS,
     LOG_TOOL_FILE_EDIT_SURGICAL,
@@ -46,6 +50,7 @@ from ..constants import (
 )
 from ..language_spec import get_language_spec
 from ..parser_loader import load_parsers
+from . import tool_descriptions as td
 
 
 class FunctionMatch(TypedDict):
@@ -86,7 +91,7 @@ class FileEditor:
         self.project_root = Path(project_root).resolve()
         self.dmp = diff_match_patch.diff_match_patch()
         self.parsers, _ = load_parsers()
-        logger.info(f"FileEditor initialized with root: {self.project_root}")
+        logger.info(LOG_FILE_EDITOR_INIT.format(root=self.project_root))
 
     def _get_real_extension(self, file_path_obj: Path) -> str:
         extension = file_path_obj.suffix
@@ -362,7 +367,7 @@ class FileEditor:
 
             if not full_path.is_file():
                 error_msg = ERR_FILE_NOT_FOUND_OR_DIR.format(path=file_path)
-                logger.warning(f"[FileEditor] {error_msg}")
+                logger.warning(LOG_FILE_EDITOR_WARN.format(msg=error_msg))
                 return EditResult(
                     file_path=file_path, success=False, error_message=error_msg
                 )
@@ -375,13 +380,13 @@ class FileEditor:
 
         except ValueError:
             error_msg = ERR_FILE_OUTSIDE_ROOT.format(action="edit")
-            logger.error(f"[FileEditor] {error_msg}")
+            logger.error(LOG_FILE_EDITOR_ERR.format(msg=error_msg))
             return EditResult(
                 file_path=file_path, success=False, error_message=error_msg
             )
         except Exception as e:
             error_msg = ERR_UNEXPECTED.format(error=e)
-            logger.error(f"[FileEditor] Error editing file {file_path}: {e}")
+            logger.error(LOG_FILE_EDITOR_ERR_EDIT.format(path=file_path, error=e))
             return EditResult(
                 file_path=file_path, success=False, error_message=error_msg
             )
@@ -401,6 +406,6 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
 
     return Tool(
         function=replace_code_surgically,
-        description="Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.",
+        description=td.FILE_EDITOR,
         requires_approval=True,
     )

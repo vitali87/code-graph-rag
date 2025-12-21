@@ -13,10 +13,13 @@ from ..constants import (
     ERR_FILE_OUTSIDE_ROOT,
     ERR_UNEXPECTED,
     ERR_UNICODE_DECODE,
+    LOG_FILE_READER_ERR,
+    LOG_FILE_READER_INIT,
     LOG_TOOL_FILE_BINARY,
     LOG_TOOL_FILE_READ,
     LOG_TOOL_FILE_READ_SUCCESS,
 )
+from . import tool_descriptions as td
 
 
 class FileReadResult(BaseModel):
@@ -39,7 +42,7 @@ class FileReader:
             ".tiff",
             ".webp",
         }
-        logger.info(f"FileReader initialized with root: {self.project_root}")
+        logger.info(LOG_FILE_READER_INIT.format(root=self.project_root))
 
     async def read_file(self, file_path: str) -> FileReadResult:
         logger.info(LOG_TOOL_FILE_READ.format(path=file_path))
@@ -84,7 +87,7 @@ class FileReader:
                 error_message=ERR_FILE_OUTSIDE_ROOT.format(action="read"),
             )
         except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
+            logger.error(LOG_FILE_READER_ERR.format(path=file_path, error=e))
             return FileReadResult(
                 file_path=file_path,
                 error_message=ERR_UNEXPECTED.format(error=e),
@@ -100,5 +103,5 @@ def create_file_reader_tool(file_reader: FileReader) -> Tool:
 
     return Tool(
         function=read_file_content,
-        description="Reads the content of text-based files. For documents like PDFs or images, use the 'analyze_document' tool instead.",
+        description=td.FILE_READER,
     )

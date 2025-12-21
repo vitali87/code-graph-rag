@@ -24,6 +24,8 @@ from ..constants import (
     ERR_DOC_SECURITY_RISK,
     ERR_DOC_UNSUPPORTED_PROVIDER,
     ERR_DOCUMENT_UNSUPPORTED,
+    LOG_DOC_ANALYZER_API_ERR,
+    LOG_DOC_ANALYZER_INIT,
     LOG_DOC_API_ERROR,
     LOG_DOC_COPIED,
     LOG_DOC_EXCEPTION,
@@ -39,6 +41,7 @@ from ..constants import (
     GoogleProviderType,
     Provider,
 )
+from . import tool_descriptions as td
 
 
 class _NotSupportedClient:
@@ -64,7 +67,7 @@ class DocumentAnalyzer:
         else:
             self.client = _NotSupportedClient()
 
-        logger.info(f"DocumentAnalyzer initialized with root: {self.project_root}")
+        logger.info(LOG_DOC_ANALYZER_INIT.format(root=self.project_root))
 
     def analyze(self, file_path: str, question: str) -> str:
         logger.info(LOG_TOOL_DOC_ANALYZE.format(path=file_path, question=question))
@@ -134,7 +137,7 @@ class DocumentAnalyzer:
                 logger.error(err_msg)
                 return f"Error: {err_msg}"
             else:
-                logger.error(f"[DocumentAnalyzer] API validation error: {e}")
+                logger.error(LOG_DOC_ANALYZER_API_ERR.format(error=e))
                 return f"Error: {ERR_DOC_API_VALIDATION.format(error=e)}"
         except ClientError as e:
             logger.error(LOG_DOC_API_ERROR.format(path=file_path, error=e))
@@ -164,5 +167,5 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
     return Tool(
         function=analyze_document,
         name="analyze_document",
-        description="Analyzes documents (PDFs, images) to answer questions about their content.",
+        description=td.ANALYZE_DOCUMENT,
     )

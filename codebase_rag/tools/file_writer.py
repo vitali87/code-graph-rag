@@ -14,6 +14,7 @@ from ..constants import (
     LOG_FILE_WRITER_INIT,
     LOG_FILE_WRITER_SUCCESS,
 )
+from . import tool_descriptions as td
 
 
 class FileCreationResult(BaseModel):
@@ -60,6 +61,6 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
 
     return Tool(
         function=create_new_file,
-        description="Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications.",
+        description=td.FILE_WRITER,
         requires_approval=True,
     )

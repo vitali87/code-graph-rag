@@ -10,19 +10,21 @@ from ..constants import (
     ERR_CODE_ENTITY_NOT_FOUND,
     ERR_CODE_MISSING_LOCATION,
     LOG_CODE_RETRIEVER_ERROR,
+    LOG_CODE_RETRIEVER_INIT,
     LOG_CODE_RETRIEVER_SEARCH,
     LOG_CODE_TOOL_RETRIEVE,
 )
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
+from . import tool_descriptions as td
 
 
 class CodeRetriever:
     def __init__(self, project_root: str, ingestor: QueryProtocol):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
-        logger.info(f"CodeRetriever initialized with root: {self.project_root}")
+        logger.info(LOG_CODE_RETRIEVER_INIT.format(root=self.project_root))
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
         logger.info(LOG_CODE_RETRIEVER_SEARCH.format(name=qualified_name))
@@ -93,5 +95,5 @@ def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
 
     return Tool(
         function=get_code_snippet,
-        description="Retrieves the source code for a specific function, class, or method using its full qualified name.",
+        description=td.CODE_RETRIEVAL,
     )

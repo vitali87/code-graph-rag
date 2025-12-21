@@ -974,9 +974,23 @@ DOC_PROMPT_PREFIX = (
 # (H) Code retrieval constants
 ERR_CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
 ERR_CODE_MISSING_LOCATION = "Graph entry is missing location data."
+LOG_CODE_RETRIEVER_INIT = "CodeRetriever initialized with root: {root}"
 LOG_CODE_RETRIEVER_SEARCH = "[CodeRetriever] Searching for: {name}"
 LOG_CODE_RETRIEVER_ERROR = "[CodeRetriever] Error: {error}"
 LOG_CODE_TOOL_RETRIEVE = "[Tool:GetCode] Retrieving code for: {name}"
+
+# (H) Tool init log messages
+LOG_FILE_EDITOR_INIT = "FileEditor initialized with root: {root}"
+LOG_FILE_READER_INIT = "FileReader initialized with root: {root}"
+LOG_SHELL_COMMANDER_INIT = "ShellCommander initialized with root: {root}"
+LOG_DOC_ANALYZER_INIT = "DocumentAnalyzer initialized with root: {root}"
+
+# (H) Additional tool error messages
+LOG_FILE_EDITOR_WARN = "[FileEditor] {msg}"
+LOG_FILE_EDITOR_ERR = "[FileEditor] {msg}"
+LOG_FILE_EDITOR_ERR_EDIT = "[FileEditor] Error editing file {path}: {error}"
+LOG_FILE_READER_ERR = "Error reading file {path}: {error}"
+LOG_DOC_ANALYZER_API_ERR = "[DocumentAnalyzer] API validation error: {error}"
 
 # (H) File writer constants
 LOG_FILE_WRITER_INIT = "FileWriter initialized with root: {root}"

@@ -19,6 +19,7 @@ from ..errors import LLMGenerationError
 from ..schemas import QueryGraphData
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
+from . import tool_descriptions as td
 
 
 def create_query_tool(
@@ -89,5 +90,5 @@ def create_query_tool(
 
     return Tool(
         function=query_codebase_knowledge_graph,
-        description="Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'.",
+        description=td.CODEBASE_QUERY,
     )

@@ -14,6 +14,7 @@ from ..constants import (
     LOG_DIR_LIST_ERROR,
     LOG_DIR_LISTING,
 )
+from . import tool_descriptions as td
 
 
 class DirectoryLister:
@@ -57,5 +58,5 @@ class DirectoryLister:
 def create_directory_lister_tool(directory_lister: DirectoryLister) -> Tool:
     return Tool(
         function=directory_lister.list_directory_contents,
-        description="Lists the contents of a directory to explore the codebase.",
+        description=td.DIRECTORY_LISTER,
     )

@@ -17,6 +17,7 @@ from ..constants import (
     ERR_COMMAND_NOT_ALLOWED,
     ERR_COMMAND_TIMEOUT,
     GREP_SUGGESTION,
+    LOG_SHELL_COMMANDER_INIT,
     LOG_SHELL_TIMING,
     LOG_TOOL_SHELL_ALREADY_TERMINATED,
     LOG_TOOL_SHELL_ERROR,
@@ -32,6 +33,7 @@ from ..constants import (
     SHELL_RM_RF_FLAG,
 )
 from ..schemas import ShellCommandResult
+from . import tool_descriptions as td
 
 COMMAND_ALLOWLIST = frozenset(
     {
@@ -107,7 +109,7 @@ class ShellCommander:
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
-        logger.info(f"ShellCommander initialized with root: {self.project_root}")
+        logger.info(LOG_SHELL_COMMANDER_INIT.format(root=self.project_root))
 
     @timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
@@ -201,5 +203,5 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     return Tool(
         function=run_shell_command,
         name="execute_shell_command",
-        description="Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation.",
+        description=td.SHELL_COMMAND,
     )
