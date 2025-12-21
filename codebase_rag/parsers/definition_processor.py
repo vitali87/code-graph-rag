@@ -34,8 +34,6 @@ _JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
 
 
 class DefinitionProcessor:
-    """Handles processing of function, class, and method definitions."""
-
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -56,20 +54,12 @@ class DefinitionProcessor:
         self.class_inheritance: dict[str, list[str]] = {}
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
-        """
-        Determine the node type for inheritance relationships.
-        Returns the type from the function registry, defaulting to "Class".
-        """
         node_type = self.function_registry.get(qualified_name, NodeType.CLASS)
         return str(node_type)
 
     def _create_inheritance_relationship(
         self, child_node_type: str, child_qn: str, parent_qn: str
     ) -> None:
-        """
-        Create an INHERITS relationship between child and parent entities.
-        Determines the parent type automatically from the function registry.
-        """
         parent_type = self._get_node_type_for_inheritance(parent_qn)
         self.ingestor.ensure_relationship_batch(
             (child_node_type, "qualified_name", child_qn),
@@ -84,10 +74,6 @@ class DefinitionProcessor:
         queries: dict[SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
     ) -> tuple[Node, SupportedLanguage] | None:
-        """
-        Parses a file, ingests its structure and definitions,
-        and returns the AST for caching.
-        """
         if isinstance(file_path, str):
             file_path = Path(file_path)
         relative_path = file_path.relative_to(self.repo_path)
@@ -112,15 +98,10 @@ class DefinitionProcessor:
             module_qn = SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
-            if file_path.name == "__init__.py":
+            if file_path.name in ["__init__.py", "mod.rs"]:
                 module_qn = SEPARATOR_DOT.join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
-            elif file_path.name == "mod.rs":
-                module_qn = SEPARATOR_DOT.join(
-                    [self.project_name] + list(relative_path.parent.parts)
-                )
-
             self.module_qn_to_file_path[module_qn] = file_path
 
             self.ingestor.ensure_node_batch(
@@ -174,7 +155,6 @@ class DefinitionProcessor:
             return None
 
     def process_dependencies(self, filepath: Path) -> None:
-        """Parse various dependency files for external package dependencies."""
         logger.info(f"  Parsing dependency file: {filepath}")
 
         dependencies = parse_dependencies(filepath)
@@ -184,8 +164,7 @@ class DefinitionProcessor:
     def _add_dependency(
         self, dep_name: str, dep_spec: str, properties: dict[str, str] | None = None
     ) -> None:
-        """Add a dependency to the graph."""
-        if not dep_name or dep_name.lower() in ["python", "php"]:
+        if not dep_name or dep_name.lower() in {"python", "php"}:
             return
 
         logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
@@ -193,7 +172,7 @@ class DefinitionProcessor:
 
         rel_properties = {"version_spec": dep_spec} if dep_spec else {}
         if properties:
-            rel_properties.update(properties)
+            rel_properties |= properties
 
         self.ingestor.ensure_relationship_batch(
             ("Project", "name", self.project_name),
@@ -203,7 +182,6 @@ class DefinitionProcessor:
         )
 
     def _get_docstring(self, node: Node) -> str | None:
-        """Extracts the docstring from a function or class node's body."""
         body_node = node.child_by_field_name("body")
         if not body_node or not body_node.children:
             return None
@@ -221,7 +199,6 @@ class DefinitionProcessor:
         return None
 
     def _extract_decorators(self, node: Node) -> list[str]:
-        """Extract decorator names from a decorated node."""
         decorators = []
 
         current = node.parent
@@ -229,8 +206,7 @@ class DefinitionProcessor:
             if current.type == "decorated_definition":
                 for child in current.children:
                     if child.type == "decorator":
-                        decorator_name = self._get_decorator_name(child)
-                        if decorator_name:
+                        if decorator_name := self._get_decorator_name(child):
                             decorators.append(decorator_name)
                 break
             current = current.parent
@@ -238,35 +214,28 @@ class DefinitionProcessor:
         return decorators
 
     def _get_decorator_name(self, decorator_node: Node) -> str | None:
-        """Extract the name from a decorator node (@decorator or @decorator(...))."""
         for child in decorator_node.children:
             if child.type == "identifier":
                 return safe_decode_text(child)
             elif child.type == "attribute":
                 return safe_decode_text(child)
             elif child.type == "call":
-                func_node = child.child_by_field_name("function")
-                if func_node:
-                    if func_node.type == "identifier":
-                        return safe_decode_text(func_node)
-                    elif func_node.type == "attribute":
+                if func_node := child.child_by_field_name("function"):
+                    if func_node.type in ["identifier", "attribute"]:
                         return safe_decode_text(func_node)
         return None
 
     def _extract_template_class_type(self, template_node: Node) -> NodeType | None:
         for child in template_node.children:
-            if child.type == "class_specifier":
+            if child.type in ["class_specifier", "struct_specifier"]:
                 return NodeType.CLASS
-            elif child.type == "struct_specifier":
-                return NodeType.CLASS
-            elif child.type == "union_specifier":
-                return NodeType.UNION
             elif child.type == "enum_specifier":
                 return NodeType.ENUM
+            elif child.type == "union_specifier":
+                return NodeType.UNION
         return None
 
     def _extract_cpp_class_name(self, class_node: Node) -> str | None:
-        """Extract class name from C++ class/struct/union/enum specifiers."""
         if class_node.type == "template_declaration":
             for child in class_node.children:
                 if child.type in [
@@ -282,13 +251,9 @@ class DefinitionProcessor:
                 return safe_decode_text(child)
 
         name_node = class_node.child_by_field_name("name")
-        if name_node and name_node.text:
-            return safe_decode_text(name_node)
-
-        return None
+        return safe_decode_text(name_node) if name_node and name_node.text else None
 
     def _extract_class_name(self, class_node: Node) -> str | None:
-        """Extract class name, handling both class declarations and class expressions."""
         name_node = class_node.child_by_field_name("name")
         if name_node and name_node.text:
             return safe_decode_text(name_node)
@@ -304,7 +269,6 @@ class DefinitionProcessor:
         return None
 
     def _extract_function_name(self, func_node: Node) -> str | None:
-        """Extract function name, handling both regular functions and arrow functions."""
         name_node = func_node.child_by_field_name("name")
         if name_node and name_node.text:
             return safe_decode_text(name_node)
@@ -321,27 +285,27 @@ class DefinitionProcessor:
         return None
 
     def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
-        """Generate a synthetic name for anonymous functions (IIFEs, callbacks, etc.)."""
         parent = func_node.parent
         if parent and parent.type == "parenthesized_expression":
             grandparent = parent.parent
-            if grandparent and grandparent.type == "call_expression":
-                if grandparent.child_by_field_name("function") == parent:
-                    func_type = (
-                        "arrow" if func_node.type == "arrow_function" else "func"
-                    )
-                    return f"iife_{func_type}_{func_node.start_point[0]}_{func_node.start_point[1]}"
+            if (
+                grandparent
+                and grandparent.type == "call_expression"
+                and grandparent.child_by_field_name("function") == parent
+            ):
+                func_type = "arrow" if func_node.type == "arrow_function" else "func"
+                return f"iife_{func_type}_{func_node.start_point[0]}_{func_node.start_point[1]}"
 
-        if parent and parent.type == "call_expression":
-            if parent.child_by_field_name("function") == func_node:
-                return (
-                    f"iife_direct_{func_node.start_point[0]}_{func_node.start_point[1]}"
-                )
+        if (
+            parent
+            and parent.type == "call_expression"
+            and parent.child_by_field_name("function") == func_node
+        ):
+            return f"iife_direct_{func_node.start_point[0]}_{func_node.start_point[1]}"
 
         return f"anonymous_{func_node.start_point[0]}_{func_node.start_point[1]}"
 
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
-        """Extract function name from Lua assignment patterns like Calculator.divide = function()."""
         return extract_lua_assigned_name(
             func_node, accepted_var_types=("dot_index_expression", "identifier")
         )
@@ -353,7 +317,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Extract and ingest all functions (including nested ones)."""
         lang_queries = queries[language]
         lang_config: LanguageSpec = lang_queries["config"]
 
@@ -471,7 +434,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Extract and ingest top-level functions. (Legacy method, replaced by _ingest_all_functions)"""
         self._ingest_all_functions(root_node, module_qn, language, queries)
 
     def _build_nested_qualified_name(
@@ -482,11 +444,6 @@ class DefinitionProcessor:
         lang_config: LanguageSpec,
         skip_classes: bool = False,
     ) -> str | None:
-        """Build qualified name for nested functions.
-
-        Args:
-            skip_classes: If True, skip class nodes in the path (used for object literal methods)
-        """
         path_parts = []
         current = func_node.parent
 
@@ -498,32 +455,54 @@ class DefinitionProcessor:
             return None
 
         while current and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.function_node_types:
-                if name_node := current.child_by_field_name("name"):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(safe_decode_text(name_node))
-                else:
-                    func_name_from_assignment = self._extract_function_name(current)
-                    if func_name_from_assignment:
-                        path_parts.append(func_name_from_assignment)
-            elif current.type in lang_config.class_node_types:
-                if skip_classes:
-                    pass
-                else:
-                    if self._is_inside_method_with_object_literals(func_node):
-                        if name_node := current.child_by_field_name("name"):
-                            text = name_node.text
-                            if text is not None:
-                                path_parts.append(safe_decode_text(name_node))
-                    else:
-                        return None
-            elif current.type == "method_definition":
-                if name_node := current.child_by_field_name("name"):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(safe_decode_text(name_node))
-
+            if (
+                current.type in lang_config.function_node_types
+                and (name_node := current.child_by_field_name("name"))
+                or current.type not in lang_config.function_node_types
+                and current.type in lang_config.class_node_types
+                and not skip_classes
+                and self._is_inside_method_with_object_literals(func_node)
+                and (name_node := current.child_by_field_name("name"))
+                or current.type not in lang_config.function_node_types
+                and current.type not in lang_config.class_node_types
+                and current.type == "method_definition"
+                and (name_node := current.child_by_field_name("name"))
+            ):
+                text = name_node.text
+                if text is not None:
+                    path_parts.append(safe_decode_text(name_node))
+            elif current.type in lang_config.function_node_types and not (
+                name_node := current.child_by_field_name("name")
+            ):
+                func_name_from_assignment = self._extract_function_name(current)
+                if func_name_from_assignment:
+                    path_parts.append(func_name_from_assignment)
+            elif (
+                (
+                    current.type in lang_config.function_node_types
+                    or current.type not in lang_config.class_node_types
+                    or skip_classes
+                    or not self._is_inside_method_with_object_literals(func_node)
+                    or (name_node := current.child_by_field_name("name"))
+                )
+                and (
+                    current.type in lang_config.function_node_types
+                    or current.type not in lang_config.class_node_types
+                    or not skip_classes
+                )
+                and (
+                    current.type in lang_config.function_node_types
+                    or current.type in lang_config.class_node_types
+                    or current.type != "method_definition"
+                    or (name_node := current.child_by_field_name("name"))
+                )
+                and (
+                    current.type in lang_config.function_node_types
+                    or current.type in lang_config.class_node_types
+                    or current.type == "method_definition"
+                )
+            ):
+                return None
             current = current.parent
 
         path_parts.reverse()
@@ -539,7 +518,6 @@ class DefinitionProcessor:
         class_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
-        """Build qualified name for classes inside inline modules."""
         if not isinstance(class_node.parent, Node):
             return None
 
@@ -556,7 +534,6 @@ class DefinitionProcessor:
     def _build_rust_method_qualified_name(
         self, method_node: Node, module_qn: str, method_name: str
     ) -> str:
-        """Build qualified name for Rust methods, handling impl blocks and modules."""
         path_parts = build_rust_module_path(method_node, include_impl_targets=True)
         if path_parts:
             return f"{module_qn}.{'.'.join(path_parts)}.{method_name}"
@@ -565,14 +542,12 @@ class DefinitionProcessor:
     def _build_rust_function_qualified_name(
         self, func_node: Node, module_qn: str, func_name: str
     ) -> str:
-        """Build qualified name for Rust functions, handling inline modules."""
         path_parts = build_rust_module_path(func_node)
         if path_parts:
             return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
-        """Check if a function is actually a method inside a class."""
         current = func_node.parent
         if not isinstance(current, Node):
             return False
@@ -586,7 +561,6 @@ class DefinitionProcessor:
     def _determine_function_parent(
         self, func_node: Node, module_qn: str, lang_config: LanguageSpec
     ) -> tuple[str, str]:
-        """Determine the parent of a function (Module or another Function)."""
         current = func_node.parent
         if not isinstance(current, Node):
             return "Module", module_qn
@@ -597,8 +571,7 @@ class DefinitionProcessor:
                     parent_text = name_node.text
                     if parent_text is None:
                         continue
-                    parent_func_name = safe_decode_text(name_node)
-                    if parent_func_name:
+                    if parent_func_name := safe_decode_text(name_node):
                         if parent_func_qn := self._build_nested_qualified_name(
                             current, module_qn, parent_func_name, lang_config
                         ):
@@ -616,11 +589,9 @@ class DefinitionProcessor:
         file_path: Path,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Process C++20 module declarations and create appropriate Module nodes."""
         module_declarations = []
 
         def find_module_declarations(node: Node) -> None:
-            """Recursively find module-related declarations."""
             if node.type == "module_declaration":
                 text = safe_decode_with_fallback(node).strip() if node.text else ""
                 module_declarations.append((node, text))
@@ -704,7 +675,6 @@ class DefinitionProcessor:
                     logger.info(f"  Found C++ Module Implementation: {impl_qn}")
 
     def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
-        """Find C++ exported classes that are misclassified as function_definition due to Tree-sitter grammar limitations."""
         exported_class_nodes = []
 
         def traverse_for_exported_classes(node: Node) -> None:
@@ -742,7 +712,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Extract and ingest classes and their methods."""
         lang_queries = queries[language]
         query = lang_queries["classes"]
         if not query:
@@ -835,7 +804,7 @@ class DefinitionProcessor:
                     nested_qn = self._build_nested_qualified_name_for_class(
                         class_node, module_qn, class_name, lang_config
                     )
-                    class_qn = nested_qn if nested_qn else f"{module_qn}.{class_name}"
+                    class_qn = nested_qn or f"{module_qn}.{class_name}"
 
             decorators = self._extract_decorators(class_node)
             class_props: dict[str, Any] = {
@@ -868,7 +837,7 @@ class DefinitionProcessor:
                 logger.info(f"  Found Union: {class_name} (qn: {class_qn})")
             elif class_node.type == "template_declaration":
                 template_class = self._extract_template_class_type(class_node)
-                node_type = template_class if template_class else NodeType.CLASS
+                node_type = template_class or NodeType.CLASS
                 logger.info(
                     f"  Found Template {node_type}: {class_name} (qn: {class_qn})"
                 )
@@ -880,25 +849,22 @@ class DefinitionProcessor:
                     safe_decode_with_fallback(class_node) if class_node.text else ""
                 )
                 if "export struct " in node_text:
-                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Struct: {class_name} (qn: {class_qn})"
                     )
                 elif "export union " in node_text:
-                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Union: {class_name} (qn: {class_qn})"
                     )
                 elif "export template" in node_text:
-                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Template Class: {class_name} (qn: {class_qn})"
                     )
                 else:
-                    node_type = NodeType.CLASS
                     logger.info(
                         f"  Found Exported Class: {class_name} (qn: {class_qn})"
                     )
+                node_type = NodeType.CLASS
             else:
                 node_type = NodeType.CLASS
                 logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
@@ -1006,21 +972,21 @@ class DefinitionProcessor:
             self.ingestor.ensure_node_batch("Module", module_props)
 
     def process_all_method_overrides(self) -> None:
-        """Process OVERRIDES relationships for all methods after collection is complete."""
         logger.info("--- Pass 4: Processing Method Override Relationships ---")
 
         for method_qn in self.function_registry.keys():
-            if self.function_registry[method_qn] == NodeType.METHOD:
-                if SEPARATOR_DOT in method_qn:
-                    parts = method_qn.rsplit(SEPARATOR_DOT, 1)
-                    if len(parts) == 2:
-                        class_qn, method_name = parts
-                        self._check_method_overrides(method_qn, method_name, class_qn)
+            if (
+                self.function_registry[method_qn] == NodeType.METHOD
+                and SEPARATOR_DOT in method_qn
+            ):
+                parts = method_qn.rsplit(SEPARATOR_DOT, 1)
+                if len(parts) == 2:
+                    class_qn, method_name = parts
+                    self._check_method_overrides(method_qn, method_name, class_qn)
 
     def _check_method_overrides(
         self, method_qn: str, method_name: str, class_qn: str
     ) -> None:
-        """Check if method overrides parent class methods using BFS traversal."""
         if class_qn not in self.class_inheritance:
             return
 
@@ -1053,7 +1019,6 @@ class DefinitionProcessor:
     def _parse_cpp_base_classes(
         self, base_clause_node: Node, class_node: Node, module_qn: str
     ) -> list[str]:
-        """Parse C++ base class clause to extract all parent classes with full template support."""
         parent_classes = []
 
         for base_child in base_clause_node.children:
@@ -1083,8 +1048,6 @@ class DefinitionProcessor:
         return parent_classes
 
     def _extract_cpp_base_class_name(self, parent_text: str) -> str:
-        """Extract the base class name from C++ inheritance text, handling templates and namespaces."""
-
         if "<" in parent_text:
             parent_text = parent_text.split("<")[0]
 
@@ -1096,7 +1059,6 @@ class DefinitionProcessor:
     def _resolve_superclass_from_type_identifier(
         self, type_identifier_node: Node, module_qn: str
     ) -> str | None:
-        """Resolve a superclass name from a type_identifier node."""
         parent_text = type_identifier_node.text
         if parent_text:
             parent_name = safe_decode_text(type_identifier_node)
@@ -1108,7 +1070,6 @@ class DefinitionProcessor:
             return None
 
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
-        """Extract parent class names from a class definition."""
         parent_classes = []
 
         if class_node.type in ["class_specifier", "struct_specifier"]:
@@ -1120,28 +1081,27 @@ class DefinitionProcessor:
             return parent_classes
 
         if class_node.type == "class_declaration":
-            superclass_node = class_node.child_by_field_name("superclass")
-            if superclass_node:
+            if superclass_node := class_node.child_by_field_name("superclass"):
                 if superclass_node.type == "type_identifier":
-                    resolved_superclass = self._resolve_superclass_from_type_identifier(
-                        superclass_node, module_qn
-                    )
-                    if resolved_superclass:
+                    if (
+                        resolved_superclass
+                        := self._resolve_superclass_from_type_identifier(
+                            superclass_node, module_qn
+                        )
+                    ):
                         parent_classes.append(resolved_superclass)
                 else:
                     for child in superclass_node.children:
                         if child.type == "type_identifier":
-                            resolved_superclass = (
+                            if resolved_superclass := (
                                 self._resolve_superclass_from_type_identifier(
                                     child, module_qn
                                 )
-                            )
-                            if resolved_superclass:
+                            ):
                                 parent_classes.append(resolved_superclass)
                                 break
 
-        superclasses_node = class_node.child_by_field_name("superclasses")
-        if superclasses_node:
+        if superclasses_node := class_node.child_by_field_name("superclasses"):
             for child in superclasses_node.children:
                 if child.type == "identifier":
                     parent_text = child.text
@@ -1162,19 +1122,15 @@ class DefinitionProcessor:
                         else:
                             parent_classes.append(f"{module_qn}.{parent_name}")
 
-        class_heritage_node = None
-        for child in class_node.children:
-            if child.type == "class_heritage":
-                class_heritage_node = child
-                break
-
-        if class_heritage_node:
+        if class_heritage_node := next(
+            (child for child in class_node.children if child.type == "class_heritage"),
+            None,
+        ):
             for child in class_heritage_node.children:
                 if child.type == "extends_clause":
                     for grandchild in child.children:
                         if grandchild.type in ["identifier", "member_expression"]:
-                            parent_text = grandchild.text
-                            if parent_text:
+                            if parent_text := grandchild.text:
                                 parent_name = parent_text.decode("utf8")
                                 parent_classes.append(
                                     self._resolve_js_ts_parent_class(
@@ -1192,8 +1148,7 @@ class DefinitionProcessor:
                     ):
                         parent_text = child.text
                         if parent_text:
-                            parent_name = safe_decode_text(child)
-                            if parent_name:
+                            if parent_name := safe_decode_text(child):
                                 parent_classes.append(
                                     self._resolve_js_ts_parent_class(
                                         parent_name, module_qn
@@ -1211,19 +1166,18 @@ class DefinitionProcessor:
                         )
 
         if class_node.type == "interface_declaration":
-            extends_type_clause_node = None
-            for child in class_node.children:
-                if child.type == "extends_type_clause":
-                    extends_type_clause_node = child
-                    break
-
-            if extends_type_clause_node:
+            if extends_type_clause_node := next(
+                (
+                    child
+                    for child in class_node.children
+                    if child.type == "extends_type_clause"
+                ),
+                None,
+            ):
                 for child in extends_type_clause_node.children:
-                    if child.type == "type_identifier":
-                        parent_text = child.text
-                        if parent_text:
-                            parent_name = safe_decode_text(child)
-                            if parent_name:
+                    if parent_text := child.text:
+                        if child.type == "type_identifier":
+                            if parent_name := safe_decode_text(child):
                                 parent_classes.append(
                                     self._resolve_js_ts_parent_class(
                                         parent_name, module_qn
@@ -1235,15 +1189,13 @@ class DefinitionProcessor:
     def _extract_mixin_parent_classes(
         self, call_expr_node: Node, module_qn: str
     ) -> list[str]:
-        """Extract parent classes from mixin call expressions like Swimmable(Animal)."""
         parent_classes = []
 
         for child in call_expr_node.children:
             if child.type == "arguments":
                 for arg_child in child.children:
                     if arg_child.type == "identifier" and arg_child.text:
-                        parent_name = safe_decode_text(arg_child)
-                        if parent_name:
+                        if parent_name := safe_decode_text(arg_child):
                             parent_classes.append(
                                 self._resolve_js_ts_parent_class(parent_name, module_qn)
                             )
@@ -1257,21 +1209,15 @@ class DefinitionProcessor:
 
     def _resolve_js_ts_parent_class(self, parent_name: str, module_qn: str) -> str:
         """Resolve a JavaScript/TypeScript parent class name to its fully qualified name."""
-        if module_qn in self.import_processor.import_mapping:
-            import_map = self.import_processor.import_mapping[module_qn]
-            if parent_name in import_map:
-                return import_map[parent_name]
-            else:
-                parent_qn = self._resolve_class_name(parent_name, module_qn)
-                if parent_qn is not None:
-                    return parent_qn
-                else:
-                    return f"{module_qn}.{parent_name}"
-        else:
+        if module_qn not in self.import_processor.import_mapping:
             return f"{module_qn}.{parent_name}"
+        import_map = self.import_processor.import_mapping[module_qn]
+        if parent_name in import_map:
+            return import_map[parent_name]
+        parent_qn = self._resolve_class_name(parent_name, module_qn)
+        return parent_qn if parent_qn is not None else f"{module_qn}.{parent_name}"
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
-        """Convert a simple class name to its fully qualified name."""
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
@@ -1283,7 +1229,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect JavaScript prototype inheritance patterns using tree-sitter queries."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
@@ -1302,7 +1247,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect prototype inheritance links (Child.prototype = Object.create(Parent.prototype))."""
         lang_queries = queries[language]
 
         language_obj = lang_queries.get("language")
@@ -1367,7 +1311,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect prototype method assignments (Constructor.prototype.method = function() {})."""
         lang_queries = queries[language]
 
         language_obj = lang_queries.get("language")
@@ -1444,7 +1387,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect import patterns not handled by the existing import_processor."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
@@ -1487,7 +1429,6 @@ class DefinitionProcessor:
     def _process_variable_declarator_for_commonjs(
         self, declarator: Node, module_qn: str
     ) -> None:
-        """Process a single variable declarator to extract CommonJS destructuring imports."""
         try:
             name_node = declarator.child_by_field_name("name")
             if not name_node or name_node.type != "object_pattern":
@@ -1511,12 +1452,10 @@ class DefinitionProcessor:
             if not arguments_node or not arguments_node.children:
                 return
 
-            module_string_node = None
-            for child in arguments_node.children:
-                if child.type == "string":
-                    module_string_node = child
-                    break
-
+            module_string_node = next(
+                (child for child in arguments_node.children if child.type == "string"),
+                None,
+            )
             if not module_string_node or module_string_node.text is None:
                 return
 
@@ -1525,8 +1464,7 @@ class DefinitionProcessor:
             for child in name_node.children:
                 if child.type == "shorthand_property_identifier_pattern":
                     if child.text is not None:
-                        destructured_name = safe_decode_text(child)
-                        if destructured_name:
+                        if destructured_name := safe_decode_text(child):
                             self._process_commonjs_import(
                                 destructured_name, module_name, module_qn
                             )
@@ -1540,13 +1478,11 @@ class DefinitionProcessor:
                         and key_node.type == "property_identifier"
                         and value_node
                         and value_node.type == "identifier"
-                    ):
-                        if value_node.text is not None:
-                            alias_name = safe_decode_text(value_node)
-                            if alias_name:
-                                self._process_commonjs_import(
-                                    alias_name, module_name, module_qn
-                                )
+                    ) and value_node.text is not None:
+                        if alias_name := safe_decode_text(value_node):
+                            self._process_commonjs_import(
+                                alias_name, module_name, module_qn
+                            )
 
         except Exception as e:
             logger.debug(f"Failed to process variable declarator for CommonJS: {e}")
@@ -1554,7 +1490,6 @@ class DefinitionProcessor:
     def _process_commonjs_import(
         self, imported_name: str, module_name: str, module_qn: str
     ) -> None:
-        """Process a single CommonJS import (either shorthand or aliased)."""
         try:
             resolved_source_module = self.import_processor._resolve_js_module_path(
                 module_name, module_qn
@@ -1598,7 +1533,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect and ingest methods defined in object literals."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
@@ -1700,7 +1634,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect and ingest CommonJS exports as function definitions."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
@@ -1748,8 +1681,7 @@ class DefinitionProcessor:
                             and export_name.text
                             and safe_decode_text(exports_obj) == "exports"
                         ):
-                            function_name = safe_decode_text(export_name)
-                            if function_name:
+                            if function_name := safe_decode_text(export_name):
                                 ingest_exported_function(
                                     export_function,
                                     function_name,
@@ -1777,8 +1709,7 @@ class DefinitionProcessor:
                             and safe_decode_text(module_obj) == "module"
                             and safe_decode_text(exports_prop) == "exports"
                         ):
-                            function_name = safe_decode_text(export_name)
-                            if function_name:
+                            if function_name := safe_decode_text(export_name):
                                 ingest_exported_function(
                                     export_function,
                                     function_name,
@@ -1804,7 +1735,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect and ingest ES6 export statements as function definitions."""
         try:
             lang_query = queries[language]["language"]
 
@@ -1835,8 +1765,7 @@ class DefinitionProcessor:
                         export_names, export_functions
                     ):
                         if export_name.text and export_function:
-                            function_name = safe_decode_text(export_name)
-                            if function_name:
+                            if function_name := safe_decode_text(export_name):
                                 ingest_exported_function(
                                     export_function,
                                     function_name,
@@ -1856,8 +1785,7 @@ class DefinitionProcessor:
                                     "name"
                                 ):
                                     if name_node.text:
-                                        function_name = safe_decode_text(name_node)
-                                        if function_name:
+                                        if function_name := safe_decode_text(name_node):
                                             ingest_exported_function(
                                                 export_function,
                                                 function_name,
@@ -1883,7 +1811,6 @@ class DefinitionProcessor:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Detect arrow functions in assignment expressions and object literals."""
         if language not in _JS_TYPESCRIPT_LANGUAGES:
             return
 
@@ -1968,8 +1895,7 @@ class DefinitionProcessor:
                             if SEPARATOR_DOT in member_text:
                                 function_name = member_text.split(SEPARATOR_DOT)[-1]
 
-                                lang_config = queries[language].get("config")
-                                if lang_config:
+                                if lang_config := queries[language].get("config"):
                                     function_qn = self._build_assignment_arrow_function_qualified_name(
                                         member_expr,
                                         arrow_function,
@@ -2005,8 +1931,7 @@ class DefinitionProcessor:
                             if SEPARATOR_DOT in member_text:
                                 function_name = member_text.split(SEPARATOR_DOT)[-1]
 
-                                lang_config = queries[language].get("config")
-                                if lang_config:
+                                if lang_config := queries[language].get("config"):
                                     function_qn = self._build_assignment_arrow_function_qualified_name(
                                         member_expr,
                                         function_expr,
@@ -2045,7 +1970,6 @@ class DefinitionProcessor:
             logger.debug(f"Failed to detect assignment arrow functions: {e}")
 
     def _is_static_method_in_class(self, method_node: Node) -> bool:
-        """Check if this method is a static method inside a class definition."""
         if method_node.type == "method_definition":
             parent = method_node.parent
             if parent and parent.type == "class_body":
@@ -2055,7 +1979,6 @@ class DefinitionProcessor:
         return False
 
     def _is_method_in_class(self, method_node: Node) -> bool:
-        """Check if this method is inside a class definition (static or instance)."""
         current = method_node.parent
         while current:
             if current.type == "class_body":
@@ -2064,7 +1987,6 @@ class DefinitionProcessor:
         return False
 
     def _is_inside_method_with_object_literals(self, func_node: Node) -> bool:
-        """Check if this function is an object literal method inside a class method."""
         current = func_node.parent
         found_object = False
 
@@ -2080,7 +2002,6 @@ class DefinitionProcessor:
         return False
 
     def _is_class_method(self, method_node: Node) -> bool:
-        """Check if a method definition is inside a class body."""
         current = method_node.parent
         while current:
             if current.type == "class_body":
@@ -2091,7 +2012,6 @@ class DefinitionProcessor:
         return False
 
     def _is_export_inside_function(self, export_node: Node) -> bool:
-        """Check if this export statement is inside a function body."""
         current = export_node.parent
         while current:
             if current.type in [
@@ -2107,7 +2027,6 @@ class DefinitionProcessor:
         return False
 
     def _find_object_name_for_method(self, method_name_node: Node) -> str | None:
-        """Find the object variable name that contains this method, using proper tree-sitter traversal."""
         current = method_name_node.parent
         while current:
             if current.type == "variable_declarator":
@@ -2129,12 +2048,6 @@ class DefinitionProcessor:
         method_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
-        """Build proper qualified name for object literal methods using tree-sitter traversal.
-
-        Skips intermediate object variable names to get semantic nesting like:
-        - createApiClient.get (not createApiClient.client.get)
-        - ServiceFactory.createService.process (not ServiceFactory.createService.{obj}.process)
-        """
         path_parts = []
 
         current = method_name_node.parent
@@ -2180,12 +2093,6 @@ class DefinitionProcessor:
         function_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
-        """Build proper qualified name for arrow functions in assignments using tree-sitter traversal.
-
-        Handles cases like:
-        - this.fetchUser = () => {} in constructor
-        - this.retry = () => {} in method
-        """
         path_parts = []
 
         current = member_expr.parent
@@ -2222,7 +2129,6 @@ class DefinitionProcessor:
     def _extract_implemented_interfaces(
         self, class_node: Node, module_qn: str
     ) -> list[str]:
-        """Extract implemented interface names from a Java class definition."""
         implemented_interfaces: list[str] = []
 
         interfaces_node = class_node.child_by_field_name("interfaces")
@@ -2236,15 +2142,13 @@ class DefinitionProcessor:
     def _extract_java_interface_names(
         self, interfaces_node: Node, interface_list: list[str], module_qn: str
     ) -> None:
-        """Extract interface names from Java interfaces clause using tree-sitter."""
         for child in interfaces_node.children:
             if child.type == "type_list":
                 for type_child in child.children:
                     if type_child.type == "type_identifier":
                         interface_name = type_child.text
                         if interface_name:
-                            interface_name_str = safe_decode_text(type_child)
-                            if interface_name_str:
+                            if interface_name_str := safe_decode_text(type_child):
                                 resolved_interface = (
                                     self._resolve_class_name(
                                         interface_name_str, module_qn
@@ -2256,7 +2160,6 @@ class DefinitionProcessor:
     def _create_implements_relationship(
         self, class_type: str, class_qn: str, interface_qn: str
     ) -> None:
-        """Create an IMPLEMENTS relationship between a class and an interface."""
         self.ingestor.ensure_relationship_batch(
             (class_type, "qualified_name", class_qn),
             "IMPLEMENTS",

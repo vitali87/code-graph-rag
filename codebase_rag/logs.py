@@ -291,3 +291,50 @@ PATH_NOT_IN_QUESTION = (
 IMAGE_NOT_FOUND = "Image path found, but does not exist: {path}"
 IMAGE_COPY_FAILED = "Failed to copy image to temporary directory: {error}"
 FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of project root."
+
+# (H) Call processor logs
+CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
+CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
+CALL_FOUND_NODES = "Found {count} call nodes in {language} for {caller}"
+CALL_FOUND = (
+    "Found call from {caller} to {call_name} (resolved as {callee_type}:{callee_qn})"
+)
+CALL_NESTED_FOUND = "Found nested call from {caller} to {call_name} (resolved as {callee_type}:{callee_qn})"
+CALL_DIRECT_IMPORT = "Direct import resolved: {call_name} -> {qn}"
+CALL_TYPE_INFERRED = "Type-inferred object method resolved: {call_name} -> {method_qn} (via {obj}:{var_type})"
+CALL_TYPE_INFERRED_INHERITED = (
+    "Type-inferred inherited object method resolved: {call_name} -> {method_qn} "
+    "(via {obj}:{var_type})"
+)
+CALL_IMPORT_STATIC = "Import-resolved static call: {call_name} -> {method_qn}"
+CALL_OBJECT_METHOD = "Object method resolved: {call_name} -> {method_qn}"
+CALL_INSTANCE_ATTR = (
+    "Instance-resolved self-attribute call: {call_name} -> {method_qn} "
+    "(via {attr_ref}:{var_type})"
+)
+CALL_INSTANCE_ATTR_INHERITED = (
+    "Instance-resolved inherited self-attribute call: {call_name} -> {method_qn} "
+    "(via {attr_ref}:{var_type})"
+)
+CALL_IMPORT_QUALIFIED = "Import-resolved qualified call: {call_name} -> {method_qn}"
+CALL_INSTANCE_QUALIFIED = "Instance-resolved qualified call: {call_name} -> {method_qn} (via {class_name}:{var_type})"
+CALL_INSTANCE_INHERITED = "Instance-resolved inherited call: {call_name} -> {method_qn} (via {class_name}:{var_type})"
+CALL_WILDCARD = "Wildcard-resolved call: {call_name} -> {qn}"
+CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
+CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
+CALL_UNRESOLVED = "Could not resolve call: {call_name}"
+CALL_CHAINED = (
+    "Resolved chained call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
+)
+CALL_CHAINED_INHERITED = "Resolved chained inherited call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
+CALL_SUPER_NO_CONTEXT = "No class context provided for super() call: {call_name}"
+CALL_SUPER_NO_INHERITANCE = "No inheritance info for class {class_qn}"
+CALL_SUPER_NO_PARENTS = "No parent classes found for {class_qn}"
+CALL_SUPER_RESOLVED = "Resolved super() call: {call_name} -> {method_qn}"
+CALL_SUPER_UNRESOLVED = (
+    "Could not resolve super() call: {call_name} in parents of {class_qn}"
+)
+CALL_JAVA_RESOLVED = "Java method call resolved: {call_text} -> {method_qn}"
+CALL_UNEXPECTED_PARENT = (
+    "Unexpected parent type for node {node}: {parent_type}. Skipping."
+)

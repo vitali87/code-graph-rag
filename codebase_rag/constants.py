@@ -648,6 +648,115 @@ DOC_PROMPT_PREFIX = (
     "Based on the document provided, please answer the following question: {question}"
 )
 
+# (H) Call processor constants
+MOD_RS = "mod.rs"
+SEPARATOR_DOUBLE_COLON = "::"
+SEPARATOR_COLON = ":"
+BUILTIN_PREFIX = "builtin"
+IIFE_FUNC_PREFIX = "iife_func_"
+IIFE_ARROW_PREFIX = "iife_arrow_"
+OPERATOR_PREFIX = "operator"
+KEYWORD_SUPER = "super"
+KEYWORD_SELF = "self"
+KEYWORD_CONSTRUCTOR = "constructor"
+
+# (H) JavaScript built-in types
+JS_BUILTIN_TYPES: frozenset[str] = frozenset(
+    {
+        "Array",
+        "Object",
+        "String",
+        "Number",
+        "Date",
+        "RegExp",
+        "Function",
+        "Map",
+        "Set",
+        "Promise",
+        "Error",
+        "Boolean",
+    }
+)
+
+# (H) JavaScript built-in function patterns
+JS_BUILTIN_PATTERNS: frozenset[str] = frozenset(
+    {
+        "Object.create",
+        "Object.keys",
+        "Object.values",
+        "Object.entries",
+        "Object.assign",
+        "Object.freeze",
+        "Object.seal",
+        "Object.defineProperty",
+        "Object.getPrototypeOf",
+        "Object.setPrototypeOf",
+        "Array.from",
+        "Array.of",
+        "Array.isArray",
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "isFinite",
+        "encodeURIComponent",
+        "decodeURIComponent",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "console.log",
+        "console.error",
+        "console.warn",
+        "console.info",
+        "console.debug",
+        "JSON.parse",
+        "JSON.stringify",
+        "Math.random",
+        "Math.floor",
+        "Math.ceil",
+        "Math.round",
+        "Math.abs",
+        "Math.max",
+        "Math.min",
+        "Date.now",
+        "Date.parse",
+    }
+)
+
+# (H) C++ operator mappings
+CPP_OPERATORS: dict[str, str] = {
+    "operator_plus": "builtin.cpp.operator_plus",
+    "operator_minus": "builtin.cpp.operator_minus",
+    "operator_multiply": "builtin.cpp.operator_multiply",
+    "operator_divide": "builtin.cpp.operator_divide",
+    "operator_modulo": "builtin.cpp.operator_modulo",
+    "operator_equal": "builtin.cpp.operator_equal",
+    "operator_not_equal": "builtin.cpp.operator_not_equal",
+    "operator_less": "builtin.cpp.operator_less",
+    "operator_greater": "builtin.cpp.operator_greater",
+    "operator_less_equal": "builtin.cpp.operator_less_equal",
+    "operator_greater_equal": "builtin.cpp.operator_greater_equal",
+    "operator_assign": "builtin.cpp.operator_assign",
+    "operator_plus_assign": "builtin.cpp.operator_plus_assign",
+    "operator_minus_assign": "builtin.cpp.operator_minus_assign",
+    "operator_multiply_assign": "builtin.cpp.operator_multiply_assign",
+    "operator_divide_assign": "builtin.cpp.operator_divide_assign",
+    "operator_modulo_assign": "builtin.cpp.operator_modulo_assign",
+    "operator_increment": "builtin.cpp.operator_increment",
+    "operator_decrement": "builtin.cpp.operator_decrement",
+    "operator_left_shift": "builtin.cpp.operator_left_shift",
+    "operator_right_shift": "builtin.cpp.operator_right_shift",
+    "operator_bitwise_and": "builtin.cpp.operator_bitwise_and",
+    "operator_bitwise_or": "builtin.cpp.operator_bitwise_or",
+    "operator_bitwise_xor": "builtin.cpp.operator_bitwise_xor",
+    "operator_bitwise_not": "builtin.cpp.operator_bitwise_not",
+    "operator_logical_and": "builtin.cpp.operator_logical_and",
+    "operator_logical_or": "builtin.cpp.operator_logical_or",
+    "operator_logical_not": "builtin.cpp.operator_logical_not",
+    "operator_subscript": "builtin.cpp.operator_subscript",
+    "operator_call": "builtin.cpp.operator_call",
+}
+
 # (H) Language CLI paths and patterns
 LANG_GRAMMARS_DIR = "grammars"
 LANG_CONFIG_FILE = "codebase_rag/language_spec.py"
@@ -806,3 +915,38 @@ LANG_TABLE_PLACEHOLDER = "—"
 
 # (H) Git submodule regex
 LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\\n]+)"
+
+
+class CppNodeType(StrEnum):
+    TRANSLATION_UNIT = "translation_unit"
+    NAMESPACE_DEFINITION = "namespace_definition"
+    NAMESPACE_IDENTIFIER = "namespace_identifier"
+    IDENTIFIER = "identifier"
+    EXPORT = "export"
+    EXPORT_KEYWORD = "export_keyword"
+    PRIMITIVE_TYPE = "primitive_type"
+    DECLARATION = "declaration"
+    FUNCTION_DEFINITION = "function_definition"
+    TEMPLATE_DECLARATION = "template_declaration"
+    CLASS_SPECIFIER = "class_specifier"
+    FUNCTION_DECLARATOR = "function_declarator"
+    POINTER_DECLARATOR = "pointer_declarator"
+    REFERENCE_DECLARATOR = "reference_declarator"
+    FIELD_DECLARATION = "field_declaration"
+    FIELD_IDENTIFIER = "field_identifier"
+    QUALIFIED_IDENTIFIER = "qualified_identifier"
+    OPERATOR_NAME = "operator_name"
+    DESTRUCTOR_NAME = "destructor_name"
+    CONSTRUCTOR_OR_DESTRUCTOR_DEFINITION = "constructor_or_destructor_definition"
+    CONSTRUCTOR_OR_DESTRUCTOR_DECLARATION = "constructor_or_destructor_declaration"
+    INLINE_METHOD_DEFINITION = "inline_method_definition"
+    OPERATOR_CAST_DEFINITION = "operator_cast_definition"
+
+
+CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
+CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
+
+CPP_FALLBACK_OPERATOR = "operator_unknown"
+CPP_FALLBACK_DESTRUCTOR = "~destructor"
+CPP_OPERATOR_TEXT_PREFIX = "operator"
+CPP_DESTRUCTOR_PREFIX = "~"
