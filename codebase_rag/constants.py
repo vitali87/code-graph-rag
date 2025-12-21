@@ -642,3 +642,7 @@ MODULE_QDRANT_CLIENT = "qdrant_client"
 
 SEMANTIC_DEPENDENCIES = (MODULE_QDRANT_CLIENT, MODULE_TORCH, MODULE_TRANSFORMERS)
 ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
+
+LOG_FQN_RESOLVE_FAILED = "Failed to resolve FQN for node at {path}: {error}"
+LOG_FQN_FIND_FAILED = "Failed to find function by FQN {fqn} in {path}: {error}"
+LOG_FQN_EXTRACT_FAILED = "Failed to extract function FQNs from {path}: {error}"
