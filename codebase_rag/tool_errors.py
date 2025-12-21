@@ -19,6 +19,7 @@ DOC_ACCESS_OUTSIDE_ROOT = (
     "Error: Security risk: Attempted to access file outside of project root: {path}"
 )
 DOC_API_VALIDATION = "Error: API validation failed: {error}"
+DOC_API_ERROR = "Error: API error: {error}"
 DOC_IMAGE_PROCESS = (
     "Error: Unable to process the image file. "
     "The image may be corrupted or in an unsupported format."

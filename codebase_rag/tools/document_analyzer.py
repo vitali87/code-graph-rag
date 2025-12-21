@@ -119,7 +119,7 @@ class DocumentAnalyzer:
             logger.error(ls.DOC_API_ERROR.format(path=file_path, error=e))
             if "Unable to process input image" in str(e):
                 return te.DOC_IMAGE_PROCESS
-            return f"Error: API error: {e}"
+            return te.DOC_API_ERROR.format(error=e)
         except Exception as e:
             logger.error(ls.DOC_FAILED.format(path=file_path, error=e), exc_info=True)
             return te.DOC_ANALYSIS_FAILED.format(error=e)
