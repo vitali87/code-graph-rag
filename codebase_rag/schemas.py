@@ -53,3 +53,15 @@ class EditResult(BaseModel):
     file_path: str
     success: bool
     error_message: str | None = None
+
+
+class FileReadResult(BaseModel):
+    file_path: str
+    content: str | None = None
+    error_message: str | None = None
+
+
+class FileCreationResult(BaseModel):
+    file_path: str
+    success: bool = True
+    error_message: str | None = None

@@ -3,19 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from loguru import logger
-from pydantic import BaseModel
 from pydantic_ai import Tool
 
 from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
+from ..schemas import FileReadResult
 from . import tool_descriptions as td
-
-
-class FileReadResult(BaseModel):
-    file_path: str
-    content: str | None = None
-    error_message: str | None = None
 
 
 class FileReader:

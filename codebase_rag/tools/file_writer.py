@@ -3,19 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from loguru import logger
-from pydantic import BaseModel
 from pydantic_ai import Tool
 
+from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
-from ..constants import ENCODING_UTF8
+from ..schemas import FileCreationResult
 from . import tool_descriptions as td
-
-
-class FileCreationResult(BaseModel):
-    file_path: str
-    success: bool = True
-    error_message: str | None = None
 
 
 class FileWriter:
@@ -31,7 +25,7 @@ class FileWriter:
             full_path.relative_to(self.project_root)
 
             full_path.parent.mkdir(parents=True, exist_ok=True)
-            full_path.write_text(content, encoding=ENCODING_UTF8)
+            full_path.write_text(content, encoding=cs.ENCODING_UTF8)
             logger.info(
                 ls.FILE_WRITER_SUCCESS.format(chars=len(content), path=file_path)
             )

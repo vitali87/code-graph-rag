@@ -6,9 +6,9 @@ import pytest
 from pydantic_ai import Tool
 
 from codebase_rag import constants as cs
+from codebase_rag.schemas import FileReadResult
 from codebase_rag.tools.file_reader import (
     FileReader,
-    FileReadResult,
     create_file_reader_tool,
 )
 
