@@ -8,8 +8,6 @@ from ..types_defs import LanguageQueries
 
 
 class StructureProcessor:
-    """Handles identification and processing of project structure."""
-
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -25,10 +23,7 @@ class StructureProcessor:
         self.ignore_dirs = IGNORE_PATTERNS
 
     def identify_structure(self) -> None:
-        """First pass: Efficiently walks the directory to find all packages and folders."""
-
         def should_skip_dir(path: Path) -> bool:
-            """Check if directory should be skipped based on ignore patterns."""
             return any(part in self.ignore_dirs for part in path.parts)
 
         directories = {self.repo_path}
@@ -104,7 +99,6 @@ class StructureProcessor:
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
-        """Process a generic (non-parseable) file and create appropriate nodes/relationships."""
         relative_filepath = str(file_path.relative_to(self.repo_path))
         relative_root = file_path.parent.relative_to(self.repo_path)
 

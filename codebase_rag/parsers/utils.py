@@ -13,29 +13,10 @@ if TYPE_CHECKING:
 
 @lru_cache(maxsize=10000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
-    """Cache decoded text to avoid repeated UTF-8 decoding operations.
-
-    This cache significantly improves performance for large codebases where
-    the same text content appears in multiple nodes.
-
-    Args:
-        text_bytes: Raw bytes to decode
-
-    Returns:
-        Decoded UTF-8 string
-    """
     return text_bytes.decode(ENCODING_UTF8)
 
 
 def safe_decode_text(node: Node | None) -> str | None:
-    """Safely decode text from a tree-sitter node with performance caching.
-
-    Args:
-        node: Tree-sitter node to decode text from, can be None.
-
-    Returns:
-        Decoded text or None if node or its text is None.
-    """
     if node is None or node.text is None:
         return None
     text_bytes = node.text
@@ -45,36 +26,15 @@ def safe_decode_text(node: Node | None) -> str | None:
 
 
 def get_query_cursor(query: Any) -> QueryCursor:
-    """Create a query cursor for the given query.
-
-    This is a simple wrapper around QueryCursor construction to provide
-    a consistent interface across the codebase.
-
-    Args:
-        query: Query object to create cursor with
-
-    Returns:
-        A QueryCursor instance for the given query
-    """
     return QueryCursor(query)
 
 
 def safe_decode_with_fallback(node: Node | None, fallback: str = "") -> str:
-    """Safely decode node.text to string with fallback."""
     result = safe_decode_text(node)
     return result if result is not None else fallback
 
 
 def contains_node(parent: Node, target: Node) -> bool:
-    """Check if parent node contains target node in its subtree.
-
-    Args:
-        parent: The parent node to search within.
-        target: The target node to search for.
-
-    Returns:
-        True if target is found within parent's subtree, False otherwise.
-    """
     if parent == target:
         return True
     for child in parent.children:
@@ -95,20 +55,6 @@ def ingest_method(
     extract_decorators_func: Any = None,
     method_qualified_name: str | None = None,
 ) -> None:
-    """Ingest a method node into the graph database.
-
-    Args:
-        method_node: The tree-sitter node representing the method.
-        container_qn: The qualified name of the container (class/impl block).
-        container_type: The type of container ("Class", "Interface", etc.).
-        ingestor: The graph database ingestor.
-        function_registry: Registry mapping qualified names to function types.
-        simple_name_lookup: Lookup table for simple names to qualified names.
-        get_docstring_func: Function to extract docstring from a node.
-        language: The programming language (used for C++ specific handling).
-        extract_decorators_func: Optional function to extract decorators.
-        method_qualified_name: Optional pre-computed qualified name to use instead of generating one.
-    """
     if language == "cpp":
         from .cpp_utils import extract_cpp_function_name
 
@@ -165,21 +111,6 @@ def ingest_exported_function(
     get_docstring_func: Any,
     is_export_inside_function_func: Any,
 ) -> None:
-    """Ingest an exported function into the graph database.
-
-    This helper eliminates duplication between CommonJS and ES6 export processing.
-
-    Args:
-        function_node: The tree-sitter node representing the function.
-        function_name: The name of the function.
-        module_qn: The qualified name of the module.
-        export_type: Description for logging (e.g., "CommonJS Export", "ES6 Export").
-        ingestor: The graph database ingestor.
-        function_registry: Registry mapping qualified names to function types.
-        simple_name_lookup: Lookup table for simple names to qualified names.
-        get_docstring_func: Function to extract docstring from a node.
-        is_export_inside_function_func: Function to check if export is inside a function.
-    """
     if is_export_inside_function_func(function_node):
         return
 

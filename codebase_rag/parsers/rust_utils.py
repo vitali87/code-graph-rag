@@ -157,7 +157,6 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
     imports = {}
 
     def extract_path_from_node(node: Node) -> str:
-        """Extract the full path from a scoped identifier or identifier."""
         if node.type == "identifier" or node.type == "type_identifier":
             return safe_decode_text(node) or ""
         elif node.type in ("scoped_identifier", "scoped_type_identifier"):
@@ -184,7 +183,6 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
         return ""
 
     def process_use_tree(node: Node, base_path: str = "") -> None:
-        """Process a use tree node and extract imports."""
         if node.type in ("identifier", "type_identifier"):
             name = safe_decode_text(node)
             if name:
