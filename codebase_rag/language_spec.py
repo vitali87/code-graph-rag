@@ -618,6 +618,13 @@ def get_language_spec(file_extension: str) -> LanguageSpec | None:
     return _EXTENSION_TO_SPEC.get(file_extension)
 
 
+def get_language_for_extension(file_extension: str) -> cs.SupportedLanguage | None:
+    spec = _EXTENSION_TO_SPEC.get(file_extension)
+    if spec and isinstance(spec.language, cs.SupportedLanguage):
+        return spec.language
+    return None
+
+
 def get_language_spec_by_name(language_name: str) -> LanguageSpec | None:
     try:
         lang_key = cs.SupportedLanguage(language_name.lower())

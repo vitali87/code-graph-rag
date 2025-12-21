@@ -9,7 +9,7 @@ from prompt_toolkit.styles import Style
 from .constants import NodeLabel, RelationshipType, SupportedLanguage
 
 if TYPE_CHECKING:
-    from tree_sitter import Language, Parser, Query
+    from tree_sitter import Language, Node, Parser, Query
 
     from .models import LanguageSpec
 
@@ -21,6 +21,14 @@ PropertyDict = dict[str, PropertyValue]
 type ResultScalar = str | int | float | bool | None
 type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
 type ResultRow = dict[str, ResultValue]
+
+
+class FunctionMatch(TypedDict):
+    node: "Node"
+    simple_name: str
+    qualified_name: str
+    parent_class: str | None
+    line_number: int
 
 
 class NodeBatchRow(TypedDict):

@@ -2,53 +2,20 @@ from __future__ import annotations
 
 import difflib
 from pathlib import Path
-from typing import TypedDict
 
 import diff_match_patch
 from loguru import logger
-from pydantic import BaseModel
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
 from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
-from ..language_spec import get_language_spec
+from ..language_spec import get_language_for_extension, get_language_spec
 from ..parser_loader import load_parsers
+from ..schemas import EditResult
+from ..types_defs import FunctionMatch
 from . import tool_descriptions as td
-
-
-class FunctionMatch(TypedDict):
-    node: Node
-    simple_name: str
-    qualified_name: str
-    parent_class: str | None
-    line_number: int
-
-
-LANGUAGE_EXTENSIONS: dict[str, cs.SupportedLanguage] = {
-    ".py": cs.SupportedLanguage.PYTHON,
-    ".js": cs.SupportedLanguage.JS,
-    ".ts": cs.SupportedLanguage.TS,
-    ".rs": cs.SupportedLanguage.RUST,
-    ".go": cs.SupportedLanguage.GO,
-    ".java": cs.SupportedLanguage.JAVA,
-    ".scala": cs.SupportedLanguage.SCALA,
-    ".cpp": cs.SupportedLanguage.CPP,
-    ".h": cs.SupportedLanguage.CPP,
-    ".hpp": cs.SupportedLanguage.CPP,
-    ".cc": cs.SupportedLanguage.CPP,
-    ".cxx": cs.SupportedLanguage.CPP,
-    ".hxx": cs.SupportedLanguage.CPP,
-    ".hh": cs.SupportedLanguage.CPP,
-    ".lua": cs.SupportedLanguage.LUA,
-}
-
-
-class EditResult(BaseModel):
-    file_path: str
-    success: bool
-    error_message: str | None = None
 
 
 class FileEditor:
@@ -70,7 +37,7 @@ class FileEditor:
         file_path_obj = Path(file_path)
         extension = self._get_real_extension(file_path_obj)
 
-        lang_name = LANGUAGE_EXTENSIONS.get(extension)
+        lang_name = get_language_for_extension(extension)
         return self.parsers.get(lang_name) if lang_name else None
 
     def get_ast(self, file_path: str) -> Node | None:

@@ -47,3 +47,9 @@ class ShellCommandResult(BaseModel):
     return_code: int
     stdout: str
     stderr: str
+
+
+class EditResult(BaseModel):
+    file_path: str
+    success: bool
+    error_message: str | None = None
