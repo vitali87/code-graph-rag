@@ -3,47 +3,11 @@ from tree_sitter import Node
 from .. import constants as cs
 from .utils import safe_decode_text, safe_decode_with_fallback
 
-CPP_OPERATOR_SYMBOL_MAP = {
-    "+": "operator_plus",
-    "-": "operator_minus",
-    "*": "operator_multiply",
-    "/": "operator_divide",
-    "%": "operator_modulo",
-    "=": "operator_assign",
-    "==": "operator_equal",
-    "!=": "operator_not_equal",
-    "<": "operator_less",
-    ">": "operator_greater",
-    "<=": "operator_less_equal",
-    ">=": "operator_greater_equal",
-    "&&": "operator_logical_and",
-    "||": "operator_logical_or",
-    "&": "operator_bitwise_and",
-    "|": "operator_bitwise_or",
-    "^": "operator_bitwise_xor",
-    "~": "operator_bitwise_not",
-    "!": "operator_not",
-    "<<": "operator_left_shift",
-    ">>": "operator_right_shift",
-    "++": "operator_increment",
-    "--": "operator_decrement",
-    "+=": "operator_plus_assign",
-    "-=": "operator_minus_assign",
-    "*=": "operator_multiply_assign",
-    "/=": "operator_divide_assign",
-    "%=": "operator_modulo_assign",
-    "&=": "operator_and_assign",
-    "|=": "operator_or_assign",
-    "^=": "operator_xor_assign",
-    "<<=": "operator_left_shift_assign",
-    ">>=": "operator_right_shift_assign",
-    "[]": "operator_subscript",
-    "()": "operator_call",
-}
-
 
 def convert_operator_symbol_to_name(symbol: str) -> str:
-    return CPP_OPERATOR_SYMBOL_MAP.get(symbol, f"operator_{symbol.replace(' ', '_')}")
+    return cs.CPP_OPERATOR_SYMBOL_MAP.get(
+        symbol, f"operator_{symbol.replace(' ', '_')}"
+    )
 
 
 def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
