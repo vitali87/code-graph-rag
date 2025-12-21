@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -30,7 +32,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
 
-def _create_provider_model(config: ModelConfig) -> "Model":
+def _create_provider_model(config: ModelConfig) -> Model:
     provider = get_provider(
         config.provider,
         api_key=config.api_key,

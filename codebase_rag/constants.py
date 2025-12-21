@@ -122,6 +122,41 @@ LOG_EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 LOG_EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 LOG_IMAGE_COPIED = "Copied image to temporary path: {path}"
 
+# (H) Protobuf service logs
+LOG_PROTOBUF_INIT = "ProtobufFileIngestor initialized to write to: {path}"
+LOG_PROTOBUF_NO_MESSAGE_CLASS = (
+    "No Protobuf message class found for label '{label}'. Skipping node."
+)
+LOG_PROTOBUF_NO_ONEOF_MAPPING = (
+    "No 'oneof' field mapping found for label '{label}'. Skipping node."
+)
+LOG_PROTOBUF_UNKNOWN_REL_TYPE = (
+    "Unknown relationship type '{rel_type}'. Setting to UNSPECIFIED."
+)
+LOG_PROTOBUF_INVALID_REL = (
+    "Invalid relationship: source_id={source_id}, target_id={target_id}"
+)
+LOG_PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
+LOG_PROTOBUF_FLUSHING = "Flushing data to {path}..."
+
+# (H) Protobuf file names
+PROTOBUF_INDEX_FILE = "index.bin"
+PROTOBUF_NODES_FILE = "nodes.bin"
+PROTOBUF_RELS_FILE = "relationships.bin"
+
+# (H) Protobuf oneof field names
+ONEOF_PROJECT = "project"
+ONEOF_PACKAGE = "package"
+ONEOF_FOLDER = "folder"
+ONEOF_MODULE = "module"
+ONEOF_CLASS = "class_node"
+ONEOF_FUNCTION = "function"
+ONEOF_METHOD = "method"
+ONEOF_FILE = "file"
+ONEOF_EXTERNAL_PACKAGE = "external_package"
+ONEOF_MODULE_IMPLEMENTATION = "module_implementation"
+ONEOF_MODULE_INTERFACE = "module_interface"
+
 # (H) CLI error and info messages
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
