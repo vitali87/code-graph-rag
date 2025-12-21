@@ -285,7 +285,7 @@ class FileEditor:
             return True
 
         except ValueError:
-            logger.error(ls.FILE_OUTSIDE_ROOT.format(action="edit"))
+            logger.error(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
             return False
         except Exception as e:
             logger.error(ls.EDITOR_SURGICAL_ERROR.format(error=e))
@@ -311,7 +311,7 @@ class FileEditor:
             return EditResult(file_path=file_path, success=True)
 
         except ValueError:
-            error_msg = ls.FILE_OUTSIDE_ROOT.format(action="edit")
+            error_msg = ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT)
             logger.error(ls.FILE_EDITOR_ERR.format(msg=error_msg))
             return EditResult(
                 file_path=file_path, success=False, error_message=error_msg

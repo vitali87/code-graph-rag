@@ -37,6 +37,11 @@ class StyleModifier(StrEnum):
     NONE = ""
 
 
+class FileAction(StrEnum):
+    READ = "read"
+    EDIT = "edit"
+
+
 DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_API_KEY = "ollama"

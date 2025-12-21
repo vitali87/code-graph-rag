@@ -6,9 +6,9 @@ from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Tool
 
+from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
-from ..constants import ENCODING_UTF8
 from . import tool_descriptions as td
 
 
@@ -43,13 +43,17 @@ class FileReader:
             except ValueError:
                 return FileReadResult(
                     file_path=file_path,
-                    error_message=ls.FILE_OUTSIDE_ROOT.format(action="read"),
+                    error_message=ls.FILE_OUTSIDE_ROOT.format(
+                        action=cs.FileAction.READ
+                    ),
                 )
 
             if not str(full_path).startswith(str(self.project_root.resolve())):
                 return FileReadResult(
                     file_path=file_path,
-                    error_message=ls.FILE_OUTSIDE_ROOT.format(action="read"),
+                    error_message=ls.FILE_OUTSIDE_ROOT.format(
+                        action=cs.FileAction.READ
+                    ),
                 )
 
             if not full_path.is_file():
@@ -63,7 +67,7 @@ class FileReader:
                 return FileReadResult(file_path=file_path, error_message=error_msg)
 
             try:
-                content = full_path.read_text(encoding=ENCODING_UTF8)
+                content = full_path.read_text(encoding=cs.ENCODING_UTF8)
                 logger.info(ls.TOOL_FILE_READ_SUCCESS.format(path=file_path))
                 return FileReadResult(file_path=file_path, content=content)
             except UnicodeDecodeError:
@@ -74,7 +78,7 @@ class FileReader:
         except ValueError:
             return FileReadResult(
                 file_path=file_path,
-                error_message=ls.FILE_OUTSIDE_ROOT.format(action="read"),
+                error_message=ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.READ),
             )
         except Exception as e:
             logger.error(ls.FILE_READER_ERR.format(path=file_path, error=e))
