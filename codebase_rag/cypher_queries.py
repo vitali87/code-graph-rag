@@ -53,6 +53,10 @@ LIMIT 1
 """
 
 
+def wrap_with_unwind(query: str) -> str:
+    return f"UNWIND $batch AS row\n{query}"
+
+
 def build_nodes_by_ids_query(node_ids: list[int]) -> str:
     placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
     return f"""

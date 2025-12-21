@@ -48,6 +48,7 @@ from ..cypher_queries import (
     build_constraint_query,
     build_merge_node_query,
     build_merge_relationship_query,
+    wrap_with_unwind,
 )
 from ..types_defs import (
     BatchParams,
@@ -134,8 +135,7 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = self.conn.cursor()
-            batch_query = f"UNWIND $batch AS row\n{query}"
-            cursor.execute(batch_query, {"batch": params_list})
+            cursor.execute(wrap_with_unwind(query), {"batch": params_list})
         except Exception as e:
             if "already exists" not in str(e).lower():
                 logger.error(LOG_MG_BATCH_ERROR.format(error=e))
@@ -161,8 +161,7 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = self.conn.cursor()
-            batch_query = f"UNWIND $batch AS row\n{query}"
-            cursor.execute(batch_query, {"batch": params_list})
+            cursor.execute(wrap_with_unwind(query), {"batch": params_list})
             return self._cursor_to_results(cursor)
         except Exception as e:
             logger.error(LOG_MG_BATCH_ERROR.format(error=e))

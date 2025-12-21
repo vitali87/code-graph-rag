@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.cypher_queries import wrap_with_unwind
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
@@ -231,7 +232,7 @@ class TestExecuteBatch:
         ingestor._execute_batch("MERGE (n:Test {id: row.id})", [{"id": 1}, {"id": 2}])
 
         call_args = mock_cursor.execute.call_args[0]
-        assert call_args[0] == "UNWIND $batch AS row\nMERGE (n:Test {id: row.id})"
+        assert call_args[0] == wrap_with_unwind("MERGE (n:Test {id: row.id})")
         assert call_args[1] == {"batch": [{"id": 1}, {"id": 2}]}
 
     def test_closes_cursor_on_success(self) -> None:

@@ -14,6 +14,7 @@ from codebase_rag.cypher_queries import (
     build_merge_node_query,
     build_merge_relationship_query,
     build_nodes_by_ids_query,
+    wrap_with_unwind,
 )
 
 if TYPE_CHECKING:
@@ -235,10 +236,9 @@ class TestCypherGetFunctionSourceLocationIntegration:
 class TestBuildMergeNodeQueryIntegration:
     def test_merge_creates_new_node(self, memgraph_ingestor: MemgraphIngestor) -> None:
         query = build_merge_node_query("Function", "qualified_name")
-        batch_query = f"UNWIND $batch AS row\n{query}"
 
         memgraph_ingestor._execute_query(
-            batch_query,
+            wrap_with_unwind(query),
             {
                 "batch": [
                     {
@@ -267,10 +267,10 @@ class TestBuildMergeNodeQueryIntegration:
         )
 
         query = build_merge_node_query("Function", "qualified_name")
-        batch_query = f"UNWIND $batch AS row\n{query}"
 
         memgraph_ingestor._execute_query(
-            batch_query, {"batch": [{"id": "mod.func", "props": {"name": "new_name"}}]}
+            wrap_with_unwind(query),
+            {"batch": [{"id": "mod.func", "props": {"name": "new_name"}}]},
         )
 
         results = memgraph_ingestor._execute_query(
@@ -294,10 +294,9 @@ class TestBuildMergeRelationshipQueryIntegration:
         query = build_merge_relationship_query(
             "Module", "qualified_name", "DEFINES", "Function", "qualified_name"
         )
-        batch_query = f"UNWIND $batch AS row\n{query}"
 
         results = memgraph_ingestor._execute_query(
-            batch_query,
+            wrap_with_unwind(query),
             {"batch": [{"from_val": "mymod", "to_val": "mymod.func", "props": {}}]},
         )
 
@@ -324,10 +323,9 @@ class TestBuildMergeRelationshipQueryIntegration:
             "qualified_name",
             has_props=True,
         )
-        batch_query = f"UNWIND $batch AS row\n{query}"
 
         memgraph_ingestor._execute_query(
-            batch_query,
+            wrap_with_unwind(query),
             {
                 "batch": [
                     {
