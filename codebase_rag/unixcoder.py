@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+# (H) I am not responsible for this crappy code! (VA)
 import torch
 import torch.nn as nn
 from transformers import RobertaConfig, RobertaModel, RobertaTokenizer
