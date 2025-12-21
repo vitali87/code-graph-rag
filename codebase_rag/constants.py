@@ -528,3 +528,34 @@ PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
 LOG_EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 LOG_EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
+
+
+class EventType(StrEnum):
+    MODIFIED = "modified"
+    CREATED = "created"
+
+
+CYPHER_DELETE_MODULE = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
+CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
+
+LOG_WATCHER_ACTIVE = "File watcher is now active."
+LOG_WATCHER_SKIP_NO_QUERY = (
+    "Ingestor does not support querying, skipping real-time update."
+)
+LOG_CHANGE_DETECTED = "Change detected: {event_type} on {path}. Updating graph."
+LOG_DELETION_QUERY = "Ran deletion query for path: {path}"
+LOG_RECALC_CALLS = "Recalculating all function call relationships for consistency..."
+LOG_GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
+LOG_INITIAL_SCAN = "Performing initial full codebase scan..."
+LOG_INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
+LOG_WATCHING = "Watching for changes in: {path}"
+LOG_LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
+
+REALTIME_LOGGER_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+    "<level>{level: <8}</level> | "
+    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+    "<level>{message}</level>"
+)
+
+WATCHER_SLEEP_INTERVAL = 1

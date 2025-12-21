@@ -1,16 +1,34 @@
 import sys
 import time
-from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 from loguru import logger
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from codebase_rag.config import settings
-from codebase_rag.constants import IGNORE_PATTERNS, IGNORE_SUFFIXES, SupportedLanguage
+from codebase_rag.constants import (
+    CYPHER_DELETE_CALLS,
+    CYPHER_DELETE_MODULE,
+    IGNORE_PATTERNS,
+    IGNORE_SUFFIXES,
+    LOG_CHANGE_DETECTED,
+    LOG_DELETION_QUERY,
+    LOG_GRAPH_UPDATED,
+    LOG_INITIAL_SCAN,
+    LOG_INITIAL_SCAN_DONE,
+    LOG_LOGGER_CONFIGURED,
+    LOG_RECALC_CALLS,
+    LOG_WATCHER_ACTIVE,
+    LOG_WATCHER_SKIP_NO_QUERY,
+    LOG_WATCHING,
+    REALTIME_LOGGER_FORMAT,
+    WATCHER_SLEEP_INTERVAL,
+    EventType,
+    SupportedLanguage,
+)
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_config import get_language_config
 from codebase_rag.parser_loader import load_parsers
@@ -18,17 +36,12 @@ from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
-class EventType(StrEnum):
-    MODIFIED = "modified"
-    CREATED = "created"
-
-
 class CodeChangeEventHandler(FileSystemEventHandler):
     def __init__(self, updater: GraphUpdater):
         self.updater = updater
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
-        logger.info("File watcher is now active.")
+        logger.info(LOG_WATCHER_ACTIVE)
 
     def _is_relevant(self, path_str: str) -> bool:
         path = Path(path_str)
@@ -36,7 +49,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             return False
         return all(part not in self.ignore_patterns for part in path.parts)
 
-    def dispatch(self, event: Any) -> None:
+    def dispatch(self, event: FileSystemEvent) -> None:
         # (H) ┌─────────────────────────────────────────────────────────────────────┐
         # (H) │                      Real-Time Graph Update Steps                   │
         # (H) ├─────────────────────────────────────────────────────────────────────┤
@@ -50,27 +63,28 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # (H) │         Fixes "island" problem - changes reflect in all relations  │
         # (H) │ Step 5: Flush all collected changes to the database                │
         # (H) └─────────────────────────────────────────────────────────────────────┘
-        if event.is_directory or not self._is_relevant(event.src_path):
+        src_path = event.src_path
+        if isinstance(src_path, bytes):
+            src_path = src_path.decode()
+
+        if event.is_directory or not self._is_relevant(src_path):
             return
 
         ingestor = self.updater.ingestor
         if not isinstance(ingestor, QueryProtocol):
-            logger.warning(
-                "Ingestor does not support querying, skipping real-time update."
-            )
+            logger.warning(LOG_WATCHER_SKIP_NO_QUERY)
             return
 
-        path = Path(event.src_path)
+        path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
         logger.warning(
-            f"Change detected: {event.event_type} on {path}. Updating graph."
+            LOG_CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
 
         # (H) Step 1
-        delete_query = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
-        ingestor.execute_write(delete_query, {"path": relative_path_str})
-        logger.debug(f"Ran deletion query for path: {relative_path_str}")
+        ingestor.execute_write(CYPHER_DELETE_MODULE, {"path": relative_path_str})
+        logger.debug(LOG_DELETION_QUERY.format(path=relative_path_str))
 
         # (H) Step 2
         self.updater.remove_file_from_state(path)
@@ -93,13 +107,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                     self.updater.ast_cache[path] = (root_node, language)
 
         # (H) Step 4
-        logger.info("Recalculating all function call relationships for consistency...")
-        ingestor.execute_write("MATCH ()-[r:CALLS]->() DELETE r")
+        logger.info(LOG_RECALC_CALLS)
+        ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 
         # (H) Step 5
         self.updater.ingestor.flush_all()
-        logger.success(f"Graph updated successfully for change in: {path.name}")
+        logger.success(LOG_GRAPH_UPDATED.format(name=path.name))
 
 
 def start_watcher(
@@ -118,19 +132,19 @@ def start_watcher(
         updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
         # (H) Initial full scan builds the complete context for real-time updates
-        logger.info("Performing initial full codebase scan...")
+        logger.info(LOG_INITIAL_SCAN)
         updater.run()
-        logger.success("Initial scan complete. Starting real-time watcher.")
+        logger.success(LOG_INITIAL_SCAN_DONE)
 
         event_handler = CodeChangeEventHandler(updater)
         observer = Observer()
         observer.schedule(event_handler, str(repo_path_obj), recursive=True)
         observer.start()
-        logger.info(f"Watching for changes in: {repo_path_obj}")
+        logger.info(LOG_WATCHING.format(path=repo_path_obj))
 
         try:
             while True:
-                time.sleep(1)
+                time.sleep(WATCHER_SLEEP_INTERVAL)
         except KeyboardInterrupt:
             observer.stop()
         observer.join()
@@ -144,8 +158,8 @@ def _validate_positive_int(value: int) -> int:
 
 def main(
     repo_path: Annotated[str, typer.Argument(help="Path to the repository to watch.")],
-    host: Annotated[str, typer.Option(help="Memgraph host")] = "localhost",
-    port: Annotated[int, typer.Option(help="Memgraph port")] = 7687,
+    host: Annotated[str, typer.Option(help="Memgraph host")] = settings.MEMGRAPH_HOST,
+    port: Annotated[int, typer.Option(help="Memgraph port")] = settings.MEMGRAPH_PORT,
     batch_size: Annotated[
         int | None,
         typer.Option(
@@ -155,12 +169,8 @@ def main(
     ] = None,
 ) -> None:
     logger.remove()
-    logger.add(
-        sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        level="INFO",
-    )
-    logger.info("Logger configured for Real-Time Updater.")
+    logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level="INFO")
+    logger.info(LOG_LOGGER_CONFIGURED)
     start_watcher(repo_path, host, port, batch_size)
 
 
