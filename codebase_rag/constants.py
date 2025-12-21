@@ -1077,6 +1077,11 @@ TS_ERROR = "ERROR"
 TS_EXPRESSION_STATEMENT = "expression_statement"
 TS_STATEMENT_BLOCK = "statement_block"
 
+# (H) Derived node type tuples for class ingestion
+CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)
+CPP_COMPOUND_TYPES = (*CPP_CLASS_TYPES, TS_UNION_SPECIFIER, TS_ENUM_SPECIFIER)
+JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
+
 # (H) Import processor function names
 IMPORT_REQUIRE = "require"
 IMPORT_PCALL = "pcall"
@@ -1154,3 +1159,79 @@ IMPORT_STD_PREFIX = "std."
 IMPORT_MODULE_LABEL = "Module"
 IMPORT_QUALIFIED_NAME = "qualified_name"
 IMPORT_RELATIONSHIP = "IMPORTS"
+
+# (H) Java type inference constants
+JAVA_LANG_PREFIX = "java.lang."
+JAVA_PRIMITIVE_TYPES = frozenset(
+    {
+        "int",
+        "long",
+        "double",
+        "float",
+        "boolean",
+        "char",
+        "byte",
+        "short",
+    }
+)
+JAVA_WRAPPER_TYPES = frozenset(
+    {
+        "String",
+        "Object",
+        "Integer",
+        "Long",
+        "Double",
+        "Boolean",
+    }
+)
+
+# (H) Java tree-sitter node types
+TS_FORMAL_PARAMETER = "formal_parameter"
+TS_SPREAD_PARAMETER = "spread_parameter"
+TS_LOCAL_VARIABLE_DECLARATION = "local_variable_declaration"
+TS_FIELD_DECLARATION = "field_declaration"
+TS_ASSIGNMENT_EXPRESSION = "assignment_expression"
+TS_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+TS_METHOD_INVOCATION = "method_invocation"
+TS_FIELD_ACCESS = "field_access"
+TS_INTEGER_LITERAL = "integer_literal"
+TS_DECIMAL_FLOATING_POINT_LITERAL = "decimal_floating_point_literal"
+TS_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
+TS_METHOD_DECLARATION = "method_declaration"
+TS_ENHANCED_FOR_STATEMENT = "enhanced_for_statement"
+TS_RECORD_DECLARATION = "record_declaration"
+TS_TRUE = "true"
+TS_FALSE = "false"
+
+# (H) Java type inference keywords
+JAVA_KEYWORD_THIS = "this"
+JAVA_KEYWORD_SUPER = "super"
+
+# (H) Java heuristic patterns
+JAVA_GETTER_PATTERN = "get"
+JAVA_NAME_PATTERN = "name"
+JAVA_ID_PATTERN = "id"
+JAVA_SIZE_PATTERN = "size"
+JAVA_LENGTH_PATTERN = "length"
+JAVA_CREATE_PATTERN = "create"
+JAVA_NEW_PATTERN = "new"
+JAVA_IS_PATTERN = "is"
+JAVA_HAS_PATTERN = "has"
+JAVA_USER_PATTERN = "user"
+JAVA_ORDER_PATTERN = "order"
+
+# (H) Java entity type names
+ENTITY_CONSTRUCTOR = "Constructor"
+
+# (H) Java primitive type names
+JAVA_TYPE_STRING = "String"
+JAVA_TYPE_INT = "int"
+JAVA_TYPE_DOUBLE = "double"
+JAVA_TYPE_BOOLEAN = "boolean"
+JAVA_TYPE_LONG = "java.lang.Long"
+JAVA_TYPE_STRING_FQN = "java.lang.String"
+JAVA_TYPE_OBJECT = "Object"
+
+# (H) Java heuristic return type names
+JAVA_HEURISTIC_USER = "User"
+JAVA_HEURISTIC_ORDER = "Order"

@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
-from ..constants import SEPARATOR_DOT, SupportedLanguage
+from .. import constants as cs
+from .. import logs
 from ..language_spec import LANGUAGE_FQN_SPECS
 from ..types_defs import NodeType
 from ..utils.fqn_resolver import resolve_fqn_from_ast
@@ -29,6 +30,14 @@ if TYPE_CHECKING:
     from .import_processor import ImportProcessor
 
 
+def _decode_node_stripped(node: Node) -> str:
+    return safe_decode_with_fallback(node).strip() if node.text else ""
+
+
+def _find_child_by_type(node: Node, node_type: str) -> Node | None:
+    return next((c for c in node.children if c.type == node_type), None)
+
+
 class ClassIngestMixin:
     ingestor: IngestorProtocol
     repo_path: Path
@@ -41,33 +50,34 @@ class ClassIngestMixin:
     _get_docstring: Callable[[Node], str | None]
     _extract_decorators: Callable[[Node], list[str]]
 
+    def _resolve_to_qn(self, name: str, module_qn: str) -> str:
+        return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
+
     def _ingest_cpp_module_declarations(
         self,
         root_node: Node,
         module_qn: str,
         file_path: Path,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         module_declarations: list[tuple[Node, str]] = []
 
         def find_module_declarations(node: Node) -> None:
-            if node.type == "module_declaration":
-                text = safe_decode_with_fallback(node).strip() if node.text else ""
-                module_declarations.append((node, text))
+            if node.type == cs.TS_MODULE_DECLARATION:
+                module_declarations.append((node, _decode_node_stripped(node)))
 
-            elif node.type == "declaration":
+            elif node.type == cs.CppNodeType.DECLARATION:
                 has_module = False
 
                 for child in node.children:
-                    if child.type == "module" or (
+                    if child.type == cs.ONEOF_MODULE or (
                         child.text
-                        and safe_decode_with_fallback(child).strip() == "module"
+                        and safe_decode_with_fallback(child).strip() == cs.ONEOF_MODULE
                     ):
                         has_module = True
 
                 if has_module:
-                    text = safe_decode_with_fallback(node).strip() if node.text else ""
-                    module_declarations.append((node, text))
+                    module_declarations.append((node, _decode_node_stripped(node)))
 
             for child in node.children:
                 find_module_declarations(child)
@@ -82,22 +92,26 @@ class ClassIngestMixin:
 
                     interface_qn = f"{self.project_name}.{module_name}"
                     self.ingestor.ensure_node_batch(
-                        "ModuleInterface",
+                        cs.NodeLabel.MODULE_INTERFACE,
                         {
-                            "qualified_name": interface_qn,
-                            "name": module_name,
-                            "path": str(file_path.relative_to(self.repo_path)),
+                            cs.KEY_QUALIFIED_NAME: interface_qn,
+                            cs.KEY_NAME: module_name,
+                            cs.KEY_PATH: str(file_path.relative_to(self.repo_path)),
                             "module_type": "interface",
                         },
                     )
 
                     self.ingestor.ensure_relationship_batch(
-                        ("Module", "qualified_name", module_qn),
-                        "EXPORTS_MODULE",
-                        ("ModuleInterface", "qualified_name", interface_qn),
+                        (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                        cs.RelationshipType.EXPORTS_MODULE,
+                        (
+                            cs.NodeLabel.MODULE_INTERFACE,
+                            cs.KEY_QUALIFIED_NAME,
+                            interface_qn,
+                        ),
                     )
 
-                    logger.info(f"  Found C++ Module Interface: {interface_qn}")
+                    logger.info(logs.CLASS_CPP_MODULE_INTERFACE.format(qn=interface_qn))
 
             elif decl_text.startswith("module ") and not decl_text.startswith(
                 "module ;"
@@ -108,37 +122,49 @@ class ClassIngestMixin:
 
                     impl_qn = f"{self.project_name}.{module_name}_impl"
                     self.ingestor.ensure_node_batch(
-                        "ModuleImplementation",
+                        cs.NodeLabel.MODULE_IMPLEMENTATION,
                         {
-                            "qualified_name": impl_qn,
-                            "name": f"{module_name}_impl",
-                            "path": str(file_path.relative_to(self.repo_path)),
+                            cs.KEY_QUALIFIED_NAME: impl_qn,
+                            cs.KEY_NAME: f"{module_name}_impl",
+                            cs.KEY_PATH: str(file_path.relative_to(self.repo_path)),
                             "implements_module": module_name,
                             "module_type": "implementation",
                         },
                     )
 
                     self.ingestor.ensure_relationship_batch(
-                        ("Module", "qualified_name", module_qn),
-                        "IMPLEMENTS_MODULE",
-                        ("ModuleImplementation", "qualified_name", impl_qn),
+                        (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                        cs.RelationshipType.IMPLEMENTS_MODULE,
+                        (
+                            cs.NodeLabel.MODULE_IMPLEMENTATION,
+                            cs.KEY_QUALIFIED_NAME,
+                            impl_qn,
+                        ),
                     )
 
                     interface_qn = f"{self.project_name}.{module_name}"
                     self.ingestor.ensure_relationship_batch(
-                        ("ModuleImplementation", "qualified_name", impl_qn),
-                        "IMPLEMENTS",
-                        ("ModuleInterface", "qualified_name", interface_qn),
+                        (
+                            cs.NodeLabel.MODULE_IMPLEMENTATION,
+                            cs.KEY_QUALIFIED_NAME,
+                            impl_qn,
+                        ),
+                        cs.RelationshipType.IMPLEMENTS,
+                        (
+                            cs.NodeLabel.MODULE_INTERFACE,
+                            cs.KEY_QUALIFIED_NAME,
+                            interface_qn,
+                        ),
                     )
 
-                    logger.info(f"  Found C++ Module Implementation: {impl_qn}")
+                    logger.info(logs.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
 
     def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
         exported_class_nodes: list[Node] = []
 
         def traverse_for_exported_classes(node: Node) -> None:
-            if node.type == "function_definition":
-                node_text = safe_decode_with_fallback(node).strip() if node.text else ""
+            if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
+                node_text = _decode_node_stripped(node)
 
                 if (
                     node_text.startswith("export class ")
@@ -146,7 +172,7 @@ class ClassIngestMixin:
                     or node_text.startswith("export template")
                 ):
                     for child in node.children:
-                        if child.type == "ERROR" and child.text:
+                        if child.type == cs.TS_ERROR and child.text:
                             error_text = safe_decode_text(child)
                             if error_text in ["class", "struct"]:
                                 exported_class_nodes.append(node)
@@ -168,22 +194,22 @@ class ClassIngestMixin:
         self,
         root_node: Node,
         module_qn: str,
-        language: SupportedLanguage,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         lang_queries = queries[language]
-        query = lang_queries["classes"]
+        query = lang_queries[cs.QUERY_CLASSES]
         if not query:
             return
 
-        lang_config: LanguageSpec = lang_queries["config"]
+        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
 
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
-        class_nodes = captures.get("class", [])
-        module_nodes = captures.get("module", [])
+        class_nodes = captures.get(cs.CAPTURE_CLASS, [])
+        module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
-        if language == SupportedLanguage.CPP:
+        if language == cs.SupportedLanguage.CPP:
             additional_class_nodes = self._find_cpp_exported_classes(root_node)
             class_nodes.extend(additional_class_nodes)
 
@@ -197,7 +223,10 @@ class ClassIngestMixin:
             class_name = None
             is_exported = False
 
-            if language == SupportedLanguage.RUST and class_node.type == "impl_item":
+            if (
+                language == cs.SupportedLanguage.RUST
+                and class_node.type == cs.TS_IMPL_ITEM
+            ):
                 impl_target = extract_rust_impl_target(class_node)
                 if not impl_target:
                     continue
@@ -205,11 +234,11 @@ class ClassIngestMixin:
                 class_qn = f"{module_qn}.{impl_target}"
 
                 body_node = class_node.child_by_field_name("body")
-                method_query = lang_queries["functions"]
+                method_query = lang_queries[cs.QUERY_FUNCTIONS]
                 if body_node and method_query:
                     method_cursor = QueryCursor(method_query)
                     method_captures = method_cursor.captures(body_node)
-                    method_nodes = method_captures.get("function", [])
+                    method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
                     for method_node in method_nodes:
                         if not isinstance(method_node, Node):
                             continue
@@ -217,7 +246,7 @@ class ClassIngestMixin:
                         ingest_method(
                             method_node,
                             class_qn,
-                            "Class",
+                            cs.NodeLabel.CLASS,
                             self.ingestor,
                             self.function_registry,
                             self.simple_name_lookup,
@@ -233,16 +262,16 @@ class ClassIngestMixin:
                     class_node, file_path, self.repo_path, self.project_name, fqn_config
                 )
                 if class_qn:
-                    class_name = class_qn.split(SEPARATOR_DOT)[-1]
-                    if language == SupportedLanguage.CPP:
-                        if class_node.type == "function_definition":
+                    class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
+                    if language == cs.SupportedLanguage.CPP:
+                        if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
                             is_exported = True
                         else:
                             is_exported = is_cpp_exported(class_node)
 
             if not class_qn:
-                if language == SupportedLanguage.CPP:
-                    if class_node.type == "function_definition":
+                if language == cs.SupportedLanguage.CPP:
+                    if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
                         class_name = extract_cpp_exported_class_name(class_node)
                         is_exported = True
                     else:
@@ -274,58 +303,80 @@ class ClassIngestMixin:
                 "docstring": self._get_docstring(class_node),
                 "is_exported": is_exported,
             }
-            if class_node.type == "interface_declaration":
-                node_type = NodeType.INTERFACE
-                logger.info(f"  Found Interface: {class_name} (qn: {class_qn})")
-            elif class_node.type in [
-                "enum_declaration",
-                "enum_specifier",
-                "enum_class_specifier",
-            ]:
-                node_type = NodeType.ENUM
-                logger.info(f"  Found Enum: {class_name} (qn: {class_qn})")
-            elif class_node.type == "type_alias_declaration":
-                node_type = NodeType.TYPE
-                logger.info(f"  Found Type: {class_name} (qn: {class_qn})")
-            elif class_node.type == "struct_specifier":
-                node_type = NodeType.CLASS
-                logger.info(f"  Found Struct: {class_name} (qn: {class_qn})")
-            elif class_node.type == "union_specifier":
-                node_type = NodeType.UNION
-                logger.info(f"  Found Union: {class_name} (qn: {class_qn})")
-            elif class_node.type == "template_declaration":
-                template_class = self._extract_template_class_type(class_node)
-                node_type = template_class or NodeType.CLASS
-                logger.info(
-                    f"  Found Template {node_type}: {class_name} (qn: {class_qn})"
-                )
-            elif (
-                class_node.type == "function_definition"
-                and language == SupportedLanguage.CPP
-            ):
-                node_text = (
-                    safe_decode_with_fallback(class_node) if class_node.text else ""
-                )
-                if "export struct " in node_text:
+            match class_node.type:
+                case cs.TS_INTERFACE_DECLARATION:
+                    node_type = NodeType.INTERFACE
                     logger.info(
-                        f"  Found Exported Struct: {class_name} (qn: {class_qn})"
+                        logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn)
                     )
-                elif "export union " in node_text:
+                case (
+                    cs.TS_ENUM_DECLARATION
+                    | cs.TS_ENUM_SPECIFIER
+                    | cs.TS_ENUM_CLASS_SPECIFIER
+                ):
+                    node_type = NodeType.ENUM
                     logger.info(
-                        f"  Found Exported Union: {class_name} (qn: {class_qn})"
+                        logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn)
                     )
-                elif "export template" in node_text:
+                case cs.TS_TYPE_ALIAS_DECLARATION:
+                    node_type = NodeType.TYPE
                     logger.info(
-                        f"  Found Exported Template Class: {class_name} (qn: {class_qn})"
+                        logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn)
                     )
-                else:
+                case cs.TS_STRUCT_SPECIFIER:
+                    node_type = NodeType.CLASS
                     logger.info(
-                        f"  Found Exported Class: {class_name} (qn: {class_qn})"
+                        logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn)
                     )
-                node_type = NodeType.CLASS
-            else:
-                node_type = NodeType.CLASS
-                logger.info(f"  Found Class: {class_name} (qn: {class_qn})")
+                case cs.TS_UNION_SPECIFIER:
+                    node_type = NodeType.UNION
+                    logger.info(
+                        logs.CLASS_FOUND_UNION.format(name=class_name, qn=class_qn)
+                    )
+                case cs.CppNodeType.TEMPLATE_DECLARATION:
+                    template_class = self._extract_template_class_type(class_node)
+                    node_type = template_class or NodeType.CLASS
+                    logger.info(
+                        logs.CLASS_FOUND_TEMPLATE.format(
+                            node_type=node_type, name=class_name, qn=class_qn
+                        )
+                    )
+                case cs.CppNodeType.FUNCTION_DEFINITION if (
+                    language == cs.SupportedLanguage.CPP
+                ):
+                    node_text = (
+                        safe_decode_with_fallback(class_node) if class_node.text else ""
+                    )
+                    if "export struct " in node_text:
+                        logger.info(
+                            logs.CLASS_FOUND_EXPORTED_STRUCT.format(
+                                name=class_name, qn=class_qn
+                            )
+                        )
+                    elif "export union " in node_text:
+                        logger.info(
+                            logs.CLASS_FOUND_EXPORTED_UNION.format(
+                                name=class_name, qn=class_qn
+                            )
+                        )
+                    elif "export template" in node_text:
+                        logger.info(
+                            logs.CLASS_FOUND_EXPORTED_TEMPLATE.format(
+                                name=class_name, qn=class_qn
+                            )
+                        )
+                    else:
+                        logger.info(
+                            logs.CLASS_FOUND_EXPORTED_CLASS.format(
+                                name=class_name, qn=class_qn
+                            )
+                        )
+                    node_type = NodeType.CLASS
+                case _:
+                    node_type = NodeType.CLASS
+                    logger.info(
+                        logs.CLASS_FOUND_CLASS.format(name=class_name, qn=class_qn)
+                    )
 
             self.ingestor.ensure_node_batch(node_type, class_props)
 
@@ -337,16 +388,16 @@ class ClassIngestMixin:
             self.class_inheritance[class_qn] = parent_classes
 
             self.ingestor.ensure_relationship_batch(
-                ("Module", "qualified_name", module_qn),
-                "DEFINES",
-                (node_type, "qualified_name", class_qn),
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                cs.RelationshipType.DEFINES,
+                (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
             )
 
-            if is_exported and language == SupportedLanguage.CPP:
+            if is_exported and language == cs.SupportedLanguage.CPP:
                 self.ingestor.ensure_relationship_batch(
-                    ("Module", "qualified_name", module_qn),
-                    "EXPORTS",
-                    (node_type, "qualified_name", class_qn),
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    cs.RelationshipType.EXPORTS,
+                    (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
                 )
 
             for parent_class_qn in parent_classes:
@@ -354,7 +405,7 @@ class ClassIngestMixin:
                     node_type, class_qn, parent_class_qn
                 )
 
-            if class_node.type == "class_declaration":
+            if class_node.type == cs.TS_CLASS_DECLARATION:
                 implemented_interfaces = self._extract_implemented_interfaces(
                     class_node, module_qn
                 )
@@ -364,21 +415,21 @@ class ClassIngestMixin:
                     )
 
             body_node = class_node.child_by_field_name("body")
-            method_query = lang_queries["functions"]
+            method_query = lang_queries[cs.QUERY_FUNCTIONS]
             if not body_node or not method_query:
                 continue
 
             method_cursor = QueryCursor(method_query)
             method_captures = method_cursor.captures(body_node)
-            method_nodes_list = method_captures.get("function", [])
+            method_nodes_list = method_captures.get(cs.CAPTURE_FUNCTION, [])
             for method_node in method_nodes_list:
                 if not isinstance(method_node, Node):
                     continue
 
                 method_qualified_name = None
-                if language == SupportedLanguage.JAVA:
+                if language == cs.SupportedLanguage.JAVA:
                     method_info = extract_java_method_info(method_node)
-                    method_name = method_info.get("name")
+                    method_name = method_info.get(cs.KEY_NAME)
                     parameters = method_info.get("parameters", [])
                     if method_name:
                         if parameters:
@@ -392,7 +443,7 @@ class ClassIngestMixin:
                 ingest_method(
                     method_node,
                     class_qn,
-                    "Class",
+                    cs.NodeLabel.CLASS,
                     self.ingestor,
                     self.function_registry,
                     self.simple_name_lookup,
@@ -417,27 +468,29 @@ class ClassIngestMixin:
             nested_qn = self._build_nested_qualified_name_for_class(
                 module_node, module_qn, module_name or "", lang_config
             )
-            inline_module_qn = nested_qn if nested_qn else f"{module_qn}.{module_name}"
+            inline_module_qn = nested_qn or f"{module_qn}.{module_name}"
 
             module_props: dict[str, Any] = {
-                "qualified_name": inline_module_qn,
-                "name": module_name,
-                "path": f"inline_module_{module_name}",
+                cs.KEY_QUALIFIED_NAME: inline_module_qn,
+                cs.KEY_NAME: module_name,
+                cs.KEY_PATH: f"inline_module_{module_name}",
             }
             logger.info(
-                f"  Found Inline Module: {module_name} (qn: {inline_module_qn})"
+                logs.CLASS_FOUND_INLINE_MODULE.format(
+                    name=module_name, qn=inline_module_qn
+                )
             )
-            self.ingestor.ensure_node_batch("Module", module_props)
+            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
 
     def process_all_method_overrides(self) -> None:
-        logger.info("--- Pass 4: Processing Method Override Relationships ---")
+        logger.info(logs.CLASS_PASS_4)
 
         for method_qn in self.function_registry.keys():
             if (
                 self.function_registry[method_qn] == NodeType.METHOD
-                and SEPARATOR_DOT in method_qn
+                and cs.SEPARATOR_DOT in method_qn
             ):
-                parts = method_qn.rsplit(SEPARATOR_DOT, 1)
+                parts = method_qn.rsplit(cs.SEPARATOR_DOT, 1)
                 if len(parts) == 2:
                     class_qn, method_name = parts
                     self._check_method_overrides(method_qn, method_name, class_qn)
@@ -459,12 +512,14 @@ class ClassIngestMixin:
 
                 if parent_method_qn in self.function_registry:
                     self.ingestor.ensure_relationship_batch(
-                        ("Method", "qualified_name", method_qn),
-                        "OVERRIDES",
-                        ("Method", "qualified_name", parent_method_qn),
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+                        cs.RelationshipType.OVERRIDES,
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
                     )
                     logger.debug(
-                        f"Method override: {method_qn} OVERRIDES {parent_method_qn}"
+                        logs.CLASS_METHOD_OVERRIDE.format(
+                            method_qn=method_qn, parent_method_qn=parent_method_qn
+                        )
                     )
                     return
 
@@ -476,42 +531,37 @@ class ClassIngestMixin:
 
     def _extract_template_class_type(self, template_node: Node) -> NodeType | None:
         for child in template_node.children:
-            if child.type in ["class_specifier", "struct_specifier"]:
+            if child.type in cs.CPP_CLASS_TYPES:
                 return NodeType.CLASS
-            elif child.type == "enum_specifier":
+            elif child.type == cs.TS_ENUM_SPECIFIER:
                 return NodeType.ENUM
-            elif child.type == "union_specifier":
+            elif child.type == cs.TS_UNION_SPECIFIER:
                 return NodeType.UNION
         return None
 
     def _extract_cpp_class_name(self, class_node: Node) -> str | None:
-        if class_node.type == "template_declaration":
+        if class_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
             for child in class_node.children:
-                if child.type in [
-                    "class_specifier",
-                    "struct_specifier",
-                    "union_specifier",
-                    "enum_specifier",
-                ]:
+                if child.type in cs.CPP_COMPOUND_TYPES:
                     return self._extract_cpp_class_name(child)
 
         for child in class_node.children:
-            if child.type == "type_identifier" and child.text:
+            if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
                 return safe_decode_text(child)
 
-        name_node = class_node.child_by_field_name("name")
+        name_node = class_node.child_by_field_name(cs.KEY_NAME)
         return safe_decode_text(name_node) if name_node and name_node.text else None
 
     def _extract_class_name(self, class_node: Node) -> str | None:
-        name_node = class_node.child_by_field_name("name")
+        name_node = class_node.child_by_field_name(cs.KEY_NAME)
         if name_node and name_node.text:
             return safe_decode_text(name_node)
 
         current = class_node.parent
         while current:
-            if current.type == "variable_declarator":
+            if current.type == cs.TS_VARIABLE_DECLARATOR:
                 for child in current.children:
-                    if child.type == "identifier" and child.text:
+                    if child.type == cs.TS_IDENTIFIER and child.text:
                         return safe_decode_text(child)
             current = current.parent
 
@@ -534,7 +584,7 @@ class ClassIngestMixin:
         )
 
         if path_parts:
-            return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{class_name}"
+            return f"{module_qn}.{cs.SEPARATOR_DOT.join(path_parts)}.{class_name}"
         return None
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
@@ -546,9 +596,9 @@ class ClassIngestMixin:
     ) -> None:
         parent_type = self._get_node_type_for_inheritance(parent_qn)
         self.ingestor.ensure_relationship_batch(
-            (child_node_type, "qualified_name", child_qn),
-            "INHERITS",
-            (parent_type, "qualified_name", parent_qn),
+            (child_node_type, cs.KEY_QUALIFIED_NAME, child_qn),
+            cs.RelationshipType.INHERITS,
+            (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
         )
 
     def _parse_cpp_base_classes(
@@ -559,26 +609,30 @@ class ClassIngestMixin:
         for base_child in base_clause_node.children:
             parent_name = None
 
-            if base_child.type == "type_identifier":
+            if base_child.type == cs.TS_TYPE_IDENTIFIER:
                 if base_child.text:
                     parent_name = safe_decode_text(base_child)
 
-            elif base_child.type == "qualified_identifier":
+            elif base_child.type == cs.CppNodeType.QUALIFIED_IDENTIFIER:
                 if base_child.text:
                     parent_name = safe_decode_text(base_child)
 
-            elif base_child.type == "template_type":
+            elif base_child.type == cs.TS_TEMPLATE_TYPE:
                 if base_child.text:
                     parent_name = safe_decode_text(base_child)
 
-            elif base_child.type in ["access_specifier", "virtual", ",", ":"]:
+            elif base_child.type in [cs.TS_ACCESS_SPECIFIER, cs.TS_VIRTUAL, ",", ":"]:
                 continue
 
             if parent_name:
                 base_name = self._extract_cpp_base_class_name(parent_name)
                 parent_qn = build_cpp_qualified_name(class_node, module_qn, base_name)
                 parent_classes.append(parent_qn)
-                logger.debug(f"Found C++ inheritance: {parent_name} -> {parent_qn}")
+                logger.debug(
+                    logs.CLASS_CPP_INHERITANCE.format(
+                        parent_name=parent_name, parent_qn=parent_qn
+                    )
+                )
 
         return parent_classes
 
@@ -594,30 +648,25 @@ class ClassIngestMixin:
     def _resolve_superclass_from_type_identifier(
         self, type_identifier_node: Node, module_qn: str
     ) -> str | None:
-        parent_text = type_identifier_node.text
-        if parent_text:
-            parent_name = safe_decode_text(type_identifier_node)
-            if parent_name:
-                return (
-                    self._resolve_class_name(parent_name, module_qn)
-                    or f"{module_qn}.{parent_name}"
-                )
+        if type_identifier_node.text:
+            if parent_name := safe_decode_text(type_identifier_node):
+                return self._resolve_to_qn(parent_name, module_qn)
         return None
 
     def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
         parent_classes: list[str] = []
 
-        if class_node.type in ["class_specifier", "struct_specifier"]:
+        if class_node.type in cs.CPP_CLASS_TYPES:
             for child in class_node.children:
-                if child.type == "base_class_clause":
+                if child.type == cs.TS_BASE_CLASS_CLAUSE:
                     parent_classes.extend(
                         self._parse_cpp_base_classes(child, class_node, module_qn)
                     )
             return parent_classes
 
-        if class_node.type == "class_declaration":
+        if class_node.type == cs.TS_CLASS_DECLARATION:
             if superclass_node := class_node.child_by_field_name("superclass"):
-                if superclass_node.type == "type_identifier":
+                if superclass_node.type == cs.TS_TYPE_IDENTIFIER:
                     if (
                         resolved_superclass
                         := self._resolve_superclass_from_type_identifier(
@@ -627,7 +676,7 @@ class ClassIngestMixin:
                         parent_classes.append(resolved_superclass)
                 else:
                     for child in superclass_node.children:
-                        if child.type == "type_identifier":
+                        if child.type == cs.TS_TYPE_IDENTIFIER:
                             if resolved_superclass := (
                                 self._resolve_superclass_from_type_identifier(
                                     child, module_qn
@@ -638,7 +687,7 @@ class ClassIngestMixin:
 
         if superclasses_node := class_node.child_by_field_name("superclasses"):
             for child in superclasses_node.children:
-                if child.type == "identifier":
+                if child.type == cs.TS_IDENTIFIER:
                     parent_text = child.text
                     if parent_text:
                         parent_name = safe_decode_text(child)
@@ -649,26 +698,19 @@ class ClassIngestMixin:
                             if parent_name in import_map:
                                 parent_classes.append(import_map[parent_name])
                             else:
-                                resolved_python_parent: str | None = (
-                                    self._resolve_class_name(parent_name, module_qn)
+                                parent_classes.append(
+                                    self._resolve_to_qn(parent_name, module_qn)
                                 )
-                                if resolved_python_parent is not None:
-                                    parent_classes.append(resolved_python_parent)
-                                else:
-                                    parent_classes.append(f"{module_qn}.{parent_name}")
                         else:
                             parent_classes.append(f"{module_qn}.{parent_name}")
 
-        if class_heritage_node := next(
-            (child for child in class_node.children if child.type == "class_heritage"),
-            None,
-        ):
+        if class_heritage_node := _find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
             for child in class_heritage_node.children:
-                if child.type == "extends_clause":
+                if child.type == cs.TS_EXTENDS_CLAUSE:
                     for grandchild in child.children:
-                        if grandchild.type in ["identifier", "member_expression"]:
+                        if grandchild.type in cs.JS_TS_PARENT_REF_TYPES:
                             if parent_text := grandchild.text:
-                                parent_name = parent_text.decode("utf8")
+                                parent_name = parent_text.decode(cs.ENCODING_UTF8)
                                 parent_classes.append(
                                     self._resolve_js_ts_parent_class(
                                         parent_name, module_qn
@@ -676,12 +718,12 @@ class ClassIngestMixin:
                                 )
                             break
                     break
-                elif child.type in ["identifier", "member_expression"]:
+                elif child.type in cs.JS_TS_PARENT_REF_TYPES:
                     child_index = class_heritage_node.children.index(child)
                     if (
                         child_index > 0
                         and class_heritage_node.children[child_index - 1].type
-                        == "extends"
+                        == cs.TS_EXTENDS
                     ):
                         parent_text = child.text
                         if parent_text:
@@ -691,29 +733,24 @@ class ClassIngestMixin:
                                         parent_name, module_qn
                                     )
                                 )
-                elif child.type == "call_expression":
+                elif child.type == cs.TS_CALL_EXPRESSION:
                     child_index = class_heritage_node.children.index(child)
                     if (
                         child_index > 0
                         and class_heritage_node.children[child_index - 1].type
-                        == "extends"
+                        == cs.TS_EXTENDS
                     ):
                         parent_classes.extend(
                             self._extract_mixin_parent_classes(child, module_qn)
                         )
 
-        if class_node.type == "interface_declaration":
-            if extends_type_clause_node := next(
-                (
-                    child
-                    for child in class_node.children
-                    if child.type == "extends_type_clause"
-                ),
-                None,
+        if class_node.type == cs.TS_INTERFACE_DECLARATION:
+            if extends_type_clause_node := _find_child_by_type(
+                class_node, cs.TS_EXTENDS_TYPE_CLAUSE
             ):
                 for child in extends_type_clause_node.children:
                     if parent_text := child.text:
-                        if child.type == "type_identifier":
+                        if child.type == cs.TS_TYPE_IDENTIFIER:
                             if parent_name := safe_decode_text(child):
                                 parent_classes.append(
                                     self._resolve_js_ts_parent_class(
@@ -729,14 +766,14 @@ class ClassIngestMixin:
         parent_classes: list[str] = []
 
         for child in call_expr_node.children:
-            if child.type == "arguments":
+            if child.type == cs.TS_ARGUMENTS:
                 for arg_child in child.children:
-                    if arg_child.type == "identifier" and arg_child.text:
+                    if arg_child.type == cs.TS_IDENTIFIER and arg_child.text:
                         if parent_name := safe_decode_text(arg_child):
                             parent_classes.append(
                                 self._resolve_js_ts_parent_class(parent_name, module_qn)
                             )
-                    elif arg_child.type == "call_expression":
+                    elif arg_child.type == cs.TS_CALL_EXPRESSION:
                         parent_classes.extend(
                             self._extract_mixin_parent_classes(arg_child, module_qn)
                         )
@@ -750,8 +787,7 @@ class ClassIngestMixin:
         import_map = self.import_processor.import_mapping[module_qn]
         if parent_name in import_map:
             return import_map[parent_name]
-        parent_qn = self._resolve_class_name(parent_name, module_qn)
-        return parent_qn if parent_qn is not None else f"{module_qn}.{parent_name}"
+        return self._resolve_to_qn(parent_name, module_qn)
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         return resolve_class_name(
@@ -775,25 +811,19 @@ class ClassIngestMixin:
         self, interfaces_node: Node, interface_list: list[str], module_qn: str
     ) -> None:
         for child in interfaces_node.children:
-            if child.type == "type_list":
+            if child.type == cs.TS_TYPE_LIST:
                 for type_child in child.children:
-                    if type_child.type == "type_identifier":
-                        interface_name = type_child.text
-                        if interface_name:
-                            if interface_name_str := safe_decode_text(type_child):
-                                resolved_interface = (
-                                    self._resolve_class_name(
-                                        interface_name_str, module_qn
-                                    )
-                                    or f"{module_qn}.{interface_name_str}"
-                                )
-                                interface_list.append(resolved_interface)
+                    if type_child.type == cs.TS_TYPE_IDENTIFIER and type_child.text:
+                        if interface_name := safe_decode_text(type_child):
+                            interface_list.append(
+                                self._resolve_to_qn(interface_name, module_qn)
+                            )
 
     def _create_implements_relationship(
         self, class_type: str, class_qn: str, interface_qn: str
     ) -> None:
         self.ingestor.ensure_relationship_batch(
-            (class_type, "qualified_name", class_qn),
-            "IMPLEMENTS",
-            ("Interface", "qualified_name", interface_qn),
+            (class_type, cs.KEY_QUALIFIED_NAME, class_qn),
+            cs.RelationshipType.IMPLEMENTS,
+            (cs.NodeLabel.INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
         )
