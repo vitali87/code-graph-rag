@@ -4,6 +4,7 @@ from loguru import logger
 from pydantic_ai import Tool
 
 from ..constants import ENCODING_UTF8
+from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
 
@@ -17,18 +18,11 @@ class CodeRetriever:
         logger.info(f"CodeRetriever initialized with root: {self.project_root}")
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
-        """Finds a code snippet by querying the graph for its location."""
         logger.info(f"[CodeRetriever] Searching for: {qualified_name}")
 
-        query = """
-            MATCH (n) WHERE n.qualified_name = $qn
-            OPTIONAL MATCH (m:Module)-[*]-(n)
-            RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path, n.docstring AS docstring
-            LIMIT 1
-        """
         params = {"qn": qualified_name}
         try:
-            results = self.ingestor.fetch_all(query, params)
+            results = self.ingestor.fetch_all(CYPHER_FIND_BY_QUALIFIED_NAME, params)
 
             if not results:
                 return CodeSnippet(

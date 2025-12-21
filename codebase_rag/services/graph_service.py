@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
+from codebase_rag.types_defs import ResultValue
+
 from ..constants import (
     BATCH_SIZE_ERROR,
     CONN_ERROR,
@@ -38,6 +40,14 @@ from ..constants import (
     LOG_MG_WRITE_QUERY,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
+)
+from ..cypher_queries import (
+    CYPHER_DELETE_ALL,
+    CYPHER_EXPORT_NODES,
+    CYPHER_EXPORT_RELATIONSHIPS,
+    build_constraint_query,
+    build_merge_node_query,
+    build_merge_relationship_query,
 )
 from ..types_defs import (
     BatchParams,
@@ -90,7 +100,9 @@ class MemgraphIngestor:
         if not cursor.description:
             return []
         column_names = [desc.name for desc in cursor.description]
-        return [dict(zip(column_names, row)) for row in cursor.fetchall()]
+        return [
+            dict[str, ResultValue](zip(column_names, row)) for row in cursor.fetchall()
+        ]
 
     def _execute_query(
         self, query: str, params: dict[str, PropertyValue] | None = None
@@ -162,16 +174,14 @@ class MemgraphIngestor:
 
     def clean_database(self) -> None:
         logger.info(LOG_MG_CLEANING_DB)
-        self._execute_query("MATCH (n) DETACH DELETE n;")
+        self._execute_query(CYPHER_DELETE_ALL)
         logger.info(LOG_MG_DB_CLEANED)
 
     def ensure_constraints(self) -> None:
         logger.info(LOG_MG_ENSURING_CONSTRAINTS)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
-                self._execute_query(
-                    f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
-                )
+                self._execute_query(build_constraint_query(label, prop))
             except Exception:
                 pass
         logger.info(LOG_MG_CONSTRAINTS_DONE)
@@ -245,7 +255,7 @@ class MemgraphIngestor:
 
             flushed_total += len(batch_rows)
 
-            query = f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
+            query = build_merge_node_query(label, id_key)
             self._execute_batch(query, batch_rows)
         logger.info(
             LOG_MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
@@ -272,17 +282,10 @@ class MemgraphIngestor:
 
         for pattern, params_list in rels_by_pattern.items():
             from_label, from_key, rel_type, to_label, to_key = pattern
-            query = (
-                f"MATCH (a:{from_label} {{{from_key}: row.from_val}}), "
-                f"(b:{to_label} {{{to_key}: row.to_val}})\n"
-                f"MERGE (a)-[r:{rel_type}]->(b)\n"
-                f"RETURN count(r) as created"
+            has_props = any(p["props"] for p in params_list)
+            query = build_merge_relationship_query(
+                from_label, from_key, rel_type, to_label, to_key, has_props
             )
-            if any(p["props"] for p in params_list):
-                query = query.replace(
-                    "RETURN count(r) as created",
-                    "SET r += row.props\nRETURN count(r) as created",
-                )
 
             total_attempted += len(params_list)
             results = self._execute_batch_with_return(query, params_list)
@@ -338,17 +341,8 @@ class MemgraphIngestor:
     def export_graph_to_dict(self) -> GraphData:
         logger.info(LOG_MG_EXPORTING)
 
-        nodes_query = """
-        MATCH (n)
-        RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
-        """
-        nodes_data = self.fetch_all(nodes_query)
-
-        relationships_query = """
-        MATCH (a)-[r]->(b)
-        RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
-        """
-        relationships_data = self.fetch_all(relationships_query)
+        nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
+        relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
 
         metadata = GraphMetadata(
             total_nodes=len(nodes_data),

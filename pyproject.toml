@@ -38,6 +38,7 @@ packages = ["codebase_rag", "codec"]
 test = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
+    "testcontainers>=4.9.0",
 ]
 dev = [
     "ruff>=0.5.5",
@@ -79,6 +80,9 @@ quote-style = "double"
 [tool.ty.environment]
 python-version = "3.12"
 
+[tool.ty.src]
+exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py"]
+
 [tool.pytest.ini_options]
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
@@ -87,6 +91,8 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = [
     "slow: marks tests as slow (may download models or require external services)",
+    "integration: marks tests as integration tests requiring Docker",
+    "e2e: marks tests as end-to-end tests",
 ]
 
 [dependency-groups]

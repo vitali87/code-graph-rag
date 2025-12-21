@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import os
 import shutil
 import sys
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,6 +15,9 @@ from loguru import logger
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
+
+if TYPE_CHECKING:
+    import mgclient  # ty: ignore[unresolved-import]
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 logger.remove()
@@ -105,3 +111,65 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     mock.ast_cache = {}
 
     return mock
+
+
+@pytest.fixture(scope="session")
+def memgraph_container() -> Generator[dict[str, str | int], None, None]:
+    pytest.importorskip("testcontainers")
+    from testcontainers.core.container import DockerContainer
+    from testcontainers.core.waiting_utils import wait_for_logs
+
+    container = DockerContainer("memgraph/memgraph:latest")
+    container.with_exposed_ports(7687)
+
+    container.start()
+    wait_for_logs(container, "You are running Memgraph", timeout=60)
+
+    host = container.get_container_host_ip()
+    port = int(container.get_exposed_port(7687))
+
+    yield {"host": host, "port": port}
+
+    container.stop()
+
+
+@pytest.fixture(scope="function")
+def memgraph_connection(
+    memgraph_container: dict[str, str | int],
+) -> Generator[mgclient.Connection, None, None]:
+    import mgclient  # ty: ignore[unresolved-import]
+
+    conn = mgclient.connect(
+        host=str(memgraph_container["host"]),
+        port=int(memgraph_container["port"]),
+    )
+    conn.autocommit = True
+
+    cursor = conn.cursor()
+    cursor.execute("MATCH (n) DETACH DELETE n")
+    cursor.close()
+
+    yield conn
+
+    cursor = conn.cursor()
+    cursor.execute("MATCH (n) DETACH DELETE n")
+    cursor.close()
+    conn.close()
+
+
+@pytest.fixture(scope="function")
+def memgraph_ingestor(
+    memgraph_container: dict[str, str | int],
+) -> Generator[MemgraphIngestor, None, None]:
+    ingestor = MemgraphIngestor(
+        host=str(memgraph_container["host"]),
+        port=int(memgraph_container["port"]),
+    )
+    ingestor.__enter__()
+
+    ingestor._execute_query("MATCH (n) DETACH DELETE n")
+
+    yield ingestor
+
+    ingestor._execute_query("MATCH (n) DETACH DELETE n")
+    ingestor.__exit__(None, None, None)

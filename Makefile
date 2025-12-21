@@ -1,4 +1,4 @@
-.PHONY: help all install dev test clean python
+.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -28,10 +28,19 @@ dev: ## Setup development environment (install deps + pre-commit hooks)
 	uv run pre-commit install --hook-type commit-msg
 	@echo "✅ Development environment ready!"
 
-test: ## Run tests
-	uv run pytest
+test: ## Run unit tests only (fast, no Docker)
+	uv run pytest -m "not integration"
 
-test-parallel: ## Run tests in parallel
+test-parallel: ## Run unit tests in parallel (fast, no Docker)
+	uv run pytest -n auto -m "not integration"
+
+test-integration: ## Run integration tests (requires Docker)
+	uv run pytest -m "integration" -v
+
+test-all: ## Run all tests including integration and e2e (requires Docker)
+	uv run pytest -v
+
+test-parallel-all: ## Run all tests in parallel including integration and e2e (requires Docker)
 	uv run pytest -n auto
 
 clean: ## Clean up build artifacts and cache

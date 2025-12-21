@@ -1,5 +1,16 @@
 from typing import TYPE_CHECKING
 
+from .cypher_queries import (
+    CYPHER_EXAMPLE_CONTENT_BY_PATH,
+    CYPHER_EXAMPLE_DECORATED_FUNCTIONS,
+    CYPHER_EXAMPLE_FILES_IN_FOLDER,
+    CYPHER_EXAMPLE_FIND_FILE,
+    CYPHER_EXAMPLE_KEYWORD_SEARCH,
+    CYPHER_EXAMPLE_LIMIT_ONE,
+    CYPHER_EXAMPLE_PYTHON_FILES,
+    CYPHER_EXAMPLE_README,
+    CYPHER_EXAMPLE_TASKS,
+)
 from .schema_builder import GRAPH_SCHEMA_DEFINITION
 from .types_defs import ToolNames
 
@@ -128,27 +139,20 @@ Your goal is to return the `name`, `path`, and `qualified_name` of the found nod
 **Pattern: Finding Decorated Functions/Methods (e.g., Workflows, Tasks)**
 cypher// "Find all prefect flows" or "what are the workflows?" or "show me the tasks"
 // Use the 'IN' operator to check the 'decorators' list property.
-MATCH (n:Function|Method)
-WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+{CYPHER_EXAMPLE_DECORATED_FUNCTIONS}
 
 **Pattern: Finding Content by Path (Robustly)**
 cypher// "what is in the 'workflows/src' directory?" or "list files in workflows"
 // Use `STARTS WITH` for path matching.
-MATCH (n)
-WHERE n.path IS NOT NULL AND n.path STARTS WITH 'workflows'
-RETURN n.name AS name, n.path AS path, labels(n) AS type
+{CYPHER_EXAMPLE_CONTENT_BY_PATH}
 
 **Pattern: Keyword & Concept Search (Fallback for general terms)**
 cypher// "find things related to 'database'"
-MATCH (n)
-WHERE toLower(n.name) CONTAINS 'database' OR (n.qualified_name IS NOT NULL AND toLower(n.qualified_name) CONTAINS 'database')
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+{CYPHER_EXAMPLE_KEYWORD_SEARCH}
 
 **Pattern: Finding a Specific File**
 cypher// "Find the main README.md"
-MATCH (f:File) WHERE toLower(f.name) = 'readme.md' AND f.path = 'README.md'
-RETURN f.path as path, f.name as name, labels(f) as type
+{CYPHER_EXAMPLE_FIND_FILE}
 
 **4. Output Format**
 Provide only the Cypher query.
@@ -174,31 +178,31 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 *   **Natural Language:** "Find the main README file"
 *   **Cypher Query:**
     ```cypher
-    MATCH (f:File) WHERE toLower(f.name) CONTAINS 'readme' RETURN f.path AS path, f.name AS name, labels(f) AS type
+    {CYPHER_EXAMPLE_README}
     ```
 
 *   **Natural Language:** "Find all python files"
 *   **Cypher Query (Note the '.' in extension):**
     ```cypher
-    MATCH (f:File) WHERE f.extension = '.py' RETURN f.path AS path, f.name AS name, labels(f) AS type
+    {CYPHER_EXAMPLE_PYTHON_FILES}
     ```
 
 *   **Natural Language:** "show me the tasks"
 *   **Cypher Query:**
     ```cypher
-    MATCH (n:Function|Method) WHERE 'task' IN n.decorators RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type
+    {CYPHER_EXAMPLE_TASKS}
     ```
 
 *   **Natural Language:** "list files in the services folder"
 *   **Cypher Query:**
     ```cypher
-    MATCH (f:File) WHERE f.path STARTS WITH 'services' RETURN f.path AS path, f.name AS name, labels(f) AS type
+    {CYPHER_EXAMPLE_FILES_IN_FOLDER}
     ```
 
 *   **Natural Language:** "Find just one file to test"
 *   **Cypher Query:**
     ```cypher
-    MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1
+    {CYPHER_EXAMPLE_LIMIT_ONE}
     ```
 """
 

@@ -3,6 +3,10 @@ from typing import Any
 from loguru import logger
 from pydantic_ai import Tool
 
+from ..cypher_queries import (
+    CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+    build_nodes_by_ids_query,
+)
 from ..utils.dependencies import has_semantic_dependencies
 
 
@@ -50,15 +54,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT, batch_size=100
         ) as ingestor:
-            placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
-            cypher_query = f"""
-            MATCH (n)
-            WHERE id(n) IN [{placeholders}]
-            RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
-                   labels(n) AS type, n.name AS name
-            ORDER BY n.qualified_name
-            """
-
+            cypher_query = build_nodes_by_ids_query(node_ids)
             params = {str(i): node_id for i, node_id in enumerate(node_ids)}
             results = ingestor._execute_query(cypher_query, params)
 
@@ -107,14 +103,9 @@ def get_function_source_code(node_id: int) -> str | None:
         with MemgraphIngestor(
             host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT, batch_size=100
         ) as ingestor:
-            query = """
-            MATCH (m:Module)-[:DEFINES]->(n)
-            WHERE id(n) = $node_id
-            RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-                   n.end_line AS end_line, m.path AS path
-            """
-
-            results = ingestor._execute_query(query, {"node_id": node_id})
+            results = ingestor._execute_query(
+                CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
+            )
 
             if not results:
                 logger.warning(f"No node found with ID: {node_id}")
