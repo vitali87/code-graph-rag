@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import pathlib
@@ -13,13 +15,12 @@ from rich.table import Table
 from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 
 
-@click.group()
+@click.group(help="CLI for managing language grammars")
 def cli() -> None:
-    """CLI for managing language grammars"""
     pass
 
 
-@cli.command()
+@cli.command(help="Add a new language grammar to the project.")
 @click.argument("language_name", required=False)
 @click.option(
     "--grammar-url",
@@ -28,8 +29,6 @@ def cli() -> None:
 def add_grammar(
     language_name: str | None = None, grammar_url: str | None = None
 ) -> None:
-    """Add a new language grammar to the project."""
-
     if not language_name and not grammar_url:
         language_name = click.prompt("Language name (e.g., 'c-sharp', 'python')")
 
@@ -250,7 +249,6 @@ def add_grammar(
             def extract_semantic_categories(
                 node_types_json: list[dict],
             ) -> dict[str, list[str]]:
-                """Extract semantic categories from tree-sitter's official hierarchy."""
                 categories: dict[str, list[str]] = {}
 
                 for node in node_types_json:
@@ -446,9 +444,8 @@ def add_grammar(
         click.echo(click.style(config_entry, fg="green"))
 
 
-@cli.command()
+@cli.command(help="List all currently configured languages.")
 def list_languages() -> None:
-    """List all currently configured languages."""
     console = Console()
 
     table = Table(
@@ -477,13 +474,12 @@ def list_languages() -> None:
     console.print(table)
 
 
-@cli.command()
+@cli.command(help="Remove a language from the project.")
 @click.argument("language_name")
 @click.option(
     "--keep-submodule", is_flag=True, help="Keep the git submodule (default: remove it)"
 )
 def remove_language(language_name: str, keep_submodule: bool = False) -> None:
-    """Remove a language from the project."""
     if language_name not in LANGUAGE_SPECS:
         available_langs = ", ".join(LANGUAGE_SPECS.keys())
         click.echo(f"❌ Language '{language_name}' not found.")
@@ -542,9 +538,8 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     click.echo(f"🎉 Language '{language_name}' has been removed successfully!")
 
 
-@cli.command()
+@cli.command(help="Clean up orphaned git modules that weren't properly removed.")
 def cleanup_orphaned_modules() -> None:
-    """Clean up orphaned git modules that weren't properly removed."""
     modules_dir = ".git/modules/grammars"
     if not os.path.exists(modules_dir):
         click.echo("📂 No grammars modules directory found.")

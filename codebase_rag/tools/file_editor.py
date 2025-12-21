@@ -101,9 +101,7 @@ class FileEditor:
         extension = self._get_real_extension(file_path_obj)
 
         lang_name = LANGUAGE_EXTENSIONS.get(extension)
-        if lang_name:
-            return self.parsers.get(lang_name)
-        return None
+        return self.parsers.get(lang_name) if lang_name else None
 
     def get_ast(self, file_path: str) -> Node | None:
         parser = self.get_parser(file_path)

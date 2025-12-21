@@ -6,7 +6,6 @@ import time
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from pathlib import Path
-from typing import Any, cast
 
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
@@ -88,11 +87,11 @@ def _requires_approval(command: str) -> bool:
     return True
 
 
-def timing_decorator(
-    func: Callable[..., Awaitable[Any]],
-) -> Callable[..., Awaitable[Any]]:
+def timing_decorator[**P, T](
+    func: Callable[P, Awaitable[T]],
+) -> Callable[P, Awaitable[T]]:
     @wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         start_time = time.perf_counter()
         result = await func(*args, **kwargs)
         end_time = time.perf_counter()
@@ -197,7 +196,7 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         if _requires_approval(command) and not ctx.tool_call_approved:
             raise ApprovalRequired(metadata={"command": command})
 
-        return cast(ShellCommandResult, await shell_commander.execute(command))
+        return await shell_commander.execute(command)
 
     return Tool(
         function=run_shell_command,

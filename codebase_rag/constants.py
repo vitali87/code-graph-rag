@@ -971,6 +971,13 @@ DOC_PROMPT_PREFIX = (
     "Based on the document provided, please answer the following question: {question}"
 )
 
+# (H) Code retrieval constants
+ERR_CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
+ERR_CODE_MISSING_LOCATION = "Graph entry is missing location data."
+LOG_CODE_RETRIEVER_SEARCH = "[CodeRetriever] Searching for: {name}"
+LOG_CODE_RETRIEVER_ERROR = "[CodeRetriever] Error: {error}"
+LOG_CODE_TOOL_RETRIEVE = "[Tool:GetCode] Retrieving code for: {name}"
+
 # (H) File writer constants
 LOG_FILE_WRITER_INIT = "FileWriter initialized with root: {root}"
 LOG_FILE_WRITER_CREATE = "[FileWriter] Creating file: {path}"
