@@ -53,11 +53,7 @@ def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | 
 
 def _cache_stdlib_result(language: str, full_qualified_name: str, result: str) -> None:
     cache_key = f"{language}:{full_qualified_name}"
-
-    if cache_key not in _STDLIB_CACHE:
-        _STDLIB_CACHE[cache_key] = {}
-
-    _STDLIB_CACHE[cache_key][full_qualified_name] = result
+    _STDLIB_CACHE.setdefault(cache_key, {})[full_qualified_name] = result
     _CACHE_TIMESTAMPS[cache_key] = time.time()
 
 
@@ -99,7 +95,6 @@ def flush_stdlib_cache() -> None:
 
 
 def clear_stdlib_cache() -> None:
-    global _STDLIB_CACHE, _CACHE_TIMESTAMPS
     _STDLIB_CACHE.clear()
     _CACHE_TIMESTAMPS.clear()
     try:
@@ -246,10 +241,10 @@ class StdlibExtractor:
 
                     if subprocess_result.returncode == 0:
                         data = json.loads(subprocess_result.stdout.strip())
-                        if data["hasEntity"] and data["entityType"] in [
+                        if data["hasEntity"] and data["entityType"] in {
                             "function",
                             "object",
-                        ]:
+                        }:
                             module_path = cs.SEPARATOR_DOT.join(parts[:-1])
                             _cache_stdlib_result(
                                 "javascript", full_qualified_name, module_path
@@ -411,8 +406,7 @@ func main() {
             if (
                 entity_name[0].isupper()
                 or entity_name.isupper()
-                or "_" not in entity_name
-                and entity_name.islower()
+                or ("_" not in entity_name and entity_name.islower())
             ):
                 return "::".join(parts[:-1])
 

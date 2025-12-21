@@ -101,7 +101,7 @@ class ImportProcessor:
                 f"Parsed {len(self.import_mapping[module_qn])} imports in {module_qn}"
             )
 
-            if self.ingestor and module_qn in self.import_mapping:
+            if self.ingestor:
                 for local_name, full_name in self.import_mapping[module_qn].items():
                     module_path = self.stdlib_extractor.extract_module_path(
                         full_name, language
@@ -445,21 +445,11 @@ class ImportProcessor:
                     parts = imported_path.split(cs.SEPARATOR_DOT)
                     if parts:
                         imported_name = parts[-1]
-                        if is_static:
-                            self.import_mapping[module_qn][imported_name] = (
-                                imported_path
-                            )
-                            logger.debug(
-                                f"Java static import: {imported_name} -> "
-                                f"{imported_path}"
-                            )
-                        else:
-                            self.import_mapping[module_qn][imported_name] = (
-                                imported_path
-                            )
-                            logger.debug(
-                                f"Java import: {imported_name} -> {imported_path}"
-                            )
+                        self.import_mapping[module_qn][imported_name] = imported_path
+                        import_type = "static import" if is_static else "import"
+                        logger.debug(
+                            f"Java {import_type}: {imported_name} -> {imported_path}"
+                        )
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get("import", []):
@@ -498,12 +488,7 @@ class ImportProcessor:
                 import_path = safe_decode_with_fallback(child).strip('"')
 
         if import_path:
-            if alias_name:
-                package_name = alias_name
-            else:
-                parts = import_path.split("/")
-                package_name = parts[-1] if parts else import_path
-
+            package_name = alias_name or import_path.split("/")[-1]
             self.import_mapping[module_qn][package_name] = import_path
             logger.debug(f"Go import: {package_name} -> {import_path}")
 
@@ -685,11 +670,7 @@ class ImportProcessor:
 
     def _lua_extract_require_arg(self, call_node: Node) -> str | None:
         args = call_node.child_by_field_name("arguments")
-        candidates = []
-        if args:
-            candidates.extend(args.children)
-        else:
-            candidates.extend(call_node.children)
+        candidates = args.children if args else call_node.children
         for node in candidates:
             if node.type in ("string", "string_literal"):
                 decoded = safe_decode_text(node)
@@ -745,8 +726,6 @@ class ImportProcessor:
         return dotted
 
     def _lua_is_stdlib_call(self, call_node: Node) -> bool:
-        from .lua_utils import safe_decode_text
-
         if not call_node.children:
             return False
 
@@ -754,24 +733,11 @@ class ImportProcessor:
         if first_child.type == "dot_index_expression":
             if first_child.children and first_child.children[0].type == "identifier":
                 module_name = safe_decode_text(first_child.children[0])
-                return module_name in {
-                    "string",
-                    "math",
-                    "table",
-                    "os",
-                    "io",
-                    "debug",
-                    "package",
-                    "coroutine",
-                    "utf8",
-                    "bit32",
-                }
+                return module_name in cs.LUA_STDLIB_MODULES
 
         return False
 
     def _lua_extract_stdlib_module(self, call_node: Node) -> str | None:
-        from .lua_utils import safe_decode_text
-
         if not call_node.children:
             return None
 
