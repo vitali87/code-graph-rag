@@ -1,4 +1,8 @@
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .types_defs import PyInstallerPackage
 
 
 class ModelRole(StrEnum):
@@ -559,3 +563,44 @@ REALTIME_LOGGER_FORMAT = (
 )
 
 WATCHER_SLEEP_INTERVAL = 1
+
+
+class Architecture(StrEnum):
+    X86_64 = "x86_64"
+    AARCH64 = "aarch64"
+    ARM64 = "arm64"
+    AMD64 = "amd64"
+
+
+BINARY_NAME_TEMPLATE = "graph-code-{system}-{machine}"
+BINARY_FILE_PERMISSION = 0o755
+DIST_DIR = "dist"
+BYTES_PER_MB_FLOAT = 1024 * 1024
+
+LOG_BUILD_BINARY = "Building binary: {name}"
+LOG_BUILD_PROGRESS = "This may take a few minutes..."
+LOG_BUILD_SUCCESS = "Binary built successfully!"
+LOG_BUILD_READY = "Binary is ready for distribution!"
+LOG_BINARY_INFO = "Binary: {path}"
+LOG_BINARY_SIZE = "Size: {size:.1f} MB"
+LOG_BUILD_FAILED = "Build failed: {error}"
+LOG_BUILD_STDOUT = "STDOUT: {stdout}"
+LOG_BUILD_STDERR = "STDERR: {stderr}"
+
+PYPROJECT_PATH = "pyproject.toml"
+TREESITTER_EXTRA_KEY = "treesitter-full"
+TREESITTER_PKG_PREFIX = "tree-sitter-"
+
+PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
+    {
+        "name": "pydantic_ai",
+        "collect_all": True,
+        "collect_data": True,
+        "hidden_import": "pydantic_ai_slim",
+    },
+    {"name": "rich", "collect_all": True},
+    {"name": "typer", "collect_all": True},
+    {"name": "loguru", "collect_all": True},
+    {"name": "toml", "collect_all": True},
+    {"name": "protobuf", "collect_all": True},
+]

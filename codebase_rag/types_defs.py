@@ -133,6 +133,13 @@ class ShellCommandArgs(TypedDict, total=False):
     command: str
 
 
+class PyInstallerPackage(TypedDict, total=False):
+    name: str
+    collect_all: bool
+    collect_data: bool
+    hidden_import: str
+
+
 @dataclass
 class RawToolArgs:
     file_path: str = ""
