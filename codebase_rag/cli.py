@@ -32,13 +32,13 @@ from .constants import (
 )
 from .graph_updater import GraphUpdater
 from .main import (
-    _connect_memgraph,
-    _export_graph_to_file,
-    _update_model_settings,
     app_context,
+    connect_memgraph,
+    export_graph_to_file,
     main_async,
     main_optimize_async,
     style,
+    update_model_settings,
 )
 from .parser_loader import load_parsers
 from .services.protobuf_service import ProtobufFileIngestor
@@ -106,7 +106,7 @@ def start(
         app_context.console.print(style(CLI_ERR_OUTPUT_REQUIRES_UPDATE, Color.RED))
         raise typer.Exit(1)
 
-    _update_model_settings(orchestrator, cypher)
+    update_model_settings(orchestrator, cypher)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -116,7 +116,7 @@ def start(
             style(CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), Color.GREEN)
         )
 
-        with _connect_memgraph(effective_batch_size) as ingestor:
+        with connect_memgraph(effective_batch_size) as ingestor:
             if clean:
                 app_context.console.print(style(CLI_MSG_CLEANING_DB, Color.YELLOW))
                 ingestor.clean_database()
@@ -131,7 +131,7 @@ def start(
                 app_context.console.print(
                     style(CLI_MSG_EXPORTING_TO.format(path=output), Color.CYAN)
                 )
-                if not _export_graph_to_file(ingestor, output):
+                if not export_graph_to_file(ingestor, output):
                     raise typer.Exit(1)
 
         app_context.console.print(style(CLI_MSG_GRAPH_UPDATED, Color.GREEN))
@@ -212,9 +212,9 @@ def export(
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     try:
-        with _connect_memgraph(effective_batch_size) as ingestor:
+        with connect_memgraph(effective_batch_size) as ingestor:
             app_context.console.print(style(CLI_MSG_EXPORTING_DATA, Color.CYAN))
-            if not _export_graph_to_file(ingestor, output):
+            if not export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
 
     except Exception as e:

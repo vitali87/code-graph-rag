@@ -669,7 +669,7 @@ def _update_single_model_setting(role: ModelRole, model_string: str) -> None:
     set_method(provider, model, **kwargs)
 
 
-def _update_model_settings(
+def update_model_settings(
     orchestrator: str | None,
     cypher: str | None,
 ) -> None:
@@ -689,7 +689,7 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
     return graph_data
 
 
-def _connect_memgraph(batch_size: int) -> MemgraphIngestor:
+def connect_memgraph(batch_size: int) -> MemgraphIngestor:
     return MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
@@ -697,7 +697,7 @@ def _connect_memgraph(batch_size: int) -> MemgraphIngestor:
     )
 
 
-def _export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
+def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
     output_path = Path(output)
 
     try:
@@ -798,7 +798,7 @@ async def main_async(repo_path: str, batch_size: int) -> None:
     table = _create_configuration_table(repo_path)
     app_context.console.print(table)
 
-    with _connect_memgraph(batch_size) as ingestor:
+    with connect_memgraph(batch_size) as ingestor:
         app_context.console.print(style(MSG_CONNECTED_MEMGRAPH, Color.GREEN))
         app_context.console.print(
             Panel(
@@ -821,7 +821,7 @@ async def main_optimize_async(
 ) -> None:
     project_root = _setup_common_initialization(target_repo_path)
 
-    _update_model_settings(orchestrator, cypher)
+    update_model_settings(orchestrator, cypher)
 
     app_context.console.print(
         UI_OPTIMIZATION_INIT.format(language=language, path=project_root)
@@ -834,7 +834,7 @@ async def main_optimize_async(
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
-    with _connect_memgraph(effective_batch_size) as ingestor:
+    with connect_memgraph(effective_batch_size) as ingestor:
         app_context.console.print(style(MSG_CONNECTED_MEMGRAPH, Color.GREEN))
 
         rag_agent, tool_names = _initialize_services_and_agent(
