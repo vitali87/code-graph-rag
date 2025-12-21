@@ -8,22 +8,13 @@ from loguru import logger
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from codebase_rag import logs
 from codebase_rag.config import settings
 from codebase_rag.constants import (
     CYPHER_DELETE_CALLS,
     CYPHER_DELETE_MODULE,
     IGNORE_PATTERNS,
     IGNORE_SUFFIXES,
-    LOG_CHANGE_DETECTED,
-    LOG_DELETION_QUERY,
-    LOG_GRAPH_UPDATED,
-    LOG_INITIAL_SCAN,
-    LOG_INITIAL_SCAN_DONE,
-    LOG_LOGGER_CONFIGURED,
-    LOG_RECALC_CALLS,
-    LOG_WATCHER_ACTIVE,
-    LOG_WATCHER_SKIP_NO_QUERY,
-    LOG_WATCHING,
     REALTIME_LOGGER_FORMAT,
     WATCHER_SLEEP_INTERVAL,
     EventType,
@@ -41,7 +32,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.updater = updater
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
-        logger.info(LOG_WATCHER_ACTIVE)
+        logger.info(logs.WATCHER_ACTIVE)
 
     def _is_relevant(self, path_str: str) -> bool:
         path = Path(path_str)
@@ -72,19 +63,19 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         ingestor = self.updater.ingestor
         if not isinstance(ingestor, QueryProtocol):
-            logger.warning(LOG_WATCHER_SKIP_NO_QUERY)
+            logger.warning(logs.WATCHER_SKIP_NO_QUERY)
             return
 
         path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
         logger.warning(
-            LOG_CHANGE_DETECTED.format(event_type=event.event_type, path=path)
+            logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
 
         # (H) Step 1
         ingestor.execute_write(CYPHER_DELETE_MODULE, {"path": relative_path_str})
-        logger.debug(LOG_DELETION_QUERY.format(path=relative_path_str))
+        logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
         # (H) Step 2
         self.updater.remove_file_from_state(path)
@@ -107,13 +98,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                     self.updater.ast_cache[path] = (root_node, language)
 
         # (H) Step 4
-        logger.info(LOG_RECALC_CALLS)
+        logger.info(logs.RECALC_CALLS)
         ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 
         # (H) Step 5
         self.updater.ingestor.flush_all()
-        logger.success(LOG_GRAPH_UPDATED.format(name=path.name))
+        logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
 
 def start_watcher(
@@ -132,15 +123,15 @@ def start_watcher(
         updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
         # (H) Initial full scan builds the complete context for real-time updates
-        logger.info(LOG_INITIAL_SCAN)
+        logger.info(logs.INITIAL_SCAN)
         updater.run()
-        logger.success(LOG_INITIAL_SCAN_DONE)
+        logger.success(logs.INITIAL_SCAN_DONE)
 
         event_handler = CodeChangeEventHandler(updater)
         observer = Observer()
         observer.schedule(event_handler, str(repo_path_obj), recursive=True)
         observer.start()
-        logger.info(LOG_WATCHING.format(path=repo_path_obj))
+        logger.info(logs.WATCHING.format(path=repo_path_obj))
 
         try:
             while True:
@@ -170,7 +161,7 @@ def main(
 ) -> None:
     logger.remove()
     logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level="INFO")
-    logger.info(LOG_LOGGER_CONFIGURED)
+    logger.info(logs.LOGGER_CONFIGURED)
     start_watcher(repo_path, host, port, batch_size)
 
 

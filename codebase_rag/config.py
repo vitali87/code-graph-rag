@@ -7,12 +7,11 @@ from dotenv import load_dotenv
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import exceptions as ex
 from .constants import (
     DEFAULT_API_KEY,
     DEFAULT_MODEL,
     DEFAULT_REGION,
-    ERR_BATCH_SIZE_POSITIVE,
-    ERR_PROVIDER_EMPTY,
     FIELD_MODEL_ID,
     FIELD_PROVIDER,
     ModelRole,
@@ -164,13 +163,13 @@ class AppConfig(BaseSettings):
             return Provider.OLLAMA, model_string
         provider, model = model_string.split(":", 1)
         if not provider:
-            raise ValueError(ERR_PROVIDER_EMPTY)
+            raise ValueError(ex.PROVIDER_EMPTY)
         return provider.lower(), model
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
         resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size
         if resolved < 1:
-            raise ValueError(ERR_BATCH_SIZE_POSITIVE)
+            raise ValueError(ex.BATCH_SIZE_POSITIVE)
         return resolved
 
 

@@ -9,8 +9,9 @@
 # └────────────────────────────────────────────────────────────────────────┘
 from functools import lru_cache
 
+from . import exceptions as ex
 from .config import settings
-from .constants import SEMANTIC_EXTRA_ERROR, UNIXCODER_MODEL
+from .constants import UNIXCODER_MODEL
 from .utils.dependencies import has_torch, has_transformers
 
 if has_torch() and has_transformers():
@@ -44,4 +45,4 @@ if has_torch() and has_transformers():
 else:
 
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
-        raise RuntimeError(SEMANTIC_EXTRA_ERROR)
+        raise RuntimeError(ex.SEMANTIC_EXTRA)

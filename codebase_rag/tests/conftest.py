@@ -186,6 +186,7 @@ def memgraph_connection(
 
     yield conn
 
+    assert conn is not None
     cursor = conn.cursor()
     cursor.execute("MATCH (n) DETACH DELETE n")
     cursor.close()

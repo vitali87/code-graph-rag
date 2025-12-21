@@ -5,25 +5,19 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..constants import (
-    ENCODING_UTF8,
-    LOG_SOURCE_AST_FAILED,
-    LOG_SOURCE_EXTRACT_FAILED,
-    LOG_SOURCE_FILE_NOT_FOUND,
-    LOG_SOURCE_INVALID_RANGE,
-    LOG_SOURCE_RANGE_EXCEEDS,
-)
+from .. import logs
+from ..constants import ENCODING_UTF8
 
 
 def extract_source_lines(
     file_path: Path, start_line: int, end_line: int, encoding: str = ENCODING_UTF8
 ) -> str | None:
     if not file_path.exists():
-        logger.warning(LOG_SOURCE_FILE_NOT_FOUND.format(path=file_path))
+        logger.warning(logs.SOURCE_FILE_NOT_FOUND.format(path=file_path))
         return None
 
     if start_line < 1 or end_line < 1 or start_line > end_line:
-        logger.warning(LOG_SOURCE_INVALID_RANGE.format(start=start_line, end=end_line))
+        logger.warning(logs.SOURCE_INVALID_RANGE.format(start=start_line, end=end_line))
         return None
 
     try:
@@ -32,7 +26,7 @@ def extract_source_lines(
 
             if start_line > len(lines) or end_line > len(lines):
                 logger.warning(
-                    LOG_SOURCE_RANGE_EXCEEDS.format(
+                    logs.SOURCE_RANGE_EXCEEDS.format(
                         start=start_line,
                         end=end_line,
                         length=len(lines),
@@ -45,7 +39,7 @@ def extract_source_lines(
             return "".join(extracted_lines).strip()
 
     except Exception as e:
-        logger.warning(LOG_SOURCE_EXTRACT_FAILED.format(path=file_path, error=e))
+        logger.warning(logs.SOURCE_EXTRACT_FAILED.format(path=file_path, error=e))
         return None
 
 
@@ -62,7 +56,7 @@ def extract_source_with_fallback(
             if ast_result := ast_extractor(qualified_name, file_path):
                 return str(ast_result)
         except Exception as e:
-            logger.debug(LOG_SOURCE_AST_FAILED.format(name=qualified_name, error=e))
+            logger.debug(logs.SOURCE_AST_FAILED.format(name=qualified_name, error=e))
 
     return extract_source_lines(file_path, start_line, end_line, encoding)
 

@@ -3,12 +3,11 @@ import sys
 
 from loguru import logger
 
+from codebase_rag import logs
 from codebase_rag.constants import (
     ALLOWED_COMMENT_MARKERS,
     COMMENT_CHAR,
     ESCAPE_CHAR,
-    LOG_COMMENT_ERROR,
-    LOG_COMMENTS_FOUND,
     QUOTE_CHARS,
     TRIPLE_QUOTES,
 )
@@ -92,9 +91,9 @@ def main() -> int:
         all_errors.extend(errors)
 
     if all_errors:
-        logger.error(LOG_COMMENTS_FOUND)
+        logger.error(logs.COMMENTS_FOUND)
         for error in all_errors:
-            logger.error(LOG_COMMENT_ERROR.format(error=error))
+            logger.error(logs.COMMENT_ERROR.format(error=error))
         return 1
 
     return 0

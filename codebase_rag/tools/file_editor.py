@@ -10,38 +10,10 @@ from pydantic import BaseModel
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
+from .. import logs
+from .. import tool_errors as te
 from ..constants import (
     ENCODING_UTF8,
-    ERR_FILE_NOT_FOUND_OR_DIR,
-    ERR_FILE_OUTSIDE_ROOT,
-    ERR_UNEXPECTED,
-    LOG_EDITOR_AMBIGUOUS,
-    LOG_EDITOR_BLOCK_NOT_FOUND,
-    LOG_EDITOR_FILE_NOT_FOUND,
-    LOG_EDITOR_FUNC_NOT_FOUND_AT_LINE,
-    LOG_EDITOR_FUNC_NOT_FOUND_QN,
-    LOG_EDITOR_FUNC_NOT_IN_FILE,
-    LOG_EDITOR_LOOKING_FOR,
-    LOG_EDITOR_MULTIPLE_OCCURRENCES,
-    LOG_EDITOR_NO_CHANGES,
-    LOG_EDITOR_NO_CHANGES_IDENTICAL,
-    LOG_EDITOR_NO_LANG_CONFIG,
-    LOG_EDITOR_NO_PARSER,
-    LOG_EDITOR_PATCH_ERROR,
-    LOG_EDITOR_PATCH_FAILED,
-    LOG_EDITOR_PATCH_SUCCESS,
-    LOG_EDITOR_PATCHES_NOT_CLEAN,
-    LOG_EDITOR_REPLACE_SUCCESS,
-    LOG_EDITOR_SURGICAL_ERROR,
-    LOG_EDITOR_SURGICAL_FAILED,
-    LOG_FILE_EDITOR_ERR,
-    LOG_FILE_EDITOR_ERR_EDIT,
-    LOG_FILE_EDITOR_INIT,
-    LOG_FILE_EDITOR_WARN,
-    LOG_TOOL_FILE_EDIT,
-    LOG_TOOL_FILE_EDIT_SUCCESS,
-    LOG_TOOL_FILE_EDIT_SURGICAL,
-    LOG_TOOL_FILE_EDIT_SURGICAL_SUCCESS,
     MSG_SURGICAL_FAILED,
     MSG_SURGICAL_SUCCESS,
     SEPARATOR_DOT,
@@ -91,7 +63,7 @@ class FileEditor:
         self.project_root = Path(project_root).resolve()
         self.dmp = diff_match_patch.diff_match_patch()
         self.parsers, _ = load_parsers()
-        logger.info(LOG_FILE_EDITOR_INIT.format(root=self.project_root))
+        logger.info(logs.FILE_EDITOR_INIT.format(root=self.project_root))
 
     def _get_real_extension(self, file_path_obj: Path) -> str:
         extension = file_path_obj.suffix
@@ -111,7 +83,7 @@ class FileEditor:
     def get_ast(self, file_path: str) -> Node | None:
         parser = self.get_parser(file_path)
         if not parser:
-            logger.warning(LOG_EDITOR_NO_PARSER.format(path=file_path))
+            logger.warning(logs.EDITOR_NO_PARSER.format(path=file_path))
             return None
 
         with open(file_path, "rb") as f:
@@ -132,7 +104,7 @@ class FileEditor:
 
         lang_config = get_language_spec(extension)
         if not lang_config:
-            logger.warning(LOG_EDITOR_NO_LANG_CONFIG.format(ext=extension))
+            logger.warning(logs.EDITOR_NO_LANG_CONFIG.format(ext=extension))
             return None
 
         matching_functions: list[FunctionMatch] = []
@@ -187,7 +159,7 @@ class FileEditor:
                             return None
                         return str(node_text.decode(ENCODING_UTF8))
                 logger.warning(
-                    LOG_EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
+                    logs.EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
                         name=function_name, line=line_number
                     )
                 )
@@ -200,7 +172,7 @@ class FileEditor:
                         if node_text is None:
                             return None
                         return str(node_text.decode(ENCODING_UTF8))
-                logger.warning(LOG_EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
+                logger.warning(logs.EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
                 return None
 
             function_details = []
@@ -209,7 +181,7 @@ class FileEditor:
                 function_details.append(details)
 
             logger.warning(
-                LOG_EDITOR_AMBIGUOUS.format(
+                logs.EDITOR_AMBIGUOUS.format(
                     name=function_name,
                     path=file_path,
                     count=len(matching_functions),
@@ -234,7 +206,7 @@ class FileEditor:
         )
         if not original_code:
             logger.error(
-                LOG_EDITOR_FUNC_NOT_IN_FILE.format(name=function_name, path=file_path)
+                logs.EDITOR_FUNC_NOT_IN_FILE.format(name=function_name, path=file_path)
             )
             return False
 
@@ -246,18 +218,18 @@ class FileEditor:
         new_content, results = self.dmp.patch_apply(patches, original_content)
 
         if not all(results):
-            logger.warning(LOG_EDITOR_PATCHES_NOT_CLEAN.format(name=function_name))
+            logger.warning(logs.EDITOR_PATCHES_NOT_CLEAN.format(name=function_name))
             return False
 
         if original_content == new_content:
-            logger.warning(LOG_EDITOR_NO_CHANGES)
+            logger.warning(logs.EDITOR_NO_CHANGES)
             return False
 
         with open(file_path, "w", encoding=ENCODING_UTF8) as f:
             f.write(new_content)
 
         logger.success(
-            LOG_EDITOR_REPLACE_SUCCESS.format(name=function_name, path=file_path)
+            logs.EDITOR_REPLACE_SUCCESS.format(name=function_name, path=file_path)
         )
         return True
 
@@ -295,37 +267,37 @@ class FileEditor:
             new_content, results = self.dmp.patch_apply(patches, original_content)
 
             if not all(results):
-                logger.warning(LOG_EDITOR_PATCH_FAILED.format(path=file_path))
+                logger.warning(logs.EDITOR_PATCH_FAILED.format(path=file_path))
                 return False
 
             with open(file_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(new_content)
 
-            logger.success(LOG_EDITOR_PATCH_SUCCESS.format(path=file_path))
+            logger.success(logs.EDITOR_PATCH_SUCCESS.format(path=file_path))
             return True
 
         except Exception as e:
-            logger.error(LOG_EDITOR_PATCH_ERROR.format(path=file_path, error=e))
+            logger.error(logs.EDITOR_PATCH_ERROR.format(path=file_path, error=e))
             return False
 
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> bool:
-        logger.info(LOG_TOOL_FILE_EDIT_SURGICAL.format(path=file_path))
+        logger.info(logs.TOOL_FILE_EDIT_SURGICAL.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)
 
             if not full_path.is_file():
-                logger.error(LOG_EDITOR_FILE_NOT_FOUND.format(path=file_path))
+                logger.error(logs.EDITOR_FILE_NOT_FOUND.format(path=file_path))
                 return False
 
             with open(full_path, encoding=ENCODING_UTF8) as f:
                 original_content = f.read()
 
             if target_block not in original_content:
-                logger.error(LOG_EDITOR_BLOCK_NOT_FOUND.format(path=file_path))
-                logger.debug(LOG_EDITOR_LOOKING_FOR.format(block=repr(target_block)))
+                logger.error(logs.EDITOR_BLOCK_NOT_FOUND.format(path=file_path))
+                logger.debug(logs.EDITOR_LOOKING_FOR.format(block=repr(target_block)))
                 return False
 
             modified_content = original_content.replace(
@@ -333,41 +305,41 @@ class FileEditor:
             )
 
             if original_content.count(target_block) > 1:
-                logger.warning(LOG_EDITOR_MULTIPLE_OCCURRENCES)
+                logger.warning(logs.EDITOR_MULTIPLE_OCCURRENCES)
 
             if original_content == modified_content:
-                logger.warning(LOG_EDITOR_NO_CHANGES_IDENTICAL)
+                logger.warning(logs.EDITOR_NO_CHANGES_IDENTICAL)
                 return False
 
             patches = self.dmp.patch_make(original_content, modified_content)
             patched_content, results = self.dmp.patch_apply(patches, original_content)
 
             if not all(results):
-                logger.error(LOG_EDITOR_SURGICAL_FAILED)
+                logger.error(logs.EDITOR_SURGICAL_FAILED)
                 return False
 
             with open(full_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(patched_content)
 
-            logger.success(LOG_TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
+            logger.success(logs.TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
             return True
 
         except ValueError:
-            logger.error(ERR_FILE_OUTSIDE_ROOT.format(action="edit"))
+            logger.error(logs.FILE_OUTSIDE_ROOT.format(action="edit"))
             return False
         except Exception as e:
-            logger.error(LOG_EDITOR_SURGICAL_ERROR.format(error=e))
+            logger.error(logs.EDITOR_SURGICAL_ERROR.format(error=e))
             return False
 
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
-        logger.info(LOG_TOOL_FILE_EDIT.format(path=file_path))
+        logger.info(logs.TOOL_FILE_EDIT.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)
 
             if not full_path.is_file():
-                error_msg = ERR_FILE_NOT_FOUND_OR_DIR.format(path=file_path)
-                logger.warning(LOG_FILE_EDITOR_WARN.format(msg=error_msg))
+                error_msg = te.FILE_NOT_FOUND_OR_DIR.format(path=file_path)
+                logger.warning(logs.FILE_EDITOR_WARN.format(msg=error_msg))
                 return EditResult(
                     file_path=file_path, success=False, error_message=error_msg
                 )
@@ -375,18 +347,18 @@ class FileEditor:
             with open(full_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(new_content)
 
-            logger.success(LOG_TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
+            logger.success(logs.TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
             return EditResult(file_path=file_path, success=True)
 
         except ValueError:
-            error_msg = ERR_FILE_OUTSIDE_ROOT.format(action="edit")
-            logger.error(LOG_FILE_EDITOR_ERR.format(msg=error_msg))
+            error_msg = logs.FILE_OUTSIDE_ROOT.format(action="edit")
+            logger.error(logs.FILE_EDITOR_ERR.format(msg=error_msg))
             return EditResult(
                 file_path=file_path, success=False, error_message=error_msg
             )
         except Exception as e:
-            error_msg = ERR_UNEXPECTED.format(error=e)
-            logger.error(LOG_FILE_EDITOR_ERR_EDIT.format(path=file_path, error=e))
+            error_msg = logs.UNEXPECTED.format(error=e)
+            logger.error(logs.FILE_EDITOR_ERR_EDIT.format(path=file_path, error=e))
             return EditResult(
                 file_path=file_path, success=False, error_message=error_msg
             )

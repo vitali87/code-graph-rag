@@ -6,16 +6,15 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from .. import exceptions as ex
+from .. import logs
 from ..constants import (
-    LOG_TOOL_QUERY_ERROR,
-    LOG_TOOL_QUERY_RECEIVED,
     QUERY_NOT_AVAILABLE,
     QUERY_RESULTS_PANEL_TITLE,
     QUERY_SUMMARY_DB_ERROR,
     QUERY_SUMMARY_SUCCESS,
     QUERY_SUMMARY_TRANSLATION_FAILED,
 )
-from ..errors import LLMGenerationError
 from ..schemas import QueryGraphData
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
@@ -33,7 +32,7 @@ def create_query_tool(
     async def query_codebase_knowledge_graph(
         natural_language_query: str,
     ) -> QueryGraphData:
-        logger.info(LOG_TOOL_QUERY_RECEIVED.format(query=natural_language_query))
+        logger.info(logs.TOOL_QUERY_RECEIVED.format(query=natural_language_query))
         cypher_query = QUERY_NOT_AVAILABLE
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
@@ -74,14 +73,14 @@ def create_query_tool(
             return QueryGraphData(
                 query_used=cypher_query, results=results, summary=summary
             )
-        except LLMGenerationError as e:
+        except ex.LLMGenerationError as e:
             return QueryGraphData(
                 query_used=QUERY_NOT_AVAILABLE,
                 results=[],
                 summary=QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
             )
         except Exception as e:
-            logger.error(LOG_TOOL_QUERY_ERROR.format(error=e), exc_info=True)
+            logger.error(logs.TOOL_QUERY_ERROR.format(error=e), exc_info=True)
             return QueryGraphData(
                 query_used=cypher_query,
                 results=[],

@@ -4,13 +4,10 @@ from pathlib import Path
 
 from loguru import logger
 
+from . import exceptions as ex
+from . import logs
 from .constants import (
     ENCODING_UTF8,
-    ERR_DATA_NOT_LOADED,
-    ERR_FAILED_TO_LOAD_DATA,
-    ERR_GRAPH_FILE_NOT_FOUND,
-    ERR_NODES_NOT_LOADED,
-    ERR_RELATIONSHIPS_NOT_LOADED,
     KEY_FROM_ID,
     KEY_LABELS,
     KEY_METADATA,
@@ -20,8 +17,6 @@ from .constants import (
     KEY_RELATIONSHIPS,
     KEY_TO_ID,
     KEY_TYPE,
-    LOG_LOADED_GRAPH,
-    LOG_LOADING_GRAPH,
 )
 from .models import GraphNode, GraphRelationship
 from .types_defs import GraphData, GraphMetadata, GraphSummary, PropertyValue
@@ -50,16 +45,14 @@ class GraphLoader:
 
     def load(self) -> None:
         if not self.file_path.exists():
-            raise FileNotFoundError(
-                ERR_GRAPH_FILE_NOT_FOUND.format(path=self.file_path)
-            )
+            raise FileNotFoundError(ex.GRAPH_FILE_NOT_FOUND.format(path=self.file_path))
 
-        logger.info(LOG_LOADING_GRAPH.format(path=self.file_path))
+        logger.info(logs.LOADING_GRAPH.format(path=self.file_path))
         with open(self.file_path, encoding=ENCODING_UTF8) as f:
             self._data = json.load(f)
 
         if self._data is None:
-            raise RuntimeError(ERR_FAILED_TO_LOAD_DATA)
+            raise RuntimeError(ex.FAILED_TO_LOAD_DATA)
 
         self._nodes = []
         for node_data in self._data[KEY_NODES]:
@@ -88,7 +81,7 @@ class GraphLoader:
             self._incoming_rels[rel.to_id].append(rel)
 
         logger.info(
-            LOG_LOADED_GRAPH.format(
+            logs.LOADED_GRAPH.format(
                 nodes=len(self._nodes), relationships=len(self._relationships)
             )
         )
@@ -107,19 +100,19 @@ class GraphLoader:
     @property
     def nodes(self) -> list[GraphNode]:
         self._ensure_loaded()
-        assert self._nodes is not None, ERR_NODES_NOT_LOADED
+        assert self._nodes is not None, ex.NODES_NOT_LOADED
         return self._nodes
 
     @property
     def relationships(self) -> list[GraphRelationship]:
         self._ensure_loaded()
-        assert self._relationships is not None, ERR_RELATIONSHIPS_NOT_LOADED
+        assert self._relationships is not None, ex.RELATIONSHIPS_NOT_LOADED
         return self._relationships
 
     @property
     def metadata(self) -> GraphMetadata:
         self._ensure_loaded()
-        assert self._data is not None, ERR_DATA_NOT_LOADED
+        assert self._data is not None, ex.DATA_NOT_LOADED
         return self._data[KEY_METADATA]
 
     def find_nodes_by_label(self, label: str) -> list[GraphNode]:

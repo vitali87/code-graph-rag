@@ -5,12 +5,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ..constants import (
-    LOG_FQN_EXTRACT_FAILED,
-    LOG_FQN_FIND_FAILED,
-    LOG_FQN_RESOLVE_FAILED,
-    SEPARATOR_DOT,
-)
+from .. import logs
+from ..constants import SEPARATOR_DOT
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -44,7 +40,7 @@ def resolve_fqn_from_ast(
         return SEPARATOR_DOT.join(full_parts)
 
     except Exception as e:
-        logger.debug(LOG_FQN_RESOLVE_FAILED.format(path=file_path, error=e))
+        logger.debug(logs.FQN_RESOLVE_FAILED.format(path=file_path, error=e))
         return None
 
 
@@ -78,7 +74,7 @@ def find_function_source_by_fqn(
 
     except Exception as e:
         logger.debug(
-            LOG_FQN_FIND_FAILED.format(fqn=target_fqn, path=file_path, error=e)
+            logs.FQN_FIND_FAILED.format(fqn=target_fqn, path=file_path, error=e)
         )
         return None
 
@@ -108,6 +104,6 @@ def extract_function_fqns(
         walk(root_node)
 
     except Exception as e:
-        logger.debug(LOG_FQN_EXTRACT_FAILED.format(path=file_path, error=e))
+        logger.debug(logs.FQN_EXTRACT_FAILED.format(path=file_path, error=e))
 
     return functions

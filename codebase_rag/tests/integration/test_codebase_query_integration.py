@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from rich.console import Console
 
-from codebase_rag.errors import LLMGenerationError
+from codebase_rag.exceptions import LLMGenerationError
 from codebase_rag.schemas import QueryGraphData
 from codebase_rag.tools.codebase_query import create_query_tool
 

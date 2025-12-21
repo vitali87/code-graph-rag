@@ -12,28 +12,12 @@ from google.genai.errors import ClientError
 from loguru import logger
 from pydantic_ai import Tool
 
+from .. import exceptions as ex
+from .. import logs
+from .. import tool_errors as te
 from ..config import settings
 from ..constants import (
     DOC_PROMPT_PREFIX,
-    ERR_DOC_ACCESS_OUTSIDE_ROOT,
-    ERR_DOC_ANALYSIS_FAILED,
-    ERR_DOC_API_VALIDATION,
-    ERR_DOC_DURING_ANALYSIS,
-    ERR_DOC_FILE_NOT_FOUND,
-    ERR_DOC_IMAGE_PROCESS,
-    ERR_DOC_SECURITY_RISK,
-    ERR_DOC_UNSUPPORTED_PROVIDER,
-    ERR_DOCUMENT_UNSUPPORTED,
-    LOG_DOC_ANALYZER_API_ERR,
-    LOG_DOC_ANALYZER_INIT,
-    LOG_DOC_API_ERROR,
-    LOG_DOC_COPIED,
-    LOG_DOC_EXCEPTION,
-    LOG_DOC_FAILED,
-    LOG_DOC_NO_TEXT,
-    LOG_DOC_RESULT,
-    LOG_DOC_SUCCESS,
-    LOG_TOOL_DOC_ANALYZE,
     MIME_TYPE_DEFAULT,
     MSG_DOC_NO_CANDIDATES,
     MSG_DOC_NO_CONTENT,
@@ -46,7 +30,7 @@ from . import tool_descriptions as td
 
 class _NotSupportedClient:
     def __getattr__(self, name: str) -> NoReturn:
-        raise NotImplementedError(ERR_DOC_UNSUPPORTED_PROVIDER)
+        raise NotImplementedError(ex.DOC_UNSUPPORTED_PROVIDER)
 
 
 class DocumentAnalyzer:
@@ -67,18 +51,18 @@ class DocumentAnalyzer:
         else:
             self.client = _NotSupportedClient()
 
-        logger.info(LOG_DOC_ANALYZER_INIT.format(root=self.project_root))
+        logger.info(logs.DOC_ANALYZER_INIT.format(root=self.project_root))
 
     def analyze(self, file_path: str, question: str) -> str:
-        logger.info(LOG_TOOL_DOC_ANALYZE.format(path=file_path, question=question))
+        logger.info(logs.TOOL_DOC_ANALYZE.format(path=file_path, question=question))
         if isinstance(self.client, _NotSupportedClient):
-            return f"Error: {ERR_DOCUMENT_UNSUPPORTED}"
+            return te.DOCUMENT_UNSUPPORTED
 
         try:
             if Path(file_path).is_absolute():
                 source_path = Path(file_path)
                 if not source_path.is_file():
-                    return f"Error: {ERR_DOC_FILE_NOT_FOUND.format(path=file_path)}"
+                    return te.DOC_FILE_NOT_FOUND.format(path=file_path)
 
                 tmp_dir = self.project_root / TMP_DIR
                 tmp_dir.mkdir(exist_ok=True)
@@ -86,19 +70,19 @@ class DocumentAnalyzer:
                 tmp_file = tmp_dir / f"{uuid.uuid4()}-{source_path.name}"
                 shutil.copy2(source_path, tmp_file)
                 full_path = tmp_file
-                logger.info(LOG_DOC_COPIED.format(path=full_path))
+                logger.info(logs.DOC_COPIED.format(path=full_path))
             else:
                 full_path = (self.project_root / file_path).resolve()
                 try:
                     full_path.relative_to(self.project_root.resolve())
                 except ValueError:
-                    return ERR_DOC_SECURITY_RISK.format(path=file_path)
+                    return te.DOC_SECURITY_RISK.format(path=file_path)
 
                 if not str(full_path).startswith(str(self.project_root.resolve())):
-                    return ERR_DOC_SECURITY_RISK.format(path=file_path)
+                    return te.DOC_SECURITY_RISK.format(path=file_path)
 
             if not full_path.is_file():
-                return f"Error: {ERR_DOC_FILE_NOT_FOUND.format(path=file_path)}"
+                return te.DOC_FILE_NOT_FOUND.format(path=file_path)
 
             mime_type, _ = mimetypes.guess_type(full_path)
             if not mime_type:
@@ -116,7 +100,7 @@ class DocumentAnalyzer:
                 model=orchestrator_config.model_id, contents=prompt_parts
             )
 
-            logger.success(LOG_DOC_SUCCESS.format(path=file_path))
+            logger.success(logs.DOC_SUCCESS.format(path=file_path))
 
             if hasattr(response, "text") and response.text:
                 return str(response.text)
@@ -128,25 +112,25 @@ class DocumentAnalyzer:
                             return str(parts[0].text)
                 return MSG_DOC_NO_CANDIDATES
             else:
-                logger.warning(LOG_DOC_NO_TEXT.format(response=response))
+                logger.warning(logs.DOC_NO_TEXT.format(response=response))
                 return MSG_DOC_NO_CONTENT
 
         except ValueError as e:
             if "does not start with" in str(e):
-                err_msg = ERR_DOC_ACCESS_OUTSIDE_ROOT.format(path=file_path)
+                err_msg = te.DOC_ACCESS_OUTSIDE_ROOT.format(path=file_path)
                 logger.error(err_msg)
-                return f"Error: {err_msg}"
+                return err_msg
             else:
-                logger.error(LOG_DOC_ANALYZER_API_ERR.format(error=e))
-                return f"Error: {ERR_DOC_API_VALIDATION.format(error=e)}"
+                logger.error(logs.DOC_ANALYZER_API_ERR.format(error=e))
+                return te.DOC_API_VALIDATION.format(error=e)
         except ClientError as e:
-            logger.error(LOG_DOC_API_ERROR.format(path=file_path, error=e))
+            logger.error(logs.DOC_API_ERROR.format(path=file_path, error=e))
             if "Unable to process input image" in str(e):
-                return f"Error: {ERR_DOC_IMAGE_PROCESS}"
-            return f"API error: {e}"
+                return te.DOC_IMAGE_PROCESS
+            return f"Error: API error: {e}"
         except Exception as e:
-            logger.error(LOG_DOC_FAILED.format(path=file_path, error=e), exc_info=True)
-            return ERR_DOC_ANALYSIS_FAILED.format(error=e)
+            logger.error(logs.DOC_FAILED.format(path=file_path, error=e), exc_info=True)
+            return te.DOC_ANALYSIS_FAILED.format(error=e)
 
 
 def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
@@ -155,14 +139,14 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
             result = analyzer.analyze(file_path, question)
             preview = result[:100] if result else "None"
             logger.debug(
-                LOG_DOC_RESULT.format(type=type(result).__name__, preview=preview)
+                logs.DOC_RESULT.format(type=type(result).__name__, preview=preview)
             )
             return result
         except Exception as e:
-            logger.error(LOG_DOC_EXCEPTION.format(error=e), exc_info=True)
+            logger.error(logs.DOC_EXCEPTION.format(error=e), exc_info=True)
             if str(e).startswith("Error:") or str(e).startswith("API error:"):
                 return str(e)
-            return ERR_DOC_DURING_ANALYSIS.format(error=e)
+            return te.DOC_DURING_ANALYSIS.format(error=e)
 
     return Tool(
         function=analyze_document,

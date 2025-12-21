@@ -7,6 +7,8 @@ from pathlib import Path
 from loguru import logger
 from tree_sitter import Language, Parser, Query
 
+from . import exceptions as ex
+from . import logs
 from .constants import (
     BINDINGS_DIR,
     BUILD_EXT_CMD,
@@ -15,24 +17,11 @@ from .constants import (
     CAPTURE_FUNCTION,
     CAPTURE_IMPORT,
     CAPTURE_IMPORT_FROM,
-    ERR_NO_LANGUAGES,
     GRAMMARS_DIR,
     INPLACE_FLAG,
     JS_LOCALS_PATTERN,
     LANG_ATTR_PREFIX,
     LANG_ATTR_TYPESCRIPT,
-    LOG_BUILD_FAILED,
-    LOG_BUILD_SUCCESS,
-    LOG_BUILDING_BINDINGS,
-    LOG_GRAMMAR_LOAD_FAILED,
-    LOG_GRAMMAR_LOADED,
-    LOG_IMPORTING_MODULE,
-    LOG_INITIALIZED_PARSERS,
-    LOG_LIB_NOT_AVAILABLE,
-    LOG_LOADED_FROM_SUBMODULE,
-    LOG_LOCALS_QUERY_FAILED,
-    LOG_NO_LANG_ATTR,
-    LOG_SUBMODULE_LOAD_FAILED,
     QUERY_LANGUAGE,
     SETUP_PY,
     TREE_SITTER_MODULE_PREFIX,
@@ -61,7 +50,7 @@ def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
 
             setup_py_path = submodule_path / SETUP_PY
             if setup_py_path.exists():
-                logger.debug(LOG_BUILDING_BINDINGS.format(lang=lang_name))
+                logger.debug(logs.BUILDING_BINDINGS.format(lang=lang_name))
                 result = subprocess.run(
                     [sys.executable, SETUP_PY, BUILD_EXT_CMD, INPLACE_FLAG],
                     cwd=str(submodule_path),
@@ -71,14 +60,14 @@ def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
 
                 if result.returncode != 0:
                     logger.debug(
-                        LOG_BUILD_FAILED.format(
+                        logs.BUILD_FAILED.format(
                             lang=lang_name, stdout=result.stdout, stderr=result.stderr
                         )
                     )
                     return None
-                logger.debug(LOG_BUILD_SUCCESS.format(lang=lang_name))
+                logger.debug(logs.BUILD_SUCCESS.format(lang=lang_name))
 
-            logger.debug(LOG_IMPORTING_MODULE.format(module=module_name))
+            logger.debug(logs.IMPORTING_MODULE.format(module=module_name))
             module = importlib.import_module(module_name)
 
             language_attrs: list[str] = [
@@ -90,13 +79,15 @@ def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
             for attr_name in language_attrs:
                 if hasattr(module, attr_name):
                     logger.debug(
-                        LOG_LOADED_FROM_SUBMODULE.format(lang=lang_name, attr=attr_name)
+                        logs.LOADED_FROM_SUBMODULE.format(
+                            lang=lang_name, attr=attr_name
+                        )
                     )
                     loader: LanguageLoader = getattr(module, attr_name)
                     return loader
 
             logger.debug(
-                LOG_NO_LANG_ATTR.format(module=module_name, available=dir(module))
+                logs.NO_LANG_ATTR.format(module=module_name, available=dir(module))
             )
 
         finally:
@@ -104,7 +95,7 @@ def _try_load_from_submodule(lang_name: SupportedLanguage) -> LanguageLoader:
                 sys.path.remove(python_bindings_str)
 
     except Exception as e:
-        logger.debug(LOG_SUBMODULE_LOAD_FAILED.format(lang=lang_name, error=e))
+        logger.debug(logs.SUBMODULE_LOAD_FAILED.format(lang=lang_name, error=e))
 
     return None
 
@@ -223,7 +214,7 @@ def load_parsers() -> tuple[
         lang_name = SupportedLanguage(lang_key)
         lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
         if not lang_lib:
-            logger.debug(LOG_LIB_NOT_AVAILABLE.format(lang=lang_name))
+            logger.debug(logs.LIB_NOT_AVAILABLE.format(lang=lang_name))
             continue
 
         try:
@@ -261,7 +252,7 @@ def load_parsers() -> tuple[
                     locals_query = Query(language, locals_pattern)
                 except Exception as e:
                     logger.debug(
-                        LOG_LOCALS_QUERY_FAILED.format(lang=lang_name, error=e)
+                        logs.LOCALS_QUERY_FAILED.format(lang=lang_name, error=e)
                     )
 
             queries[lang_name] = LanguageQueries(
@@ -280,14 +271,14 @@ def load_parsers() -> tuple[
             )
 
             available_languages.append(lang_name)
-            logger.success(LOG_GRAMMAR_LOADED.format(lang=lang_name))
+            logger.success(logs.GRAMMAR_LOADED.format(lang=lang_name))
         except Exception as e:
-            logger.warning(LOG_GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
+            logger.warning(logs.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
 
     if not available_languages:
-        raise RuntimeError(ERR_NO_LANGUAGES)
+        raise RuntimeError(ex.NO_LANGUAGES)
 
     logger.info(
-        LOG_INITIALIZED_PARSERS.format(languages=", ".join(available_languages))
+        logs.INITIALIZED_PARSERS.format(languages=", ".join(available_languages))
     )
     return parsers, queries

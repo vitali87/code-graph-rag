@@ -5,15 +5,9 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import Tool
 
-from ..constants import (
-    ENCODING_UTF8,
-    ERR_CODE_ENTITY_NOT_FOUND,
-    ERR_CODE_MISSING_LOCATION,
-    LOG_CODE_RETRIEVER_ERROR,
-    LOG_CODE_RETRIEVER_INIT,
-    LOG_CODE_RETRIEVER_SEARCH,
-    LOG_CODE_TOOL_RETRIEVE,
-)
+from .. import logs
+from .. import tool_errors as te
+from ..constants import ENCODING_UTF8
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
@@ -24,10 +18,10 @@ class CodeRetriever:
     def __init__(self, project_root: str, ingestor: QueryProtocol):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
-        logger.info(LOG_CODE_RETRIEVER_INIT.format(root=self.project_root))
+        logger.info(logs.CODE_RETRIEVER_INIT.format(root=self.project_root))
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
-        logger.info(LOG_CODE_RETRIEVER_SEARCH.format(name=qualified_name))
+        logger.info(logs.CODE_RETRIEVER_SEARCH.format(name=qualified_name))
 
         params = {"qn": qualified_name}
         try:
@@ -41,7 +35,7 @@ class CodeRetriever:
                     line_start=0,
                     line_end=0,
                     found=False,
-                    error_message=ERR_CODE_ENTITY_NOT_FOUND,
+                    error_message=te.CODE_ENTITY_NOT_FOUND,
                 )
 
             res = results[0]
@@ -57,7 +51,7 @@ class CodeRetriever:
                     line_start=0,
                     line_end=0,
                     found=False,
-                    error_message=ERR_CODE_MISSING_LOCATION,
+                    error_message=te.CODE_MISSING_LOCATION,
                 )
 
             full_path = self.project_root / file_path_str
@@ -76,7 +70,7 @@ class CodeRetriever:
                 docstring=res.get("docstring"),
             )
         except Exception as e:
-            logger.error(LOG_CODE_RETRIEVER_ERROR.format(error=e), exc_info=True)
+            logger.error(logs.CODE_RETRIEVER_ERROR.format(error=e), exc_info=True)
             return CodeSnippet(
                 qualified_name=qualified_name,
                 source_code="",
@@ -90,7 +84,7 @@ class CodeRetriever:
 
 def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
     async def get_code_snippet(qualified_name: str) -> CodeSnippet:
-        logger.info(LOG_CODE_TOOL_RETRIEVE.format(name=qualified_name))
+        logger.info(logs.CODE_TOOL_RETRIEVE.format(name=qualified_name))
         return await code_retriever.find_code_snippet(qualified_name)
 
     return Tool(

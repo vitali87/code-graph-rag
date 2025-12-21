@@ -5,22 +5,16 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 
+from .. import exceptions as ex
+from .. import logs
 from ..config import ModelConfig, settings
 from ..constants import (
     CYPHER_BACKTICK,
     CYPHER_MATCH_KEYWORD,
     CYPHER_PREFIX,
     CYPHER_SEMICOLON,
-    ERR_LLM_GENERATION_FAILED,
-    ERR_LLM_INIT_CYPHER,
-    ERR_LLM_INIT_ORCHESTRATOR,
-    ERR_LLM_INVALID_QUERY,
-    LOG_CYPHER_ERROR,
-    LOG_CYPHER_GENERATED,
-    LOG_CYPHER_GENERATING,
     Provider,
 )
-from ..errors import LLMGenerationError
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
@@ -73,26 +67,26 @@ class CypherGenerator:
                 retries=settings.AGENT_RETRIES,
             )
         except Exception as e:
-            raise LLMGenerationError(ERR_LLM_INIT_CYPHER.format(error=e)) from e
+            raise ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error=e)) from e
 
     async def generate(self, natural_language_query: str) -> str:
-        logger.info(LOG_CYPHER_GENERATING.format(query=natural_language_query))
+        logger.info(logs.CYPHER_GENERATING.format(query=natural_language_query))
         try:
             result = await self.agent.run(natural_language_query)
             if (
                 not isinstance(result.output, str)
                 or CYPHER_MATCH_KEYWORD not in result.output.upper()
             ):
-                raise LLMGenerationError(
-                    ERR_LLM_INVALID_QUERY.format(output=result.output)
+                raise ex.LLMGenerationError(
+                    ex.LLM_INVALID_QUERY.format(output=result.output)
                 )
 
             query = _clean_cypher_response(result.output)
-            logger.info(LOG_CYPHER_GENERATED.format(query=query))
+            logger.info(logs.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:
-            logger.error(LOG_CYPHER_ERROR.format(error=e))
-            raise LLMGenerationError(ERR_LLM_GENERATION_FAILED.format(error=e)) from e
+            logger.error(logs.CYPHER_ERROR.format(error=e))
+            raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
 
 
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
@@ -109,4 +103,4 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
             output_type=[str, DeferredToolRequests],
         )
     except Exception as e:
-        raise LLMGenerationError(ERR_LLM_INIT_ORCHESTRATOR.format(error=e)) from e
+        raise ex.LLMGenerationError(ex.LLM_INIT_ORCHESTRATOR.format(error=e)) from e

@@ -58,30 +58,7 @@ V1_PATH = "/v1"
 # (H) HTTP status codes
 HTTP_OK = 200
 
-# (H) Provider error messages
-ERR_GOOGLE_GLA_NO_KEY = (
-    "Gemini GLA provider requires api_key. "
-    "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
-)
-ERR_GOOGLE_VERTEX_NO_PROJECT = (
-    "Gemini Vertex provider requires project_id. "
-    "Set ORCHESTRATOR_PROJECT_ID or CYPHER_PROJECT_ID in .env file."
-)
-ERR_OPENAI_NO_KEY = (
-    "OpenAI provider requires api_key. "
-    "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
-)
-ERR_OLLAMA_NOT_RUNNING = (
-    "Ollama server not responding at {endpoint}. "
-    "Make sure Ollama is running: ollama serve"
-)
-ERR_UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
-LOG_PROVIDER_REGISTERED = "Registered provider: {name}"
-
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
-SEMANTIC_EXTRA_ERROR = (
-    "Semantic search requires 'semantic' extra: uv sync --extra semantic"
-)
 
 KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
@@ -108,73 +85,6 @@ INIT_PY = "__init__.py"
 
 # (H) Encoding
 ENCODING_UTF8 = "utf-8"
-
-# (H) Error messages
-ERR_GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
-ERR_FAILED_TO_LOAD_DATA = "Failed to load data from file"
-ERR_NODES_NOT_LOADED = "Nodes should be loaded"
-ERR_RELATIONSHIPS_NOT_LOADED = "Relationships should be loaded"
-ERR_DATA_NOT_LOADED = "Data should be loaded"
-ERR_PROVIDER_EMPTY = "Provider name cannot be empty in 'provider:model' format."
-ERR_BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
-ERR_UNEXPECTED = "An unexpected error occurred: {error}"
-ERR_EXPORT_FAILED = "Failed to export graph: {error}"
-ERR_EXPORT_ERROR = "Export error: {error}"
-ERR_CONFIG = "{role} configuration error: {error}"
-ERR_PATH_NOT_IN_QUESTION = (
-    "Could not find original path in question for replacement: {path}"
-)
-ERR_IMAGE_NOT_FOUND = "Image path found, but does not exist: {path}"
-ERR_IMAGE_COPY_FAILED = "Failed to copy image to temporary directory: {error}"
-
-LOG_LOADING_GRAPH = "Loading graph from {path}"
-LOG_LOADED_GRAPH = "Loaded {nodes} nodes and {relationships} relationships with indexes"
-LOG_ENSURING_PROJECT = "Ensuring Project: {name}"
-LOG_PASS_1_STRUCTURE = "--- Pass 1: Identifying Packages and Folders ---"
-LOG_PASS_2_FILES = (
-    "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
-)
-LOG_PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
-LOG_PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
-LOG_FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"
-LOG_ANALYSIS_COMPLETE = "\n--- Analysis complete. Flushing all data to database... ---"
-LOG_REMOVING_STATE = "Removing in-memory state for: {path}"
-LOG_REMOVED_FROM_CACHE = "  - Removed from ast_cache"
-LOG_REMOVING_QNS = "  - Removing {count} QNs from function_registry"
-LOG_CLEANED_SIMPLE_NAME = "  - Cleaned simple_name '{name}'"
-LOG_SEMANTIC_NOT_AVAILABLE = (
-    "Semantic search dependencies not available, skipping embedding generation"
-)
-LOG_INGESTOR_NO_QUERY = (
-    "Ingestor does not support querying, skipping embedding generation"
-)
-LOG_NO_FUNCTIONS_FOR_EMBEDDING = (
-    "No functions or methods found for embedding generation"
-)
-LOG_GENERATING_EMBEDDINGS = "Generating embeddings for {count} functions/methods"
-LOG_EMBEDDING_PROGRESS = "Generated {done}/{total} embeddings"
-LOG_EMBEDDING_FAILED = "Failed to embed {name}: {error}"
-LOG_NO_SOURCE_FOR = "No source code found for {name}"
-LOG_EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
-LOG_EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
-LOG_IMAGE_COPIED = "Copied image to temporary path: {path}"
-
-# (H) Protobuf service logs
-LOG_PROTOBUF_INIT = "ProtobufFileIngestor initialized to write to: {path}"
-LOG_PROTOBUF_NO_MESSAGE_CLASS = (
-    "No Protobuf message class found for label '{label}'. Skipping node."
-)
-LOG_PROTOBUF_NO_ONEOF_MAPPING = (
-    "No 'oneof' field mapping found for label '{label}'. Skipping node."
-)
-LOG_PROTOBUF_UNKNOWN_REL_TYPE = (
-    "Unknown relationship type '{rel_type}'. Setting to UNSPECIFIED."
-)
-LOG_PROTOBUF_INVALID_REL = (
-    "Invalid relationship: source_id={source_id}, target_id={target_id}"
-)
-LOG_PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
-LOG_PROTOBUF_FLUSHING = "Flushing data to {path}..."
 
 # (H) Protobuf file names
 PROTOBUF_INDEX_FILE = "index.bin"
@@ -511,25 +421,6 @@ INPLACE_FLAG = "--inplace"
 LANG_ATTR_PREFIX = "language_"
 LANG_ATTR_TYPESCRIPT = "language_typescript"
 
-# (H) Parser loader log messages
-LOG_BUILDING_BINDINGS = "Building Python bindings for {lang}..."
-LOG_BUILD_FAILED = "Failed to build {lang} bindings: stdout={stdout}, stderr={stderr}"
-LOG_BUILD_SUCCESS = "Successfully built {lang} bindings"
-LOG_IMPORTING_MODULE = "Attempting to import module: {module}"
-LOG_LOADED_FROM_SUBMODULE = (
-    "Successfully loaded {lang} from submodule bindings using {attr}"
-)
-LOG_NO_LANG_ATTR = (
-    "Module {module} imported but has no language attribute. Available: {available}"
-)
-LOG_SUBMODULE_LOAD_FAILED = "Failed to load {lang} from submodule bindings: {error}"
-LOG_LIB_NOT_AVAILABLE = "Tree-sitter library for {lang} not available."
-LOG_LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
-LOG_GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
-LOG_GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
-LOG_INITIALIZED_PARSERS = "Initialized parsers for: {languages}"
-ERR_NO_LANGUAGES = "No Tree-sitter languages available."
-
 # (H) Query dict keys
 QUERY_FUNCTIONS = "functions"
 QUERY_CLASSES = "classes"
@@ -597,9 +488,6 @@ IGNORE_SUFFIXES = frozenset({".tmp", "~"})
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
-LOG_EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
-LOG_EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
-
 
 class EventType(StrEnum):
     MODIFIED = "modified"
@@ -608,19 +496,6 @@ class EventType(StrEnum):
 
 CYPHER_DELETE_MODULE = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
-
-LOG_WATCHER_ACTIVE = "File watcher is now active."
-LOG_WATCHER_SKIP_NO_QUERY = (
-    "Ingestor does not support querying, skipping real-time update."
-)
-LOG_CHANGE_DETECTED = "Change detected: {event_type} on {path}. Updating graph."
-LOG_DELETION_QUERY = "Ran deletion query for path: {path}"
-LOG_RECALC_CALLS = "Recalculating all function call relationships for consistency..."
-LOG_GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
-LOG_INITIAL_SCAN = "Performing initial full codebase scan..."
-LOG_INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
-LOG_WATCHING = "Watching for changes in: {path}"
-LOG_LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
 
 REALTIME_LOGGER_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -643,16 +518,6 @@ BINARY_NAME_TEMPLATE = "graph-code-{system}-{machine}"
 BINARY_FILE_PERMISSION = 0o755
 DIST_DIR = "dist"
 BYTES_PER_MB_FLOAT = 1024 * 1024
-
-LOG_BUILD_BINARY = "Building binary: {name}"
-LOG_BUILD_PROGRESS = "This may take a few minutes..."
-LOG_BUILD_SUCCESS = "Binary built successfully!"
-LOG_BUILD_READY = "Binary is ready for distribution!"
-LOG_BINARY_INFO = "Binary: {path}"
-LOG_BINARY_SIZE = "Size: {size:.1f} MB"
-LOG_BUILD_FAILED = "Build failed: {error}"
-LOG_BUILD_STDOUT = "STDOUT: {stdout}"
-LOG_BUILD_STDERR = "STDERR: {stderr}"
 
 PYPROJECT_PATH = "pyproject.toml"
 TREESITTER_EXTRA_KEY = "treesitter-full"
@@ -680,27 +545,7 @@ TRIPLE_QUOTES = ('"""', "'''")
 COMMENT_CHAR = "#"
 ESCAPE_CHAR = "\\"
 
-LOG_COMMENTS_FOUND = "Comments without (H) marker found:"
-LOG_COMMENT_ERROR = "  {error}"
-
 DEFAULT_NAME = "Unknown"
-
-LOG_GRAPH_SUMMARY = "Graph Summary:"
-LOG_GRAPH_TOTAL_NODES = "   Total nodes: {count:,}"
-LOG_GRAPH_TOTAL_RELS = "   Total relationships: {count:,}"
-LOG_GRAPH_EXPORTED_AT = "   Exported at: {timestamp}"
-LOG_GRAPH_NODE_TYPES = "Node Types:"
-LOG_GRAPH_NODE_COUNT = "   {label}: {count:,} nodes"
-LOG_GRAPH_REL_TYPES = "Relationship Types:"
-LOG_GRAPH_REL_COUNT = "   {rel_type}: {count:,} relationships"
-LOG_GRAPH_FOUND_NODES = "Found {count} '{label}' nodes."
-LOG_GRAPH_EXAMPLE_NAMES = "   Example {label} names:"
-LOG_GRAPH_EXAMPLE_NAME = "      - {name}"
-LOG_GRAPH_MORE_NODES = "      ... and {count} more"
-LOG_GRAPH_ANALYZING = "Analyzing graph from: {path}"
-LOG_GRAPH_ANALYSIS_COMPLETE = "Analysis complete!"
-LOG_GRAPH_ANALYSIS_ERROR = "Error analyzing graph: {error}"
-LOG_GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 
 MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
@@ -708,62 +553,6 @@ MODULE_QDRANT_CLIENT = "qdrant_client"
 
 SEMANTIC_DEPENDENCIES = (MODULE_QDRANT_CLIENT, MODULE_TORCH, MODULE_TRANSFORMERS)
 ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
-
-LOG_FQN_RESOLVE_FAILED = "Failed to resolve FQN for node at {path}: {error}"
-LOG_FQN_FIND_FAILED = "Failed to find function by FQN {fqn} in {path}: {error}"
-LOG_FQN_EXTRACT_FAILED = "Failed to extract function FQNs from {path}: {error}"
-
-LOG_SOURCE_FILE_NOT_FOUND = "Source file not found: {path}"
-LOG_SOURCE_INVALID_RANGE = "Invalid line range: {start}-{end}"
-LOG_SOURCE_RANGE_EXCEEDS = (
-    "Line range {start}-{end} exceeds file length {length} in {path}"
-)
-LOG_SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
-LOG_SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
-
-LOG_MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
-LOG_MG_CONNECTED = "Successfully connected to Memgraph."
-LOG_MG_EXCEPTION = "An exception occurred: {error}. Flushing remaining items..."
-LOG_MG_DISCONNECTED = "\nDisconnected from Memgraph."
-LOG_MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
-LOG_MG_CYPHER_QUERY = "    Query: {query}"
-LOG_MG_CYPHER_PARAMS = "    Params: {params}"
-LOG_MG_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
-LOG_MG_BATCH_PARAMS_TRUNCATED = "    Params (first 10 of {count}): {params}..."
-LOG_MG_CLEANING_DB = "--- Cleaning database... ---"
-LOG_MG_DB_CLEANED = "--- Database cleaned. ---"
-LOG_MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
-LOG_MG_CONSTRAINTS_DONE = "Constraints checked/created."
-LOG_MG_NODE_BUFFER_FLUSH = (
-    "Node buffer reached batch size ({size}). Performing incremental flush."
-)
-LOG_MG_REL_BUFFER_FLUSH = (
-    "Relationship buffer reached batch size ({size}). Performing incremental flush."
-)
-LOG_MG_NO_CONSTRAINT = (
-    "No unique constraint defined for label '{label}'. Skipping flush."
-)
-LOG_MG_MISSING_PROP = "Skipping {label} node missing required '{key}' property: {props}"
-LOG_MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
-LOG_MG_NODES_SKIPPED = (
-    "Skipped {count} buffered nodes due to missing identifiers or constraints."
-)
-LOG_MG_CALLS_FAILED = (
-    "Failed to create {count} CALLS relationships - nodes may not exist"
-)
-LOG_MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
-LOG_MG_RELS_FLUSHED = (
-    "Flushed {total} relationships ({success} successful, {failed} failed)."
-)
-LOG_MG_FLUSH_START = "--- Flushing all pending writes to database... ---"
-LOG_MG_FLUSH_COMPLETE = "--- Flushing complete. ---"
-LOG_MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
-LOG_MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
-LOG_MG_EXPORTING = "Exporting graph data..."
-LOG_MG_EXPORTED = "Exported {nodes} nodes and {rels} relationships"
-
-BATCH_SIZE_ERROR = "batch_size must be a positive integer"
-CONN_ERROR = "Not connected to Memgraph."
 
 REL_TYPE_CALLS = "CALLS"
 
@@ -785,72 +574,6 @@ CYPHER_SEMICOLON = ";"
 CYPHER_BACKTICK = "`"
 CYPHER_MATCH_KEYWORD = "MATCH"
 
-# (H) LLM error messages
-ERR_LLM_INIT_CYPHER = "Failed to initialize CypherGenerator: {error}"
-ERR_LLM_INVALID_QUERY = "LLM did not generate a valid query. Output: {output}"
-ERR_LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
-ERR_LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
-
-# (H) LLM log messages
-LOG_CYPHER_GENERATING = "  [CypherGenerator] Generating query for: '{query}'"
-LOG_CYPHER_GENERATED = "  [CypherGenerator] Generated Cypher: {query}"
-LOG_CYPHER_ERROR = "  [CypherGenerator] Error: {error}"
-
-# (H) Tool error messages
-ERR_FILE_OUTSIDE_ROOT = (
-    "Security risk: Attempted to {action} file outside of project root."
-)
-ERR_FILE_NOT_FOUND = "File not found."
-ERR_FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"
-ERR_BINARY_FILE = "File '{path}' is a binary file. Use the 'analyze_document' tool for this file type."
-ERR_UNICODE_DECODE = (
-    "File '{path}' could not be read as text. It may be a binary file. "
-    "If it is a document (e.g., PDF), use the 'analyze_document' tool."
-)
-ERR_DOCUMENT_UNSUPPORTED = (
-    "Document analysis is not supported for the current LLM provider."
-)
-ERR_DIRECTORY_INVALID = "'{path}' is not a valid directory."
-ERR_DIRECTORY_EMPTY = "The directory '{path}' is empty."
-ERR_DIRECTORY_LIST_FAILED = "Could not list contents of '{path}'."
-ERR_COMMAND_NOT_ALLOWED = "Command '{cmd}' is not in the allowlist.{suggestion} Available commands: {available}"
-ERR_COMMAND_EMPTY = "Empty command provided."
-ERR_COMMAND_DANGEROUS = "Rejected dangerous command: {cmd}"
-ERR_COMMAND_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
-ERR_ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
-
-# (H) Tool log messages
-LOG_TOOL_FILE_READ = "[FileReader] Attempting to read file: {path}"
-LOG_TOOL_FILE_READ_SUCCESS = "[FileReader] Successfully read text from {path}"
-LOG_TOOL_FILE_BINARY = "[FileReader] {message}"
-LOG_TOOL_FILE_WRITE = "[FileWriter] Creating file: {path}"
-LOG_TOOL_FILE_WRITE_SUCCESS = (
-    "[FileWriter] Successfully wrote {chars} characters to {path}"
-)
-LOG_TOOL_FILE_EDIT = "[FileEditor] Attempting full file replacement: {path}"
-LOG_TOOL_FILE_EDIT_SUCCESS = "[FileEditor] Successfully replaced entire file: {path}"
-LOG_TOOL_FILE_EDIT_SURGICAL = (
-    "[FileEditor] Attempting surgical block replacement in: {path}"
-)
-LOG_TOOL_FILE_EDIT_SURGICAL_SUCCESS = (
-    "[FileEditor] Successfully applied surgical block replacement in: {path}"
-)
-LOG_TOOL_QUERY_RECEIVED = "[Tool:QueryGraph] Received NL query: '{query}'"
-LOG_TOOL_QUERY_ERROR = "[Tool:QueryGraph] Error during query execution: {error}"
-LOG_TOOL_SHELL_EXEC = "Executing shell command: {cmd}"
-LOG_TOOL_SHELL_RETURN = "Return code: {code}"
-LOG_TOOL_SHELL_STDOUT = "Stdout: {stdout}"
-LOG_TOOL_SHELL_STDERR = "Stderr: {stderr}"
-LOG_TOOL_SHELL_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
-LOG_TOOL_SHELL_KILLED = "Process killed due to timeout."
-LOG_TOOL_SHELL_ALREADY_TERMINATED = (
-    "Process already terminated when timeout kill was attempted."
-)
-LOG_TOOL_SHELL_ERROR = "An error occurred while executing command: {error}"
-LOG_TOOL_DOC_ANALYZE = (
-    "[DocumentAnalyzer] Analyzing '{path}' with question: '{question}'"
-)
-
 # (H) Tool success messages
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
 MSG_SURGICAL_FAILED = (
@@ -867,7 +590,6 @@ SHELL_CMD_GIT = "git"
 SHELL_CMD_RM = "rm"
 SHELL_RM_RF_FLAG = "-rf"
 SHELL_RETURN_CODE_ERROR = -1
-LOG_SHELL_TIMING = "'{func}' executed in {time:.2f}ms"
 
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
@@ -880,51 +602,8 @@ QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
 
 # (H) File editor constants
 TMP_EXTENSION = ".tmp"
-LOG_EDITOR_NO_PARSER = "No parser available for {path}"
-LOG_EDITOR_NO_LANG_CONFIG = "No language config found for extension {ext}"
-LOG_EDITOR_FUNC_NOT_FOUND_AT_LINE = "No function '{name}' found at line {line}"
-LOG_EDITOR_FUNC_NOT_FOUND_QN = "No function found with qualified name '{name}'"
-LOG_EDITOR_AMBIGUOUS = (
-    "Ambiguous function name '{name}' in {path}. "
-    "Found {count} matches: {details}. "
-    "Using first match. Consider using qualified name (e.g., 'ClassName.{name}') "
-    "or specify line number for precise targeting."
-)
-LOG_EDITOR_FUNC_NOT_IN_FILE = "Function '{name}' not found in {path}."
-LOG_EDITOR_PATCHES_NOT_CLEAN = "Patches for function '{name}' did not apply cleanly."
-LOG_EDITOR_NO_CHANGES = "No changes detected after replacement."
-LOG_EDITOR_REPLACE_SUCCESS = "Successfully replaced function '{name}' in {path}."
-LOG_EDITOR_PATCH_FAILED = "Some patches failed to apply cleanly to {path}"
-LOG_EDITOR_PATCH_SUCCESS = "Successfully applied patch to {path}"
-LOG_EDITOR_PATCH_ERROR = "Error applying patch to {path}: {error}"
-LOG_EDITOR_FILE_NOT_FOUND = "File not found: {path}"
-LOG_EDITOR_BLOCK_NOT_FOUND = "Target block not found in {path}"
-LOG_EDITOR_LOOKING_FOR = "Looking for: {block}"
-LOG_EDITOR_MULTIPLE_OCCURRENCES = (
-    "Multiple occurrences of target block found. Only replacing first occurrence."
-)
-LOG_EDITOR_NO_CHANGES_IDENTICAL = (
-    "No changes detected - target and replacement are identical"
-)
-LOG_EDITOR_SURGICAL_FAILED = "Surgical patches failed to apply cleanly"
-LOG_EDITOR_SURGICAL_ERROR = "Error during surgical block replacement: {error}"
-
-# (H) Directory lister log messages
-LOG_DIR_LISTING = "Listing contents of directory: {path}"
-LOG_DIR_LIST_ERROR = "Error listing directory {path}: {error}"
 
 # (H) Semantic search constants
-LOG_SEMANTIC_NO_MATCH = "No semantic matches found for query: {query}"
-LOG_SEMANTIC_FOUND = "Found {count} semantic matches for: {query}"
-LOG_SEMANTIC_FAILED = "Semantic search failed for query '{query}': {error}"
-LOG_SEMANTIC_NODE_NOT_FOUND = "No node found with ID: {id}"
-LOG_SEMANTIC_INVALID_LOCATION = "Missing or invalid source location info for node {id}"
-LOG_SEMANTIC_SOURCE_FAILED = "Failed to get source code for node {id}: {error}"
-LOG_SEMANTIC_TOOL_SEARCH = "[Tool:SemanticSearch] Searching for: '{query}'"
-LOG_SEMANTIC_TOOL_SOURCE = (
-    "[Tool:GetFunctionSource] Retrieving source for node ID: {id}"
-)
-
 MSG_SEMANTIC_NO_RESULTS = (
     "No semantic matches found for query: '{query}'. This could mean:\n"
     "1. No functions match this description\n"
@@ -942,61 +621,9 @@ SEMANTIC_BATCH_SIZE = 100
 SEMANTIC_TYPE_UNKNOWN = "Unknown"
 
 # (H) Document analyzer constants
-ERR_DOC_UNSUPPORTED_PROVIDER = (
-    "DocumentAnalyzer does not support the 'local' LLM provider."
-)
-ERR_DOC_FILE_NOT_FOUND = "File not found at '{path}'."
-ERR_DOC_SECURITY_RISK = "Security risk: file path {path} is outside the project root"
-ERR_DOC_ACCESS_OUTSIDE_ROOT = (
-    "Security risk: Attempted to access file outside of project root: {path}"
-)
-ERR_DOC_API_VALIDATION = "API validation failed: {error}"
-ERR_DOC_IMAGE_PROCESS = (
-    "Unable to process the image file. "
-    "The image may be corrupted or in an unsupported format."
-)
-ERR_DOC_ANALYSIS_FAILED = "An error occurred during analysis: {error}"
-ERR_DOC_DURING_ANALYSIS = "Error during document analysis: {error}"
-LOG_DOC_COPIED = "Copied external file to: {path}"
-LOG_DOC_SUCCESS = "Successfully received analysis for '{path}'."
-LOG_DOC_NO_TEXT = "No text found in response: {response}"
-LOG_DOC_API_ERROR = "Google GenAI API error for '{path}': {error}"
-LOG_DOC_FAILED = "Failed to analyze document '{path}': {error}"
-LOG_DOC_RESULT = "[analyze_document] Result type: {type}, content: {preview}..."
-LOG_DOC_EXCEPTION = "[analyze_document] Exception during analysis: {error}"
 MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
 MSG_DOC_NO_CONTENT = "No text content received from the API."
 MIME_TYPE_DEFAULT = "application/octet-stream"
 DOC_PROMPT_PREFIX = (
     "Based on the document provided, please answer the following question: {question}"
 )
-
-# (H) Code retrieval constants
-ERR_CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
-ERR_CODE_MISSING_LOCATION = "Graph entry is missing location data."
-LOG_CODE_RETRIEVER_INIT = "CodeRetriever initialized with root: {root}"
-LOG_CODE_RETRIEVER_SEARCH = "[CodeRetriever] Searching for: {name}"
-LOG_CODE_RETRIEVER_ERROR = "[CodeRetriever] Error: {error}"
-LOG_CODE_TOOL_RETRIEVE = "[Tool:GetCode] Retrieving code for: {name}"
-
-# (H) Tool init log messages
-LOG_FILE_EDITOR_INIT = "FileEditor initialized with root: {root}"
-LOG_FILE_READER_INIT = "FileReader initialized with root: {root}"
-LOG_SHELL_COMMANDER_INIT = "ShellCommander initialized with root: {root}"
-LOG_DOC_ANALYZER_INIT = "DocumentAnalyzer initialized with root: {root}"
-
-# (H) Additional tool error messages
-LOG_FILE_EDITOR_WARN = "[FileEditor] {msg}"
-LOG_FILE_EDITOR_ERR = "[FileEditor] {msg}"
-LOG_FILE_EDITOR_ERR_EDIT = "[FileEditor] Error editing file {path}: {error}"
-LOG_FILE_READER_ERR = "Error reading file {path}: {error}"
-LOG_DOC_ANALYZER_API_ERR = "[DocumentAnalyzer] API validation error: {error}"
-
-# (H) File writer constants
-LOG_FILE_WRITER_INIT = "FileWriter initialized with root: {root}"
-LOG_FILE_WRITER_CREATE = "[FileWriter] Creating file: {path}"
-LOG_FILE_WRITER_SUCCESS = "[FileWriter] Successfully wrote {chars} characters to {path}"
-ERR_FILE_WRITER_SECURITY = (
-    "Security risk: Attempted to create file outside of project root: {path}"
-)
-ERR_FILE_WRITER_CREATE = "Error creating file {path}: {error}"

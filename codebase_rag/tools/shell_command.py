@@ -10,22 +10,11 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
 
+from .. import logs
+from .. import tool_errors as te
 from ..constants import (
     ENCODING_UTF8,
-    ERR_COMMAND_DANGEROUS,
-    ERR_COMMAND_EMPTY,
-    ERR_COMMAND_NOT_ALLOWED,
-    ERR_COMMAND_TIMEOUT,
     GREP_SUGGESTION,
-    LOG_SHELL_COMMANDER_INIT,
-    LOG_SHELL_TIMING,
-    LOG_TOOL_SHELL_ALREADY_TERMINATED,
-    LOG_TOOL_SHELL_ERROR,
-    LOG_TOOL_SHELL_EXEC,
-    LOG_TOOL_SHELL_KILLED,
-    LOG_TOOL_SHELL_RETURN,
-    LOG_TOOL_SHELL_STDERR,
-    LOG_TOOL_SHELL_STDOUT,
     SHELL_CMD_GIT,
     SHELL_CMD_GREP,
     SHELL_CMD_RM,
@@ -99,7 +88,7 @@ def timing_decorator[**P, T](
         end_time = time.perf_counter()
         execution_time = (end_time - start_time) * 1000
         func_name = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
-        logger.info(LOG_SHELL_TIMING.format(func=func_name, time=execution_time))
+        logger.info(logs.SHELL_TIMING.format(func=func_name, time=execution_time))
         return result
 
     return wrapper
@@ -109,25 +98,25 @@ class ShellCommander:
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
-        logger.info(LOG_SHELL_COMMANDER_INIT.format(root=self.project_root))
+        logger.info(logs.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
     @timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
-        logger.info(LOG_TOOL_SHELL_EXEC.format(cmd=command))
+        logger.info(logs.TOOL_SHELL_EXEC.format(cmd=command))
         try:
             cmd_parts = shlex.split(command)
             if not cmd_parts:
                 return ShellCommandResult(
                     return_code=SHELL_RETURN_CODE_ERROR,
                     stdout="",
-                    stderr=ERR_COMMAND_EMPTY,
+                    stderr=te.COMMAND_EMPTY,
                 )
 
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
                 available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
                 suggestion = GREP_SUGGESTION if cmd_parts[0] == SHELL_CMD_GREP else ""
 
-                err_msg = ERR_COMMAND_NOT_ALLOWED.format(
+                err_msg = te.COMMAND_NOT_ALLOWED.format(
                     cmd=cmd_parts[0],
                     suggestion=suggestion,
                     available=available_commands,
@@ -138,7 +127,7 @@ class ShellCommander:
                 )
 
             if _is_dangerous_command(cmd_parts):
-                err_msg = ERR_COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
+                err_msg = te.COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
                 logger.error(err_msg)
                 return ShellCommandResult(
                     return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
@@ -157,11 +146,11 @@ class ShellCommander:
             stdout_str = stdout.decode(ENCODING_UTF8, errors="replace").strip()
             stderr_str = stderr.decode(ENCODING_UTF8, errors="replace").strip()
 
-            logger.info(LOG_TOOL_SHELL_RETURN.format(code=process.returncode))
+            logger.info(logs.TOOL_SHELL_RETURN.format(code=process.returncode))
             if stdout_str:
-                logger.info(LOG_TOOL_SHELL_STDOUT.format(stdout=stdout_str))
+                logger.info(logs.TOOL_SHELL_STDOUT.format(stdout=stdout_str))
             if stderr_str:
-                logger.warning(LOG_TOOL_SHELL_STDERR.format(stderr=stderr_str))
+                logger.warning(logs.TOOL_SHELL_STDERR.format(stderr=stderr_str))
 
             return ShellCommandResult(
                 return_code=(
@@ -173,19 +162,19 @@ class ShellCommander:
                 stderr=stderr_str,
             )
         except TimeoutError:
-            msg = ERR_COMMAND_TIMEOUT.format(cmd=command, timeout=self.timeout)
+            msg = te.COMMAND_TIMEOUT.format(cmd=command, timeout=self.timeout)
             logger.error(msg)
             try:
                 process.kill()
                 await process.wait()
-                logger.info(LOG_TOOL_SHELL_KILLED)
+                logger.info(logs.TOOL_SHELL_KILLED)
             except ProcessLookupError:
-                logger.warning(LOG_TOOL_SHELL_ALREADY_TERMINATED)
+                logger.warning(logs.TOOL_SHELL_ALREADY_TERMINATED)
             return ShellCommandResult(
                 return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
             )
         except Exception as e:
-            logger.error(LOG_TOOL_SHELL_ERROR.format(error=e))
+            logger.error(logs.TOOL_SHELL_ERROR.format(error=e))
             return ShellCommandResult(
                 return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=str(e)
             )

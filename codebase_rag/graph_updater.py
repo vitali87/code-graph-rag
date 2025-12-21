@@ -6,6 +6,7 @@ from pathlib import Path
 from loguru import logger
 from tree_sitter import Node, Parser
 
+from . import logs
 from .config import settings
 from .constants import (
     BYTES_PER_MB,
@@ -20,26 +21,6 @@ from .constants import (
     KEY_PATH,
     KEY_QUALIFIED_NAME,
     KEY_START_LINE,
-    LOG_ANALYSIS_COMPLETE,
-    LOG_CLEANED_SIMPLE_NAME,
-    LOG_EMBEDDING_FAILED,
-    LOG_EMBEDDING_GENERATION_FAILED,
-    LOG_EMBEDDING_PROGRESS,
-    LOG_EMBEDDINGS_COMPLETE,
-    LOG_ENSURING_PROJECT,
-    LOG_FOUND_FUNCTIONS,
-    LOG_GENERATING_EMBEDDINGS,
-    LOG_INGESTOR_NO_QUERY,
-    LOG_NO_FUNCTIONS_FOR_EMBEDDING,
-    LOG_NO_SOURCE_FOR,
-    LOG_PASS_1_STRUCTURE,
-    LOG_PASS_2_FILES,
-    LOG_PASS_3_CALLS,
-    LOG_PASS_4_EMBEDDINGS,
-    LOG_REMOVED_FROM_CACHE,
-    LOG_REMOVING_QNS,
-    LOG_REMOVING_STATE,
-    LOG_SEMANTIC_NOT_AVAILABLE,
     NODE_PROJECT,
     SEPARATOR_DOT,
     TRIE_INTERNAL_PREFIX,
@@ -294,31 +275,31 @@ class GraphUpdater:
 
     def run(self) -> None:
         self.ingestor.ensure_node_batch(NODE_PROJECT, {KEY_NAME: self.project_name})
-        logger.info(LOG_ENSURING_PROJECT.format(name=self.project_name))
+        logger.info(logs.ENSURING_PROJECT.format(name=self.project_name))
 
-        logger.info(LOG_PASS_1_STRUCTURE)
+        logger.info(logs.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
-        logger.info(LOG_PASS_2_FILES)
+        logger.info(logs.PASS_2_FILES)
         self._process_files()
 
-        logger.info(LOG_FOUND_FUNCTIONS.format(count=len(self.function_registry)))
-        logger.info(LOG_PASS_3_CALLS)
+        logger.info(logs.FOUND_FUNCTIONS.format(count=len(self.function_registry)))
+        logger.info(logs.PASS_3_CALLS)
         self._process_function_calls()
 
         self.factory.definition_processor.process_all_method_overrides()
 
-        logger.info(LOG_ANALYSIS_COMPLETE)
+        logger.info(logs.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
 
         self._generate_semantic_embeddings()
 
     def remove_file_from_state(self, file_path: Path) -> None:
-        logger.debug(LOG_REMOVING_STATE.format(path=file_path))
+        logger.debug(logs.REMOVING_STATE.format(path=file_path))
 
         if file_path in self.ast_cache:
             del self.ast_cache[file_path]
-            logger.debug(LOG_REMOVED_FROM_CACHE)
+            logger.debug(logs.REMOVED_FROM_CACHE)
 
         relative_path = file_path.relative_to(self.repo_path)
         path_parts = (
@@ -336,14 +317,14 @@ class GraphUpdater:
                 del self.function_registry[qn]
 
         if qns_to_remove:
-            logger.debug(LOG_REMOVING_QNS.format(count=len(qns_to_remove)))
+            logger.debug(logs.REMOVING_QNS.format(count=len(qns_to_remove)))
 
         for simple_name, qn_set in self.simple_name_lookup.items():
             original_count = len(qn_set)
             new_qn_set = qn_set - qns_to_remove
             if len(new_qn_set) < original_count:
                 self.simple_name_lookup[simple_name] = new_qn_set
-                logger.debug(LOG_CLEANED_SIMPLE_NAME.format(name=simple_name))
+                logger.debug(logs.CLEANED_SIMPLE_NAME.format(name=simple_name))
 
     def _process_files(self) -> None:
         def should_skip_path(path: Path) -> bool:
@@ -385,26 +366,26 @@ class GraphUpdater:
 
     def _generate_semantic_embeddings(self) -> None:
         if not has_semantic_dependencies():
-            logger.info(LOG_SEMANTIC_NOT_AVAILABLE)
+            logger.info(logs.SEMANTIC_NOT_AVAILABLE)
             return
 
         if not isinstance(self.ingestor, QueryProtocol):
-            logger.info(LOG_INGESTOR_NO_QUERY)
+            logger.info(logs.INGESTOR_NO_QUERY)
             return
 
         try:
             from .embedder import embed_code
             from .vector_store import store_embedding
 
-            logger.info(LOG_PASS_4_EMBEDDINGS)
+            logger.info(logs.PASS_4_EMBEDDINGS)
 
             results = self.ingestor.fetch_all(CYPHER_QUERY_EMBEDDINGS)
 
             if not results:
-                logger.info(LOG_NO_FUNCTIONS_FOR_EMBEDDING)
+                logger.info(logs.NO_FUNCTIONS_FOR_EMBEDDING)
                 return
 
-            logger.info(LOG_GENERATING_EMBEDDINGS.format(count=len(results)))
+            logger.info(logs.GENERATING_EMBEDDINGS.format(count=len(results)))
 
             embedded_count = 0
             for result in results:
@@ -425,22 +406,22 @@ class GraphUpdater:
 
                         if embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0:
                             logger.debug(
-                                LOG_EMBEDDING_PROGRESS.format(
+                                logs.EMBEDDING_PROGRESS.format(
                                     done=embedded_count, total=len(results)
                                 )
                             )
 
                     except Exception as e:
                         logger.warning(
-                            LOG_EMBEDDING_FAILED.format(name=qualified_name, error=e)
+                            logs.EMBEDDING_FAILED.format(name=qualified_name, error=e)
                         )
                 else:
-                    logger.debug(LOG_NO_SOURCE_FOR.format(name=qualified_name))
+                    logger.debug(logs.NO_SOURCE_FOR.format(name=qualified_name))
 
-            logger.info(LOG_EMBEDDINGS_COMPLETE.format(count=embedded_count))
+            logger.info(logs.EMBEDDINGS_COMPLETE.format(count=embedded_count))
 
         except Exception as e:
-            logger.warning(LOG_EMBEDDING_GENERATION_FAILED.format(error=e))
+            logger.warning(logs.EMBEDDING_GENERATION_FAILED.format(error=e))
 
     def _extract_source_code(
         self, qualified_name: str, file_path: str, start_line: int, end_line: int

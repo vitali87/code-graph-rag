@@ -9,20 +9,12 @@ from pathlib import Path
 import toml
 from loguru import logger
 
+from codebase_rag import logs
 from codebase_rag.constants import (
     BINARY_FILE_PERMISSION,
     BINARY_NAME_TEMPLATE,
     BYTES_PER_MB_FLOAT,
     DIST_DIR,
-    LOG_BINARY_INFO,
-    LOG_BINARY_SIZE,
-    LOG_BUILD_BINARY,
-    LOG_BUILD_FAILED,
-    LOG_BUILD_PROGRESS,
-    LOG_BUILD_READY,
-    LOG_BUILD_STDERR,
-    LOG_BUILD_STDOUT,
-    LOG_BUILD_SUCCESS,
     PYINSTALLER_PACKAGES,
     PYPROJECT_PATH,
     TREESITTER_EXTRA_KEY,
@@ -85,28 +77,30 @@ def build_binary() -> bool:
 
     cmd.append("main.py")
 
-    logger.info(LOG_BUILD_BINARY.format(name=binary_name))
-    logger.info(LOG_BUILD_PROGRESS)
+    logger.info(logs.BUILD_BINARY.format(name=binary_name))
+    logger.info(logs.BUILD_PROGRESS)
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
-        logger.success(LOG_BUILD_SUCCESS)
+        logger.success(logs.BUILD_SUCCESS)
 
         binary_path = Path(DIST_DIR) / binary_name
         if binary_path.exists():
             size_mb = binary_path.stat().st_size / BYTES_PER_MB_FLOAT
-            logger.info(LOG_BINARY_INFO.format(path=binary_path))
-            logger.info(LOG_BINARY_SIZE.format(size=size_mb))
+            logger.info(logs.BINARY_INFO.format(path=binary_path))
+            logger.info(logs.BINARY_SIZE.format(size=size_mb))
 
             os.chmod(binary_path, BINARY_FILE_PERMISSION)
-            logger.success(LOG_BUILD_READY)
+            logger.success(logs.BUILD_READY)
 
         return True
 
     except subprocess.CalledProcessError as e:
-        logger.error(LOG_BUILD_FAILED.format(error=e))
-        logger.error(LOG_BUILD_STDOUT.format(stdout=e.stdout))
-        logger.error(LOG_BUILD_STDERR.format(stderr=e.stderr))
+        logger.error(
+            logs.BUILD_FAILED.format(lang=binary_name, stdout=e.stdout, stderr=e.stderr)
+        )
+        logger.error(logs.BUILD_STDOUT.format(stdout=e.stdout))
+        logger.error(logs.BUILD_STDERR.format(stderr=e.stderr))
         return False
 
 

@@ -6,7 +6,7 @@ import pytest
 from pydantic_ai import Tool
 from rich.console import Console
 
-from codebase_rag.errors import LLMGenerationError
+from codebase_rag.exceptions import LLMGenerationError
 from codebase_rag.tools.codebase_query import create_query_tool
 
 pytestmark = [pytest.mark.anyio]

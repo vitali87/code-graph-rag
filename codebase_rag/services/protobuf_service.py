@@ -6,17 +6,11 @@ from loguru import logger
 
 import codec.schema_pb2 as pb
 
+from .. import logs
 from ..constants import (
     KEY_NAME,
     KEY_PATH,
     KEY_QUALIFIED_NAME,
-    LOG_PROTOBUF_FLUSH_SUCCESS,
-    LOG_PROTOBUF_FLUSHING,
-    LOG_PROTOBUF_INIT,
-    LOG_PROTOBUF_INVALID_REL,
-    LOG_PROTOBUF_NO_MESSAGE_CLASS,
-    LOG_PROTOBUF_NO_ONEOF_MAPPING,
-    LOG_PROTOBUF_UNKNOWN_REL_TYPE,
     ONEOF_CLASS,
     ONEOF_EXTERNAL_PACKAGE,
     ONEOF_FILE,
@@ -63,7 +57,7 @@ class ProtobufFileIngestor:
         self._nodes: dict[str, pb.Node] = {}
         self._relationships: dict[tuple[str, int, str], pb.Relationship] = {}
         self.split_index = split_index
-        logger.info(LOG_PROTOBUF_INIT.format(path=self.output_dir))
+        logger.info(logs.PROTOBUF_INIT.format(path=self.output_dir))
 
     def _get_node_id(self, label: NodeLabel, properties: PropertyDict) -> str:
         if label in PATH_BASED_LABELS:
@@ -81,7 +75,7 @@ class ProtobufFileIngestor:
 
         payload_message_class = getattr(pb, label, None)
         if not payload_message_class:
-            logger.warning(LOG_PROTOBUF_NO_MESSAGE_CLASS.format(label=label))
+            logger.warning(logs.PROTOBUF_NO_MESSAGE_CLASS.format(label=label))
             return
 
         payload_message = payload_message_class()
@@ -100,7 +94,7 @@ class ProtobufFileIngestor:
 
         payload_field_name = LABEL_TO_ONEOF_FIELD.get(node_label)
         if not payload_field_name:
-            logger.warning(LOG_PROTOBUF_NO_ONEOF_MAPPING.format(label=label))
+            logger.warning(logs.PROTOBUF_NO_ONEOF_MAPPING.format(label=label))
             return
 
         getattr(node, payload_field_name).CopyFrom(payload_message)
@@ -118,7 +112,7 @@ class ProtobufFileIngestor:
 
         rel_type_enum = getattr(pb.Relationship.RelationshipType, rel_type, None)
         if rel_type_enum is None:
-            logger.warning(LOG_PROTOBUF_UNKNOWN_REL_TYPE.format(rel_type=rel_type))
+            logger.warning(logs.PROTOBUF_UNKNOWN_REL_TYPE.format(rel_type=rel_type))
             rel_type_enum = (
                 pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
             )
@@ -134,7 +128,7 @@ class ProtobufFileIngestor:
 
         if not rel.source_id.strip() or not rel.target_id.strip():
             logger.warning(
-                LOG_PROTOBUF_INVALID_REL.format(
+                logs.PROTOBUF_INVALID_REL.format(
                     source_id=rel.source_id, target_id=rel.target_id
                 )
             )
@@ -163,7 +157,7 @@ class ProtobufFileIngestor:
             f.write(serialised_file)
 
         logger.success(
-            LOG_PROTOBUF_FLUSH_SUCCESS.format(
+            logs.PROTOBUF_FLUSH_SUCCESS.format(
                 nodes=len(self._nodes),
                 rels=len(self._relationships),
                 path=self.output_dir,
@@ -190,7 +184,7 @@ class ProtobufFileIngestor:
             f.write(serialised_rels)
 
         logger.success(
-            LOG_PROTOBUF_FLUSH_SUCCESS.format(
+            logs.PROTOBUF_FLUSH_SUCCESS.format(
                 nodes=len(self._nodes),
                 rels=len(self._relationships),
                 path=self.output_dir,
@@ -198,6 +192,6 @@ class ProtobufFileIngestor:
         )
 
     def flush_all(self) -> None:
-        logger.info(LOG_PROTOBUF_FLUSHING.format(path=self.output_dir))
+        logger.info(logs.PROTOBUF_FLUSHING.format(path=self.output_dir))
 
         return self._flush_split() if self.split_index else self._flush_joint()

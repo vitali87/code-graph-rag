@@ -10,18 +10,14 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
+from .. import exceptions as ex
+from .. import logs
 from ..config import settings
 from ..constants import (
     DEFAULT_API_KEY,
     DEFAULT_REGION,
-    ERR_GOOGLE_GLA_NO_KEY,
-    ERR_GOOGLE_VERTEX_NO_PROJECT,
-    ERR_OLLAMA_NOT_RUNNING,
-    ERR_OPENAI_NO_KEY,
-    ERR_UNKNOWN_PROVIDER,
     GOOGLE_CLOUD_SCOPE,
     HTTP_OK,
-    LOG_PROVIDER_REGISTERED,
     OLLAMA_DEFAULT_BASE_URL,
     OLLAMA_DEFAULT_ENDPOINT,
     OLLAMA_HEALTH_PATH,
@@ -77,9 +73,9 @@ class GoogleProvider(ModelProvider):
 
     def validate_config(self) -> None:
         if self.provider_type == GoogleProviderType.GLA and not self.api_key:
-            raise ValueError(ERR_GOOGLE_GLA_NO_KEY)
+            raise ValueError(ex.GOOGLE_GLA_NO_KEY)
         if self.provider_type == GoogleProviderType.VERTEX and not self.project_id:
-            raise ValueError(ERR_GOOGLE_VERTEX_NO_PROJECT)
+            raise ValueError(ex.GOOGLE_VERTEX_NO_PROJECT)
 
     def create_model(self, model_id: str, **kwargs: str | int | None) -> GoogleModel:
         self.validate_config()
@@ -129,7 +125,7 @@ class OpenAIProvider(ModelProvider):
 
     def validate_config(self) -> None:
         if not self.api_key:
-            raise ValueError(ERR_OPENAI_NO_KEY)
+            raise ValueError(ex.OPENAI_NO_KEY)
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None
@@ -159,7 +155,7 @@ class OllamaProvider(ModelProvider):
         base_url = self.endpoint.rstrip(V1_PATH).rstrip("/")
 
         if not check_ollama_running(base_url):
-            raise ValueError(ERR_OLLAMA_NOT_RUNNING.format(endpoint=base_url))
+            raise ValueError(ex.OLLAMA_NOT_RUNNING.format(endpoint=base_url))
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None
@@ -184,7 +180,7 @@ def get_provider(
     if provider_key not in PROVIDER_REGISTRY:
         available = ", ".join(PROVIDER_REGISTRY.keys())
         raise ValueError(
-            ERR_UNKNOWN_PROVIDER.format(provider=provider_name, available=available)
+            ex.UNKNOWN_PROVIDER.format(provider=provider_name, available=available)
         )
 
     provider_class = PROVIDER_REGISTRY[provider_key]
@@ -193,7 +189,7 @@ def get_provider(
 
 def register_provider(name: str, provider_class: type[ModelProvider]) -> None:
     PROVIDER_REGISTRY[name] = provider_class
-    logger.info(LOG_PROVIDER_REGISTERED.format(name=name))
+    logger.info(logs.PROVIDER_REGISTERED.format(name=name))
 
 
 def list_providers() -> list[str]:
