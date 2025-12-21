@@ -9,9 +9,11 @@ import subprocess
 
 import click
 import diff_match_patch as dmp
+from loguru import logger
 from rich.console import Console
 from rich.table import Table
 
+from .. import constants as cs
 from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 
 
@@ -30,57 +32,48 @@ def add_grammar(
     language_name: str | None = None, grammar_url: str | None = None
 ) -> None:
     if not language_name and not grammar_url:
-        language_name = click.prompt("Language name (e.g., 'c-sharp', 'python')")
+        language_name = click.prompt(cs.LANG_PROMPT_LANGUAGE_NAME)
 
     if not grammar_url:
         if not language_name:
-            click.echo(
-                "❌ Error: Either language_name or --grammar-url must be provided"
-            )
+            click.echo(f"❌ {cs.LANG_ERR_MISSING_ARGS}")
             return
-        grammar_url = f"https://github.com/tree-sitter/tree-sitter-{language_name}"
-        click.echo(f"🔍 Using default tree-sitter URL: {grammar_url}")
+        grammar_url = cs.LANG_DEFAULT_GRAMMAR_URL.format(name=language_name)
+        click.echo(f"🔍 {cs.LANG_MSG_USING_DEFAULT_URL.format(url=grammar_url)}")
 
-    if grammar_url and "github.com/tree-sitter/tree-sitter" not in grammar_url:
+    if grammar_url and cs.LANG_TREE_SITTER_URL_MARKER not in grammar_url:
         click.secho(
-            "⚠️ WARNING: You are adding a grammar from a custom URL. This may execute code from the repository. Only proceed if you trust the source.",
-            fg="yellow",
+            f"⚠️ {cs.LANG_MSG_CUSTOM_URL_WARNING}",
+            fg=cs.Color.YELLOW,
             bold=True,
         )
-        if not click.confirm("Do you want to continue?"):
+        if not click.confirm(cs.LANG_PROMPT_CONTINUE):
             return
 
-    grammars_dir = "grammars"
-    if not os.path.exists(grammars_dir):
-        os.makedirs(grammars_dir)
+    if not os.path.exists(cs.LANG_GRAMMARS_DIR):
+        os.makedirs(cs.LANG_GRAMMARS_DIR)
 
     grammar_dir_name = os.path.basename(grammar_url).removesuffix(".git")
-    grammar_path = os.path.join(grammars_dir, grammar_dir_name)
+    grammar_path = os.path.join(cs.LANG_GRAMMARS_DIR, grammar_dir_name)
 
     try:
-        click.echo(f"🔄 Adding submodule from {grammar_url}...")
+        click.echo(f"🔄 {cs.LANG_MSG_ADDING_SUBMODULE.format(url=grammar_url)}")
         subprocess.run(
-            [
-                "git",
-                "submodule",
-                "add",
-                grammar_url,
-                grammar_path,
-            ],
+            ["git", "submodule", "add", grammar_url, grammar_path],
             check=True,
             capture_output=True,
             text=True,
         )
-        click.echo(f"✅ Successfully added submodule at {grammar_path}")
+        click.echo(f"✅ {cs.LANG_MSG_SUBMODULE_SUCCESS.format(path=grammar_path)}")
     except subprocess.CalledProcessError as e:
         error_output = e.stderr or str(e)
         if "already exists in the index" in error_output:
             click.secho(
-                f"⚠️  Submodule already exists at {grammar_path}. Forcing re-installation...",
-                fg="yellow",
+                f"⚠️  {cs.LANG_MSG_SUBMODULE_EXISTS.format(path=grammar_path)}",
+                fg=cs.Color.YELLOW,
             )
             try:
-                click.echo("   -> Removing existing submodule entry...")
+                click.echo(cs.LANG_MSG_REMOVING_ENTRY)
                 subprocess.run(
                     ["git", "submodule", "deinit", "-f", grammar_path],
                     check=True,
@@ -94,56 +87,56 @@ def add_grammar(
                     text=True,
                 )
 
-                modules_path = f".git/modules/{grammar_path}"
+                modules_path = cs.LANG_GIT_MODULES_PATH.format(path=grammar_path)
                 if os.path.exists(modules_path):
                     shutil.rmtree(modules_path)
 
-                click.echo("   -> Re-adding submodule...")
+                click.echo(cs.LANG_MSG_READDING_SUBMODULE)
                 subprocess.run(
-                    [
-                        "git",
-                        "submodule",
-                        "add",
-                        "--force",
-                        grammar_url,
-                        grammar_path,
-                    ],
+                    ["git", "submodule", "add", "--force", grammar_url, grammar_path],
                     check=True,
                     capture_output=True,
                     text=True,
                 )
-                click.echo(f"✅ Successfully re-installed submodule at {grammar_path}")
+                click.echo(
+                    f"✅ {cs.LANG_MSG_REINSTALL_SUCCESS.format(path=grammar_path)}"
+                )
             except (subprocess.CalledProcessError, OSError) as reinstall_e:
                 error_msg = (
                     reinstall_e.stderr
                     if hasattr(reinstall_e, "stderr")
                     else str(reinstall_e)
                 )
-                click.secho(f"❌ Failed to reinstall submodule: {error_msg}", fg="red")
-                click.echo("💡 You may need to remove it manually and try again:")
+                logger.error(cs.LANG_ERR_REINSTALL_FAILED.format(error=error_msg))
+                click.secho(
+                    f"❌ {cs.LANG_ERR_REINSTALL_FAILED.format(error=error_msg)}",
+                    fg=cs.Color.RED,
+                )
+                click.echo(f"💡 {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
                 click.echo(f"   git submodule deinit -f {grammar_path}")
                 click.echo(f"   git rm -f {grammar_path}")
-                click.echo(f"   rm -rf .git/modules/{grammar_path}")
+                click.echo(
+                    f"   rm -rf {cs.LANG_GIT_MODULES_PATH.format(path=grammar_path)}"
+                )
                 return
         elif "does not exist" in error_output or "not found" in error_output:
-            click.echo(f"❌ Error: Repository not found at {grammar_url}")
-            click.echo("💡 Try using a custom URL with: --grammar-url <your-repo-url>")
+            logger.error(cs.LANG_ERR_REPO_NOT_FOUND.format(url=grammar_url))
+            click.echo(f"❌ {cs.LANG_ERR_REPO_NOT_FOUND.format(url=grammar_url)}")
+            click.echo(f"💡 {cs.LANG_ERR_CUSTOM_URL_HINT}")
             return
         else:
-            click.echo(f"❌ Git error: {error_output}")
+            logger.error(cs.LANG_ERR_GIT.format(error=error_output))
+            click.echo(f"❌ {cs.LANG_ERR_GIT.format(error=error_output)}")
             raise
 
-    tree_sitter_json_path = os.path.join(grammar_path, "tree-sitter.json")
+    tree_sitter_json_path = os.path.join(grammar_path, cs.LANG_TREE_SITTER_JSON)
 
     if not os.path.exists(tree_sitter_json_path):
-        click.echo(f"Warning: tree-sitter.json not found in {grammar_path}")
+        click.echo(cs.LANG_ERR_TREE_SITTER_JSON_WARNING.format(path=grammar_path))
         if not language_name:
-            language_name = click.prompt("What is the common name for this language?")
+            language_name = click.prompt(cs.LANG_PROMPT_COMMON_NAME)
         file_extension = [
-            ext.strip()
-            for ext in click.prompt(
-                "What file extensions should be associated with this language? (comma-separated)"
-            ).split(",")
+            ext.strip() for ext in click.prompt(cs.LANG_PROMPT_EXTENSIONS).split(",")
         ]
     else:
         with open(tree_sitter_json_path) as f:
@@ -160,28 +153,29 @@ def add_grammar(
             if not language_name:
                 language_name = detected_name
 
-            click.echo(f"Auto-detected language: {detected_name}")
-            click.echo(f"Using language name: {language_name}")
-            click.echo(f"Auto-detected file extensions: {file_extension}")
+            click.echo(cs.LANG_MSG_AUTO_DETECTED_LANG.format(name=detected_name))
+            click.echo(cs.LANG_MSG_USING_LANG_NAME.format(name=language_name))
+            click.echo(cs.LANG_MSG_AUTO_DETECTED_EXT.format(extensions=file_extension))
         else:
-            click.echo("Warning: No grammars found in tree-sitter.json")
+            click.echo(cs.LANG_ERR_NO_GRAMMARS_WARNING)
             if not language_name:
-                language_name = click.prompt(
-                    "What is the common name for this language?"
-                )
+                language_name = click.prompt(cs.LANG_PROMPT_COMMON_NAME)
             file_extension = [
                 ext.strip()
-                for ext in click.prompt(
-                    "What file extensions should be associated with this language? (comma-separated)"
-                ).split(",")
+                for ext in click.prompt(cs.LANG_PROMPT_EXTENSIONS).split(",")
             ]
 
     assert language_name is not None
     possible_paths = [
-        os.path.join(grammar_path, "src", "node-types.json"),
-        os.path.join(grammar_path, language_name, "src", "node-types.json"),
+        os.path.join(grammar_path, cs.LANG_SRC_DIR, cs.LANG_NODE_TYPES_JSON),
         os.path.join(
-            grammar_path, language_name.replace("-", "_"), "src", "node-types.json"
+            grammar_path, language_name, cs.LANG_SRC_DIR, cs.LANG_NODE_TYPES_JSON
+        ),
+        os.path.join(
+            grammar_path,
+            language_name.replace("-", "_"),
+            cs.LANG_SRC_DIR,
+            cs.LANG_NODE_TYPES_JSON,
         ),
     ]
 
@@ -192,45 +186,35 @@ def add_grammar(
             break
 
     if not node_types_path:
-        click.echo(
-            f"Warning: node-types.json not found in any expected location for {language_name}"
-        )
-        function_nodes = ["function_definition", "method_definition"]
-        class_nodes = ["class_declaration"]
+        click.echo(cs.LANG_ERR_NODE_TYPES_WARNING.format(name=language_name))
+        function_nodes = list(cs.LANG_DEFAULT_FUNCTION_NODES)
+        class_nodes = list(cs.LANG_DEFAULT_CLASS_NODES)
         click.echo("Available nodes for mapping:")
-        click.echo(f"Functions: {function_nodes}")
-        click.echo(f"Classes: {class_nodes}")
+        click.echo(cs.LANG_MSG_FUNCTIONS.format(nodes=function_nodes))
+        click.echo(cs.LANG_MSG_CLASSES.format(nodes=class_nodes))
 
         functions = [
             node.strip()
-            for node in click.prompt(
-                "Select nodes representing FUNCTIONS (comma-separated)", type=str
-            ).split(",")
+            for node in click.prompt(cs.LANG_PROMPT_FUNCTIONS, type=str).split(",")
         ]
         classes = [
             node.strip()
-            for node in click.prompt(
-                "Select nodes representing CLASSES (comma-separated)", type=str
-            ).split(",")
+            for node in click.prompt(cs.LANG_PROMPT_CLASSES, type=str).split(",")
         ]
         modules = [
             node.strip()
-            for node in click.prompt(
-                "Select nodes representing MODULES (comma-separated)", type=str
-            ).split(",")
+            for node in click.prompt(cs.LANG_PROMPT_MODULES, type=str).split(",")
         ]
         calls = [
             node.strip()
-            for node in click.prompt(
-                "Select nodes representing FUNCTION CALLS (comma-separated)", type=str
-            ).split(",")
+            for node in click.prompt(cs.LANG_PROMPT_CALLS, type=str).split(",")
         ]
     else:
         try:
             with open(node_types_path) as f:
                 node_types = json.load(f)
 
-            all_node_names = set()
+            all_node_names: set[str] = set()
 
             def extract_types(obj: dict | list) -> None:
                 if isinstance(obj, dict):
@@ -273,76 +257,45 @@ def add_grammar(
 
             semantic_categories = extract_semantic_categories(node_types)
 
-            click.echo(f"📊 Found {len(all_node_names)} total node types in grammar")
+            click.echo(
+                f"📊 {cs.LANG_MSG_FOUND_NODE_TYPES.format(count=len(all_node_names))}"
+            )
 
-            click.echo("🌳 Tree-sitter semantic categories:")
+            click.echo(f"🌳 {cs.LANG_MSG_SEMANTIC_CATEGORIES}")
             for category, subtypes in semantic_categories.items():
+                preview = f"{subtypes[:5]}{'...' if len(subtypes) > 5 else ''}"
                 click.echo(
-                    f"  {category}: {subtypes[:5]}{'...' if len(subtypes) > 5 else ''} ({len(subtypes)} total)"
+                    cs.LANG_MSG_CATEGORY_FORMAT.format(
+                        category=category, subtypes=preview, count=len(subtypes)
+                    )
                 )
 
-            functions = []
-            classes = []
-            modules = []
-            calls = []
+            functions: list[str] = []
+            classes: list[str] = []
+            modules: list[str] = []
+            calls: list[str] = []
 
             for category, subtypes in semantic_categories.items():
                 for subtype in subtypes:
                     subtype_lower = subtype.lower()
 
                     if (
-                        any(
-                            kw in subtype_lower
-                            for kw in [
-                                "function",
-                                "method",
-                                "constructor",
-                                "destructor",
-                                "lambda",
-                                "arrow_function",
-                                "anonymous_function",
-                                "closure",
-                            ]
-                        )
+                        any(kw in subtype_lower for kw in cs.LANG_FUNCTION_KEYWORDS)
                         and "call" not in subtype_lower
                     ):
                         functions.append(subtype)
 
-                    elif (
-                        any(
-                            kw in subtype_lower
-                            for kw in [
-                                "class",
-                                "interface",
-                                "struct",
-                                "enum",
-                                "trait",
-                                "object",
-                                "type",
-                                "impl",
-                                "union",
-                            ]
-                        )
-                        and "access" not in subtype_lower
-                        and "call" not in subtype_lower
+                    elif any(
+                        kw in subtype_lower for kw in cs.LANG_CLASS_KEYWORDS
+                    ) and not any(
+                        kw in subtype_lower for kw in cs.LANG_EXCLUSION_KEYWORDS
                     ):
                         classes.append(subtype)
 
-                    elif any(
-                        kw in subtype_lower for kw in ["call", "invoke", "invocation"]
-                    ):
+                    elif any(kw in subtype_lower for kw in cs.LANG_CALL_KEYWORDS):
                         calls.append(subtype)
 
-                    elif any(
-                        kw in subtype_lower
-                        for kw in [
-                            "program",
-                            "source_file",
-                            "compilation_unit",
-                            "module",
-                            "chunk",
-                        ]
-                    ):
+                    elif any(kw in subtype_lower for kw in cs.LANG_MODULE_KEYWORDS):
                         modules.append(subtype)
 
             root_nodes = [
@@ -357,18 +310,19 @@ def add_grammar(
             modules = list(set(modules))
             calls = list(set(calls))
 
-            click.echo("\n🎯 Mapped to our categories:")
-            click.echo(f"Functions: {functions}")
-            click.echo(f"Classes: {classes}")
-            click.echo(f"Modules: {modules}")
-            click.echo(f"Calls: {calls}")
+            click.echo(f"🎯 {cs.LANG_MSG_MAPPED_CATEGORIES}")
+            click.echo(cs.LANG_MSG_FUNCTIONS.format(nodes=functions))
+            click.echo(cs.LANG_MSG_CLASSES.format(nodes=classes))
+            click.echo(cs.LANG_MSG_MODULES.format(nodes=modules))
+            click.echo(cs.LANG_MSG_CALLS.format(nodes=calls))
 
         except Exception as e:
-            click.echo(f"Error parsing node-types.json: {e}")
-            functions = ["method_declaration"]
-            classes = ["class_declaration"]
-            modules = ["compilation_unit"]
-            calls = ["invocation_expression"]
+            logger.error(cs.LANG_ERR_PARSE_NODE_TYPES.format(error=e))
+            click.echo(cs.LANG_ERR_PARSE_NODE_TYPES.format(error=e))
+            functions = [cs.LANG_FALLBACK_METHOD_NODE]
+            classes = list(cs.LANG_DEFAULT_CLASS_NODES)
+            modules = list(cs.LANG_DEFAULT_MODULE_NODES)
+            calls = list(cs.LANG_DEFAULT_CALL_NODES)
 
     new_language_spec = LanguageSpec(
         language=language_name,
@@ -379,10 +333,7 @@ def add_grammar(
         call_node_types=tuple(calls),
     )
 
-    config_file_path = "codebase_rag/language_spec.py"
-    try:
-        config_content = pathlib.Path(config_file_path).read_text()
-        config_entry = f"""    "{language_name}": LanguageSpec(
+    config_entry = f"""    "{language_name}": LanguageSpec(
         language="{new_language_spec.language}",
         file_extensions={new_language_spec.file_extensions},
         function_node_types={new_language_spec.function_node_types},
@@ -390,6 +341,9 @@ def add_grammar(
         module_node_types={new_language_spec.module_node_types},
         call_node_types={new_language_spec.call_node_types},
     ),"""
+
+    try:
+        config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text()
 
         closing_brace_pos = config_content.rfind("}")
         if closing_brace_pos != -1:
@@ -400,48 +354,38 @@ def add_grammar(
                 + config_content[closing_brace_pos:]
             )
 
-            with open(config_file_path, "w") as f:
+            with open(cs.LANG_CONFIG_FILE, "w") as f:
                 f.write(new_content)
 
+            click.echo(f"✅ {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
             click.echo(
-                f"\n✅ Language '{language_name}' has been added to the configuration!"
+                f"📝 {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}"
             )
-            click.echo(f"📝 Updated {config_file_path}")
 
             click.echo()
             click.echo(
                 click.style(
-                    "📋 Please review the detected node types:", bold=True, fg="yellow"
+                    f"📋 {cs.LANG_MSG_REVIEW_PROMPT}", bold=True, fg=cs.Color.YELLOW
                 )
             )
-            click.echo("   The auto-detection is good but may need manual adjustments.")
-            click.echo(f"   Edit the configuration in: {config_file_path}")
+            click.echo(cs.LANG_MSG_REVIEW_HINT)
+            click.echo(cs.LANG_MSG_EDIT_HINT.format(path=cs.LANG_CONFIG_FILE))
             click.echo()
-            click.echo("🎯 Look for these common issues:")
-            click.echo(
-                "   • Remove misclassified types (e.g., table_constructor in functions)"
-            )
-            click.echo("   • Add missing types that should be included")
-            click.echo(
-                "   • Verify class_node_types includes all relevant class-like constructs"
-            )
-            click.echo("   • Check call_node_types covers all function call patterns")
+            click.echo(f"🎯 {cs.LANG_MSG_COMMON_ISSUES}")
+            click.echo(f"   • {cs.LANG_MSG_ISSUE_MISCLASSIFIED.strip()}")
+            click.echo(f"   • {cs.LANG_MSG_ISSUE_MISSING.strip()}")
+            click.echo(f"   • {cs.LANG_MSG_ISSUE_CLASS_TYPES.strip()}")
+            click.echo(f"   • {cs.LANG_MSG_ISSUE_CALL_TYPES.strip()}")
             click.echo()
-            click.echo(
-                "💡 You can run 'cgr language list-languages' to see the current config."
-            )
+            click.echo(f"💡 {cs.LANG_MSG_LIST_HINT}")
         else:
-            raise ValueError("Could not find LANGUAGE_SPECS dictionary end")
+            raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
 
     except Exception as e:
-        click.echo(f"❌ Error updating config file: {e}")
-        click.echo(
-            click.style(
-                "FALLBACK: Please manually add the following entry to 'LANGUAGE_SPECS' in 'codebase_rag/language_spec.py':",
-                bold=True,
-            )
-        )
-        click.echo(click.style(config_entry, fg="green"))
+        logger.error(cs.LANG_ERR_UPDATE_CONFIG.format(error=e))
+        click.echo(f"❌ {cs.LANG_ERR_UPDATE_CONFIG.format(error=e)}")
+        click.echo(click.style(cs.LANG_FALLBACK_MANUAL_ADD, bold=True))
+        click.echo(click.style(config_entry, fg=cs.Color.GREEN))
 
 
 @cli.command(help="List all currently configured languages.")
@@ -449,24 +393,32 @@ def list_languages() -> None:
     console = Console()
 
     table = Table(
-        title="📋 Configured Languages", show_header=True, header_style="bold magenta"
+        title=f"📋 {cs.LANG_TABLE_TITLE}",
+        show_header=True,
+        header_style=f"bold {cs.Color.MAGENTA}",
     )
-    table.add_column("Language", style="cyan", width=12)
-    table.add_column("Extensions", style="green", width=20)
-    table.add_column("Function Types", style="yellow", width=30)
-    table.add_column("Class Types", style="blue", width=35)
-    table.add_column("Call Types", style="red", width=30)
+    table.add_column(cs.LANG_TABLE_COL_LANGUAGE, style=cs.Color.CYAN, width=12)
+    table.add_column(cs.LANG_TABLE_COL_EXTENSIONS, style=cs.Color.GREEN, width=20)
+    table.add_column(cs.LANG_TABLE_COL_FUNCTION_TYPES, style=cs.Color.YELLOW, width=30)
+    table.add_column(cs.LANG_TABLE_COL_CLASS_TYPES, style="blue", width=35)
+    table.add_column(cs.LANG_TABLE_COL_CALL_TYPES, style=cs.Color.RED, width=30)
 
     for lang_name, config in LANGUAGE_SPECS.items():
         extensions = ", ".join(config.file_extensions)
         function_types = (
-            ", ".join(config.function_node_types) if config.function_node_types else "—"
+            ", ".join(config.function_node_types)
+            if config.function_node_types
+            else cs.LANG_TABLE_PLACEHOLDER
         )
         class_types = (
-            ", ".join(config.class_node_types) if config.class_node_types else "—"
+            ", ".join(config.class_node_types)
+            if config.class_node_types
+            else cs.LANG_TABLE_PLACEHOLDER
         )
         call_types = (
-            ", ".join(config.call_node_types) if config.call_node_types else "—"
+            ", ".join(config.call_node_types)
+            if config.call_node_types
+            else cs.LANG_TABLE_PLACEHOLDER
         )
 
         table.add_row(lang_name, extensions, function_types, class_types, call_types)
@@ -482,13 +434,12 @@ def list_languages() -> None:
 def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     if language_name not in LANGUAGE_SPECS:
         available_langs = ", ".join(LANGUAGE_SPECS.keys())
-        click.echo(f"❌ Language '{language_name}' not found.")
-        click.echo(f"📋 Available languages: {available_langs}")
+        click.echo(f"❌ {cs.LANG_MSG_LANG_NOT_FOUND.format(name=language_name)}")
+        click.echo(f"📋 {cs.LANG_MSG_AVAILABLE_LANGS.format(langs=available_langs)}")
         return
 
-    config_file = "codebase_rag/language_spec.py"
     try:
-        original_content = pathlib.Path(config_file).read_text()
+        original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text()
         pattern = rf'    "{language_name}": LanguageSpec\([\s\S]*?\),\n'
         new_content = re.sub(pattern, "", original_content)
 
@@ -496,20 +447,25 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         patches = dmp_obj.patch_make(original_content, new_content)
         result, _ = dmp_obj.patch_apply(patches, original_content)
 
-        with open(config_file, "w") as f:
+        with open(cs.LANG_CONFIG_FILE, "w") as f:
             f.write(result)
 
-        click.echo(f"✅ Removed language '{language_name}' from configuration file.")
+        click.echo(f"✅ {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
 
     except Exception as e:
-        click.echo(f"❌ Failed to update config file: {e}")
+        logger.error(cs.LANG_ERR_REMOVE_CONFIG.format(error=e))
+        click.echo(f"❌ {cs.LANG_ERR_REMOVE_CONFIG.format(error=e)}")
         return
 
     if not keep_submodule:
-        submodule_path = f"grammars/tree-sitter-{language_name}"
+        submodule_path = (
+            f"{cs.LANG_GRAMMARS_DIR}/{cs.TREE_SITTER_PREFIX}{language_name}"
+        )
         if os.path.exists(submodule_path):
             try:
-                click.echo(f"🔄 Removing git submodule '{submodule_path}'...")
+                click.echo(
+                    f"🔄 {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
+                )
                 subprocess.run(
                     ["git", "submodule", "deinit", "-f", submodule_path],
                     check=True,
@@ -519,61 +475,68 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
                     ["git", "rm", "-f", submodule_path], check=True, capture_output=True
                 )
 
-                modules_path = f".git/modules/{submodule_path}"
+                modules_path = cs.LANG_GIT_MODULES_PATH.format(path=submodule_path)
                 if os.path.exists(modules_path):
                     shutil.rmtree(modules_path)
-                    click.echo(f"🧹 Cleaned up git modules directory: {modules_path}")
+                    click.echo(
+                        f"🧹 {cs.LANG_MSG_CLEANED_MODULES.format(path=modules_path)}"
+                    )
 
-                click.echo(f"🗑️  Successfully removed submodule '{submodule_path}'")
+                click.echo(
+                    f"🗑️  {cs.LANG_MSG_SUBMODULE_REMOVED.format(path=submodule_path)}"
+                )
             except subprocess.CalledProcessError as e:
-                click.echo(f"❌ Failed to remove submodule: {e}")
-                click.echo("💡 You may need to remove it manually:")
+                logger.error(cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e))
+                click.echo(f"❌ {cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e)}")
+                click.echo(f"💡 {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
                 click.echo(f"   git submodule deinit -f {submodule_path}")
                 click.echo(f"   git rm -f {submodule_path}")
         else:
-            click.echo(f"ℹ️  No submodule found at '{submodule_path}'")
+            click.echo(f"ℹ️  {cs.LANG_MSG_NO_SUBMODULE.format(path=submodule_path)}")
     else:
-        click.echo("ℹ️  Keeping submodule (--keep-submodule flag used)")
+        click.echo(f"ℹ️  {cs.LANG_MSG_KEEPING_SUBMODULE}")
 
-    click.echo(f"🎉 Language '{language_name}' has been removed successfully!")
+    click.echo(f"🎉 {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
 
 
 @cli.command(help="Clean up orphaned git modules that weren't properly removed.")
 def cleanup_orphaned_modules() -> None:
-    modules_dir = ".git/modules/grammars"
+    modules_dir = f".git/modules/{cs.LANG_GRAMMARS_DIR}"
     if not os.path.exists(modules_dir):
-        click.echo("📂 No grammars modules directory found.")
+        click.echo(f"📂 {cs.LANG_MSG_NO_MODULES_DIR}")
         return
 
-    gitmodules_submodules = set()
+    gitmodules_submodules: set[str] = set()
     try:
         with open(".gitmodules") as f:
             content = f.read()
-            paths = re.findall(r"path = (grammars/tree-sitter-[^\\n]+)", content)
+            paths = re.findall(cs.LANG_GITMODULES_REGEX, content)
             gitmodules_submodules = set(paths)
     except FileNotFoundError:
-        click.echo("📄 No .gitmodules file found.")
+        click.echo(f"📄 {cs.LANG_MSG_NO_GITMODULES}")
 
     orphaned = []
     for item in os.listdir(modules_dir):
-        module_path = f"grammars/{item}"
+        module_path = f"{cs.LANG_GRAMMARS_DIR}/{item}"
         if module_path not in gitmodules_submodules:
             orphaned.append(item)
 
     if not orphaned:
-        click.echo("✨ No orphaned modules found!")
+        click.echo(f"✨ {cs.LANG_MSG_NO_ORPHANS}")
         return
 
-    click.echo(f"🔍 Found {len(orphaned)} orphaned module(s): {', '.join(orphaned)}")
+    click.echo(
+        f"🔍 {cs.LANG_MSG_FOUND_ORPHANS.format(count=len(orphaned), modules=', '.join(orphaned))}"
+    )
 
-    if click.confirm("Do you want to remove these orphaned modules?"):
+    if click.confirm(cs.LANG_PROMPT_REMOVE_ORPHANS):
         for module in orphaned:
             module_path = os.path.join(modules_dir, module)
             shutil.rmtree(module_path)
-            click.echo(f"🗑️  Removed orphaned module: {module}")
-        click.echo("🎉 Cleanup complete!")
+            click.echo(f"🗑️  {cs.LANG_MSG_REMOVED_ORPHAN.format(module=module)}")
+        click.echo(f"🎉 {cs.LANG_MSG_CLEANUP_COMPLETE}")
     else:
-        click.echo("❌ Cleanup cancelled.")
+        click.echo(f"❌ {cs.LANG_MSG_CLEANUP_CANCELLED}")
 
 
 if __name__ == "__main__":
