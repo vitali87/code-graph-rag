@@ -6,7 +6,7 @@ from typing import Any
 from loguru import logger
 from tree_sitter import Node
 
-from ..constants import SEPARATOR_DOT, SupportedLanguage
+from .. import constants as cs
 from ..language_spec import LanguageSpec
 from ..types_defs import LanguageQueries
 from .lua_utils import (
@@ -16,17 +16,16 @@ from .lua_utils import (
 from .rust_utils import extract_rust_use_imports
 from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
-_JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
+_JS_TYPESCRIPT_LANGUAGES = {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}
 
 _STDLIB_CACHE: dict[str, dict[str, str]] = {}
-_CACHE_TTL = 3600
+_CACHE_TTL = cs.IMPORT_CACHE_TTL
 _CACHE_TIMESTAMPS: dict[str, float] = {}
 
 _EXTERNAL_TOOLS: dict[str, bool] = {}
 
 
 def _is_tool_available(tool_name: str) -> bool:
-    """Check if an external tool is available in the system PATH with caching."""
     if tool_name in _EXTERNAL_TOOLS:
         return _EXTERNAL_TOOLS[tool_name]
 
@@ -49,7 +48,6 @@ def _is_tool_available(tool_name: str) -> bool:
 
 
 def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | None:
-    """Get cached stdlib introspection result if available and not expired."""
     cache_key = f"{language}:{full_qualified_name}"
 
     if cache_key not in _STDLIB_CACHE:
@@ -65,7 +63,6 @@ def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | 
 
 
 def _cache_stdlib_result(language: str, full_qualified_name: str, result: str) -> None:
-    """Cache stdlib introspection result."""
     cache_key = f"{language}:{full_qualified_name}"
 
     if cache_key not in _STDLIB_CACHE:
@@ -76,7 +73,6 @@ def _cache_stdlib_result(language: str, full_qualified_name: str, result: str) -
 
 
 def _load_persistent_cache() -> None:
-    """Load persistent cache from disk if available."""
     try:
         cache_file = Path.home() / ".cache" / "codebase_rag" / "stdlib_cache.json"
         if cache_file.exists():
@@ -90,7 +86,6 @@ def _load_persistent_cache() -> None:
 
 
 def _save_persistent_cache() -> None:
-    """Save persistent cache to disk."""
     try:
         cache_dir = Path.home() / ".cache" / "codebase_rag"
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -127,7 +122,6 @@ class ImportProcessor:
         _load_persistent_cache()
 
     def __del__(self) -> None:
-        """Save cache when processor is destroyed."""
         try:
             _save_persistent_cache()
         except Exception:
@@ -135,12 +129,10 @@ class ImportProcessor:
 
     @staticmethod
     def flush_stdlib_cache() -> None:
-        """Manually flush the stdlib cache to disk. Useful for ensuring persistence."""
         _save_persistent_cache()
 
     @staticmethod
     def clear_stdlib_cache() -> None:
-        """Clear the stdlib cache from memory and disk."""
         global _STDLIB_CACHE, _CACHE_TIMESTAMPS
         _STDLIB_CACHE.clear()
         _CACHE_TIMESTAMPS.clear()
@@ -154,7 +146,6 @@ class ImportProcessor:
 
     @staticmethod
     def get_stdlib_cache_stats() -> dict[str, Any]:
-        """Get statistics about the stdlib cache for monitoring/debugging."""
         return {
             "cache_entries": len(_STDLIB_CACHE),
             "cache_languages": list(_STDLIB_CACHE.keys()),
@@ -168,10 +159,9 @@ class ImportProcessor:
         self,
         root_node: Node,
         module_qn: str,
-        language: SupportedLanguage,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Parse import statements and build import mapping for the module."""
         if language not in queries or not queries[language].get("imports"):
             return
 
@@ -185,19 +175,19 @@ class ImportProcessor:
             captures = cursor.captures(root_node)
 
             match language:
-                case SupportedLanguage.PYTHON:
+                case cs.SupportedLanguage.PYTHON:
                     self._parse_python_imports(captures, module_qn)
-                case SupportedLanguage.JS | SupportedLanguage.TS:
+                case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                     self._parse_js_ts_imports(captures, module_qn)
-                case SupportedLanguage.JAVA:
+                case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
-                case SupportedLanguage.RUST:
+                case cs.SupportedLanguage.RUST:
                     self._parse_rust_imports(captures, module_qn)
-                case SupportedLanguage.GO:
+                case cs.SupportedLanguage.GO:
                     self._parse_go_imports(captures, module_qn)
-                case SupportedLanguage.CPP:
+                case cs.SupportedLanguage.CPP:
                     self._parse_cpp_imports(captures, module_qn)
-                case SupportedLanguage.LUA:
+                case cs.SupportedLanguage.LUA:
                     self._parse_lua_imports(captures, module_qn)
                 case _:
                     self._parse_generic_imports(captures, module_qn, lang_config)
@@ -223,7 +213,6 @@ class ImportProcessor:
             logger.warning(f"Failed to parse imports in {module_qn}: {e}")
 
     def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
-        """Parse Python import statements with full support for all import types."""
         for import_node in captures.get("import", []) + captures.get("import_from", []):
             if import_node.type == "import_statement":
                 self._handle_python_import_statement(import_node, module_qn)
@@ -233,11 +222,10 @@ class ImportProcessor:
     def _handle_python_import_statement(
         self, import_node: Node, module_qn: str
     ) -> None:
-        """Handle 'import module' statements."""
         for child in import_node.named_children:
             if child.type == "dotted_name":
                 module_name = safe_decode_text(child) or ""
-                local_name = module_name.split(SEPARATOR_DOT)[0]
+                local_name = module_name.split(cs.SEPARATOR_DOT)[0]
 
                 if (self.repo_path / local_name).is_dir() or (
                     self.repo_path / f"{local_name}.py"
@@ -260,7 +248,7 @@ class ImportProcessor:
                     module_name = decoded_module_name
                     alias = decoded_alias
 
-                    top_level_module = module_name.split(SEPARATOR_DOT)[0]
+                    top_level_module = module_name.split(cs.SEPARATOR_DOT)[0]
                     if (self.repo_path / top_level_module).is_dir() or (
                         self.repo_path / f"{top_level_module}.py"
                     ).is_file():
@@ -274,7 +262,6 @@ class ImportProcessor:
     def _handle_python_import_from_statement(
         self, import_node: Node, module_qn: str
     ) -> None:
-        """Handle 'from module import name' statements."""
         module_name_node = import_node.child_by_field_name("module_name")
         if not module_name_node:
             return
@@ -318,7 +305,7 @@ class ImportProcessor:
             if module_name.startswith(self.project_name):
                 base_module = module_name
             else:
-                top_level_module = module_name.split(SEPARATOR_DOT)[0]
+                top_level_module = module_name.split(cs.SEPARATOR_DOT)[0]
                 if (self.repo_path / top_level_module).is_dir() or (
                     self.repo_path / f"{top_level_module}.py"
                 ).is_file():
@@ -337,8 +324,7 @@ class ImportProcessor:
                     logger.debug(f"  From import: {local_name} -> {full_name}")
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
-        """Resolve relative imports like '.module' or '..parent.module'."""
-        module_parts = module_qn.split(SEPARATOR_DOT)[1:]
+        module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
 
         dots = 0
         module_name = ""
@@ -358,13 +344,11 @@ class ImportProcessor:
         target_parts = module_parts[:-dots] if dots > 0 else module_parts
 
         if module_name:
-            target_parts.extend(module_name.split(SEPARATOR_DOT))
+            target_parts.extend(module_name.split(cs.SEPARATOR_DOT))
 
-        return SEPARATOR_DOT.join(target_parts)
+        return cs.SEPARATOR_DOT.join(target_parts)
 
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
-        """Parse JavaScript/TypeScript import statements."""
-
         for import_node in captures.get("import", []):
             if import_node.type == "import_statement":
                 source_module = None
@@ -390,11 +374,10 @@ class ImportProcessor:
                 self._parse_js_reexport(import_node, module_qn)
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
-        """Resolve JavaScript module path to qualified name."""
         if not import_path.startswith("."):
-            return import_path.replace("/", SEPARATOR_DOT)
+            return import_path.replace("/", cs.SEPARATOR_DOT)
 
-        current_parts = current_module.split(SEPARATOR_DOT)[:-1]
+        current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
         import_parts = import_path.split("/")
 
         for part in import_parts:
@@ -406,12 +389,11 @@ class ImportProcessor:
             elif part:
                 current_parts.append(part)
 
-        return SEPARATOR_DOT.join(current_parts)
+        return cs.SEPARATOR_DOT.join(current_parts)
 
     def _parse_js_import_clause(
         self, clause_node: Node, source_module: str, current_module: str
     ) -> None:
-        """Parse JavaScript import clause (named, default, namespace imports)."""
         for child in clause_node.children:
             if child.type == "identifier":
                 imported_name = safe_decode_with_fallback(child)
@@ -455,7 +437,6 @@ class ImportProcessor:
                         break
 
     def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
-        """Parse CommonJS require() statements using field-based access."""
         for declarator in decl_node.children:
             if declarator.type == "variable_declarator":
                 name_node = declarator.child_by_field_name("name")
@@ -495,7 +476,6 @@ class ImportProcessor:
                                 break
 
     def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
-        """Parse JavaScript re-export statements like 'export { name } from './module'."""
         source_module = None
         for child in export_node.children:
             if child.type == "string":
@@ -534,8 +514,6 @@ class ImportProcessor:
                 logger.debug(f"JS namespace re-export: * -> {source_module}")
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
-        """Parse Java import statements."""
-
         for import_node in captures.get("import", []):
             if import_node.type == "import_declaration":
                 is_static = False
@@ -557,7 +535,7 @@ class ImportProcessor:
                     logger.debug(f"Java wildcard import: {imported_path}.*")
                     self.import_mapping[module_qn][f"*{imported_path}"] = imported_path
                 else:
-                    parts = imported_path.split(SEPARATOR_DOT)
+                    parts = imported_path.split(cs.SEPARATOR_DOT)
                     if parts:
                         imported_name = parts[-1]
                         if is_static:
@@ -577,14 +555,11 @@ class ImportProcessor:
                             )
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
-        """Parse Rust use declarations."""
-
         for import_node in captures.get("import", []):
             if import_node.type == "use_declaration":
                 self._parse_rust_use_declaration(import_node, module_qn)
 
     def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
-        """Parse a single Rust use declaration using tree-sitter field access."""
         imports = extract_rust_use_imports(use_node)
 
         for imported_name, full_path in imports.items():
@@ -592,14 +567,11 @@ class ImportProcessor:
             logger.debug(f"Rust import: {imported_name} -> {full_path}")
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
-        """Parse Go import declarations."""
-
         for import_node in captures.get("import", []):
             if import_node.type == "import_declaration":
                 self._parse_go_import_declaration(import_node, module_qn)
 
     def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:
-        """Parse a Go import declaration."""
         for child in import_node.children:
             if child.type == "import_spec":
                 self._parse_go_import_spec(child, module_qn)
@@ -609,7 +581,6 @@ class ImportProcessor:
                         self._parse_go_import_spec(grandchild, module_qn)
 
     def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:
-        """Parse a single Go import spec."""
         alias_name = None
         import_path = None
 
@@ -630,7 +601,6 @@ class ImportProcessor:
             logger.debug(f"Go import: {package_name} -> {import_path}")
 
     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
-        """Parse C++ #include statements and C++20 module imports."""
         for import_node in captures.get("import", []):
             if import_node.type == "preproc_include":
                 self._parse_cpp_include(import_node, module_qn)
@@ -640,7 +610,6 @@ class ImportProcessor:
                 self._parse_cpp_module_declaration(import_node, module_qn)
 
     def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
-        """Parse a single C++ #include statement."""
         include_path = None
         is_system_include = False
 
@@ -655,7 +624,7 @@ class ImportProcessor:
         if include_path:
             header_name = include_path.split("/")[-1]
             if header_name.endswith(".h") or header_name.endswith(".hpp"):
-                local_name = header_name.split(SEPARATOR_DOT)[0]
+                local_name = header_name.split(cs.SEPARATOR_DOT)[0]
             else:
                 local_name = header_name
 
@@ -667,7 +636,7 @@ class ImportProcessor:
                 )
             else:
                 path_parts = (
-                    include_path.replace("/", SEPARATOR_DOT)
+                    include_path.replace("/", cs.SEPARATOR_DOT)
                     .replace(".h", "")
                     .replace(".hpp", "")
                 )
@@ -679,7 +648,6 @@ class ImportProcessor:
             )
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
-        """Parse C++20 module import statements like 'import <iostream>;'."""
         identifier_child = None
         template_args_child = None
 
@@ -709,7 +677,6 @@ class ImportProcessor:
                     logger.debug(f"C++20 module import: {local_name} -> {full_name}")
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
-        """Parse C++20 module declarations and partition imports."""
         decoded_text = safe_decode_text(decl_node)
         if not decoded_text:
             return
@@ -748,22 +715,19 @@ class ImportProcessor:
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageSpec
     ) -> None:
-        """Generic fallback import parsing for other languages."""
-
         for import_node in captures.get("import", []):
             logger.debug(
                 f"Generic import parsing for {lang_config.language}: {import_node.type}"
             )
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
-        """Parse Lua require-based imports from function_call captures."""
         for call_node in captures.get("import", []):
             if self._lua_is_require_call(call_node):
                 module_path = self._lua_extract_require_arg(call_node)
                 if module_path:
                     local_name = (
                         self._lua_extract_assignment_lhs(call_node)
-                        or module_path.split(SEPARATOR_DOT)[-1]
+                        or module_path.split(cs.SEPARATOR_DOT)[-1]
                     )
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
@@ -772,7 +736,7 @@ class ImportProcessor:
                 if module_path:
                     local_name = (
                         self._lua_extract_pcall_assignment_lhs(call_node)
-                        or module_path.split(SEPARATOR_DOT)[-1]
+                        or module_path.split(cs.SEPARATOR_DOT)[-1]
                     )
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
@@ -783,14 +747,12 @@ class ImportProcessor:
                     self.import_mapping[module_qn][stdlib_module] = stdlib_module
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
-        """Return True if function_call represents require(...) or require 'x'."""
         first_child = call_node.children[0] if call_node.children else None
         if first_child and first_child.type == "identifier":
             return safe_decode_text(first_child) == "require"
         return False
 
     def _lua_is_pcall_require(self, call_node: Node) -> bool:
-        """Return True if function_call represents pcall(require, 'module')."""
         first_child = call_node.children[0] if call_node.children else None
         if not (
             first_child
@@ -815,7 +777,6 @@ class ImportProcessor:
         )
 
     def _lua_extract_require_arg(self, call_node: Node) -> str | None:
-        """Extract first string-like argument from a require call."""
         args = call_node.child_by_field_name("arguments")
         candidates = []
         if args:
@@ -830,7 +791,6 @@ class ImportProcessor:
         return None
 
     def _lua_extract_pcall_require_arg(self, call_node: Node) -> str | None:
-        """Extract module path from pcall(require, 'module') pattern."""
         args = call_node.child_by_field_name("arguments")
         if not args:
             return None
@@ -846,21 +806,14 @@ class ImportProcessor:
         return None
 
     def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
-        """Find identifier assigned from the require call (local or global)."""
         return extract_lua_assigned_name(call_node, accepted_var_types=("identifier",))
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
-        """Find the second identifier assigned from pcall(require, ...) pattern.
-
-        In patterns like: local ok, json = pcall(require, 'json')
-        We want to extract 'json' (the second identifier).
-        """
         return extract_lua_pcall_second_identifier(call_node)
 
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
-        """Resolve Lua module path for require. Handles ./ and ../ prefixes."""
         if import_path.startswith("./") or import_path.startswith("../"):
-            parts = current_module.split(SEPARATOR_DOT)[:-1]
+            parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
             rel_parts = [p for p in import_path.replace("\\", "/").split("/")]
             for p in rel_parts:
                 if p == ".":
@@ -870,11 +823,11 @@ class ImportProcessor:
                         parts.pop()
                 elif p:
                     parts.append(p)
-            return SEPARATOR_DOT.join(parts)
-        dotted = import_path.replace("/", SEPARATOR_DOT)
+            return cs.SEPARATOR_DOT.join(parts)
+        dotted = import_path.replace("/", cs.SEPARATOR_DOT)
 
         try:
-            relative_file = dotted.replace(SEPARATOR_DOT, "/") + ".lua"
+            relative_file = dotted.replace(cs.SEPARATOR_DOT, "/") + ".lua"
             if (self.repo_path / relative_file).is_file():
                 return f"{self.project_name}.{dotted}"
             if (self.repo_path / f"{dotted}.lua").is_file():
@@ -885,7 +838,6 @@ class ImportProcessor:
         return dotted
 
     def _lua_is_stdlib_call(self, call_node: Node) -> bool:
-        """Return True if function_call represents a Lua standard library call (e.g., string.upper, math.floor)."""
         from .lua_utils import safe_decode_text
 
         if not call_node.children:
@@ -911,7 +863,6 @@ class ImportProcessor:
         return False
 
     def _lua_extract_stdlib_module(self, call_node: Node) -> str | None:
-        """Extract the stdlib module name from a stdlib function call."""
         from .lua_utils import safe_decode_text
 
         if not call_node.children:
@@ -927,59 +878,39 @@ class ImportProcessor:
     def _extract_module_path(
         self,
         full_qualified_name: str,
-        language: SupportedLanguage = SupportedLanguage.PYTHON,
+        language: cs.SupportedLanguage = cs.SupportedLanguage.PYTHON,
     ) -> str:
-        """Extract module path from a full qualified name using tree-sitter knowledge.
-
-        This method uses the function_registry (populated by tree-sitter parsing) to determine
-        whether the qualified name refers to a module file or to a class/function within a module.
-
-        The function_registry contains entries for all Class/Function/Method nodes discovered
-        by tree-sitter parsing. If a qualified name is in the registry, we know it's an entity
-        defined within a module, so we extract the module path by removing the entity name.
-
-        Args:
-            full_qualified_name: Full qualified name like "project.module.Class"
-
-        Returns:
-            Module path like "project.module"
-
-        Examples:
-            "project.my_app.db.base.BaseRepo" -> "project.my_app.db.base" (BaseRepo is a Class)
-            "project.my_app.db.base" -> "project.my_app.db.base" (base is the module file)
-        """
         if self.function_registry and full_qualified_name in self.function_registry:
             entity_type = self.function_registry[full_qualified_name]
             if entity_type in ("Class", "Function", "Method"):
-                parts = full_qualified_name.rsplit(SEPARATOR_DOT, 1)
+                parts = full_qualified_name.rsplit(cs.SEPARATOR_DOT, 1)
                 if len(parts) == 2:
                     return parts[0]
 
         match language:
-            case SupportedLanguage.PYTHON:
+            case cs.SupportedLanguage.PYTHON:
                 return self._extract_python_stdlib_path(full_qualified_name)
-            case SupportedLanguage.JS | SupportedLanguage.TS:
+            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 return self._extract_js_stdlib_path(full_qualified_name)
-            case SupportedLanguage.GO:
+            case cs.SupportedLanguage.GO:
                 return self._extract_go_stdlib_path(full_qualified_name)
-            case SupportedLanguage.RUST:
+            case cs.SupportedLanguage.RUST:
                 return self._extract_rust_stdlib_path(full_qualified_name)
-            case SupportedLanguage.CPP:
+            case cs.SupportedLanguage.CPP:
                 return self._extract_cpp_stdlib_path(full_qualified_name)
-            case SupportedLanguage.JAVA:
+            case cs.SupportedLanguage.JAVA:
                 return self._extract_java_stdlib_path(full_qualified_name)
-            case SupportedLanguage.LUA:
+            case cs.SupportedLanguage.LUA:
                 return self._extract_lua_stdlib_path(full_qualified_name)
             case _:
                 return self._extract_generic_stdlib_path(full_qualified_name)
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
-        """Extract Python stdlib module path using runtime introspection."""
         cached_result = _get_cached_stdlib_result("python", full_qualified_name)
         if cached_result is not None:
             return cached_result
 
-        parts = full_qualified_name.split(SEPARATOR_DOT)
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             module_name = parts[0]
             entity_name = parts[-1]
@@ -997,14 +928,14 @@ class ImportProcessor:
                         or inspect.isfunction(obj)
                         or not inspect.ismodule(obj)
                     ):
-                        module_path = SEPARATOR_DOT.join(parts[:-1])
+                        module_path = cs.SEPARATOR_DOT.join(parts[:-1])
                         _cache_stdlib_result("python", full_qualified_name, module_path)
                         return module_path
             except (ImportError, AttributeError):
                 pass
 
             if entity_name[0].isupper():
-                result = SEPARATOR_DOT.join(parts[:-1])
+                result = cs.SEPARATOR_DOT.join(parts[:-1])
             else:
                 result = full_qualified_name
 
@@ -1014,12 +945,11 @@ class ImportProcessor:
         return full_qualified_name
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
-        """Extract JavaScript/Node.js stdlib module path using runtime introspection."""
         cached_result = _get_cached_stdlib_result("javascript", full_qualified_name)
         if cached_result is not None:
             return cached_result
 
-        parts = full_qualified_name.split(SEPARATOR_DOT)
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             module_name = parts[0]
             entity_name = parts[-1]
@@ -1067,7 +997,7 @@ class ImportProcessor:
                             "function",
                             "object",
                         ]:
-                            module_path = SEPARATOR_DOT.join(parts[:-1])
+                            module_path = cs.SEPARATOR_DOT.join(parts[:-1])
                             _cache_stdlib_result(
                                 "javascript", full_qualified_name, module_path
                             )
@@ -1081,7 +1011,7 @@ class ImportProcessor:
                     pass
 
             if entity_name[0].isupper():
-                result = SEPARATOR_DOT.join(parts[:-1])
+                result = cs.SEPARATOR_DOT.join(parts[:-1])
             else:
                 result = full_qualified_name
 
@@ -1091,7 +1021,6 @@ class ImportProcessor:
         return full_qualified_name
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
-        """Extract Go stdlib module path using compile-time analysis."""
         parts = full_qualified_name.split("/")
         if len(parts) >= 2:
             try:
@@ -1223,7 +1152,6 @@ func main() {
         return full_qualified_name
 
     def _extract_rust_stdlib_path(self, full_qualified_name: str) -> str:
-        """Extract Rust stdlib module path using compile-time analysis."""
         parts = full_qualified_name.split("::")
         if len(parts) >= 2:
             entity_name = parts[-1]
@@ -1239,7 +1167,6 @@ func main() {
         return full_qualified_name
 
     def _extract_cpp_stdlib_path(self, full_qualified_name: str) -> str:
-        """Extract C++ stdlib module path using header analysis."""
         parts = full_qualified_name.split("::")
         if len(parts) >= 2:
             namespace = parts[0]
@@ -1328,8 +1255,7 @@ int main() {{
         return full_qualified_name
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
-        """Extract Java stdlib module path using reflection."""
-        parts = full_qualified_name.split(SEPARATOR_DOT)
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             try:
                 import json
@@ -1337,7 +1263,7 @@ int main() {{
                 import subprocess
                 import tempfile
 
-                package_name = SEPARATOR_DOT.join(parts[:-1])
+                package_name = cs.SEPARATOR_DOT.join(parts[:-1])
                 entity_name = parts[-1]
 
                 java_program = """
@@ -1425,7 +1351,7 @@ public class StdlibCheck {
                         if run_result.returncode == 0:
                             data = json.loads(run_result.stdout.strip())
                             if data.get("hasEntity"):
-                                return SEPARATOR_DOT.join(parts[:-1])
+                                return cs.SEPARATOR_DOT.join(parts[:-1])
 
                 finally:
                     for ext in [".java", ".class"]:
@@ -1469,13 +1395,12 @@ public class StdlibCheck {
                     "BigDecimal",
                 }
             ):
-                return SEPARATOR_DOT.join(parts[:-1])
+                return cs.SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
-        """Extract Lua stdlib module path using runtime introspection."""
-        parts = full_qualified_name.split(SEPARATOR_DOT)
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             module_name = parts[0]
             entity_name = parts[-1]
@@ -1534,7 +1459,7 @@ end
                 if result.returncode == 0:
                     output = result.stdout.strip()
                     if "hasEntity=true" in output:
-                        return SEPARATOR_DOT.join(parts[:-1])
+                        return cs.SEPARATOR_DOT.join(parts[:-1])
 
             except (
                 subprocess.TimeoutExpired,
@@ -1552,16 +1477,15 @@ end
                 "os",
                 "debug",
             }:
-                return SEPARATOR_DOT.join(parts[:-1])
+                return cs.SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_generic_stdlib_path(self, full_qualified_name: str) -> str:
-        """Generic fallback using basic heuristics."""
-        parts = full_qualified_name.split(SEPARATOR_DOT)
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             entity_name = parts[-1]
             if entity_name[0].isupper():
-                return SEPARATOR_DOT.join(parts[:-1])
+                return cs.SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name

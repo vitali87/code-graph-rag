@@ -991,3 +991,166 @@ GOMOD_COMMENT_PREFIX = "//"
 
 # (H) Gemfile parsing patterns
 GEMFILE_GEM_PREFIX = "gem "
+
+# (H) Import processor cache config
+IMPORT_CACHE_TTL = 3600
+IMPORT_CACHE_DIR = ".cache/codebase_rag"
+IMPORT_CACHE_FILE = "stdlib_cache.json"
+IMPORT_CACHE_KEY = "cache"
+IMPORT_TIMESTAMPS_KEY = "timestamps"
+
+# (H) Tree-sitter Python import node types
+TS_IMPORT_STATEMENT = "import_statement"
+TS_IMPORT_FROM_STATEMENT = "import_from_statement"
+TS_DOTTED_NAME = "dotted_name"
+TS_ALIASED_IMPORT = "aliased_import"
+TS_RELATIVE_IMPORT = "relative_import"
+TS_IMPORT_PREFIX = "import_prefix"
+TS_WILDCARD_IMPORT = "wildcard_import"
+
+# (H) Tree-sitter JS/TS import node types
+TS_STRING = "string"
+TS_IMPORT_CLAUSE = "import_clause"
+TS_LEXICAL_DECLARATION = "lexical_declaration"
+TS_EXPORT_STATEMENT = "export_statement"
+TS_NAMED_IMPORTS = "named_imports"
+TS_IMPORT_SPECIFIER = "import_specifier"
+TS_NAMESPACE_IMPORT = "namespace_import"
+TS_IDENTIFIER = "identifier"
+TS_VARIABLE_DECLARATOR = "variable_declarator"
+TS_CALL_EXPRESSION = "call_expression"
+TS_EXPORT_CLAUSE = "export_clause"
+TS_EXPORT_SPECIFIER = "export_specifier"
+
+# (H) Tree-sitter Java import node types
+TS_IMPORT_DECLARATION = "import_declaration"
+TS_STATIC = "static"
+TS_SCOPED_IDENTIFIER = "scoped_identifier"
+TS_ASTERISK = "asterisk"
+
+# (H) Tree-sitter Rust import node types
+TS_USE_DECLARATION = "use_declaration"
+
+# (H) Tree-sitter Go import node types
+TS_IMPORT_SPEC = "import_spec"
+TS_IMPORT_SPEC_LIST = "import_spec_list"
+TS_PACKAGE_IDENTIFIER = "package_identifier"
+TS_INTERPRETED_STRING_LITERAL = "interpreted_string_literal"
+
+# (H) Tree-sitter C++ import node types
+TS_PREPROC_INCLUDE = "preproc_include"
+TS_TEMPLATE_FUNCTION = "template_function"
+TS_DECLARATION = "declaration"
+TS_STRING_LITERAL = "string_literal"
+TS_SYSTEM_LIB_STRING = "system_lib_string"
+TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
+TS_TYPE_DESCRIPTOR = "type_descriptor"
+TS_TYPE_IDENTIFIER = "type_identifier"
+
+# (H) Tree-sitter Lua node types
+TS_DOT_INDEX_EXPRESSION = "dot_index_expression"
+
+# (H) Tree-sitter class/module node types for class_ingest
+TS_MODULE_DECLARATION = "module_declaration"
+TS_IMPL_ITEM = "impl_item"
+TS_INTERFACE_DECLARATION = "interface_declaration"
+TS_ENUM_DECLARATION = "enum_declaration"
+TS_ENUM_SPECIFIER = "enum_specifier"
+TS_ENUM_CLASS_SPECIFIER = "enum_class_specifier"
+TS_TYPE_ALIAS_DECLARATION = "type_alias_declaration"
+TS_STRUCT_SPECIFIER = "struct_specifier"
+TS_UNION_SPECIFIER = "union_specifier"
+TS_CLASS_DECLARATION = "class_declaration"
+TS_BASE_CLASS_CLAUSE = "base_class_clause"
+TS_TEMPLATE_TYPE = "template_type"
+TS_ACCESS_SPECIFIER = "access_specifier"
+TS_VIRTUAL = "virtual"
+TS_TYPE_LIST = "type_list"
+TS_CLASS_HERITAGE = "class_heritage"
+TS_EXTENDS_CLAUSE = "extends_clause"
+TS_MEMBER_EXPRESSION = "member_expression"
+TS_EXTENDS = "extends"
+TS_ARGUMENTS = "arguments"
+TS_EXTENDS_TYPE_CLAUSE = "extends_type_clause"
+TS_METHOD_DEFINITION = "method_definition"
+TS_ERROR = "ERROR"
+TS_EXPRESSION_STATEMENT = "expression_statement"
+TS_STATEMENT_BLOCK = "statement_block"
+
+# (H) Import processor function names
+IMPORT_REQUIRE = "require"
+IMPORT_PCALL = "pcall"
+IMPORT_IMPORT = "import"
+
+# (H) Lua stdlib module names
+LUA_STDLIB_MODULES = frozenset(
+    {
+        "string",
+        "math",
+        "table",
+        "os",
+        "io",
+        "debug",
+        "package",
+        "coroutine",
+        "utf8",
+        "bit32",
+    }
+)
+
+# (H) Entity type names
+ENTITY_CLASS = "Class"
+ENTITY_FUNCTION = "Function"
+ENTITY_METHOD = "Method"
+
+# (H) C++ stdlib entity names for heuristic detection
+CPP_STDLIB_ENTITIES = frozenset(
+    {
+        "vector",
+        "string",
+        "map",
+        "set",
+        "list",
+        "deque",
+        "unique_ptr",
+        "shared_ptr",
+        "weak_ptr",
+        "thread",
+        "mutex",
+        "condition_variable",
+        "future",
+        "promise",
+        "sort",
+        "find",
+        "copy",
+        "transform",
+        "accumulate",
+    }
+)
+
+# (H) Java common class names for heuristic detection
+JAVA_STDLIB_CLASSES = frozenset(
+    {
+        "String",
+        "Object",
+        "Integer",
+        "Double",
+        "Boolean",
+        "ArrayList",
+        "HashMap",
+        "HashSet",
+        "LinkedList",
+        "File",
+        "URL",
+        "Pattern",
+        "LocalDateTime",
+        "BigDecimal",
+    }
+)
+
+# (H) Import processor misc
+IMPORT_DEFAULT_SUFFIX = ".default"
+IMPORT_STD_PREFIX = "std."
+IMPORT_MODULE_LABEL = "Module"
+IMPORT_QUALIFIED_NAME = "qualified_name"
+IMPORT_RELATIONSHIP = "IMPORTS"
