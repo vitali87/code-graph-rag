@@ -23,7 +23,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from .config import CHAT_LOOP_CONFIG, OPTIMIZATION_LOOP_CONFIG, ORANGE_STYLE, settings
+from .config import settings
 from .constants import (
     ARG_COMMAND,
     ARG_CONTENT,
@@ -102,7 +102,7 @@ from .constants import (
     Provider,
     StyleModifier,
 )
-from .models import AgentLoopConfig, AppContext
+from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
@@ -120,6 +120,10 @@ from .tools.semantic_search import (
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 from .types_defs import (
+    CHAT_LOOP_UI,
+    OPTIMIZATION_LOOP_UI,
+    ORANGE_STYLE,
+    AgentLoopUI,
     CancelledResult,
     ConfirmationToolNames,
     CreateFileArgs,
@@ -406,7 +410,7 @@ async def run_optimization_loop(
         rag_agent,
         message_history,
         project_root,
-        OPTIMIZATION_LOOP_CONFIG,
+        OPTIMIZATION_LOOP_UI,
         style(PROMPT_YOUR_RESPONSE, Color.CYAN),
         tool_names,
         initial_question,
@@ -445,7 +449,7 @@ async def _run_agent_response_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
     question_with_context: str,
-    config: AgentLoopConfig,
+    config: AgentLoopUI,
     tool_names: ConfirmationToolNames,
 ) -> None:
     deferred_results: DeferredToolResults | None = None
@@ -589,7 +593,7 @@ async def _run_interactive_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
     project_root: Path,
-    config: AgentLoopConfig,
+    config: AgentLoopUI,
     input_prompt: str,
     tool_names: ConfirmationToolNames,
     initial_question: str | None = None,
@@ -643,7 +647,7 @@ async def run_chat_loop(
         rag_agent,
         message_history,
         project_root,
-        CHAT_LOOP_CONFIG,
+        CHAT_LOOP_UI,
         style(PROMPT_ASK_QUESTION, Color.CYAN),
         tool_names,
     )

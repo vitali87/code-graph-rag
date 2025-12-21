@@ -10,7 +10,7 @@ import diff_match_patch as dmp
 from rich.console import Console
 from rich.table import Table
 
-from ..language_config import LANGUAGE_CONFIGS, LanguageConfig
+from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 
 
 @click.group()
@@ -372,7 +372,7 @@ def add_grammar(
             modules = ["compilation_unit"]
             calls = ["invocation_expression"]
 
-    new_language_config = LanguageConfig(
+    new_language_spec = LanguageSpec(
         language=language_name,
         file_extensions=tuple(file_extension),
         function_node_types=tuple(functions),
@@ -381,16 +381,16 @@ def add_grammar(
         call_node_types=tuple(calls),
     )
 
-    config_file_path = "codebase_rag/language_config.py"
+    config_file_path = "codebase_rag/language_spec.py"
     try:
         config_content = pathlib.Path(config_file_path).read_text()
-        config_entry = f"""    "{language_name}": LanguageConfig(
-        language="{new_language_config.language}",
-        file_extensions={new_language_config.file_extensions},
-        function_node_types={new_language_config.function_node_types},
-        class_node_types={new_language_config.class_node_types},
-        module_node_types={new_language_config.module_node_types},
-        call_node_types={new_language_config.call_node_types},
+        config_entry = f"""    "{language_name}": LanguageSpec(
+        language="{new_language_spec.language}",
+        file_extensions={new_language_spec.file_extensions},
+        function_node_types={new_language_spec.function_node_types},
+        class_node_types={new_language_spec.class_node_types},
+        module_node_types={new_language_spec.module_node_types},
+        call_node_types={new_language_spec.call_node_types},
     ),"""
 
         closing_brace_pos = config_content.rfind("}")
@@ -433,13 +433,13 @@ def add_grammar(
                 "💡 You can run 'cgr language list-languages' to see the current config."
             )
         else:
-            raise ValueError("Could not find LANGUAGE_CONFIGS dictionary end")
+            raise ValueError("Could not find LANGUAGE_SPECS dictionary end")
 
     except Exception as e:
         click.echo(f"❌ Error updating config file: {e}")
         click.echo(
             click.style(
-                "FALLBACK: Please manually add the following entry to 'LANGUAGE_CONFIGS' in 'codebase_rag/language_config.py':",
+                "FALLBACK: Please manually add the following entry to 'LANGUAGE_SPECS' in 'codebase_rag/language_spec.py':",
                 bold=True,
             )
         )
@@ -460,7 +460,7 @@ def list_languages() -> None:
     table.add_column("Class Types", style="blue", width=35)
     table.add_column("Call Types", style="red", width=30)
 
-    for lang_name, config in LANGUAGE_CONFIGS.items():
+    for lang_name, config in LANGUAGE_SPECS.items():
         extensions = ", ".join(config.file_extensions)
         function_types = (
             ", ".join(config.function_node_types) if config.function_node_types else "—"
@@ -484,16 +484,16 @@ def list_languages() -> None:
 )
 def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     """Remove a language from the project."""
-    if language_name not in LANGUAGE_CONFIGS:
-        available_langs = ", ".join(LANGUAGE_CONFIGS.keys())
+    if language_name not in LANGUAGE_SPECS:
+        available_langs = ", ".join(LANGUAGE_SPECS.keys())
         click.echo(f"❌ Language '{language_name}' not found.")
         click.echo(f"📋 Available languages: {available_langs}")
         return
 
-    config_file = "codebase_rag/language_config.py"
+    config_file = "codebase_rag/language_spec.py"
     try:
         original_content = pathlib.Path(config_file).read_text()
-        pattern = rf'    "{language_name}": LanguageConfig\([\s\S]*?\),\n'
+        pattern = rf'    "{language_name}": LanguageSpec\([\s\S]*?\),\n'
         new_content = re.sub(pattern, "", original_content)
 
         dmp_obj = dmp.diff_match_patch()

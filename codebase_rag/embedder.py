@@ -9,7 +9,8 @@
 # └────────────────────────────────────────────────────────────────────────┘
 from functools import lru_cache
 
-from .constants import DEFAULT_MAX_LENGTH, SEMANTIC_EXTRA_ERROR, UNIXCODER_MODEL
+from .config import settings
+from .constants import SEMANTIC_EXTRA_ERROR, UNIXCODER_MODEL
 from .utils.dependencies import has_torch, has_transformers
 
 if has_torch() and has_transformers():
@@ -27,7 +28,9 @@ if has_torch() and has_transformers():
             model = model.cuda()
         return model
 
-    def embed_code(code: str, max_length: int = DEFAULT_MAX_LENGTH) -> list[float]:
+    def embed_code(code: str, max_length: int | None = None) -> list[float]:
+        if max_length is None:
+            max_length = settings.EMBEDDING_MAX_LENGTH
         model = get_model()
         device = next(model.parameters()).device
         tokens = model.tokenize([code], max_length=max_length)
@@ -40,5 +43,5 @@ if has_torch() and has_transformers():
 
 else:
 
-    def embed_code(code: str, max_length: int = DEFAULT_MAX_LENGTH) -> list[float]:
+    def embed_code(code: str, max_length: int | None = None) -> list[float]:
         raise RuntimeError(SEMANTIC_EXTRA_ERROR)

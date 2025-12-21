@@ -9,7 +9,7 @@ from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
 from ..constants import ENCODING_UTF8, SEPARATOR_DOT, SupportedLanguage
-from ..language_config import get_language_config
+from ..language_spec import get_language_spec
 from ..parser_loader import load_parsers
 
 
@@ -95,7 +95,7 @@ class FileEditor:
         file_path_obj = Path(file_path)
         extension = self._get_real_extension(file_path_obj)
 
-        lang_config = get_language_config(extension)
+        lang_config = get_language_spec(extension)
         if not lang_config:
             logger.warning(f"No language config found for extension {extension}")
             return None

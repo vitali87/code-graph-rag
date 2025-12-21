@@ -40,7 +40,7 @@ from .constants import (
     TS_LOCALS_PATTERN,
     SupportedLanguage,
 )
-from .language_config import LANGUAGE_CONFIGS
+from .language_spec import LANGUAGE_SPECS
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
@@ -183,7 +183,7 @@ def _import_language_loaders() -> dict[SupportedLanguage, LanguageLoader]:
         )
         for lang_import in language_imports
     }
-    for lang_key in LANGUAGE_CONFIGS:
+    for lang_key in LANGUAGE_SPECS:
         lang_name = SupportedLanguage(lang_key)
         if lang_name not in loaders or loaders[lang_name] is None:
             loaders[lang_name] = _try_load_from_submodule(lang_name)
@@ -217,7 +217,7 @@ def load_parsers() -> tuple[
     queries: dict[SupportedLanguage, LanguageQueries] = {}
     available_languages: list[SupportedLanguage] = []
 
-    configs = deepcopy(LANGUAGE_CONFIGS)
+    configs = deepcopy(LANGUAGE_SPECS)
 
     for lang_key, lang_config in configs.items():
         lang_name = SupportedLanguage(lang_key)

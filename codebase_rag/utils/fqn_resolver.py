@@ -15,7 +15,7 @@ from ..constants import (
 if TYPE_CHECKING:
     from tree_sitter import Node
 
-    from ..language_config import FQNConfig
+    from ..language_spec import FQNSpec
 
 
 def resolve_fqn_from_ast(
@@ -23,7 +23,7 @@ def resolve_fqn_from_ast(
     file_path: Path,
     repo_root: Path,
     project_name: str,
-    fqn_config: FQNConfig,
+    fqn_config: FQNSpec,
 ) -> str | None:
     try:
         func_name = fqn_config.get_name(func_node)
@@ -54,7 +54,7 @@ def find_function_source_by_fqn(
     file_path: Path,
     repo_root: Path,
     project_name: str,
-    fqn_config: FQNConfig,
+    fqn_config: FQNSpec,
 ) -> str | None:
     from ..parsers.utils import safe_decode_text
 
@@ -88,7 +88,7 @@ def extract_function_fqns(
     file_path: Path,
     repo_root: Path,
     project_name: str,
-    fqn_config: FQNConfig,
+    fqn_config: FQNSpec,
 ) -> list[tuple[str, Node]]:
     functions: list[tuple[str, Node]] = []
 

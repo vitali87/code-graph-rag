@@ -7,7 +7,7 @@ from loguru import logger
 from tree_sitter import Node
 
 from ..constants import SEPARATOR_DOT, SupportedLanguage
-from ..language_config import LanguageConfig
+from ..language_spec import LanguageSpec
 from ..types_defs import LanguageQueries
 from .lua_utils import (
     extract_lua_assigned_name,
@@ -746,7 +746,7 @@ class ImportProcessor:
                     )
 
     def _parse_generic_imports(
-        self, captures: dict, module_qn: str, lang_config: LanguageConfig
+        self, captures: dict, module_qn: str, lang_config: LanguageSpec
     ) -> None:
         """Generic fallback import parsing for other languages."""
 

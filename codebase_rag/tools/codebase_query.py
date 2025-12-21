@@ -4,15 +4,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ..errors import LLMGenerationError
 from ..schemas import QueryGraphData
 from ..services import QueryProtocol
-from ..services.llm import CypherGenerator, LLMGenerationError
-
-
-class GraphQueryError(Exception):
-    """Custom exception for graph query failures."""
-
-    pass
+from ..services.llm import CypherGenerator
 
 
 def create_query_tool(

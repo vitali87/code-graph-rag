@@ -30,7 +30,7 @@ from codebase_rag.constants import (
     SupportedLanguage,
 )
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.language_config import get_language_config
+from codebase_rag.language_spec import get_language_spec
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -91,7 +91,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         # (H) Step 3
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
-            lang_config = get_language_config(path.suffix)
+            lang_config = get_language_spec(path.suffix)
             if (
                 lang_config
                 and isinstance(lang_config.language, SupportedLanguage)

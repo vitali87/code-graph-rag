@@ -7,7 +7,7 @@ from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
 from ..constants import SEPARATOR_DOT, SupportedLanguage
-from ..language_config import LANGUAGE_FQN_CONFIGS, LanguageConfig
+from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeType, SimpleNameLookup
 from ..utils.fqn_resolver import resolve_fqn_from_ast
@@ -355,7 +355,7 @@ class DefinitionProcessor:
     ) -> None:
         """Extract and ingest all functions (including nested ones)."""
         lang_queries = queries[language]
-        lang_config: LanguageConfig = lang_queries["config"]
+        lang_config: LanguageSpec = lang_queries["config"]
 
         query = lang_queries["functions"]
         if not query:
@@ -380,7 +380,7 @@ class DefinitionProcessor:
             is_exported = False
 
             # (H) Try unified FQN resolution first
-            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
+            fqn_config = LANGUAGE_FQN_SPECS.get(language)
             if fqn_config and file_path:
                 func_qn = resolve_fqn_from_ast(
                     func_node, file_path, self.repo_path, self.project_name, fqn_config
@@ -479,7 +479,7 @@ class DefinitionProcessor:
         func_node: Node,
         module_qn: str,
         func_name: str,
-        lang_config: LanguageConfig,
+        lang_config: LanguageSpec,
         skip_classes: bool = False,
     ) -> str | None:
         """Build qualified name for nested functions.
@@ -537,7 +537,7 @@ class DefinitionProcessor:
         class_node: Node,
         module_qn: str,
         class_name: str,
-        lang_config: LanguageConfig,
+        lang_config: LanguageSpec,
     ) -> str | None:
         """Build qualified name for classes inside inline modules."""
         if not isinstance(class_node.parent, Node):
@@ -571,7 +571,7 @@ class DefinitionProcessor:
             return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"
 
-    def _is_method(self, func_node: Node, lang_config: LanguageConfig) -> bool:
+    def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         """Check if a function is actually a method inside a class."""
         current = func_node.parent
         if not isinstance(current, Node):
@@ -584,7 +584,7 @@ class DefinitionProcessor:
         return False
 
     def _determine_function_parent(
-        self, func_node: Node, module_qn: str, lang_config: LanguageConfig
+        self, func_node: Node, module_qn: str, lang_config: LanguageSpec
     ) -> tuple[str, str]:
         """Determine the parent of a function (Module or another Function)."""
         current = func_node.parent
@@ -748,7 +748,7 @@ class DefinitionProcessor:
         if not query:
             return
 
-        lang_config: LanguageConfig = lang_queries["config"]
+        lang_config: LanguageSpec = lang_queries["config"]
 
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
@@ -800,7 +800,7 @@ class DefinitionProcessor:
                 continue
 
             # (H) Try unified FQN resolution
-            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
+            fqn_config = LANGUAGE_FQN_SPECS.get(language)
             if fqn_config and file_path:
                 class_qn = resolve_fqn_from_ast(
                     class_node, file_path, self.repo_path, self.project_name, fqn_config
@@ -2127,7 +2127,7 @@ class DefinitionProcessor:
         method_func_node: Node,
         module_qn: str,
         method_name: str,
-        lang_config: LanguageConfig,
+        lang_config: LanguageSpec,
     ) -> str | None:
         """Build proper qualified name for object literal methods using tree-sitter traversal.
 
@@ -2178,7 +2178,7 @@ class DefinitionProcessor:
         arrow_function: Node,
         module_qn: str,
         function_name: str,
-        lang_config: LanguageConfig,
+        lang_config: LanguageSpec,
     ) -> str | None:
         """Build proper qualified name for arrow functions in assignments using tree-sitter traversal.
 

@@ -1,7 +1,24 @@
+from typing import TYPE_CHECKING
+
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 
-from ..config import settings
+from ..config import ModelConfig, settings
+from ..constants import (
+    CYPHER_BACKTICK,
+    CYPHER_MATCH_KEYWORD,
+    CYPHER_PREFIX,
+    CYPHER_SEMICOLON,
+    ERR_LLM_GENERATION_FAILED,
+    ERR_LLM_INIT_CYPHER,
+    ERR_LLM_INIT_ORCHESTRATOR,
+    ERR_LLM_INVALID_QUERY,
+    LOG_CYPHER_ERROR,
+    LOG_CYPHER_GENERATED,
+    LOG_CYPHER_GENERATING,
+    Provider,
+)
+from ..errors import LLMGenerationError
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
@@ -9,17 +26,29 @@ from ..prompts import (
 )
 from ..providers.base import get_provider
 
+if TYPE_CHECKING:
+    from pydantic_ai.models import Model
 
-class LLMGenerationError(Exception):
-    pass
+
+def _create_provider_model(config: ModelConfig) -> "Model":
+    provider = get_provider(
+        config.provider,
+        api_key=config.api_key,
+        endpoint=config.endpoint,
+        project_id=config.project_id,
+        region=config.region,
+        provider_type=config.provider_type,
+        thinking_budget=config.thinking_budget,
+    )
+    return provider.create_model(config.model_id)
 
 
 def _clean_cypher_response(response_text: str) -> str:
-    query = response_text.strip().replace("`", "")
-    if query.startswith("cypher"):
-        query = query[6:].strip()
-    if not query.endswith(";"):
-        query += ";"
+    query = response_text.strip().replace(CYPHER_BACKTICK, "")
+    if query.startswith(CYPHER_PREFIX):
+        query = query[len(CYPHER_PREFIX) :].strip()
+    if not query.endswith(CYPHER_SEMICOLON):
+        query += CYPHER_SEMICOLON
     return query
 
 
@@ -27,22 +56,11 @@ class CypherGenerator:
     def __init__(self) -> None:
         try:
             config = settings.active_cypher_config
-
-            provider = get_provider(
-                config.provider,
-                api_key=config.api_key,
-                endpoint=config.endpoint,
-                project_id=config.project_id,
-                region=config.region,
-                provider_type=config.provider_type,
-                thinking_budget=config.thinking_budget,
-            )
-
-            llm = provider.create_model(config.model_id)
+            llm = _create_provider_model(config)
 
             system_prompt = (
                 LOCAL_CYPHER_SYSTEM_PROMPT
-                if config.provider == "ollama"
+                if config.provider == Provider.OLLAMA
                 else CYPHER_SYSTEM_PROMPT
             )
 
@@ -53,55 +71,40 @@ class CypherGenerator:
                 retries=settings.AGENT_RETRIES,
             )
         except Exception as e:
-            raise LLMGenerationError(
-                f"Failed to initialize CypherGenerator: {e}"
-            ) from e
+            raise LLMGenerationError(ERR_LLM_INIT_CYPHER.format(error=e)) from e
 
     async def generate(self, natural_language_query: str) -> str:
-        logger.info(
-            f"  [CypherGenerator] Generating query for: '{natural_language_query}'"
-        )
+        logger.info(LOG_CYPHER_GENERATING.format(query=natural_language_query))
         try:
             result = await self.agent.run(natural_language_query)
             if (
                 not isinstance(result.output, str)
-                or "MATCH" not in result.output.upper()
+                or CYPHER_MATCH_KEYWORD not in result.output.upper()
             ):
                 raise LLMGenerationError(
-                    f"LLM did not generate a valid query. Output: {result.output}"
+                    ERR_LLM_INVALID_QUERY.format(output=result.output)
                 )
 
             query = _clean_cypher_response(result.output)
-            logger.info(f"  [CypherGenerator] Generated Cypher: {query}")
+            logger.info(LOG_CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:
-            logger.error(f"  [CypherGenerator] Error: {e}")
-            raise LLMGenerationError(f"Cypher generation failed: {e}") from e
+            logger.error(LOG_CYPHER_ERROR.format(error=e))
+            raise LLMGenerationError(ERR_LLM_GENERATION_FAILED.format(error=e)) from e
 
 
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     try:
         config = settings.active_orchestrator_config
-
-        provider = get_provider(
-            config.provider,
-            api_key=config.api_key,
-            endpoint=config.endpoint,
-            project_id=config.project_id,
-            region=config.region,
-            provider_type=config.provider_type,
-            thinking_budget=config.thinking_budget,
-        )
-
-        llm = provider.create_model(config.model_id)
+        llm = _create_provider_model(config)
 
         return Agent(
             model=llm,
             system_prompt=build_rag_orchestrator_prompt(tools),
             tools=tools,
             retries=settings.AGENT_RETRIES,
-            output_retries=100,
+            output_retries=settings.ORCHESTRATOR_OUTPUT_RETRIES,
             output_type=[str, DeferredToolRequests],
         )
     except Exception as e:
-        raise LLMGenerationError(f"Failed to initialize RAG Orchestrator: {e}") from e
+        raise LLMGenerationError(ERR_LLM_INIT_ORCHESTRATOR.format(error=e)) from e

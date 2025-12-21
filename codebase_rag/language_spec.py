@@ -14,7 +14,7 @@ from .constants import (
     NAME_FIELDS,
     SupportedLanguage,
 )
-from .models import FQNConfig, LanguageConfig
+from .models import FQNSpec, LanguageSpec
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -120,14 +120,14 @@ def _cpp_get_name(node: "Node") -> str | None:
     return _generic_get_name(node)
 
 
-PYTHON_FQN_CONFIG = FQNConfig(
+PYTHON_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset({"class_definition", "module", "function_definition"}),
     function_node_types=frozenset({"function_definition"}),
     get_name=_python_get_name,
     file_to_module_parts=_python_file_to_module,
 )
 
-JS_FQN_CONFIG = FQNConfig(
+JS_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "class_declaration",
@@ -150,7 +150,7 @@ JS_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_js_file_to_module,
 )
 
-TS_FQN_CONFIG = FQNConfig(
+TS_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "class_declaration",
@@ -176,7 +176,7 @@ TS_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_js_file_to_module,
 )
 
-RUST_FQN_CONFIG = FQNConfig(
+RUST_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "struct_item",
@@ -198,7 +198,7 @@ RUST_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_rust_file_to_module,
 )
 
-JAVA_FQN_CONFIG = FQNConfig(
+JAVA_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "class_declaration",
@@ -212,7 +212,7 @@ JAVA_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_generic_file_to_module,
 )
 
-CPP_FQN_CONFIG = FQNConfig(
+CPP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "class_specifier",
@@ -234,21 +234,21 @@ CPP_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_generic_file_to_module,
 )
 
-LUA_FQN_CONFIG = FQNConfig(
+LUA_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset({"chunk"}),
     function_node_types=frozenset({"function_declaration", "function_definition"}),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
-GO_FQN_CONFIG = FQNConfig(
+GO_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset({"type_declaration", "source_file"}),
     function_node_types=frozenset({"function_declaration", "method_declaration"}),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
-SCALA_FQN_CONFIG = FQNConfig(
+SCALA_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "class_definition",
@@ -262,7 +262,7 @@ SCALA_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_generic_file_to_module,
 )
 
-CSHARP_FQN_CONFIG = FQNConfig(
+CSHARP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "class_declaration",
@@ -286,7 +286,7 @@ CSHARP_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_generic_file_to_module,
 )
 
-PHP_FQN_CONFIG = FQNConfig(
+PHP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(
         {
             "class_declaration",
@@ -307,23 +307,23 @@ PHP_FQN_CONFIG = FQNConfig(
     file_to_module_parts=_generic_file_to_module,
 )
 
-LANGUAGE_FQN_CONFIGS: dict[SupportedLanguage, FQNConfig] = {
-    SupportedLanguage.PYTHON: PYTHON_FQN_CONFIG,
-    SupportedLanguage.JS: JS_FQN_CONFIG,
-    SupportedLanguage.TS: TS_FQN_CONFIG,
-    SupportedLanguage.RUST: RUST_FQN_CONFIG,
-    SupportedLanguage.JAVA: JAVA_FQN_CONFIG,
-    SupportedLanguage.CPP: CPP_FQN_CONFIG,
-    SupportedLanguage.LUA: LUA_FQN_CONFIG,
-    SupportedLanguage.GO: GO_FQN_CONFIG,
-    SupportedLanguage.SCALA: SCALA_FQN_CONFIG,
-    SupportedLanguage.CSHARP: CSHARP_FQN_CONFIG,
-    SupportedLanguage.PHP: PHP_FQN_CONFIG,
+LANGUAGE_FQN_SPECS: dict[SupportedLanguage, FQNSpec] = {
+    SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
+    SupportedLanguage.JS: JS_FQN_SPEC,
+    SupportedLanguage.TS: TS_FQN_SPEC,
+    SupportedLanguage.RUST: RUST_FQN_SPEC,
+    SupportedLanguage.JAVA: JAVA_FQN_SPEC,
+    SupportedLanguage.CPP: CPP_FQN_SPEC,
+    SupportedLanguage.LUA: LUA_FQN_SPEC,
+    SupportedLanguage.GO: GO_FQN_SPEC,
+    SupportedLanguage.SCALA: SCALA_FQN_SPEC,
+    SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
+    SupportedLanguage.PHP: PHP_FQN_SPEC,
 }
 
 
-LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
-    SupportedLanguage.PYTHON: LanguageConfig(
+LANGUAGE_SPECS: dict[SupportedLanguage, LanguageSpec] = {
+    SupportedLanguage.PYTHON: LanguageSpec(
         language=SupportedLanguage.PYTHON,
         file_extensions=(".py",),
         function_node_types=("function_definition",),
@@ -334,7 +334,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
         import_from_node_types=("import_from_statement",),
         package_indicators=("__init__.py",),
     ),
-    SupportedLanguage.JS: LanguageConfig(
+    SupportedLanguage.JS: LanguageSpec(
         language=SupportedLanguage.JS,
         file_extensions=(".js", ".jsx"),
         function_node_types=JS_TS_FUNCTION_NODES,
@@ -344,7 +344,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
         import_node_types=JS_TS_IMPORT_NODES,
         import_from_node_types=JS_TS_IMPORT_NODES,
     ),
-    SupportedLanguage.TS: LanguageConfig(
+    SupportedLanguage.TS: LanguageSpec(
         language=SupportedLanguage.TS,
         file_extensions=(".ts", ".tsx"),
         function_node_types=JS_TS_FUNCTION_NODES + ("function_signature",),
@@ -361,7 +361,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
         import_node_types=JS_TS_IMPORT_NODES,
         import_from_node_types=JS_TS_IMPORT_NODES,
     ),
-    SupportedLanguage.RUST: LanguageConfig(
+    SupportedLanguage.RUST: LanguageSpec(
         language=SupportedLanguage.RUST,
         file_extensions=(".rs",),
         function_node_types=(
@@ -418,7 +418,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
             macro: (identifier) @name) @call
         """,
     ),
-    SupportedLanguage.GO: LanguageConfig(
+    SupportedLanguage.GO: LanguageSpec(
         language=SupportedLanguage.GO,
         file_extensions=(".go",),
         function_node_types=("function_declaration", "method_declaration"),
@@ -428,7 +428,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
         import_node_types=("import_declaration",),
         import_from_node_types=("import_declaration",),
     ),
-    SupportedLanguage.SCALA: LanguageConfig(
+    SupportedLanguage.SCALA: LanguageSpec(
         language=SupportedLanguage.SCALA,
         file_extensions=(".scala", ".sc"),
         function_node_types=("function_definition", "function_declaration"),
@@ -447,7 +447,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
         import_node_types=("import_declaration",),
         import_from_node_types=("import_declaration",),
     ),
-    SupportedLanguage.JAVA: LanguageConfig(
+    SupportedLanguage.JAVA: LanguageSpec(
         language=SupportedLanguage.JAVA,
         file_extensions=(".java",),
         function_node_types=("method_declaration", "constructor_declaration"),
@@ -487,7 +487,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
             type: (type_identifier) @name) @call
         """,
     ),
-    SupportedLanguage.CPP: LanguageConfig(
+    SupportedLanguage.CPP: LanguageSpec(
         language=SupportedLanguage.CPP,
         file_extensions=(
             ".cpp",
@@ -561,7 +561,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
     (delete_expression) @call
     """,
     ),
-    SupportedLanguage.CSHARP: LanguageConfig(
+    SupportedLanguage.CSHARP: LanguageSpec(
         language=SupportedLanguage.CSHARP,
         file_extensions=(".cs",),
         function_node_types=(
@@ -584,7 +584,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
         import_node_types=IMPORT_NODES_USING,
         import_from_node_types=IMPORT_NODES_USING,
     ),
-    SupportedLanguage.PHP: LanguageConfig(
+    SupportedLanguage.PHP: LanguageSpec(
         language=SupportedLanguage.PHP,
         file_extensions=(".php",),
         function_node_types=(
@@ -607,7 +607,7 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
             "nullsafe_member_call_expression",
         ),
     ),
-    SupportedLanguage.LUA: LanguageConfig(
+    SupportedLanguage.LUA: LanguageSpec(
         language=SupportedLanguage.LUA,
         file_extensions=(".lua",),
         function_node_types=("function_declaration", "function_definition"),
@@ -618,19 +618,19 @@ LANGUAGE_CONFIGS: dict[SupportedLanguage, LanguageConfig] = {
     ),
 }
 
-_EXTENSION_TO_CONFIG: dict[str, LanguageConfig] = {}
-for _config in LANGUAGE_CONFIGS.values():
+_EXTENSION_TO_SPEC: dict[str, LanguageSpec] = {}
+for _config in LANGUAGE_SPECS.values():
     for _ext in _config.file_extensions:
-        _EXTENSION_TO_CONFIG[_ext] = _config
+        _EXTENSION_TO_SPEC[_ext] = _config
 
 
-def get_language_config(file_extension: str) -> LanguageConfig | None:
-    return _EXTENSION_TO_CONFIG.get(file_extension)
+def get_language_spec(file_extension: str) -> LanguageSpec | None:
+    return _EXTENSION_TO_SPEC.get(file_extension)
 
 
-def get_language_config_by_name(language_name: str) -> LanguageConfig | None:
+def get_language_spec_by_name(language_name: str) -> LanguageSpec | None:
     try:
         lang_key = SupportedLanguage(language_name.lower())
-        return LANGUAGE_CONFIGS.get(lang_key)
+        return LANGUAGE_SPECS.get(lang_key)
     except ValueError:
         return None

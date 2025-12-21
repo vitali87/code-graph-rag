@@ -4,7 +4,6 @@ from dataclasses import asdict, dataclass
 from typing import Unpack
 
 from dotenv import load_dotenv
-from prompt_toolkit.styles import Style
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,7 +18,6 @@ from .constants import (
     ModelRole,
     Provider,
 )
-from .models import AgentLoopConfig
 from .types_defs import ModelConfigKwargs
 
 load_dotenv()
@@ -61,6 +59,7 @@ class AppConfig(BaseSettings):
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
     AGENT_RETRIES: int = 3
+    ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 
     ORCHESTRATOR_PROVIDER: str = ""
     ORCHESTRATOR_MODEL: str = ""
@@ -91,6 +90,13 @@ class AppConfig(BaseSettings):
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5
+    EMBEDDING_MAX_LENGTH: int = 512
+    EMBEDDING_PROGRESS_INTERVAL: int = 10
+
+    CACHE_MAX_ENTRIES: int = 1000
+    CACHE_MAX_MEMORY_MB: int = 500
+    CACHE_EVICTION_DIVISOR: int = 10
+    CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
@@ -167,21 +173,3 @@ class AppConfig(BaseSettings):
 
 
 settings = AppConfig()
-
-ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})
-
-OPTIMIZATION_LOOP_CONFIG = AgentLoopConfig(
-    status_message="[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]",
-    cancelled_log="ASSISTANT: [Analysis was cancelled]",
-    approval_prompt="Do you approve this optimization?",
-    denial_default="User rejected this optimization without feedback",
-    panel_title="[bold green]Optimization Agent[/bold green]",
-)
-
-CHAT_LOOP_CONFIG = AgentLoopConfig(
-    status_message="[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]",
-    cancelled_log="ASSISTANT: [Thinking was cancelled]",
-    approval_prompt="Do you approve this change?",
-    denial_default="User rejected this change without feedback",
-    panel_title="[bold green]Assistant[/bold green]",
-)

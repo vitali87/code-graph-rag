@@ -6,16 +6,12 @@ from pathlib import Path
 from loguru import logger
 from tree_sitter import Node, Parser
 
+from .config import settings
 from .constants import (
     BYTES_PER_MB,
-    CACHE_EVICTION_DIVISOR,
-    CACHE_MEMORY_THRESHOLD_RATIO,
     CSPROJ_SUFFIX,
     CYPHER_QUERY_EMBEDDINGS,
-    DEFAULT_CACHE_ENTRIES,
-    DEFAULT_CACHE_MEMORY_MB,
     DEPENDENCY_FILES,
-    EMBEDDING_PROGRESS_INTERVAL,
     IGNORE_PATTERNS,
     INIT_PY,
     KEY_END_LINE,
@@ -51,7 +47,7 @@ from .constants import (
     TRIE_TYPE_KEY,
     SupportedLanguage,
 )
-from .language_config import LANGUAGE_FQN_CONFIGS, get_language_config
+from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
 from .parsers.factory import ProcessorFactory
 from .services import IngestorProtocol, QueryProtocol
 from .types_defs import (
@@ -202,12 +198,17 @@ class FunctionRegistryTrie:
 class BoundedASTCache:
     def __init__(
         self,
-        max_entries: int = DEFAULT_CACHE_ENTRIES,
-        max_memory_mb: int = DEFAULT_CACHE_MEMORY_MB,
+        max_entries: int | None = None,
+        max_memory_mb: int | None = None,
     ):
         self.cache: OrderedDict[Path, tuple[Node, SupportedLanguage]] = OrderedDict()
-        self.max_entries = max_entries
-        self.max_memory_bytes = max_memory_mb * BYTES_PER_MB
+        self.max_entries = (
+            max_entries if max_entries is not None else settings.CACHE_MAX_ENTRIES
+        )
+        max_mem = (
+            max_memory_mb if max_memory_mb is not None else settings.CACHE_MAX_MEMORY_MB
+        )
+        self.max_memory_bytes = max_mem * BYTES_PER_MB
 
     def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None:
         if key in self.cache:
@@ -237,7 +238,9 @@ class BoundedASTCache:
             self.cache.popitem(last=False)  # (H) Remove least recently used
 
         if self._should_evict_for_memory():
-            entries_to_remove = max(1, len(self.cache) // CACHE_EVICTION_DIVISOR)
+            entries_to_remove = max(
+                1, len(self.cache) // settings.CACHE_EVICTION_DIVISOR
+            )
             for _ in range(entries_to_remove):
                 if self.cache:
                     self.cache.popitem(last=False)
@@ -247,7 +250,10 @@ class BoundedASTCache:
             cache_size = sum(sys.getsizeof(v) for v in self.cache.values())
             return cache_size > self.max_memory_bytes
         except Exception:
-            return len(self.cache) > self.max_entries * CACHE_MEMORY_THRESHOLD_RATIO
+            return (
+                len(self.cache)
+                > self.max_entries * settings.CACHE_MEMORY_THRESHOLD_RATIO
+            )
 
 
 class GraphUpdater:
@@ -348,7 +354,7 @@ class GraphUpdater:
 
         for filepath in self.repo_path.rglob("*"):
             if filepath.is_file() and not should_skip_path(filepath):
-                lang_config = get_language_config(filepath.suffix)
+                lang_config = get_language_spec(filepath.suffix)
                 if (
                     lang_config
                     and isinstance(lang_config.language, SupportedLanguage)
@@ -417,7 +423,7 @@ class GraphUpdater:
                         store_embedding(node_id, embedding, qualified_name)
                         embedded_count += 1
 
-                        if embedded_count % EMBEDDING_PROGRESS_INTERVAL == 0:
+                        if embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0:
                             logger.debug(
                                 LOG_EMBEDDING_PROGRESS.format(
                                     done=embedded_count, total=len(results)
@@ -447,7 +453,7 @@ class GraphUpdater:
         ast_extractor = None
         if file_path_obj in self.ast_cache:
             root_node, language = self.ast_cache[file_path_obj]
-            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
+            fqn_config = LANGUAGE_FQN_SPECS.get(language)
 
             if fqn_config:
 

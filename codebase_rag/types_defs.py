@@ -4,12 +4,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
+from prompt_toolkit.styles import Style
+
 from .constants import NodeLabel, RelationshipType, SupportedLanguage
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Parser, Query
 
-    from .models import LanguageConfig
+    from .models import LanguageSpec
 
 type LanguageLoader = Callable[[], "Language"] | None
 
@@ -110,6 +112,33 @@ class CancelledResult(NamedTuple):
     cancelled: bool
 
 
+class AgentLoopUI(NamedTuple):
+    status_message: str
+    cancelled_log: str
+    approval_prompt: str
+    denial_default: str
+    panel_title: str
+
+
+ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})
+
+OPTIMIZATION_LOOP_UI = AgentLoopUI(
+    status_message="[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]",
+    cancelled_log="ASSISTANT: [Analysis was cancelled]",
+    approval_prompt="Do you approve this optimization?",
+    denial_default="User rejected this optimization without feedback",
+    panel_title="[bold green]Optimization Agent[/bold green]",
+)
+
+CHAT_LOOP_UI = AgentLoopUI(
+    status_message="[bold green]Thinking... (Press Ctrl+C to cancel)[/bold green]",
+    cancelled_log="ASSISTANT: [Thinking was cancelled]",
+    approval_prompt="Do you approve this change?",
+    denial_default="User rejected this change without feedback",
+    panel_title="[bold green]Assistant[/bold green]",
+)
+
+
 class LanguageImport(NamedTuple):
     lang_key: SupportedLanguage
     module_path: str
@@ -173,7 +202,7 @@ class LanguageQueries(TypedDict):
     calls: "Query | None"
     imports: "Query | None"
     locals: "Query | None"
-    config: "LanguageConfig"
+    config: "LanguageSpec"
     language: "Language"
     parser: "Parser"
 

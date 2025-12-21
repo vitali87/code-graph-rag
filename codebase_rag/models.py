@@ -12,14 +12,6 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
 
-class AgentLoopConfig(NamedTuple):
-    status_message: str
-    cancelled_log: str
-    approval_prompt: str
-    denial_default: str
-    panel_title: str
-
-
 @dataclass
 class SessionState:
     confirm_edits: bool = True
@@ -55,7 +47,7 @@ class GraphRelationship:
     properties: dict[str, PropertyValue]
 
 
-class FQNConfig(NamedTuple):
+class FQNSpec(NamedTuple):
     scope_node_types: frozenset[str]
     function_node_types: frozenset[str]
     get_name: Callable[["Node"], str | None]
@@ -63,7 +55,7 @@ class FQNConfig(NamedTuple):
 
 
 @dataclass(frozen=True)
-class LanguageConfig:
+class LanguageSpec:
     language: SupportedLanguage | str
     file_extensions: tuple[str, ...]
     function_node_types: tuple[str, ...]

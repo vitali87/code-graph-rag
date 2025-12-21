@@ -6,7 +6,7 @@ import tree_sitter_python as tspython
 from tree_sitter import Language, Parser, Tree
 
 from codebase_rag.constants import SupportedLanguage
-from codebase_rag.language_config import LANGUAGE_FQN_CONFIGS
+from codebase_rag.language_spec import LANGUAGE_FQN_SPECS
 from codebase_rag.utils.fqn_resolver import (
     extract_function_fqns,
     find_function_source_by_fqn,
@@ -29,7 +29,7 @@ class TestResolveFqnFromAst:
         code = "def my_func(): pass"
         tree = parse_python(code)
         func_node = tree.root_node.children[0]
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -50,7 +50,7 @@ class MyClass:
         class_body = class_node.child_by_field_name("body")
         assert class_body is not None
         method_node = class_body.children[0]
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -75,7 +75,7 @@ class Outer:
         inner_body = inner_class.child_by_field_name("body")
         assert inner_body is not None
         method_node = inner_body.children[0]
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "pkg" / "module.py"
 
@@ -89,7 +89,7 @@ class Outer:
         code = "def func(): pass"
         tree = parse_python(code)
         func_node = tree.root_node.children[0]
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "pkg" / "__init__.py"
 
@@ -106,7 +106,7 @@ class Outer:
         assign = expr_stmt.children[0]
         lambda_node = assign.child_by_field_name("right")
         assert lambda_node is not None
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -121,7 +121,7 @@ class TestFindFunctionSourceByFqn:
     def test_finds_matching_function(self) -> None:
         code = "def target_func(): pass"
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -139,7 +139,7 @@ class TestFindFunctionSourceByFqn:
     def test_returns_none_when_not_found(self) -> None:
         code = "def other_func(): pass"
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -161,7 +161,7 @@ class MyClass:
         pass
 """
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -180,7 +180,7 @@ class MyClass:
     def test_empty_tree_returns_none(self) -> None:
         code = ""
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -200,7 +200,7 @@ class TestExtractFunctionFqns:
     def test_extracts_single_function(self) -> None:
         code = "def my_func(): pass"
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -217,7 +217,7 @@ def func1(): pass
 def func2(): pass
 """
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -236,7 +236,7 @@ class MyClass:
     def method2(self): pass
 """
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -254,7 +254,7 @@ class MyClass:
     def test_empty_tree_returns_empty_list(self) -> None:
         code = ""
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -270,7 +270,7 @@ def named_func(): pass
 f = lambda x: x
 """
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 
@@ -290,7 +290,7 @@ class ClassB:
     def method_b(self): pass
 """
         tree = parse_python(code)
-        config = LANGUAGE_FQN_CONFIGS[SupportedLanguage.PYTHON]
+        config = LANGUAGE_FQN_SPECS[SupportedLanguage.PYTHON]
         repo_root = Path("/repo")
         file_path = repo_root / "mymodule.py"
 

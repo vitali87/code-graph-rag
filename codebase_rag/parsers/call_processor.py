@@ -6,7 +6,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ..constants import SEPARATOR_DOT, SupportedLanguage
-from ..language_config import LanguageConfig
+from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeType
 from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
@@ -129,7 +129,7 @@ class CallProcessor:
     ) -> None:
         """Process calls within top-level functions."""
         lang_queries = queries[language]
-        lang_config: LanguageConfig = lang_queries["config"]
+        lang_config: LanguageSpec = lang_queries["config"]
 
         query = lang_queries["functions"]
         if not query:
@@ -961,7 +961,7 @@ class CallProcessor:
         func_node: Node,
         module_qn: str,
         func_name: str,
-        lang_config: LanguageConfig,
+        lang_config: LanguageSpec,
     ) -> str | None:
         """Build qualified name for nested functions."""
         path_parts = []
@@ -991,7 +991,7 @@ class CallProcessor:
         else:
             return f"{module_qn}.{func_name}"
 
-    def _is_method(self, func_node: Node, lang_config: LanguageConfig) -> bool:
+    def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         """Check if a function is actually a method inside a class."""
         current = func_node.parent
         if not isinstance(current, Node):

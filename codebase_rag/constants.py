@@ -45,7 +45,6 @@ UNIXCODER_MODEL = "microsoft/unixcoder-base"
 SEMANTIC_EXTRA_ERROR = (
     "Semantic search requires 'semantic' extra: uv sync --extra semantic"
 )
-DEFAULT_MAX_LENGTH = 512
 
 KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
@@ -240,13 +239,8 @@ class RelationshipType(StrEnum):
 
 NODE_PROJECT = NodeLabel.PROJECT
 
-# (H) Cache defaults
-DEFAULT_CACHE_ENTRIES = 1000
-DEFAULT_CACHE_MEMORY_MB = 500
-EMBEDDING_PROGRESS_INTERVAL = 10
+# (H) Byte size constants
 BYTES_PER_MB = 1024 * 1024
-CACHE_EVICTION_DIVISOR = 10
-CACHE_MEMORY_THRESHOLD_RATIO = 0.8
 
 # (H) Property keys
 KEY_NAME = "name"
@@ -712,3 +706,20 @@ NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
     "File": "path",
     "ExternalPackage": "name",
 }
+
+# (H) Cypher response cleaning
+CYPHER_PREFIX = "cypher"
+CYPHER_SEMICOLON = ";"
+CYPHER_BACKTICK = "`"
+CYPHER_MATCH_KEYWORD = "MATCH"
+
+# (H) LLM error messages
+ERR_LLM_INIT_CYPHER = "Failed to initialize CypherGenerator: {error}"
+ERR_LLM_INVALID_QUERY = "LLM did not generate a valid query. Output: {output}"
+ERR_LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
+ERR_LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
+
+# (H) LLM log messages
+LOG_CYPHER_GENERATING = "  [CypherGenerator] Generating query for: '{query}'"
+LOG_CYPHER_GENERATED = "  [CypherGenerator] Generated Cypher: {query}"
+LOG_CYPHER_ERROR = "  [CypherGenerator] Error: {error}"
