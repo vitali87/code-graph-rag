@@ -268,7 +268,7 @@ class GraphUpdater:
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = self._prepare_queries_with_parsers(queries, parsers)
-        self.project_name = repo_path.name
+        self.project_name = repo_path.resolve().name
         self.function_registry = FunctionRegistryTrie()
         self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
         self.ast_cache = BoundedASTCache(max_entries=1000, max_memory_mb=500)

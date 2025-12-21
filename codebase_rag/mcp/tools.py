@@ -343,7 +343,7 @@ class MCPToolsRegistry:
             Success message with indexing statistics
         """
         logger.info(f"[MCP] Indexing repository at: {self.project_root}")
-        project_name = Path(self.project_root).name
+        project_name = Path(self.project_root).resolve().name
 
         try:
             # Delete only the current project's data (preserves other projects)
