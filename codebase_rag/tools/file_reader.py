@@ -81,7 +81,7 @@ def create_file_reader_tool(file_reader: FileReader) -> Tool:
     async def read_file_content(file_path: str) -> str:
         result = await file_reader.read_file(file_path)
         if result.error_message:
-            return f"Error: {result.error_message}"
+            return te.ERROR_WRAPPER.format(message=result.error_message)
         return result.content or ""
 
     return Tool(

@@ -8,6 +8,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -136,7 +137,11 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             if not handler_info:
                 error_msg = f"Unknown tool: {name}"
                 logger.error(f"[GraphCode MCP] {error_msg}")
-                return [TextContent(type="text", text=f"Error: {error_msg}")]
+                return [
+                    TextContent(
+                        type="text", text=te.ERROR_WRAPPER.format(message=error_msg)
+                    )
+                ]
 
             handler, returns_json = handler_info
 
@@ -150,9 +155,13 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             return [TextContent(type="text", text=result_text)]
 
         except Exception as e:
-            error_msg = f"Error executing tool '{name}': {str(e)}"
+            error_msg = f"Error executing tool '{name}': {e}"
             logger.error(f"[GraphCode MCP] {error_msg}", exc_info=True)
-            return [TextContent(type="text", text=f"Error: {error_msg}")]
+            return [
+                TextContent(
+                    type="text", text=te.ERROR_WRAPPER.format(message=error_msg)
+                )
+            ]
 
     return server, ingestor
 

@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from loguru import logger
 
+from codebase_rag import tool_errors as te
 from codebase_rag.constants import ENCODING_UTF8
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -335,7 +336,7 @@ class MCPToolsRegistry:
             return cast(str, result)
         except Exception as e:
             logger.error(f"[MCP] Error replacing code: {e}")
-            return f"Error: {str(e)}"
+            return te.ERROR_WRAPPER.format(message=e)
 
     async def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None
@@ -379,7 +380,7 @@ class MCPToolsRegistry:
 
         except Exception as e:
             logger.error(f"[MCP] Error reading file: {e}")
-            return f"Error: {str(e)}"
+            return te.ERROR_WRAPPER.format(message=e)
 
     async def write_file(self, file_path: str, content: str) -> str:
         """Write content to a file, creating it if it doesn't exist.
@@ -399,10 +400,10 @@ class MCPToolsRegistry:
             if result.success:
                 return f"Successfully wrote file: {file_path}"
             else:
-                return f"Error: {result.error_message}"
+                return te.ERROR_WRAPPER.format(message=result.error_message)
         except Exception as e:
             logger.error(f"[MCP] Error writing file: {e}")
-            return f"Error: {str(e)}"
+            return te.ERROR_WRAPPER.format(message=e)
 
     async def list_directory(self, directory_path: str = ".") -> str:
         """List contents of a directory.
@@ -421,7 +422,7 @@ class MCPToolsRegistry:
             return cast(str, result)
         except Exception as e:
             logger.error(f"[MCP] Error listing directory: {e}")
-            return f"Error: {str(e)}"
+            return te.ERROR_WRAPPER.format(message=e)
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get MCP tool schemas for all registered tools.

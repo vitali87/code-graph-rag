@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# (H) Generic error wrapper
+ERROR_WRAPPER = "Error: {message}"
+
 # (H) File operation errors
 FILE_NOT_FOUND = "File not found."
 FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"
