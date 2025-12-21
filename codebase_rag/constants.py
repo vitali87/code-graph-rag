@@ -646,3 +646,11 @@ ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
 LOG_FQN_RESOLVE_FAILED = "Failed to resolve FQN for node at {path}: {error}"
 LOG_FQN_FIND_FAILED = "Failed to find function by FQN {fqn} in {path}: {error}"
 LOG_FQN_EXTRACT_FAILED = "Failed to extract function FQNs from {path}: {error}"
+
+LOG_SOURCE_FILE_NOT_FOUND = "Source file not found: {path}"
+LOG_SOURCE_INVALID_RANGE = "Invalid line range: {start}-{end}"
+LOG_SOURCE_RANGE_EXCEEDS = (
+    "Line range {start}-{end} exceeds file length {length} in {path}"
+)
+LOG_SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
+LOG_SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
