@@ -8,7 +8,7 @@ from loguru import logger
 from codebase_rag.types_defs import ResultValue
 
 from .. import exceptions as ex
-from .. import logs
+from .. import logs as ls
 from ..constants import (
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
@@ -53,21 +53,21 @@ class MemgraphIngestor:
         ] = []
 
     def __enter__(self) -> "MemgraphIngestor":
-        logger.info(logs.MG_CONNECTING.format(host=self._host, port=self._port))
+        logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
-        logger.info(logs.MG_CONNECTED)
+        logger.info(ls.MG_CONNECTED)
         return self
 
     def __exit__(
         self, exc_type: type | None, exc_val: Exception | None, exc_tb: object
     ) -> None:
         if exc_type:
-            logger.error(logs.MG_EXCEPTION.format(error=exc_val), exc_info=True)
+            logger.error(ls.MG_EXCEPTION.format(error=exc_val), exc_info=True)
         self.flush_all()
         if self.conn:
             self.conn.close()
-            logger.info(logs.MG_DISCONNECTED)
+            logger.info(ls.MG_DISCONNECTED)
 
     def _cursor_to_results(self, cursor: mgclient.Cursor) -> list[ResultRow]:
         if not cursor.description:
@@ -93,9 +93,9 @@ class MemgraphIngestor:
                 "already exists" not in str(e).lower()
                 and "constraint" not in str(e).lower()
             ):
-                logger.error(logs.MG_CYPHER_ERROR.format(error=e))
-                logger.error(logs.MG_CYPHER_QUERY.format(query=query))
-                logger.error(logs.MG_CYPHER_PARAMS.format(params=params))
+                logger.error(ls.MG_CYPHER_ERROR.format(error=e))
+                logger.error(ls.MG_CYPHER_QUERY.format(query=query))
+                logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
             raise
         finally:
             if cursor:
@@ -110,16 +110,16 @@ class MemgraphIngestor:
             cursor.execute(wrap_with_unwind(query), {"batch": params_list})
         except Exception as e:
             if "already exists" not in str(e).lower():
-                logger.error(logs.MG_BATCH_ERROR.format(error=e))
-                logger.error(logs.MG_CYPHER_QUERY.format(query=query))
+                logger.error(ls.MG_BATCH_ERROR.format(error=e))
+                logger.error(ls.MG_CYPHER_QUERY.format(query=query))
                 if len(params_list) > 10:
                     logger.error(
-                        logs.MG_BATCH_PARAMS_TRUNCATED.format(
+                        ls.MG_BATCH_PARAMS_TRUNCATED.format(
                             count=len(params_list), params=params_list[:10]
                         )
                     )
                 else:
-                    logger.error(logs.MG_CYPHER_PARAMS.format(params=params_list))
+                    logger.error(ls.MG_CYPHER_PARAMS.format(params=params_list))
             raise
         finally:
             if cursor:
@@ -136,33 +136,33 @@ class MemgraphIngestor:
             cursor.execute(wrap_with_unwind(query), {"batch": params_list})
             return self._cursor_to_results(cursor)
         except Exception as e:
-            logger.error(logs.MG_BATCH_ERROR.format(error=e))
-            logger.error(logs.MG_CYPHER_QUERY.format(query=query))
+            logger.error(ls.MG_BATCH_ERROR.format(error=e))
+            logger.error(ls.MG_CYPHER_QUERY.format(query=query))
             raise
         finally:
             if cursor:
                 cursor.close()
 
     def clean_database(self) -> None:
-        logger.info(logs.MG_CLEANING_DB)
+        logger.info(ls.MG_CLEANING_DB)
         self._execute_query(CYPHER_DELETE_ALL)
-        logger.info(logs.MG_DB_CLEANED)
+        logger.info(ls.MG_DB_CLEANED)
 
     def ensure_constraints(self) -> None:
-        logger.info(logs.MG_ENSURING_CONSTRAINTS)
+        logger.info(ls.MG_ENSURING_CONSTRAINTS)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(build_constraint_query(label, prop))
             except Exception:
                 pass
-        logger.info(logs.MG_CONSTRAINTS_DONE)
+        logger.info(ls.MG_CONSTRAINTS_DONE)
 
     def ensure_node_batch(
         self, label: str, properties: dict[str, PropertyValue]
     ) -> None:
         self.node_buffer.append((label, properties))
         if len(self.node_buffer) >= self.batch_size:
-            logger.debug(logs.MG_NODE_BUFFER_FLUSH.format(size=self.batch_size))
+            logger.debug(ls.MG_NODE_BUFFER_FLUSH.format(size=self.batch_size))
             self.flush_nodes()
 
     def ensure_relationship_batch(
@@ -183,7 +183,7 @@ class MemgraphIngestor:
             )
         )
         if len(self.relationship_buffer) >= self.batch_size:
-            logger.debug(logs.MG_REL_BUFFER_FLUSH.format(size=self.batch_size))
+            logger.debug(ls.MG_REL_BUFFER_FLUSH.format(size=self.batch_size))
             self.flush_nodes()
             self.flush_relationships()
 
@@ -204,7 +204,7 @@ class MemgraphIngestor:
                 continue
             id_key = NODE_UNIQUE_CONSTRAINTS.get(label)
             if not id_key:
-                logger.warning(logs.MG_NO_CONSTRAINT.format(label=label))
+                logger.warning(ls.MG_NO_CONSTRAINT.format(label=label))
                 skipped_total += len(props_list)
                 continue
 
@@ -212,9 +212,7 @@ class MemgraphIngestor:
             for props in props_list:
                 if id_key not in props:
                     logger.warning(
-                        logs.MG_MISSING_PROP.format(
-                            label=label, key=id_key, props=props
-                        )
+                        ls.MG_MISSING_PROP.format(label=label, key=id_key, props=props)
                     )
                     skipped_total += 1
                     continue
@@ -231,10 +229,10 @@ class MemgraphIngestor:
             query = build_merge_node_query(label, id_key)
             self._execute_batch(query, batch_rows)
         logger.info(
-            logs.MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
+            ls.MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
         )
         if skipped_total:
-            logger.info(logs.MG_NODES_SKIPPED.format(count=skipped_total))
+            logger.info(ls.MG_NODES_SKIPPED.format(count=skipped_total))
         self.node_buffer.clear()
 
     def flush_relationships(self) -> None:
@@ -272,10 +270,10 @@ class MemgraphIngestor:
             if rel_type == REL_TYPE_CALLS:
                 failed = len(params_list) - batch_successful
                 if failed > 0:
-                    logger.warning(logs.MG_CALLS_FAILED.format(count=failed))
+                    logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
                     for i, sample in enumerate(params_list[:3]):
                         logger.warning(
-                            logs.MG_CALLS_SAMPLE.format(
+                            ls.MG_CALLS_SAMPLE.format(
                                 index=i + 1,
                                 from_label=from_label,
                                 from_val=sample["from_val"],
@@ -285,7 +283,7 @@ class MemgraphIngestor:
                         )
 
         logger.info(
-            logs.MG_RELS_FLUSHED.format(
+            ls.MG_RELS_FLUSHED.format(
                 total=len(self.relationship_buffer),
                 success=total_successful,
                 failed=total_attempted - total_successful,
@@ -294,25 +292,25 @@ class MemgraphIngestor:
         self.relationship_buffer.clear()
 
     def flush_all(self) -> None:
-        logger.info(logs.MG_FLUSH_START)
+        logger.info(ls.MG_FLUSH_START)
         self.flush_nodes()
         self.flush_relationships()
-        logger.info(logs.MG_FLUSH_COMPLETE)
+        logger.info(ls.MG_FLUSH_COMPLETE)
 
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> list[ResultRow]:
-        logger.debug(logs.MG_FETCH_QUERY.format(query=query, params=params))
+        logger.debug(ls.MG_FETCH_QUERY.format(query=query, params=params))
         return self._execute_query(query, params)
 
     def execute_write(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> None:
-        logger.debug(logs.MG_WRITE_QUERY.format(query=query, params=params))
+        logger.debug(ls.MG_WRITE_QUERY.format(query=query, params=params))
         self._execute_query(query, params)
 
     def export_graph_to_dict(self) -> GraphData:
-        logger.info(logs.MG_EXPORTING)
+        logger.info(ls.MG_EXPORTING)
 
         nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
         relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
@@ -324,7 +322,7 @@ class MemgraphIngestor:
         )
 
         logger.info(
-            logs.MG_EXPORTED.format(nodes=len(nodes_data), rels=len(relationships_data))
+            ls.MG_EXPORTED.format(nodes=len(nodes_data), rels=len(relationships_data))
         )
         return GraphData(
             nodes=nodes_data,

@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .. import exceptions as ex
-from .. import logs
+from .. import logs as ls
 from ..constants import (
     QUERY_NOT_AVAILABLE,
     QUERY_RESULTS_PANEL_TITLE,
@@ -32,7 +32,7 @@ def create_query_tool(
     async def query_codebase_knowledge_graph(
         natural_language_query: str,
     ) -> QueryGraphData:
-        logger.info(logs.TOOL_QUERY_RECEIVED.format(query=natural_language_query))
+        logger.info(ls.TOOL_QUERY_RECEIVED.format(query=natural_language_query))
         cypher_query = QUERY_NOT_AVAILABLE
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
@@ -80,7 +80,7 @@ def create_query_tool(
                 summary=QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
             )
         except Exception as e:
-            logger.error(logs.TOOL_QUERY_ERROR.format(error=e), exc_info=True)
+            logger.error(ls.TOOL_QUERY_ERROR.format(error=e), exc_info=True)
             return QueryGraphData(
                 query_used=cypher_query,
                 results=[],

@@ -6,7 +6,7 @@ from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Tool
 
-from .. import logs
+from .. import logs as ls
 from .. import tool_errors as te
 from ..constants import ENCODING_UTF8
 from . import tool_descriptions as td
@@ -21,10 +21,10 @@ class FileCreationResult(BaseModel):
 class FileWriter:
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
-        logger.info(logs.FILE_WRITER_INIT.format(root=self.project_root))
+        logger.info(ls.FILE_WRITER_INIT.format(root=self.project_root))
 
     async def create_file(self, file_path: str, content: str) -> FileCreationResult:
-        logger.info(logs.FILE_WRITER_CREATE.format(path=file_path))
+        logger.info(ls.FILE_WRITER_CREATE.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
 
@@ -33,7 +33,7 @@ class FileWriter:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content, encoding=ENCODING_UTF8)
             logger.info(
-                logs.FILE_WRITER_SUCCESS.format(chars=len(content), path=file_path)
+                ls.FILE_WRITER_SUCCESS.format(chars=len(content), path=file_path)
             )
             return FileCreationResult(file_path=file_path)
         except ValueError:

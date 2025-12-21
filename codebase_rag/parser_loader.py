@@ -9,7 +9,7 @@ from tree_sitter import Language, Parser, Query
 
 from . import constants as cs
 from . import exceptions as ex
-from . import logs
+from . import logs as ls
 from .language_spec import LANGUAGE_SPECS
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
@@ -33,7 +33,7 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 
             setup_py_path = submodule_path / cs.SETUP_PY
             if setup_py_path.exists():
-                logger.debug(logs.BUILDING_BINDINGS.format(lang=lang_name))
+                logger.debug(ls.BUILDING_BINDINGS.format(lang=lang_name))
                 result = subprocess.run(
                     [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
                     cwd=str(submodule_path),
@@ -43,14 +43,14 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 
                 if result.returncode != 0:
                     logger.debug(
-                        logs.BUILD_FAILED.format(
+                        ls.BUILD_FAILED.format(
                             lang=lang_name, stdout=result.stdout, stderr=result.stderr
                         )
                     )
                     return None
-                logger.debug(logs.BUILD_SUCCESS.format(lang=lang_name))
+                logger.debug(ls.BUILD_SUCCESS.format(lang=lang_name))
 
-            logger.debug(logs.IMPORTING_MODULE.format(module=module_name))
+            logger.debug(ls.IMPORTING_MODULE.format(module=module_name))
             module = importlib.import_module(module_name)
 
             language_attrs: list[str] = [
@@ -62,15 +62,13 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
             for attr_name in language_attrs:
                 if hasattr(module, attr_name):
                     logger.debug(
-                        logs.LOADED_FROM_SUBMODULE.format(
-                            lang=lang_name, attr=attr_name
-                        )
+                        ls.LOADED_FROM_SUBMODULE.format(lang=lang_name, attr=attr_name)
                     )
                     loader: LanguageLoader = getattr(module, attr_name)
                     return loader
 
             logger.debug(
-                logs.NO_LANG_ATTR.format(module=module_name, available=dir(module))
+                ls.NO_LANG_ATTR.format(module=module_name, available=dir(module))
             )
 
         finally:
@@ -78,7 +76,7 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
                 sys.path.remove(python_bindings_str)
 
     except Exception as e:
-        logger.debug(logs.SUBMODULE_LOAD_FAILED.format(lang=lang_name, error=e))
+        logger.debug(ls.SUBMODULE_LOAD_FAILED.format(lang=lang_name, error=e))
 
     return None
 
@@ -200,7 +198,7 @@ def load_parsers() -> tuple[
         lang_name = cs.SupportedLanguage(lang_key)
         lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
         if not lang_lib:
-            logger.debug(logs.LIB_NOT_AVAILABLE.format(lang=lang_name))
+            logger.debug(ls.LIB_NOT_AVAILABLE.format(lang=lang_name))
             continue
 
         try:
@@ -237,9 +235,7 @@ def load_parsers() -> tuple[
                 try:
                     locals_query = Query(language, locals_pattern)
                 except Exception as e:
-                    logger.debug(
-                        logs.LOCALS_QUERY_FAILED.format(lang=lang_name, error=e)
-                    )
+                    logger.debug(ls.LOCALS_QUERY_FAILED.format(lang=lang_name, error=e))
 
             queries[lang_name] = LanguageQueries(
                 functions=Query(language, function_patterns)
@@ -257,14 +253,12 @@ def load_parsers() -> tuple[
             )
 
             available_languages.append(lang_name)
-            logger.success(logs.GRAMMAR_LOADED.format(lang=lang_name))
+            logger.success(ls.GRAMMAR_LOADED.format(lang=lang_name))
         except Exception as e:
-            logger.warning(logs.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
+            logger.warning(ls.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
 
     if not available_languages:
         raise RuntimeError(ex.NO_LANGUAGES)
 
-    logger.info(
-        logs.INITIALIZED_PARSERS.format(languages=", ".join(available_languages))
-    )
+    logger.info(ls.INITIALIZED_PARSERS.format(languages=", ".join(available_languages)))
     return parsers, queries

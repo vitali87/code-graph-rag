@@ -6,7 +6,7 @@ from loguru import logger
 
 from . import constants as cs
 from . import exceptions as ex
-from . import logs
+from . import logs as ls
 from .models import GraphNode, GraphRelationship
 from .types_defs import GraphData, GraphMetadata, GraphSummary, PropertyValue
 
@@ -36,7 +36,7 @@ class GraphLoader:
         if not self.file_path.exists():
             raise FileNotFoundError(ex.GRAPH_FILE_NOT_FOUND.format(path=self.file_path))
 
-        logger.info(logs.LOADING_GRAPH.format(path=self.file_path))
+        logger.info(ls.LOADING_GRAPH.format(path=self.file_path))
         with open(self.file_path, encoding=cs.ENCODING_UTF8) as f:
             self._data = json.load(f)
 
@@ -70,7 +70,7 @@ class GraphLoader:
             self._incoming_rels[rel.to_id].append(rel)
 
         logger.info(
-            logs.LOADED_GRAPH.format(
+            ls.LOADED_GRAPH.format(
                 nodes=len(self._nodes), relationships=len(self._relationships)
             )
         )

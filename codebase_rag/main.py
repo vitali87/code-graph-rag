@@ -25,7 +25,7 @@ from rich.text import Text
 
 from . import constants as cs
 from . import exceptions as ex
-from . import logs
+from . import logs as ls
 from .config import settings
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
@@ -458,7 +458,7 @@ def _replace_path_in_question(question: str, old_path: str, new_path: str) -> st
     for variant in _get_path_variants(old_path):
         if variant in question:
             return question.replace(variant, new_path)
-    logger.warning(logs.PATH_NOT_IN_QUESTION.format(path=old_path))
+    logger.warning(ls.PATH_NOT_IN_QUESTION.format(path=old_path))
     return question
 
 
@@ -473,7 +473,7 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
 
     for original_path in image_files:
         if not original_path.exists() or not original_path.is_file():
-            logger.warning(logs.IMAGE_NOT_FOUND.format(path=original_path))
+            logger.warning(ls.IMAGE_NOT_FOUND.format(path=original_path))
             continue
 
         try:
@@ -483,9 +483,9 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
             updated_question = _replace_path_in_question(
                 updated_question, str(original_path), new_relative
             )
-            logger.info(logs.IMAGE_COPIED.format(path=new_relative))
+            logger.info(ls.IMAGE_COPIED.format(path=new_relative))
         except Exception as e:
-            logger.error(logs.IMAGE_COPY_FAILED.format(error=e))
+            logger.error(ls.IMAGE_COPY_FAILED.format(error=e))
 
     return updated_question
 
@@ -572,7 +572,7 @@ async def _run_interactive_loop(
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error(logs.UNEXPECTED.format(error=e), exc_info=True)
+            logger.error(ls.UNEXPECTED.format(error=e), exc_info=True)
             app_context.console.print(cs.UI_ERR_UNEXPECTED.format(error=e))
 
 
@@ -659,7 +659,7 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
     except Exception as e:
         app_context.console.print(cs.UI_ERR_EXPORT_FAILED.format(error=e))
-        logger.error(logs.EXPORT_ERROR.format(error=e), exc_info=True)
+        logger.error(ls.EXPORT_ERROR.format(error=e), exc_info=True)
         return False
 
 

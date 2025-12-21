@@ -7,7 +7,7 @@ from pydantic_ai import Agent, DeferredToolRequests, Tool
 
 from .. import constants as cs
 from .. import exceptions as ex
-from .. import logs
+from .. import logs as ls
 from ..config import ModelConfig, settings
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
@@ -64,7 +64,7 @@ class CypherGenerator:
             raise ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error=e)) from e
 
     async def generate(self, natural_language_query: str) -> str:
-        logger.info(logs.CYPHER_GENERATING.format(query=natural_language_query))
+        logger.info(ls.CYPHER_GENERATING.format(query=natural_language_query))
         try:
             result = await self.agent.run(natural_language_query)
             if (
@@ -76,10 +76,10 @@ class CypherGenerator:
                 )
 
             query = _clean_cypher_response(result.output)
-            logger.info(logs.CYPHER_GENERATED.format(query=query))
+            logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:
-            logger.error(logs.CYPHER_ERROR.format(error=e))
+            logger.error(ls.CYPHER_ERROR.format(error=e))
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
 
 

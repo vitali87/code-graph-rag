@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from .. import logs
+from .. import logs as ls
 from ..constants import SEPARATOR_DOT
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ def resolve_fqn_from_ast(
         return SEPARATOR_DOT.join(full_parts)
 
     except Exception as e:
-        logger.debug(logs.FQN_RESOLVE_FAILED.format(path=file_path, error=e))
+        logger.debug(ls.FQN_RESOLVE_FAILED.format(path=file_path, error=e))
         return None
 
 
@@ -73,9 +73,7 @@ def find_function_source_by_fqn(
         return walk(root_node)
 
     except Exception as e:
-        logger.debug(
-            logs.FQN_FIND_FAILED.format(fqn=target_fqn, path=file_path, error=e)
-        )
+        logger.debug(ls.FQN_FIND_FAILED.format(fqn=target_fqn, path=file_path, error=e))
         return None
 
 
@@ -104,6 +102,6 @@ def extract_function_fqns(
         walk(root_node)
 
     except Exception as e:
-        logger.debug(logs.FQN_EXTRACT_FAILED.format(path=file_path, error=e))
+        logger.debug(ls.FQN_EXTRACT_FAILED.format(path=file_path, error=e))
 
     return functions

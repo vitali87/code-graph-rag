@@ -11,7 +11,7 @@ from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
 
 from .. import constants as cs
-from .. import logs
+from .. import logs as ls
 from .. import tool_errors as te
 from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
@@ -80,7 +80,7 @@ def timing_decorator[**P, T](
         end_time = time.perf_counter()
         execution_time = (end_time - start_time) * 1000
         func_name = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
-        logger.info(logs.SHELL_TIMING.format(func=func_name, time=execution_time))
+        logger.info(ls.SHELL_TIMING.format(func=func_name, time=execution_time))
         return result
 
     return wrapper
@@ -90,11 +90,11 @@ class ShellCommander:
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
-        logger.info(logs.SHELL_COMMANDER_INIT.format(root=self.project_root))
+        logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
     @timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
-        logger.info(logs.TOOL_SHELL_EXEC.format(cmd=command))
+        logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
             cmd_parts = shlex.split(command)
             if not cmd_parts:
@@ -140,11 +140,11 @@ class ShellCommander:
             stdout_str = stdout.decode(cs.ENCODING_UTF8, errors="replace").strip()
             stderr_str = stderr.decode(cs.ENCODING_UTF8, errors="replace").strip()
 
-            logger.info(logs.TOOL_SHELL_RETURN.format(code=process.returncode))
+            logger.info(ls.TOOL_SHELL_RETURN.format(code=process.returncode))
             if stdout_str:
-                logger.info(logs.TOOL_SHELL_STDOUT.format(stdout=stdout_str))
+                logger.info(ls.TOOL_SHELL_STDOUT.format(stdout=stdout_str))
             if stderr_str:
-                logger.warning(logs.TOOL_SHELL_STDERR.format(stderr=stderr_str))
+                logger.warning(ls.TOOL_SHELL_STDERR.format(stderr=stderr_str))
 
             return ShellCommandResult(
                 return_code=(
@@ -161,14 +161,14 @@ class ShellCommander:
             try:
                 process.kill()
                 await process.wait()
-                logger.info(logs.TOOL_SHELL_KILLED)
+                logger.info(ls.TOOL_SHELL_KILLED)
             except ProcessLookupError:
-                logger.warning(logs.TOOL_SHELL_ALREADY_TERMINATED)
+                logger.warning(ls.TOOL_SHELL_ALREADY_TERMINATED)
             return ShellCommandResult(
                 return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
             )
         except Exception as e:
-            logger.error(logs.TOOL_SHELL_ERROR.format(error=e))
+            logger.error(ls.TOOL_SHELL_ERROR.format(error=e))
             return ShellCommandResult(
                 return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=str(e)
             )

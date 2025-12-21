@@ -1,6 +1,6 @@
 from loguru import logger
 
-from . import logs
+from . import logs as ls
 from .config import settings
 from .constants import PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME
 from .utils.dependencies import has_qdrant_client
@@ -44,7 +44,7 @@ if has_qdrant_client():
             )
         except Exception as e:
             logger.warning(
-                logs.EMBEDDING_STORE_FAILED.format(name=qualified_name, error=e)
+                ls.EMBEDDING_STORE_FAILED.format(name=qualified_name, error=e)
             )
 
     def search_embeddings(
@@ -64,7 +64,7 @@ if has_qdrant_client():
                 if hit.payload is not None
             ]
         except Exception as e:
-            logger.warning(logs.EMBEDDING_SEARCH_FAILED.format(error=e))
+            logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
             return []
 
 else:

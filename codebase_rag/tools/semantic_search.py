@@ -5,7 +5,7 @@ from pydantic_ai import Tool
 
 from .. import constants as cs
 from .. import exceptions as ex
-from .. import logs
+from .. import logs as ls
 from ..cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     build_nodes_by_ids_query,
@@ -30,7 +30,7 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResul
         search_results = search_embeddings(query_embedding, top_k=top_k)
 
         if not search_results:
-            logger.info(logs.SEMANTIC_NO_MATCH.format(query=query))
+            logger.info(ls.SEMANTIC_NO_MATCH.format(query=query))
             return []
 
         node_ids = [node_id for node_id, _ in search_results]
@@ -67,12 +67,12 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResul
                     )
 
             logger.info(
-                logs.SEMANTIC_FOUND.format(count=len(formatted_results), query=query)
+                ls.SEMANTIC_FOUND.format(count=len(formatted_results), query=query)
             )
             return formatted_results
 
     except Exception as e:
-        logger.error(logs.SEMANTIC_FAILED.format(query=query, error=e))
+        logger.error(ls.SEMANTIC_FAILED.format(query=query, error=e))
         return []
 
 
@@ -95,7 +95,7 @@ def get_function_source_code(node_id: int) -> str | None:
             )
 
             if not results:
-                logger.warning(logs.SEMANTIC_NODE_NOT_FOUND.format(id=node_id))
+                logger.warning(ls.SEMANTIC_NODE_NOT_FOUND.format(id=node_id))
                 return None
 
             result = results[0]
@@ -107,19 +107,19 @@ def get_function_source_code(node_id: int) -> str | None:
                 file_path, start_line, end_line
             )
             if not is_valid or file_path_obj is None:
-                logger.warning(logs.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+                logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
                 return None
 
             return extract_source_lines(file_path_obj, start_line, end_line)
 
     except Exception as e:
-        logger.error(logs.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
+        logger.error(ls.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
         return None
 
 
 def create_semantic_search_tool() -> Tool:
     async def semantic_search_functions(query: str, top_k: int = 5) -> str:
-        logger.info(logs.SEMANTIC_TOOL_SEARCH.format(query=query))
+        logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
         results = semantic_code_search(query, top_k)
 
@@ -143,7 +143,7 @@ def create_semantic_search_tool() -> Tool:
 
 def create_get_function_source_tool() -> Tool:
     async def get_function_source_by_id(node_id: int) -> str:
-        logger.info(logs.SEMANTIC_TOOL_SOURCE.format(id=node_id))
+        logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = get_function_source_code(node_id)
 

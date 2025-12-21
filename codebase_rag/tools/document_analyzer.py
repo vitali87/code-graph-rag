@@ -14,7 +14,7 @@ from pydantic_ai import Tool
 
 from .. import constants as cs
 from .. import exceptions as ex
-from .. import logs
+from .. import logs as ls
 from .. import tool_errors as te
 from ..config import settings
 from . import tool_descriptions as td
@@ -43,10 +43,10 @@ class DocumentAnalyzer:
         else:
             self.client = _NotSupportedClient()
 
-        logger.info(logs.DOC_ANALYZER_INIT.format(root=self.project_root))
+        logger.info(ls.DOC_ANALYZER_INIT.format(root=self.project_root))
 
     def analyze(self, file_path: str, question: str) -> str:
-        logger.info(logs.TOOL_DOC_ANALYZE.format(path=file_path, question=question))
+        logger.info(ls.TOOL_DOC_ANALYZE.format(path=file_path, question=question))
         if isinstance(self.client, _NotSupportedClient):
             return te.DOCUMENT_UNSUPPORTED
 
@@ -62,7 +62,7 @@ class DocumentAnalyzer:
                 tmp_file = tmp_dir / f"{uuid.uuid4()}-{source_path.name}"
                 shutil.copy2(source_path, tmp_file)
                 full_path = tmp_file
-                logger.info(logs.DOC_COPIED.format(path=full_path))
+                logger.info(ls.DOC_COPIED.format(path=full_path))
             else:
                 full_path = (self.project_root / file_path).resolve()
                 try:
@@ -92,7 +92,7 @@ class DocumentAnalyzer:
                 model=orchestrator_config.model_id, contents=prompt_parts
             )
 
-            logger.success(logs.DOC_SUCCESS.format(path=file_path))
+            logger.success(ls.DOC_SUCCESS.format(path=file_path))
 
             if hasattr(response, "text") and response.text:
                 return str(response.text)
@@ -104,7 +104,7 @@ class DocumentAnalyzer:
                             return str(parts[0].text)
                 return cs.MSG_DOC_NO_CANDIDATES
             else:
-                logger.warning(logs.DOC_NO_TEXT.format(response=response))
+                logger.warning(ls.DOC_NO_TEXT.format(response=response))
                 return cs.MSG_DOC_NO_CONTENT
 
         except ValueError as e:
@@ -113,15 +113,15 @@ class DocumentAnalyzer:
                 logger.error(err_msg)
                 return err_msg
             else:
-                logger.error(logs.DOC_ANALYZER_API_ERR.format(error=e))
+                logger.error(ls.DOC_ANALYZER_API_ERR.format(error=e))
                 return te.DOC_API_VALIDATION.format(error=e)
         except ClientError as e:
-            logger.error(logs.DOC_API_ERROR.format(path=file_path, error=e))
+            logger.error(ls.DOC_API_ERROR.format(path=file_path, error=e))
             if "Unable to process input image" in str(e):
                 return te.DOC_IMAGE_PROCESS
             return f"Error: API error: {e}"
         except Exception as e:
-            logger.error(logs.DOC_FAILED.format(path=file_path, error=e), exc_info=True)
+            logger.error(ls.DOC_FAILED.format(path=file_path, error=e), exc_info=True)
             return te.DOC_ANALYSIS_FAILED.format(error=e)
 
 
@@ -131,11 +131,11 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
             result = analyzer.analyze(file_path, question)
             preview = result[:100] if result else "None"
             logger.debug(
-                logs.DOC_RESULT.format(type=type(result).__name__, preview=preview)
+                ls.DOC_RESULT.format(type=type(result).__name__, preview=preview)
             )
             return result
         except Exception as e:
-            logger.error(logs.DOC_EXCEPTION.format(error=e), exc_info=True)
+            logger.error(ls.DOC_EXCEPTION.format(error=e), exc_info=True)
             if str(e).startswith("Error:") or str(e).startswith("API error:"):
                 return str(e)
             return te.DOC_DURING_ANALYSIS.format(error=e)

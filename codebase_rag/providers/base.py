@@ -12,7 +12,7 @@ from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvide
 
 from .. import constants as cs
 from .. import exceptions as ex
-from .. import logs
+from .. import logs as ls
 from ..config import settings
 
 
@@ -177,7 +177,7 @@ def get_provider(
 
 def register_provider(name: str, provider_class: type[ModelProvider]) -> None:
     PROVIDER_REGISTRY[name] = provider_class
-    logger.info(logs.PROVIDER_REGISTERED.format(name=name))
+    logger.info(ls.PROVIDER_REGISTERED.format(name=name))
 
 
 def list_providers() -> list[str]:
