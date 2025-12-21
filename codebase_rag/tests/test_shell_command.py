@@ -6,10 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic_ai import ApprovalRequired, Tool
 
+from codebase_rag.config import settings
 from codebase_rag.tools.shell_command import (
-    COMMAND_ALLOWLIST,
-    READ_ONLY_COMMANDS,
-    SAFE_GIT_SUBCOMMANDS,
     ShellCommander,
     _is_dangerous_command,
     _requires_approval,
@@ -65,7 +63,7 @@ class TestIsDangerousCommand:
 
 class TestRequiresApproval:
     def test_read_only_commands_no_approval(self) -> None:
-        for cmd in READ_ONLY_COMMANDS:
+        for cmd in settings.SHELL_READ_ONLY_COMMANDS:
             assert _requires_approval(cmd) is False
 
     def test_read_only_with_args_no_approval(self) -> None:
@@ -74,7 +72,7 @@ class TestRequiresApproval:
         assert _requires_approval("find . -name '*.py'") is False
 
     def test_safe_git_subcommands_no_approval(self) -> None:
-        for subcmd in SAFE_GIT_SUBCOMMANDS:
+        for subcmd in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
             assert _requires_approval(f"git {subcmd}") is False
 
     def test_unsafe_git_subcommands_require_approval(self) -> None:
@@ -108,7 +106,7 @@ class TestCommandAllowlist:
             "mkdir",
         }
         for cmd in expected_commands:
-            assert cmd in COMMAND_ALLOWLIST
+            assert cmd in settings.SHELL_COMMAND_ALLOWLIST
 
 
 class TestShellCommanderExecute:

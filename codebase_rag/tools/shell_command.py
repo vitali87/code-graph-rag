@@ -13,36 +13,9 @@ from pydantic_ai import ApprovalRequired, RunContext, Tool
 from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
+from ..config import settings
 from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
-
-COMMAND_ALLOWLIST = frozenset(
-    {
-        "ls",
-        "rg",
-        "cat",
-        "git",
-        "echo",
-        "pwd",
-        "pytest",
-        "mypy",
-        "ruff",
-        "uv",
-        "find",
-        "pre-commit",
-        "rm",
-        "cp",
-        "mv",
-        "mkdir",
-        "rmdir",
-    }
-)
-
-READ_ONLY_COMMANDS = frozenset({"ls", "cat", "find", "pwd", "rg", "echo"})
-
-SAFE_GIT_SUBCOMMANDS = frozenset(
-    {"status", "log", "diff", "show", "ls-files", "remote", "config", "branch"}
-)
 
 
 def _is_dangerous_command(cmd_parts: list[str]) -> bool:
@@ -61,11 +34,11 @@ def _requires_approval(command: str) -> bool:
 
     base_cmd = cmd_parts[0]
 
-    if base_cmd in READ_ONLY_COMMANDS:
+    if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
         return False
 
     if base_cmd == cs.SHELL_CMD_GIT and len(cmd_parts) > 1:
-        return cmd_parts[1] not in SAFE_GIT_SUBCOMMANDS
+        return cmd_parts[1] not in settings.SHELL_SAFE_GIT_SUBCOMMANDS
 
     return True
 
@@ -104,8 +77,8 @@ class ShellCommander:
                     stderr=te.COMMAND_EMPTY,
                 )
 
-            if cmd_parts[0] not in COMMAND_ALLOWLIST:
-                available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
+            if cmd_parts[0] not in settings.SHELL_COMMAND_ALLOWLIST:
+                available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
                 suggestion = (
                     cs.GREP_SUGGESTION if cmd_parts[0] == cs.SHELL_CMD_GREP else ""
                 )

@@ -76,6 +76,49 @@ class AppConfig(BaseSettings):
 
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
+    SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
+        {
+            "ls",
+            "rg",
+            "cat",
+            "git",
+            "echo",
+            "pwd",
+            "pytest",
+            "mypy",
+            "ruff",
+            "uv",
+            "find",
+            "pre-commit",
+            "rm",
+            "cp",
+            "mv",
+            "mkdir",
+            "rmdir",
+        }
+    )
+    SHELL_READ_ONLY_COMMANDS: frozenset[str] = frozenset(
+        {
+            "ls",
+            "cat",
+            "find",
+            "pwd",
+            "rg",
+            "echo",
+        }
+    )
+    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset(
+        {
+            "status",
+            "log",
+            "diff",
+            "show",
+            "ls-files",
+            "remote",
+            "config",
+            "branch",
+        }
+    )
 
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
