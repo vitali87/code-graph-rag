@@ -42,6 +42,21 @@ class FileAction(StrEnum):
     EDIT = "edit"
 
 
+BINARY_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".pdf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".tiff",
+        ".webp",
+    }
+)
+
+
 DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_API_KEY = "ollama"

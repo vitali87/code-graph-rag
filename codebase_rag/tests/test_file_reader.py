@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Tool
 
+from codebase_rag import constants as cs
 from codebase_rag.tools.file_reader import (
     FileReader,
     FileReadResult,
@@ -52,11 +53,11 @@ class TestFileReaderInit:
         reader = FileReader(".")
         assert reader.project_root == Path(".").resolve()
 
-    def test_binary_extensions_set(self, file_reader: FileReader) -> None:
-        assert ".pdf" in file_reader.binary_extensions
-        assert ".png" in file_reader.binary_extensions
-        assert ".jpg" in file_reader.binary_extensions
-        assert ".jpeg" in file_reader.binary_extensions
+    def test_binary_extensions_set(self) -> None:
+        assert ".pdf" in cs.BINARY_EXTENSIONS
+        assert ".png" in cs.BINARY_EXTENSIONS
+        assert ".jpg" in cs.BINARY_EXTENSIONS
+        assert ".jpeg" in cs.BINARY_EXTENSIONS
 
 
 class TestFileReadResult:

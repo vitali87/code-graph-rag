@@ -21,17 +21,6 @@ class FileReadResult(BaseModel):
 class FileReader:
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
-        self.binary_extensions = {
-            ".pdf",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-            ".bmp",
-            ".ico",
-            ".tiff",
-            ".webp",
-        }
         logger.info(ls.FILE_READER_INIT.format(root=self.project_root))
 
     async def read_file(self, file_path: str) -> FileReadResult:
@@ -61,7 +50,7 @@ class FileReader:
                     file_path=file_path, error_message=te.FILE_NOT_FOUND
                 )
 
-            if full_path.suffix.lower() in self.binary_extensions:
+            if full_path.suffix.lower() in cs.BINARY_EXTENSIONS:
                 error_msg = te.BINARY_FILE.format(path=file_path)
                 logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
                 return FileReadResult(file_path=file_path, error_message=error_msg)
