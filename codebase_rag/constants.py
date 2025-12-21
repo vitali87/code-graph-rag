@@ -604,3 +604,14 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     {"name": "toml", "collect_all": True},
     {"name": "protobuf", "collect_all": True},
 ]
+
+ALLOWED_COMMENT_MARKERS = frozenset(
+    {"(H)", "type:", "noqa", "pyright", "ty:", "@@protoc"}
+)
+QUOTE_CHARS = frozenset({'"', "'"})
+TRIPLE_QUOTES = ('"""', "'''")
+COMMENT_CHAR = "#"
+ESCAPE_CHAR = "\\"
+
+LOG_COMMENTS_FOUND = "Comments without (H) marker found:"
+LOG_COMMENT_ERROR = "  {error}"

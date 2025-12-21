@@ -3,13 +3,15 @@ import sys
 
 from loguru import logger
 
-ALLOWED_COMMENT_MARKERS = frozenset(
-    {"(H)", "type:", "noqa", "pyright", "ty:", "@@protoc"}
+from codebase_rag.constants import (
+    ALLOWED_COMMENT_MARKERS,
+    COMMENT_CHAR,
+    ESCAPE_CHAR,
+    LOG_COMMENT_ERROR,
+    LOG_COMMENTS_FOUND,
+    QUOTE_CHARS,
+    TRIPLE_QUOTES,
 )
-QUOTE_CHARS = frozenset({'"', "'"})
-TRIPLE_QUOTES = ('"""', "'''")
-COMMENT_CHAR = "#"
-ESCAPE_CHAR = "\\"
 
 
 def find_comment_start(line: str) -> int | None:
@@ -62,13 +64,13 @@ def check_file(filepath: str) -> list[str]:
         if in_multiline_string:
             continue
 
-        if not found_first_code:
-            if (
-                stripped
-                and not stripped.startswith(COMMENT_CHAR)
-                and not any(stripped.startswith(q) for q in TRIPLE_QUOTES)
-            ):
-                found_first_code = True
+        is_code_line = (
+            stripped
+            and not stripped.startswith(COMMENT_CHAR)
+            and not any(stripped.startswith(q) for q in TRIPLE_QUOTES)
+        )
+        if is_code_line and not found_first_code:
+            found_first_code = True
 
         if not found_first_code:
             continue
@@ -90,9 +92,9 @@ def main() -> int:
         all_errors.extend(errors)
 
     if all_errors:
-        logger.error("Comments without (H) marker found:")
+        logger.error(LOG_COMMENTS_FOUND)
         for error in all_errors:
-            logger.error(f"  {error}")
+            logger.error(LOG_COMMENT_ERROR.format(error=error))
         return 1
 
     return 0
