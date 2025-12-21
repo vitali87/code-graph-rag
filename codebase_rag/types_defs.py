@@ -1,8 +1,9 @@
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, ItemsView, KeysView
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, NamedTuple, TypedDict
+from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
 
 from prompt_toolkit.styles import Style
 
@@ -63,6 +64,31 @@ class NodeType(StrEnum):
 
 type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
 type FunctionRegistry = dict[QualifiedName, NodeType]
+
+
+class FunctionRegistryTrieProtocol(Protocol):
+    def __contains__(self, qualified_name: QualifiedName) -> bool: ...
+    def __getitem__(self, qualified_name: QualifiedName) -> NodeType: ...
+    def __setitem__(
+        self, qualified_name: QualifiedName, func_type: NodeType
+    ) -> None: ...
+    def get(
+        self, qualified_name: QualifiedName, default: NodeType | None = None
+    ) -> NodeType | None: ...
+    def keys(self) -> KeysView[QualifiedName]: ...
+    def items(self) -> ItemsView[QualifiedName, NodeType]: ...
+    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]: ...
+    def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
+
+
+class ASTCacheProtocol(Protocol):
+    def __setitem__(
+        self, key: Path, value: tuple["Node", SupportedLanguage]
+    ) -> None: ...
+    def __getitem__(self, key: Path) -> tuple["Node", SupportedLanguage]: ...
+    def __delitem__(self, key: Path) -> None: ...
+    def __contains__(self, key: Path) -> bool: ...
+    def items(self) -> ItemsView[Path, tuple["Node", SupportedLanguage]]: ...
 
 
 class ModelConfigKwargs(TypedDict, total=False):

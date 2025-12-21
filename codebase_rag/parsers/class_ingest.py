@@ -67,15 +67,14 @@ class ClassIngestMixin:
                 module_declarations.append((node, _decode_node_stripped(node)))
 
             elif node.type == cs.CppNodeType.DECLARATION:
-                has_module = False
-
-                for child in node.children:
-                    if child.type == cs.ONEOF_MODULE or (
+                has_module = any(
+                    child.type == cs.ONEOF_MODULE
+                    or (
                         child.text
                         and safe_decode_with_fallback(child).strip() == cs.ONEOF_MODULE
-                    ):
-                        has_module = True
-
+                    )
+                    for child in node.children
+                )
                 if has_module:
                     module_declarations.append((node, _decode_node_stripped(node)))
 
@@ -166,10 +165,8 @@ class ClassIngestMixin:
             if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
                 node_text = _decode_node_stripped(node)
 
-                if (
-                    node_text.startswith("export class ")
-                    or node_text.startswith("export struct ")
-                    or node_text.startswith("export template")
+                if node_text.startswith(
+                    ("export class ", "export struct ", "export template")
                 ):
                     for child in node.children:
                         if child.type == cs.TS_ERROR and child.text:
@@ -198,248 +195,99 @@ class ClassIngestMixin:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         lang_queries = queries[language]
-        query = lang_queries[cs.QUERY_CLASSES]
-        if not query:
+        if not (query := lang_queries[cs.QUERY_CLASSES]):
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
         module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
         if language == cs.SupportedLanguage.CPP:
-            additional_class_nodes = self._find_cpp_exported_classes(root_node)
-            class_nodes.extend(additional_class_nodes)
+            class_nodes.extend(self._find_cpp_exported_classes(root_node))
 
         file_path = self.module_qn_to_file_path.get(module_qn)
 
         for class_node in class_nodes:
-            if not isinstance(class_node, Node):
-                continue
-
-            class_qn = None
-            class_name = None
-            is_exported = False
-
-            if (
-                language == cs.SupportedLanguage.RUST
-                and class_node.type == cs.TS_IMPL_ITEM
-            ):
-                impl_target = extract_rust_impl_target(class_node)
-                if not impl_target:
-                    continue
-
-                class_qn = f"{module_qn}.{impl_target}"
-
-                body_node = class_node.child_by_field_name("body")
-                method_query = lang_queries[cs.QUERY_FUNCTIONS]
-                if body_node and method_query:
-                    method_cursor = QueryCursor(method_query)
-                    method_captures = method_cursor.captures(body_node)
-                    method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
-                    for method_node in method_nodes:
-                        if not isinstance(method_node, Node):
-                            continue
-
-                        ingest_method(
-                            method_node,
-                            class_qn,
-                            cs.NodeLabel.CLASS,
-                            self.ingestor,
-                            self.function_registry,
-                            self.simple_name_lookup,
-                            self._get_docstring,
-                            language,
-                        )
-
-                continue
-
-            fqn_config = LANGUAGE_FQN_SPECS.get(language)
-            if fqn_config and file_path:
-                class_qn = resolve_fqn_from_ast(
-                    class_node, file_path, self.repo_path, self.project_name, fqn_config
+            if isinstance(class_node, Node):
+                self._process_class_node(
+                    class_node,
+                    module_qn,
+                    language,
+                    lang_queries,
+                    lang_config,
+                    file_path,
                 )
-                if class_qn:
-                    class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
-                    if language == cs.SupportedLanguage.CPP:
-                        if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                            is_exported = True
-                        else:
-                            is_exported = is_cpp_exported(class_node)
 
-            if not class_qn:
-                if language == cs.SupportedLanguage.CPP:
-                    if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                        class_name = extract_cpp_exported_class_name(class_node)
-                        is_exported = True
-                    else:
-                        class_name = self._extract_cpp_class_name(class_node)
-                        is_exported = is_cpp_exported(class_node)
+        self._process_inline_modules(module_nodes, module_qn, lang_config)
 
-                    if not class_name:
-                        continue
-                    class_qn = build_cpp_qualified_name(
-                        class_node, module_qn, class_name
-                    )
-                else:
-                    is_exported = False
-                    class_name = self._extract_class_name(class_node)
-                    if not class_name:
-                        continue
-                    nested_qn = self._build_nested_qualified_name_for_class(
-                        class_node, module_qn, class_name, lang_config
-                    )
-                    class_qn = nested_qn or f"{module_qn}.{class_name}"
-
-            decorators = self._extract_decorators(class_node)
-            class_props: dict[str, Any] = {
-                "qualified_name": class_qn,
-                "name": class_name,
-                "decorators": decorators,
-                "start_line": class_node.start_point[0] + 1,
-                "end_line": class_node.end_point[0] + 1,
-                "docstring": self._get_docstring(class_node),
-                "is_exported": is_exported,
-            }
-            match class_node.type:
-                case cs.TS_INTERFACE_DECLARATION:
-                    node_type = NodeType.INTERFACE
-                    logger.info(
-                        logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn)
-                    )
-                case (
-                    cs.TS_ENUM_DECLARATION
-                    | cs.TS_ENUM_SPECIFIER
-                    | cs.TS_ENUM_CLASS_SPECIFIER
-                ):
-                    node_type = NodeType.ENUM
-                    logger.info(
-                        logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn)
-                    )
-                case cs.TS_TYPE_ALIAS_DECLARATION:
-                    node_type = NodeType.TYPE
-                    logger.info(
-                        logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn)
-                    )
-                case cs.TS_STRUCT_SPECIFIER:
-                    node_type = NodeType.CLASS
-                    logger.info(
-                        logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn)
-                    )
-                case cs.TS_UNION_SPECIFIER:
-                    node_type = NodeType.UNION
-                    logger.info(
-                        logs.CLASS_FOUND_UNION.format(name=class_name, qn=class_qn)
-                    )
-                case cs.CppNodeType.TEMPLATE_DECLARATION:
-                    template_class = self._extract_template_class_type(class_node)
-                    node_type = template_class or NodeType.CLASS
-                    logger.info(
-                        logs.CLASS_FOUND_TEMPLATE.format(
-                            node_type=node_type, name=class_name, qn=class_qn
-                        )
-                    )
-                case cs.CppNodeType.FUNCTION_DEFINITION if (
-                    language == cs.SupportedLanguage.CPP
-                ):
-                    node_text = (
-                        safe_decode_with_fallback(class_node) if class_node.text else ""
-                    )
-                    if "export struct " in node_text:
-                        logger.info(
-                            logs.CLASS_FOUND_EXPORTED_STRUCT.format(
-                                name=class_name, qn=class_qn
-                            )
-                        )
-                    elif "export union " in node_text:
-                        logger.info(
-                            logs.CLASS_FOUND_EXPORTED_UNION.format(
-                                name=class_name, qn=class_qn
-                            )
-                        )
-                    elif "export template" in node_text:
-                        logger.info(
-                            logs.CLASS_FOUND_EXPORTED_TEMPLATE.format(
-                                name=class_name, qn=class_qn
-                            )
-                        )
-                    else:
-                        logger.info(
-                            logs.CLASS_FOUND_EXPORTED_CLASS.format(
-                                name=class_name, qn=class_qn
-                            )
-                        )
-                    node_type = NodeType.CLASS
-                case _:
-                    node_type = NodeType.CLASS
-                    logger.info(
-                        logs.CLASS_FOUND_CLASS.format(name=class_name, qn=class_qn)
-                    )
-
-            self.ingestor.ensure_node_batch(node_type, class_props)
-
-            self.function_registry[class_qn] = node_type
-            if class_name:
-                self.simple_name_lookup[class_name].add(class_qn)
-
-            parent_classes = self._extract_parent_classes(class_node, module_qn)
-            self.class_inheritance[class_qn] = parent_classes
-
-            self.ingestor.ensure_relationship_batch(
-                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                cs.RelationshipType.DEFINES,
-                (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
+    def _process_class_node(
+        self,
+        class_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_queries: LanguageQueries,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+    ) -> None:
+        if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
+            self._ingest_rust_impl_methods(
+                class_node, module_qn, language, lang_queries
             )
+            return
 
-            if is_exported and language == cs.SupportedLanguage.CPP:
-                self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                    cs.RelationshipType.EXPORTS,
-                    (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
-                )
+        identity = self._resolve_class_identity(
+            class_node, module_qn, language, lang_config, file_path
+        )
+        if not identity:
+            return
 
-            for parent_class_qn in parent_classes:
-                self._create_inheritance_relationship(
-                    node_type, class_qn, parent_class_qn
-                )
+        class_qn, class_name, is_exported = identity
+        node_type = self._determine_node_type(
+            class_node, class_name, class_qn, language
+        )
 
-            if class_node.type == cs.TS_CLASS_DECLARATION:
-                implemented_interfaces = self._extract_implemented_interfaces(
-                    class_node, module_qn
-                )
-                for interface_qn in implemented_interfaces:
-                    self._create_implements_relationship(
-                        node_type, class_qn, interface_qn
-                    )
+        class_props: dict[str, Any] = {
+            "qualified_name": class_qn,
+            "name": class_name,
+            "decorators": self._extract_decorators(class_node),
+            "start_line": class_node.start_point[0] + 1,
+            "end_line": class_node.end_point[0] + 1,
+            "docstring": self._get_docstring(class_node),
+            "is_exported": is_exported,
+        }
+        self.ingestor.ensure_node_batch(node_type, class_props)
+        self.function_registry[class_qn] = node_type
+        if class_name:
+            self.simple_name_lookup[class_name].add(class_qn)
 
-            body_node = class_node.child_by_field_name("body")
-            method_query = lang_queries[cs.QUERY_FUNCTIONS]
-            if not body_node or not method_query:
-                continue
+        self._create_class_relationships(
+            class_node, class_qn, module_qn, node_type, is_exported, language
+        )
+        self._ingest_class_methods(class_node, class_qn, language, lang_queries)
 
-            method_cursor = QueryCursor(method_query)
-            method_captures = method_cursor.captures(body_node)
-            method_nodes_list = method_captures.get(cs.CAPTURE_FUNCTION, [])
-            for method_node in method_nodes_list:
-                if not isinstance(method_node, Node):
-                    continue
+    def _ingest_rust_impl_methods(
+        self,
+        class_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_queries: LanguageQueries,
+    ) -> None:
+        if not (impl_target := extract_rust_impl_target(class_node)):
+            return
 
-                method_qualified_name = None
-                if language == cs.SupportedLanguage.JAVA:
-                    method_info = extract_java_method_info(method_node)
-                    method_name = method_info.get(cs.KEY_NAME)
-                    parameters = method_info.get("parameters", [])
-                    if method_name:
-                        if parameters:
-                            param_signature = "(" + ",".join(parameters) + ")"
-                            method_qualified_name = (
-                                f"{class_qn}.{method_name}{param_signature}"
-                            )
-                        else:
-                            method_qualified_name = f"{class_qn}.{method_name}()"
+        class_qn = f"{module_qn}.{impl_target}"
+        body_node = class_node.child_by_field_name("body")
+        method_query = lang_queries[cs.QUERY_FUNCTIONS]
 
+        if not body_node or not method_query:
+            return
+
+        method_cursor = QueryCursor(method_query)
+        method_captures = method_cursor.captures(body_node)
+        for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
+            if isinstance(method_node, Node):
                 ingest_method(
                     method_node,
                     class_qn,
@@ -449,22 +297,219 @@ class ClassIngestMixin:
                     self.simple_name_lookup,
                     self._get_docstring,
                     language,
-                    self._extract_decorators,
-                    method_qualified_name,
                 )
 
+    def _resolve_class_identity(
+        self,
+        class_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+    ) -> tuple[str, str, bool] | None:
+        if (fqn_config := LANGUAGE_FQN_SPECS.get(language)) and file_path:
+            class_qn = resolve_fqn_from_ast(
+                class_node, file_path, self.repo_path, self.project_name, fqn_config
+            )
+            if class_qn:
+                class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
+                is_exported = language == cs.SupportedLanguage.CPP and (
+                    class_node.type == cs.CppNodeType.FUNCTION_DEFINITION
+                    or is_cpp_exported(class_node)
+                )
+                return class_qn, class_name, is_exported
+
+        return self._resolve_class_identity_fallback(
+            class_node, module_qn, language, lang_config
+        )
+
+    def _resolve_class_identity_fallback(
+        self,
+        class_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> tuple[str, str, bool] | None:
+        if language == cs.SupportedLanguage.CPP:
+            if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
+                class_name = extract_cpp_exported_class_name(class_node)
+                is_exported = True
+            else:
+                class_name = self._extract_cpp_class_name(class_node)
+                is_exported = is_cpp_exported(class_node)
+
+            if not class_name:
+                return None
+            class_qn = build_cpp_qualified_name(class_node, module_qn, class_name)
+            return class_qn, class_name, is_exported
+
+        class_name = self._extract_class_name(class_node)
+        if not class_name:
+            return None
+        nested_qn = self._build_nested_qualified_name_for_class(
+            class_node, module_qn, class_name, lang_config
+        )
+        return nested_qn or f"{module_qn}.{class_name}", class_name, False
+
+    def _determine_node_type(
+        self,
+        class_node: Node,
+        class_name: str | None,
+        class_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> NodeType:
+        match class_node.type:
+            case cs.TS_INTERFACE_DECLARATION:
+                logger.info(
+                    logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn)
+                )
+                return NodeType.INTERFACE
+            case (
+                cs.TS_ENUM_DECLARATION
+                | cs.TS_ENUM_SPECIFIER
+                | cs.TS_ENUM_CLASS_SPECIFIER
+            ):
+                logger.info(logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn))
+                return NodeType.ENUM
+            case cs.TS_TYPE_ALIAS_DECLARATION:
+                logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
+                return NodeType.TYPE
+            case cs.TS_STRUCT_SPECIFIER:
+                logger.info(
+                    logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn)
+                )
+                return NodeType.CLASS
+            case cs.TS_UNION_SPECIFIER:
+                logger.info(logs.CLASS_FOUND_UNION.format(name=class_name, qn=class_qn))
+                return NodeType.UNION
+            case cs.CppNodeType.TEMPLATE_DECLARATION:
+                node_type = (
+                    self._extract_template_class_type(class_node) or NodeType.CLASS
+                )
+                logger.info(
+                    logs.CLASS_FOUND_TEMPLATE.format(
+                        node_type=node_type, name=class_name, qn=class_qn
+                    )
+                )
+                return node_type
+            case cs.CppNodeType.FUNCTION_DEFINITION if (
+                language == cs.SupportedLanguage.CPP
+            ):
+                self._log_exported_class_type(class_node, class_name, class_qn)
+                return NodeType.CLASS
+            case _:
+                logger.info(logs.CLASS_FOUND_CLASS.format(name=class_name, qn=class_qn))
+                return NodeType.CLASS
+
+    def _log_exported_class_type(
+        self, class_node: Node, class_name: str | None, class_qn: str
+    ) -> None:
+        node_text = safe_decode_with_fallback(class_node) if class_node.text else ""
+        if "export struct " in node_text:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_STRUCT.format(name=class_name, qn=class_qn)
+            )
+        elif "export union " in node_text:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_UNION.format(name=class_name, qn=class_qn)
+            )
+        elif "export template" in node_text:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_TEMPLATE.format(name=class_name, qn=class_qn)
+            )
+        else:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_CLASS.format(name=class_name, qn=class_qn)
+            )
+
+    def _create_class_relationships(
+        self,
+        class_node: Node,
+        class_qn: str,
+        module_qn: str,
+        node_type: NodeType,
+        is_exported: bool,
+        language: cs.SupportedLanguage,
+    ) -> None:
+        parent_classes = self._extract_parent_classes(class_node, module_qn)
+        self.class_inheritance[class_qn] = parent_classes
+
+        self.ingestor.ensure_relationship_batch(
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            cs.RelationshipType.DEFINES,
+            (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
+        )
+
+        if is_exported and language == cs.SupportedLanguage.CPP:
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                cs.RelationshipType.EXPORTS,
+                (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
+            )
+
+        for parent_class_qn in parent_classes:
+            self._create_inheritance_relationship(node_type, class_qn, parent_class_qn)
+
+        if class_node.type == cs.TS_CLASS_DECLARATION:
+            for interface_qn in self._extract_implemented_interfaces(
+                class_node, module_qn
+            ):
+                self._create_implements_relationship(node_type, class_qn, interface_qn)
+
+    def _ingest_class_methods(
+        self,
+        class_node: Node,
+        class_qn: str,
+        language: cs.SupportedLanguage,
+        lang_queries: LanguageQueries,
+    ) -> None:
+        body_node = class_node.child_by_field_name("body")
+        method_query = lang_queries[cs.QUERY_FUNCTIONS]
+        if not body_node or not method_query:
+            return
+
+        method_cursor = QueryCursor(method_query)
+        method_captures = method_cursor.captures(body_node)
+        for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
+            if not isinstance(method_node, Node):
+                continue
+
+            method_qualified_name = None
+            if language == cs.SupportedLanguage.JAVA:
+                method_info = extract_java_method_info(method_node)
+                if method_name := method_info.get(cs.KEY_NAME):
+                    parameters = method_info.get("parameters", [])
+                    param_sig = f"({','.join(parameters)})" if parameters else "()"
+                    method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
+
+            ingest_method(
+                method_node,
+                class_qn,
+                cs.NodeLabel.CLASS,
+                self.ingestor,
+                self.function_registry,
+                self.simple_name_lookup,
+                self._get_docstring,
+                language,
+                self._extract_decorators,
+                method_qualified_name,
+            )
+
+    def _process_inline_modules(
+        self,
+        module_nodes: list[Node],
+        module_qn: str,
+        lang_config: LanguageSpec,
+    ) -> None:
         for module_node in module_nodes:
             if not isinstance(module_node, Node):
                 continue
+            if not (module_name_node := module_node.child_by_field_name("name")):
+                continue
+            if not module_name_node.text:
+                continue
 
-            module_name_node = module_node.child_by_field_name("name")
-            if not module_name_node:
-                continue
-            text = module_name_node.text
-            if text is None:
-                continue
             module_name = safe_decode_text(module_name_node)
-
             nested_qn = self._build_nested_qualified_name_for_class(
                 module_node, module_qn, module_name or "", lang_config
             )
@@ -605,34 +650,28 @@ class ClassIngestMixin:
         self, base_clause_node: Node, class_node: Node, module_qn: str
     ) -> list[str]:
         parent_classes: list[str] = []
+        base_type_nodes = (
+            cs.TS_TYPE_IDENTIFIER,
+            cs.CppNodeType.QUALIFIED_IDENTIFIER,
+            cs.TS_TEMPLATE_TYPE,
+        )
 
         for base_child in base_clause_node.children:
-            parent_name = None
-
-            if base_child.type == cs.TS_TYPE_IDENTIFIER:
-                if base_child.text:
-                    parent_name = safe_decode_text(base_child)
-
-            elif base_child.type == cs.CppNodeType.QUALIFIED_IDENTIFIER:
-                if base_child.text:
-                    parent_name = safe_decode_text(base_child)
-
-            elif base_child.type == cs.TS_TEMPLATE_TYPE:
-                if base_child.text:
-                    parent_name = safe_decode_text(base_child)
-
-            elif base_child.type in [cs.TS_ACCESS_SPECIFIER, cs.TS_VIRTUAL, ",", ":"]:
+            if base_child.type in [cs.TS_ACCESS_SPECIFIER, cs.TS_VIRTUAL, ",", ":"]:
                 continue
 
-            if parent_name:
-                base_name = self._extract_cpp_base_class_name(parent_name)
-                parent_qn = build_cpp_qualified_name(class_node, module_qn, base_name)
-                parent_classes.append(parent_qn)
-                logger.debug(
-                    logs.CLASS_CPP_INHERITANCE.format(
-                        parent_name=parent_name, parent_qn=parent_qn
+            if base_child.type in base_type_nodes and base_child.text:
+                if parent_name := safe_decode_text(base_child):
+                    base_name = self._extract_cpp_base_class_name(parent_name)
+                    parent_qn = build_cpp_qualified_name(
+                        class_node, module_qn, base_name
                     )
-                )
+                    parent_classes.append(parent_qn)
+                    logger.debug(
+                        logs.CLASS_CPP_INHERITANCE.format(
+                            parent_name=parent_name, parent_qn=parent_qn
+                        )
+                    )
 
         return parent_classes
 
@@ -687,22 +726,17 @@ class ClassIngestMixin:
 
         if superclasses_node := class_node.child_by_field_name("superclasses"):
             for child in superclasses_node.children:
-                if child.type == cs.TS_IDENTIFIER:
-                    parent_text = child.text
-                    if parent_text:
-                        parent_name = safe_decode_text(child)
-                        if not parent_name:
-                            continue
-                        if module_qn in self.import_processor.import_mapping:
-                            import_map = self.import_processor.import_mapping[module_qn]
-                            if parent_name in import_map:
-                                parent_classes.append(import_map[parent_name])
-                            else:
-                                parent_classes.append(
-                                    self._resolve_to_qn(parent_name, module_qn)
-                                )
-                        else:
-                            parent_classes.append(f"{module_qn}.{parent_name}")
+                if child.type != cs.TS_IDENTIFIER or not child.text:
+                    continue
+                if not (parent_name := safe_decode_text(child)):
+                    continue
+                import_map = self.import_processor.import_mapping.get(module_qn)
+                if import_map and parent_name in import_map:
+                    parent_classes.append(import_map[parent_name])
+                elif import_map:
+                    parent_classes.append(self._resolve_to_qn(parent_name, module_qn))
+                else:
+                    parent_classes.append(f"{module_qn}.{parent_name}")
 
         if class_heritage_node := _find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
             for child in class_heritage_node.children:
@@ -749,14 +783,14 @@ class ClassIngestMixin:
                 class_node, cs.TS_EXTENDS_TYPE_CLAUSE
             ):
                 for child in extends_type_clause_node.children:
-                    if parent_text := child.text:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            if parent_name := safe_decode_text(child):
-                                parent_classes.append(
-                                    self._resolve_js_ts_parent_class(
-                                        parent_name, module_qn
-                                    )
-                                )
+                    if (
+                        child.type == cs.TS_TYPE_IDENTIFIER
+                        and child.text
+                        and (parent_name := safe_decode_text(child))
+                    ):
+                        parent_classes.append(
+                            self._resolve_js_ts_parent_class(parent_name, module_qn)
+                        )
 
         return parent_classes
 

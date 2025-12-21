@@ -489,3 +489,479 @@ class TestCalculateImportDistance:
             "other.pkg.other.func", "proj.pkg.mod"
         )
         assert close_distance < far_distance
+
+
+class TestGetNodeName:
+    def test_gets_name_from_function_def(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "def my_function(): pass"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        func_node = find_first_node_of_type(root, "function_definition")
+        assert func_node is not None
+
+        result = call_processor._get_node_name(func_node)
+        assert result == "my_function"
+
+    def test_gets_name_from_class_def(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "class MyClass: pass"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        class_node = find_first_node_of_type(root, "class_definition")
+        assert class_node is not None
+
+        result = call_processor._get_node_name(class_node)
+        assert result == "MyClass"
+
+    def test_returns_none_for_no_name(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "x = 1"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        expr_node = find_first_node_of_type(root, "expression_statement")
+        assert expr_node is not None
+
+        result = call_processor._get_node_name(expr_node)
+        assert result is None
+
+    def test_gets_field_by_custom_field_name(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "def my_func(arg1): pass"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        func_node = find_first_node_of_type(root, "function_definition")
+        assert func_node is not None
+
+        result = call_processor._get_node_name(func_node, "name")
+        assert result == "my_func"
+
+
+class TestIsMethod:
+    def test_function_in_class_is_method(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = """
+class MyClass:
+    def my_method(self):
+        pass
+"""
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        func_node = find_first_node_of_type(root, "function_definition")
+        assert func_node is not None
+
+        lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
+        result = call_processor._is_method(func_node, lang_config)
+        assert result is True
+
+    def test_top_level_function_is_not_method(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "def my_function(): pass"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        func_node = find_first_node_of_type(root, "function_definition")
+        assert func_node is not None
+
+        lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
+        result = call_processor._is_method(func_node, lang_config)
+        assert result is False
+
+    def test_nested_function_is_not_method(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = """
+def outer():
+    def inner():
+        pass
+"""
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+
+        def find_inner_function(node: Node) -> Node | None:
+            if node.type == "function_definition":
+                name_node = node.child_by_field_name("name")
+                if name_node and name_node.text == b"inner":
+                    return node
+            for child in node.children:
+                if result := find_inner_function(child):
+                    return result
+            return None
+
+        inner_func = find_inner_function(root)
+        assert inner_func is not None
+
+        lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
+        result = call_processor._is_method(inner_func, lang_config)
+        assert result is False
+
+
+class TestBuildNestedQualifiedName:
+    def test_top_level_function(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "def my_func(): pass"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        func_node = find_first_node_of_type(root, "function_definition")
+        assert func_node is not None
+
+        lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
+        result = call_processor._build_nested_qualified_name(
+            func_node, "proj.module", "my_func", lang_config
+        )
+        assert result == "proj.module.my_func"
+
+    def test_nested_function(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = """
+def outer():
+    def inner():
+        pass
+"""
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+
+        def find_inner_function(node: Node) -> Node | None:
+            if node.type == "function_definition":
+                name_node = node.child_by_field_name("name")
+                if name_node and name_node.text == b"inner":
+                    return node
+            for child in node.children:
+                if result := find_inner_function(child):
+                    return result
+            return None
+
+        inner_func = find_inner_function(root)
+        assert inner_func is not None
+
+        lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
+        result = call_processor._build_nested_qualified_name(
+            inner_func, "proj.module", "inner", lang_config
+        )
+        assert result == "proj.module.outer.inner"
+
+    def test_method_returns_none(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = """
+class MyClass:
+    def my_method(self):
+        pass
+"""
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        func_node = find_first_node_of_type(root, "function_definition")
+        assert func_node is not None
+
+        lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
+        result = call_processor._build_nested_qualified_name(
+            func_node, "proj.module", "my_method", lang_config
+        )
+        assert result is None
+
+
+class TestResolveFunctionCall:
+    @pytest.fixture
+    def processor_with_registry(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> CallProcessor:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        processor = updater.factory.call_processor
+
+        processor.function_registry["proj.module.local_func"] = NodeType.FUNCTION
+        processor.function_registry["proj.module.MyClass.method"] = NodeType.METHOD
+        processor.function_registry["proj.other.other_func"] = NodeType.FUNCTION
+        processor.function_registry["proj.utils.helper"] = NodeType.FUNCTION
+
+        processor.import_processor.import_mapping["proj.module"] = {
+            "other_func": "proj.other.other_func",
+            "helper": "proj.utils.helper",
+            "MyClass": "proj.module.MyClass",
+        }
+
+        return processor
+
+    def test_resolves_same_module_function(
+        self, processor_with_registry: CallProcessor
+    ) -> None:
+        result = processor_with_registry._resolve_function_call(
+            "local_func", "proj.module"
+        )
+        assert result is not None
+        assert result[1] == "proj.module.local_func"
+
+    def test_resolves_imported_function(
+        self, processor_with_registry: CallProcessor
+    ) -> None:
+        result = processor_with_registry._resolve_function_call(
+            "other_func", "proj.module"
+        )
+        assert result is not None
+        assert result[1] == "proj.other.other_func"
+
+    def test_resolves_method_on_imported_class(
+        self, processor_with_registry: CallProcessor
+    ) -> None:
+        result = processor_with_registry._resolve_function_call(
+            "MyClass.method", "proj.module"
+        )
+        assert result is not None
+        assert result[1] == "proj.module.MyClass.method"
+
+    def test_returns_none_for_unknown_function(
+        self, processor_with_registry: CallProcessor
+    ) -> None:
+        result = processor_with_registry._resolve_function_call(
+            "unknown_func", "proj.module"
+        )
+        assert result is None
+
+    def test_resolves_local_variable_method_call(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        processor = updater.factory.call_processor
+
+        processor.function_registry["proj.models.User.save"] = NodeType.METHOD
+        processor.import_processor.import_mapping["proj.service"] = {
+            "User": "proj.models.User"
+        }
+
+        local_var_types = {"user": "User"}
+
+        result = processor._resolve_function_call(
+            "user.save", "proj.service", local_var_types
+        )
+        assert result is not None
+        assert result[1] == "proj.models.User.save"
+
+    def test_iife_function_resolution(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        processor = updater.factory.call_processor
+
+        iife_qn = "proj.module.__iife_func_1_5"
+        processor.function_registry[iife_qn] = NodeType.FUNCTION
+
+        result = processor._resolve_function_call("__iife_func_1_5", "proj.module")
+        assert result is not None
+        assert result[1] == iife_qn
+
+
+class TestResolveChainedCall:
+    @pytest.fixture
+    def processor_with_types(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> CallProcessor:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        processor = updater.factory.call_processor
+
+        processor.function_registry["proj.models.QuerySet.filter"] = NodeType.METHOD
+        processor.function_registry["proj.models.QuerySet.all"] = NodeType.METHOD
+        processor.function_registry["proj.models.User.objects"] = NodeType.METHOD
+
+        processor.import_processor.import_mapping["proj.views"] = {
+            "User": "proj.models.User",
+            "QuerySet": "proj.models.QuerySet",
+        }
+
+        return processor
+
+    def test_returns_none_for_unresolvable_chain(
+        self, processor_with_types: CallProcessor
+    ) -> None:
+        result = processor_with_types._resolve_chained_call(
+            "unknown().method", "proj.views"
+        )
+        assert result is None
+
+    def test_returns_none_for_non_chained_expression(
+        self, processor_with_types: CallProcessor
+    ) -> None:
+        result = processor_with_types._resolve_chained_call("simple_call", "proj.views")
+        assert result is None
+
+    def test_returns_none_for_chain_without_type_info(
+        self, processor_with_types: CallProcessor
+    ) -> None:
+        result = processor_with_types._resolve_chained_call(
+            "unknown_object.method_one().method_two", "proj.views"
+        )
+        assert result is None
+
+
+class TestTryResolveMethod:
+    @pytest.fixture
+    def processor_with_methods(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> CallProcessor:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        processor = updater.factory.call_processor
+
+        processor.function_registry["proj.models.User.save"] = NodeType.METHOD
+        processor.function_registry["proj.models.BaseModel.validate"] = NodeType.METHOD
+
+        processor.class_inheritance["proj.models.User"] = ["proj.models.BaseModel"]
+
+        return processor
+
+    def test_resolves_direct_method(
+        self, processor_with_methods: CallProcessor
+    ) -> None:
+        result = processor_with_methods._try_resolve_method("proj.models.User", "save")
+        assert result is not None
+        assert result[1] == "proj.models.User.save"
+
+    def test_resolves_inherited_method(
+        self, processor_with_methods: CallProcessor
+    ) -> None:
+        result = processor_with_methods._try_resolve_method(
+            "proj.models.User", "validate"
+        )
+        assert result is not None
+        assert result[1] == "proj.models.BaseModel.validate"
+
+    def test_returns_none_for_unknown_method(
+        self, processor_with_methods: CallProcessor
+    ) -> None:
+        result = processor_with_methods._try_resolve_method(
+            "proj.models.User", "unknown_method"
+        )
+        assert result is None
+
+
+class TestResolveClassQnFromType:
+    @pytest.fixture
+    def processor_with_imports(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> CallProcessor:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        processor = updater.factory.call_processor
+
+        processor.function_registry["proj.models.User"] = NodeType.CLASS
+        processor.import_processor.import_mapping["proj.service"] = {
+            "User": "proj.models.User"
+        }
+
+        return processor
+
+    def test_resolves_from_import_map(
+        self, processor_with_imports: CallProcessor
+    ) -> None:
+        import_map = {"User": "proj.models.User"}
+        result = processor_with_imports._resolve_class_qn_from_type(
+            "User", import_map, "proj.service"
+        )
+        assert result == "proj.models.User"
+
+    def test_returns_dotted_type_as_is(
+        self, processor_with_imports: CallProcessor
+    ) -> None:
+        import_map: dict[str, str] = {}
+        result = processor_with_imports._resolve_class_qn_from_type(
+            "proj.models.User", import_map, "proj.service"
+        )
+        assert result == "proj.models.User"
+
+    def test_fallback_to_local_resolution(
+        self, processor_with_imports: CallProcessor
+    ) -> None:
+        import_map: dict[str, str] = {}
+        result = processor_with_imports._resolve_class_qn_from_type(
+            "UnknownClass", import_map, "proj.service"
+        )
+        assert result == ""
