@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
+
+class Name(StrEnum):
+    SEMANTIC_SEARCH = "semantic_search_functions"
+    GET_FUNCTION_SOURCE = "get_function_source_by_id"
+    ANALYZE_DOCUMENT = "analyze_document"
+    EXECUTE_SHELL = "execute_shell_command"
+
+
 ANALYZE_DOCUMENT = (
     "Analyzes documents (PDFs, images) to answer questions about their content."
 )

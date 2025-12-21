@@ -185,6 +185,6 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
 
     return Tool(
         function=run_shell_command,
-        name=cs.ToolName.EXECUTE_SHELL,
+        name=td.Name.EXECUTE_SHELL,
         description=td.SHELL_COMMAND,
     )
