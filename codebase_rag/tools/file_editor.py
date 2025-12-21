@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import difflib
 from pathlib import Path
 from typing import TypedDict
@@ -8,7 +10,40 @@ from pydantic import BaseModel
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
-from ..constants import ENCODING_UTF8, SEPARATOR_DOT, SupportedLanguage
+from ..constants import (
+    ENCODING_UTF8,
+    ERR_FILE_NOT_FOUND_OR_DIR,
+    ERR_FILE_OUTSIDE_ROOT,
+    ERR_UNEXPECTED,
+    LOG_EDITOR_AMBIGUOUS,
+    LOG_EDITOR_BLOCK_NOT_FOUND,
+    LOG_EDITOR_FILE_NOT_FOUND,
+    LOG_EDITOR_FUNC_NOT_FOUND_AT_LINE,
+    LOG_EDITOR_FUNC_NOT_FOUND_QN,
+    LOG_EDITOR_FUNC_NOT_IN_FILE,
+    LOG_EDITOR_LOOKING_FOR,
+    LOG_EDITOR_MULTIPLE_OCCURRENCES,
+    LOG_EDITOR_NO_CHANGES,
+    LOG_EDITOR_NO_CHANGES_IDENTICAL,
+    LOG_EDITOR_NO_LANG_CONFIG,
+    LOG_EDITOR_NO_PARSER,
+    LOG_EDITOR_PATCH_ERROR,
+    LOG_EDITOR_PATCH_FAILED,
+    LOG_EDITOR_PATCH_SUCCESS,
+    LOG_EDITOR_PATCHES_NOT_CLEAN,
+    LOG_EDITOR_REPLACE_SUCCESS,
+    LOG_EDITOR_SURGICAL_ERROR,
+    LOG_EDITOR_SURGICAL_FAILED,
+    LOG_TOOL_FILE_EDIT,
+    LOG_TOOL_FILE_EDIT_SUCCESS,
+    LOG_TOOL_FILE_EDIT_SURGICAL,
+    LOG_TOOL_FILE_EDIT_SURGICAL_SUCCESS,
+    MSG_SURGICAL_FAILED,
+    MSG_SURGICAL_SUCCESS,
+    SEPARATOR_DOT,
+    TMP_EXTENSION,
+    SupportedLanguage,
+)
 from ..language_spec import get_language_spec
 from ..parser_loader import load_parsers
 
@@ -41,8 +76,6 @@ LANGUAGE_EXTENSIONS: dict[str, SupportedLanguage] = {
 
 
 class EditResult(BaseModel):
-    """Data model for file edit results."""
-
     file_path: str
     success: bool
     error_message: str | None = None
@@ -56,12 +89,11 @@ class FileEditor:
         logger.info(f"FileEditor initialized with root: {self.project_root}")
 
     def _get_real_extension(self, file_path_obj: Path) -> str:
-        """Gets the file extension, looking past a .tmp suffix if present."""
         extension = file_path_obj.suffix
-        if extension == ".tmp":
+        if extension == TMP_EXTENSION:
             base_name = file_path_obj.stem
-            if "." in base_name:
-                return "." + base_name.split(".")[-1]
+            if SEPARATOR_DOT in base_name:
+                return SEPARATOR_DOT + base_name.split(SEPARATOR_DOT)[-1]
         return extension
 
     def get_parser(self, file_path: str) -> Parser | None:
@@ -76,7 +108,7 @@ class FileEditor:
     def get_ast(self, file_path: str) -> Node | None:
         parser = self.get_parser(file_path)
         if not parser:
-            logger.warning(f"No parser available for {file_path}")
+            logger.warning(LOG_EDITOR_NO_PARSER.format(path=file_path))
             return None
 
         with open(file_path, "rb") as f:
@@ -97,7 +129,7 @@ class FileEditor:
 
         lang_config = get_language_spec(extension)
         if not lang_config:
-            logger.warning(f"No language config found for extension {extension}")
+            logger.warning(LOG_EDITOR_NO_LANG_CONFIG.format(ext=extension))
             return None
 
         matching_functions: list[FunctionMatch] = []
@@ -152,7 +184,9 @@ class FileEditor:
                             return None
                         return str(node_text.decode(ENCODING_UTF8))
                 logger.warning(
-                    f"No function '{function_name}' found at line {line_number}"
+                    LOG_EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
+                        name=function_name, line=line_number
+                    )
                 )
                 return None
 
@@ -163,9 +197,7 @@ class FileEditor:
                         if node_text is None:
                             return None
                         return str(node_text.decode(ENCODING_UTF8))
-                logger.warning(
-                    f"No function found with qualified name '{function_name}'"
-                )
+                logger.warning(LOG_EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
                 return None
 
             function_details = []
@@ -174,10 +206,12 @@ class FileEditor:
                 function_details.append(details)
 
             logger.warning(
-                f"Ambiguous function name '{function_name}' in {file_path}. "
-                f"Found {len(matching_functions)} matches: {', '.join(function_details)}. "
-                f"Using first match. Consider using qualified name (e.g., 'ClassName.{function_name}') "
-                f"or specify line number for precise targeting."
+                LOG_EDITOR_AMBIGUOUS.format(
+                    name=function_name,
+                    path=file_path,
+                    count=len(matching_functions),
+                    details=", ".join(function_details),
+                )
             )
 
             node_text = matching_functions[0]["node"].text
@@ -196,7 +230,9 @@ class FileEditor:
             file_path, function_name, line_number
         )
         if not original_code:
-            logger.error(f"Function '{function_name}' not found in {file_path}.")
+            logger.error(
+                LOG_EDITOR_FUNC_NOT_IN_FILE.format(name=function_name, path=file_path)
+            )
             return False
 
         with open(file_path, encoding=ENCODING_UTF8) as f:
@@ -207,20 +243,18 @@ class FileEditor:
         new_content, results = self.dmp.patch_apply(patches, original_content)
 
         if not all(results):
-            logger.warning(
-                f"Patches for function '{function_name}' did not apply cleanly."
-            )
+            logger.warning(LOG_EDITOR_PATCHES_NOT_CLEAN.format(name=function_name))
             return False
 
         if original_content == new_content:
-            logger.warning("No changes detected after replacement.")
+            logger.warning(LOG_EDITOR_NO_CHANGES)
             return False
 
         with open(file_path, "w", encoding=ENCODING_UTF8) as f:
             f.write(new_content)
 
         logger.success(
-            f"Successfully replaced function '{function_name}' in {file_path}."
+            LOG_EDITOR_REPLACE_SUCCESS.format(name=function_name, path=file_path)
         )
         return True
 
@@ -249,7 +283,6 @@ class FileEditor:
         return "".join(diff)
 
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
-        """Apply a patch to a file using diff-match-patch."""
         try:
             with open(file_path, encoding=ENCODING_UTF8) as f:
                 original_content = f.read()
@@ -259,40 +292,37 @@ class FileEditor:
             new_content, results = self.dmp.patch_apply(patches, original_content)
 
             if not all(results):
-                logger.warning(f"Some patches failed to apply cleanly to {file_path}")
+                logger.warning(LOG_EDITOR_PATCH_FAILED.format(path=file_path))
                 return False
 
             with open(file_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(new_content)
 
-            logger.success(f"Successfully applied patch to {file_path}")
+            logger.success(LOG_EDITOR_PATCH_SUCCESS.format(path=file_path))
             return True
 
         except Exception as e:
-            logger.error(f"Error applying patch to {file_path}: {e}")
+            logger.error(LOG_EDITOR_PATCH_ERROR.format(path=file_path, error=e))
             return False
 
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> bool:
-        """Surgically replace a specific code block in a file using diff-match-patch."""
-        logger.info(
-            f"[FileEditor] Attempting surgical block replacement in: {file_path}"
-        )
+        logger.info(LOG_TOOL_FILE_EDIT_SURGICAL.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)
 
             if not full_path.is_file():
-                logger.error(f"File not found: {file_path}")
+                logger.error(LOG_EDITOR_FILE_NOT_FOUND.format(path=file_path))
                 return False
 
             with open(full_path, encoding=ENCODING_UTF8) as f:
                 original_content = f.read()
 
             if target_block not in original_content:
-                logger.error(f"Target block not found in {file_path}")
-                logger.debug(f"Looking for: {repr(target_block)}")
+                logger.error(LOG_EDITOR_BLOCK_NOT_FOUND.format(path=file_path))
+                logger.debug(LOG_EDITOR_LOOKING_FOR.format(block=repr(target_block)))
                 return False
 
             modified_content = original_content.replace(
@@ -300,49 +330,40 @@ class FileEditor:
             )
 
             if original_content.count(target_block) > 1:
-                logger.warning(
-                    "Multiple occurrences of target block found. Only replacing first occurrence."
-                )
+                logger.warning(LOG_EDITOR_MULTIPLE_OCCURRENCES)
 
             if original_content == modified_content:
-                logger.warning(
-                    "No changes detected - target and replacement are identical"
-                )
+                logger.warning(LOG_EDITOR_NO_CHANGES_IDENTICAL)
                 return False
 
             patches = self.dmp.patch_make(original_content, modified_content)
             patched_content, results = self.dmp.patch_apply(patches, original_content)
 
             if not all(results):
-                logger.error("Surgical patches failed to apply cleanly")
+                logger.error(LOG_EDITOR_SURGICAL_FAILED)
                 return False
 
             with open(full_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(patched_content)
 
-            logger.success(
-                f"[FileEditor] Successfully applied surgical block replacement in: {file_path}"
-            )
+            logger.success(LOG_TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
             return True
 
         except ValueError:
-            logger.error(
-                "Security risk: Attempted to edit file outside of project root."
-            )
+            logger.error(ERR_FILE_OUTSIDE_ROOT.format(action="edit"))
             return False
         except Exception as e:
-            logger.error(f"Error during surgical block replacement: {e}")
+            logger.error(LOG_EDITOR_SURGICAL_ERROR.format(error=e))
             return False
 
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
-        """Overwrites entire file with new content - use for full file replacement."""
-        logger.info(f"[FileEditor] Attempting full file replacement: {file_path}")
+        logger.info(LOG_TOOL_FILE_EDIT.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)
 
             if not full_path.is_file():
-                error_msg = f"File not found or is a directory: {file_path}"
+                error_msg = ERR_FILE_NOT_FOUND_OR_DIR.format(path=file_path)
                 logger.warning(f"[FileEditor] {error_msg}")
                 return EditResult(
                     file_path=file_path, success=False, error_message=error_msg
@@ -351,19 +372,17 @@ class FileEditor:
             with open(full_path, "w", encoding=ENCODING_UTF8) as f:
                 f.write(new_content)
 
-            logger.success(
-                f"[FileEditor] Successfully replaced entire file: {file_path}"
-            )
+            logger.success(LOG_TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
             return EditResult(file_path=file_path, success=True)
 
         except ValueError:
-            error_msg = "Security risk: Attempted to edit file outside of project root."
+            error_msg = ERR_FILE_OUTSIDE_ROOT.format(action="edit")
             logger.error(f"[FileEditor] {error_msg}")
             return EditResult(
                 file_path=file_path, success=False, error_message=error_msg
             )
         except Exception as e:
-            error_msg = f"An unexpected error occurred: {e}"
+            error_msg = ERR_UNEXPECTED.format(error=e)
             logger.error(f"[FileEditor] Error editing file {file_path}: {e}")
             return EditResult(
                 file_path=file_path, success=False, error_message=error_msg
@@ -371,31 +390,16 @@ class FileEditor:
 
 
 def create_file_editor_tool(file_editor: FileEditor) -> Tool:
-    """Factory function to create the file editor tool."""
-
     async def replace_code_surgically(
         file_path: str, target_code: str, replacement_code: str
     ) -> str:
-        """
-        Surgically replaces a specific code block in a file using diff-match-patch.
-        This tool finds the exact target code block and replaces only that section,
-        leaving the rest of the file completely unchanged. This is true surgical patching.
-
-        Args:
-            file_path: Path to the file to modify
-            target_code: The exact code block to find and replace (must match exactly)
-            replacement_code: The new code to replace the target with
-
-        Use this when you need to change specific functions, classes, or code blocks
-        without affecting the rest of the file. The target_code must be an exact match.
-        """
         success = file_editor.replace_code_block(
             file_path, target_code, replacement_code
         )
         if success:
-            return f"Successfully applied surgical code replacement in: {file_path}"
+            return MSG_SURGICAL_SUCCESS.format(path=file_path)
         else:
-            return f"Failed to apply surgical replacement in {file_path}. Target code not found or patches failed."
+            return MSG_SURGICAL_FAILED.format(path=file_path)
 
     return Tool(
         function=replace_code_surgically,

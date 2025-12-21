@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import shlex
 import time
@@ -9,7 +11,27 @@ from typing import Any, cast
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
 
-from ..constants import ENCODING_UTF8
+from ..constants import (
+    ENCODING_UTF8,
+    ERR_COMMAND_DANGEROUS,
+    ERR_COMMAND_EMPTY,
+    ERR_COMMAND_NOT_ALLOWED,
+    ERR_COMMAND_TIMEOUT,
+    GREP_SUGGESTION,
+    LOG_SHELL_TIMING,
+    LOG_TOOL_SHELL_ALREADY_TERMINATED,
+    LOG_TOOL_SHELL_ERROR,
+    LOG_TOOL_SHELL_EXEC,
+    LOG_TOOL_SHELL_KILLED,
+    LOG_TOOL_SHELL_RETURN,
+    LOG_TOOL_SHELL_STDERR,
+    LOG_TOOL_SHELL_STDOUT,
+    SHELL_CMD_GIT,
+    SHELL_CMD_GREP,
+    SHELL_CMD_RM,
+    SHELL_RETURN_CODE_ERROR,
+    SHELL_RM_RF_FLAG,
+)
 from ..schemas import ShellCommandResult
 
 COMMAND_ALLOWLIST = frozenset(
@@ -43,7 +65,7 @@ SAFE_GIT_SUBCOMMANDS = frozenset(
 
 def _is_dangerous_command(cmd_parts: list[str]) -> bool:
     command = cmd_parts[0]
-    return command == "rm" and "-rf" in cmd_parts
+    return command == SHELL_CMD_RM and SHELL_RM_RF_FLAG in cmd_parts
 
 
 def _requires_approval(command: str) -> bool:
@@ -60,7 +82,7 @@ def _requires_approval(command: str) -> bool:
     if base_cmd in READ_ONLY_COMMANDS:
         return False
 
-    if base_cmd == "git" and len(cmd_parts) > 1:
+    if base_cmd == SHELL_CMD_GIT and len(cmd_parts) > 1:
         return cmd_parts[1] not in SAFE_GIT_SUBCOMMANDS
 
     return True
@@ -69,10 +91,6 @@ def _requires_approval(command: str) -> bool:
 def timing_decorator(
     func: Callable[..., Awaitable[Any]],
 ) -> Callable[..., Awaitable[Any]]:
-    """
-    A decorator that logs the execution time of the decorated asynchronous function.
-    """
-
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         start_time = time.perf_counter()
@@ -80,15 +98,13 @@ def timing_decorator(
         end_time = time.perf_counter()
         execution_time = (end_time - start_time) * 1000
         func_name = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
-        logger.info(f"'{func_name}' executed in {execution_time:.2f}ms")
+        logger.info(LOG_SHELL_TIMING.format(func=func_name, time=execution_time))
         return result
 
     return wrapper
 
 
 class ShellCommander:
-    """Service to execute shell commands."""
-
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
@@ -96,28 +112,36 @@ class ShellCommander:
 
     @timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
-        logger.info(f"Executing shell command: {command}")
+        logger.info(LOG_TOOL_SHELL_EXEC.format(cmd=command))
         try:
             cmd_parts = shlex.split(command)
             if not cmd_parts:
                 return ShellCommandResult(
-                    return_code=-1, stdout="", stderr="Empty command provided."
+                    return_code=SHELL_RETURN_CODE_ERROR,
+                    stdout="",
+                    stderr=ERR_COMMAND_EMPTY,
                 )
 
             if cmd_parts[0] not in COMMAND_ALLOWLIST:
                 available_commands = ", ".join(sorted(COMMAND_ALLOWLIST))
-                suggestion = ""
-                if cmd_parts[0] == "grep":
-                    suggestion = " Use 'rg' instead of 'grep' for text searching."
+                suggestion = GREP_SUGGESTION if cmd_parts[0] == SHELL_CMD_GREP else ""
 
-                err_msg = f"Command '{cmd_parts[0]}' is not in the allowlist.{suggestion} Available commands: {available_commands}"
+                err_msg = ERR_COMMAND_NOT_ALLOWED.format(
+                    cmd=cmd_parts[0],
+                    suggestion=suggestion,
+                    available=available_commands,
+                )
                 logger.error(err_msg)
-                return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
+                return ShellCommandResult(
+                    return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+                )
 
             if _is_dangerous_command(cmd_parts):
-                err_msg = f"Rejected dangerous command: {' '.join(cmd_parts)}"
+                err_msg = ERR_COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
                 logger.error(err_msg)
-                return ShellCommandResult(return_code=-1, stdout="", stderr=err_msg)
+                return ShellCommandResult(
+                    return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+                )
 
             process = await asyncio.create_subprocess_exec(
                 *cmd_parts,
@@ -132,58 +156,44 @@ class ShellCommander:
             stdout_str = stdout.decode(ENCODING_UTF8, errors="replace").strip()
             stderr_str = stderr.decode(ENCODING_UTF8, errors="replace").strip()
 
-            logger.info(f"Return code: {process.returncode}")
+            logger.info(LOG_TOOL_SHELL_RETURN.format(code=process.returncode))
             if stdout_str:
-                logger.info(f"Stdout: {stdout_str}")
+                logger.info(LOG_TOOL_SHELL_STDOUT.format(stdout=stdout_str))
             if stderr_str:
-                logger.warning(f"Stderr: {stderr_str}")
+                logger.warning(LOG_TOOL_SHELL_STDERR.format(stderr=stderr_str))
 
             return ShellCommandResult(
                 return_code=(
-                    process.returncode if process.returncode is not None else -1
+                    process.returncode
+                    if process.returncode is not None
+                    else SHELL_RETURN_CODE_ERROR
                 ),
                 stdout=stdout_str,
                 stderr=stderr_str,
             )
         except TimeoutError:
-            msg = f"Command '{command}' timed out after {self.timeout} seconds."
+            msg = ERR_COMMAND_TIMEOUT.format(cmd=command, timeout=self.timeout)
             logger.error(msg)
             try:
                 process.kill()
                 await process.wait()
-                logger.info("Process killed due to timeout.")
+                logger.info(LOG_TOOL_SHELL_KILLED)
             except ProcessLookupError:
-                logger.warning(
-                    "Process already terminated when timeout kill was attempted."
-                )
-            return ShellCommandResult(return_code=-1, stdout="", stderr=msg)
+                logger.warning(LOG_TOOL_SHELL_ALREADY_TERMINATED)
+            return ShellCommandResult(
+                return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
+            )
         except Exception as e:
-            logger.error(f"An error occurred while executing command: {e}")
-            return ShellCommandResult(return_code=-1, stdout="", stderr=str(e))
+            logger.error(LOG_TOOL_SHELL_ERROR.format(error=e))
+            return ShellCommandResult(
+                return_code=SHELL_RETURN_CODE_ERROR, stdout="", stderr=str(e)
+            )
 
 
 def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
-        """
-        Executes a shell command from the approved allowlist only.
-
-        Args:
-            command: The shell command to execute
-
-        AVAILABLE COMMANDS (no approval needed):
-        - Read-only: ls, cat, find, pwd, rg, echo
-        - Safe git: status, log, diff, show, ls-files, remote, config, branch
-
-        COMMANDS REQUIRING APPROVAL:
-        - File system modifications: rm, cp, mv, mkdir, rmdir
-        - Package management: uv
-        - Git write operations: add, commit, push, pull, merge, rebase, etc.
-        - Testing: pytest, mypy, ruff, pre-commit
-
-        IMPORTANT: Use 'rg' for text searching, NOT 'grep' (grep is not available).
-        """
         if _requires_approval(command) and not ctx.tool_call_approved:
             raise ApprovalRequired(metadata={"command": command})
 

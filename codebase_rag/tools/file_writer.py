@@ -1,30 +1,34 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from loguru import logger
 from pydantic import BaseModel
 from pydantic_ai import Tool
 
-from ..constants import ENCODING_UTF8
+from ..constants import (
+    ENCODING_UTF8,
+    ERR_FILE_WRITER_CREATE,
+    ERR_FILE_WRITER_SECURITY,
+    LOG_FILE_WRITER_CREATE,
+    LOG_FILE_WRITER_INIT,
+    LOG_FILE_WRITER_SUCCESS,
+)
 
 
 class FileCreationResult(BaseModel):
-    """Data model for file creation results."""
-
     file_path: str
     success: bool = True
     error_message: str | None = None
 
 
 class FileWriter:
-    """Service to write file content to the filesystem."""
-
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
-        logger.info(f"FileWriter initialized with root: {self.project_root}")
+        logger.info(LOG_FILE_WRITER_INIT.format(root=self.project_root))
 
     async def create_file(self, file_path: str, content: str) -> FileCreationResult:
-        """Creates or overwrites a file with the given content."""
-        logger.info(f"[FileWriter] Creating file: {file_path}")
+        logger.info(LOG_FILE_WRITER_CREATE.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
 
@@ -33,17 +37,17 @@ class FileWriter:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content, encoding=ENCODING_UTF8)
             logger.info(
-                f"[FileWriter] Successfully wrote {len(content)} characters to {file_path}"
+                LOG_FILE_WRITER_SUCCESS.format(chars=len(content), path=file_path)
             )
             return FileCreationResult(file_path=file_path)
         except ValueError:
-            err_msg = f"Security risk: Attempted to create file outside of project root: {file_path}"
+            err_msg = ERR_FILE_WRITER_SECURITY.format(path=file_path)
             logger.error(err_msg)
             return FileCreationResult(
                 file_path=file_path, success=False, error_message=err_msg
             )
         except Exception as e:
-            err_msg = f"Error creating file {file_path}: {e}"
+            err_msg = ERR_FILE_WRITER_CREATE.format(path=file_path, error=e)
             logger.error(err_msg)
             return FileCreationResult(
                 file_path=file_path, success=False, error_message=err_msg
@@ -51,20 +55,7 @@ class FileWriter:
 
 
 def create_file_writer_tool(file_writer: FileWriter) -> Tool:
-    """Factory function to create the file writer tool."""
-
     async def create_new_file(file_path: str, content: str) -> FileCreationResult:
-        """
-        Creates a new file with the specified content.
-
-        IMPORTANT: Before using this tool, you MUST check if the file already exists using
-        the file reader or directory listing tools. If the file exists, use edit_existing_file
-        instead to preserve existing content and show diffs.
-
-        If the file already exists, it will be completely overwritten WITHOUT showing any diff.
-        Use this ONLY for creating entirely new files, not for modifying existing ones.
-        For modifying existing files with diff preview, use edit_existing_file instead.
-        """
         return await file_writer.create_file(file_path, content)
 
     return Tool(

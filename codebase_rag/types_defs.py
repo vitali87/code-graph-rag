@@ -108,6 +108,14 @@ class EmbeddingQueryResult(TypedDict):
     path: str | None
 
 
+class SemanticSearchResult(TypedDict):
+    node_id: int
+    qualified_name: str
+    name: str
+    type: str
+    score: float
+
+
 class CancelledResult(NamedTuple):
     cancelled: bool
 

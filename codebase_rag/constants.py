@@ -795,3 +795,187 @@ ERR_LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 LOG_CYPHER_GENERATING = "  [CypherGenerator] Generating query for: '{query}'"
 LOG_CYPHER_GENERATED = "  [CypherGenerator] Generated Cypher: {query}"
 LOG_CYPHER_ERROR = "  [CypherGenerator] Error: {error}"
+
+# (H) Tool error messages
+ERR_FILE_OUTSIDE_ROOT = (
+    "Security risk: Attempted to {action} file outside of project root."
+)
+ERR_FILE_NOT_FOUND = "File not found."
+ERR_FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"
+ERR_BINARY_FILE = "File '{path}' is a binary file. Use the 'analyze_document' tool for this file type."
+ERR_UNICODE_DECODE = (
+    "File '{path}' could not be read as text. It may be a binary file. "
+    "If it is a document (e.g., PDF), use the 'analyze_document' tool."
+)
+ERR_DOCUMENT_UNSUPPORTED = (
+    "Document analysis is not supported for the current LLM provider."
+)
+ERR_DIRECTORY_INVALID = "'{path}' is not a valid directory."
+ERR_DIRECTORY_EMPTY = "The directory '{path}' is empty."
+ERR_DIRECTORY_LIST_FAILED = "Could not list contents of '{path}'."
+ERR_COMMAND_NOT_ALLOWED = "Command '{cmd}' is not in the allowlist.{suggestion} Available commands: {available}"
+ERR_COMMAND_EMPTY = "Empty command provided."
+ERR_COMMAND_DANGEROUS = "Rejected dangerous command: {cmd}"
+ERR_COMMAND_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
+ERR_ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
+
+# (H) Tool log messages
+LOG_TOOL_FILE_READ = "[FileReader] Attempting to read file: {path}"
+LOG_TOOL_FILE_READ_SUCCESS = "[FileReader] Successfully read text from {path}"
+LOG_TOOL_FILE_BINARY = "[FileReader] {message}"
+LOG_TOOL_FILE_WRITE = "[FileWriter] Creating file: {path}"
+LOG_TOOL_FILE_WRITE_SUCCESS = (
+    "[FileWriter] Successfully wrote {chars} characters to {path}"
+)
+LOG_TOOL_FILE_EDIT = "[FileEditor] Attempting full file replacement: {path}"
+LOG_TOOL_FILE_EDIT_SUCCESS = "[FileEditor] Successfully replaced entire file: {path}"
+LOG_TOOL_FILE_EDIT_SURGICAL = (
+    "[FileEditor] Attempting surgical block replacement in: {path}"
+)
+LOG_TOOL_FILE_EDIT_SURGICAL_SUCCESS = (
+    "[FileEditor] Successfully applied surgical block replacement in: {path}"
+)
+LOG_TOOL_QUERY_RECEIVED = "[Tool:QueryGraph] Received NL query: '{query}'"
+LOG_TOOL_QUERY_ERROR = "[Tool:QueryGraph] Error during query execution: {error}"
+LOG_TOOL_SHELL_EXEC = "Executing shell command: {cmd}"
+LOG_TOOL_SHELL_RETURN = "Return code: {code}"
+LOG_TOOL_SHELL_STDOUT = "Stdout: {stdout}"
+LOG_TOOL_SHELL_STDERR = "Stderr: {stderr}"
+LOG_TOOL_SHELL_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
+LOG_TOOL_SHELL_KILLED = "Process killed due to timeout."
+LOG_TOOL_SHELL_ALREADY_TERMINATED = (
+    "Process already terminated when timeout kill was attempted."
+)
+LOG_TOOL_SHELL_ERROR = "An error occurred while executing command: {error}"
+LOG_TOOL_DOC_ANALYZE = (
+    "[DocumentAnalyzer] Analyzing '{path}' with question: '{question}'"
+)
+
+# (H) Tool success messages
+MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+MSG_SURGICAL_FAILED = (
+    "Failed to apply surgical replacement in {path}. "
+    "Target code not found or patches failed."
+)
+
+# (H) Grep suggestion
+GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
+
+# (H) Shell command constants
+SHELL_CMD_GREP = "grep"
+SHELL_CMD_GIT = "git"
+SHELL_CMD_RM = "rm"
+SHELL_RM_RF_FLAG = "-rf"
+SHELL_RETURN_CODE_ERROR = -1
+LOG_SHELL_TIMING = "'{func}' executed in {time:.2f}ms"
+
+# (H) Query tool messages
+QUERY_NOT_AVAILABLE = "N/A"
+QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
+QUERY_SUMMARY_TRANSLATION_FAILED = (
+    "I couldn't translate your request into a database query. Error: {error}"
+)
+QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
+QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
+
+# (H) File editor constants
+TMP_EXTENSION = ".tmp"
+LOG_EDITOR_NO_PARSER = "No parser available for {path}"
+LOG_EDITOR_NO_LANG_CONFIG = "No language config found for extension {ext}"
+LOG_EDITOR_FUNC_NOT_FOUND_AT_LINE = "No function '{name}' found at line {line}"
+LOG_EDITOR_FUNC_NOT_FOUND_QN = "No function found with qualified name '{name}'"
+LOG_EDITOR_AMBIGUOUS = (
+    "Ambiguous function name '{name}' in {path}. "
+    "Found {count} matches: {details}. "
+    "Using first match. Consider using qualified name (e.g., 'ClassName.{name}') "
+    "or specify line number for precise targeting."
+)
+LOG_EDITOR_FUNC_NOT_IN_FILE = "Function '{name}' not found in {path}."
+LOG_EDITOR_PATCHES_NOT_CLEAN = "Patches for function '{name}' did not apply cleanly."
+LOG_EDITOR_NO_CHANGES = "No changes detected after replacement."
+LOG_EDITOR_REPLACE_SUCCESS = "Successfully replaced function '{name}' in {path}."
+LOG_EDITOR_PATCH_FAILED = "Some patches failed to apply cleanly to {path}"
+LOG_EDITOR_PATCH_SUCCESS = "Successfully applied patch to {path}"
+LOG_EDITOR_PATCH_ERROR = "Error applying patch to {path}: {error}"
+LOG_EDITOR_FILE_NOT_FOUND = "File not found: {path}"
+LOG_EDITOR_BLOCK_NOT_FOUND = "Target block not found in {path}"
+LOG_EDITOR_LOOKING_FOR = "Looking for: {block}"
+LOG_EDITOR_MULTIPLE_OCCURRENCES = (
+    "Multiple occurrences of target block found. Only replacing first occurrence."
+)
+LOG_EDITOR_NO_CHANGES_IDENTICAL = (
+    "No changes detected - target and replacement are identical"
+)
+LOG_EDITOR_SURGICAL_FAILED = "Surgical patches failed to apply cleanly"
+LOG_EDITOR_SURGICAL_ERROR = "Error during surgical block replacement: {error}"
+
+# (H) Directory lister log messages
+LOG_DIR_LISTING = "Listing contents of directory: {path}"
+LOG_DIR_LIST_ERROR = "Error listing directory {path}: {error}"
+
+# (H) Semantic search constants
+LOG_SEMANTIC_NO_MATCH = "No semantic matches found for query: {query}"
+LOG_SEMANTIC_FOUND = "Found {count} semantic matches for: {query}"
+LOG_SEMANTIC_FAILED = "Semantic search failed for query '{query}': {error}"
+LOG_SEMANTIC_NODE_NOT_FOUND = "No node found with ID: {id}"
+LOG_SEMANTIC_INVALID_LOCATION = "Missing or invalid source location info for node {id}"
+LOG_SEMANTIC_SOURCE_FAILED = "Failed to get source code for node {id}: {error}"
+LOG_SEMANTIC_TOOL_SEARCH = "[Tool:SemanticSearch] Searching for: '{query}'"
+LOG_SEMANTIC_TOOL_SOURCE = (
+    "[Tool:GetFunctionSource] Retrieving source for node ID: {id}"
+)
+
+MSG_SEMANTIC_NO_RESULTS = (
+    "No semantic matches found for query: '{query}'. This could mean:\n"
+    "1. No functions match this description\n"
+    "2. Semantic search dependencies are not installed\n"
+    "3. No embeddings have been generated yet"
+)
+MSG_SEMANTIC_SOURCE_UNAVAILABLE = (
+    "Could not retrieve source code for node ID {id}. "
+    "The node may not exist or source file may be unavailable."
+)
+MSG_SEMANTIC_SOURCE_FORMAT = "Source code for node ID {id}:\n\n```\n{code}\n```"
+MSG_SEMANTIC_RESULT_HEADER = "Found {count} semantic matches for '{query}':\n\n"
+MSG_SEMANTIC_RESULT_FOOTER = "\n\nUse the qualified names above with other tools to get more details or source code."
+SEMANTIC_BATCH_SIZE = 100
+SEMANTIC_TYPE_UNKNOWN = "Unknown"
+
+# (H) Document analyzer constants
+ERR_DOC_UNSUPPORTED_PROVIDER = (
+    "DocumentAnalyzer does not support the 'local' LLM provider."
+)
+ERR_DOC_FILE_NOT_FOUND = "File not found at '{path}'."
+ERR_DOC_SECURITY_RISK = "Security risk: file path {path} is outside the project root"
+ERR_DOC_ACCESS_OUTSIDE_ROOT = (
+    "Security risk: Attempted to access file outside of project root: {path}"
+)
+ERR_DOC_API_VALIDATION = "API validation failed: {error}"
+ERR_DOC_IMAGE_PROCESS = (
+    "Unable to process the image file. "
+    "The image may be corrupted or in an unsupported format."
+)
+ERR_DOC_ANALYSIS_FAILED = "An error occurred during analysis: {error}"
+ERR_DOC_DURING_ANALYSIS = "Error during document analysis: {error}"
+LOG_DOC_COPIED = "Copied external file to: {path}"
+LOG_DOC_SUCCESS = "Successfully received analysis for '{path}'."
+LOG_DOC_NO_TEXT = "No text found in response: {response}"
+LOG_DOC_API_ERROR = "Google GenAI API error for '{path}': {error}"
+LOG_DOC_FAILED = "Failed to analyze document '{path}': {error}"
+LOG_DOC_RESULT = "[analyze_document] Result type: {type}, content: {preview}..."
+LOG_DOC_EXCEPTION = "[analyze_document] Exception during analysis: {error}"
+MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
+MSG_DOC_NO_CONTENT = "No text content received from the API."
+MIME_TYPE_DEFAULT = "application/octet-stream"
+DOC_PROMPT_PREFIX = (
+    "Based on the document provided, please answer the following question: {question}"
+)
+
+# (H) File writer constants
+LOG_FILE_WRITER_INIT = "FileWriter initialized with root: {root}"
+LOG_FILE_WRITER_CREATE = "[FileWriter] Creating file: {path}"
+LOG_FILE_WRITER_SUCCESS = "[FileWriter] Successfully wrote {chars} characters to {path}"
+ERR_FILE_WRITER_SECURITY = (
+    "Security risk: Attempted to create file outside of project root: {path}"
+)
+ERR_FILE_WRITER_CREATE = "Error creating file {path}: {error}"

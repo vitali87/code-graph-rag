@@ -1,9 +1,20 @@
+from __future__ import annotations
+
 from loguru import logger
 from pydantic_ai import Tool
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ..constants import (
+    LOG_TOOL_QUERY_ERROR,
+    LOG_TOOL_QUERY_RECEIVED,
+    QUERY_NOT_AVAILABLE,
+    QUERY_RESULTS_PANEL_TITLE,
+    QUERY_SUMMARY_DB_ERROR,
+    QUERY_SUMMARY_SUCCESS,
+    QUERY_SUMMARY_TRANSLATION_FAILED,
+)
 from ..errors import LLMGenerationError
 from ..schemas import QueryGraphData
 from ..services import QueryProtocol
@@ -15,32 +26,14 @@ def create_query_tool(
     cypher_gen: CypherGenerator,
     console: Console | None = None,
 ) -> Tool:
-    """
-    Factory function that creates the knowledge graph query tool,
-    injecting its dependencies.
-    """
     if console is None:
         console = Console(width=None, force_terminal=True)
 
     async def query_codebase_knowledge_graph(
         natural_language_query: str,
     ) -> QueryGraphData:
-        """
-        Queries the codebase knowledge graph using natural language.
-
-        Provide your question in plain English about the codebase structure,
-        functions, classes, dependencies, or relationships. The tool will
-        automatically translate your natural language question into the
-        appropriate database query and return the results.
-
-        Examples:
-        - "Find all functions that call each other"
-        - "What classes are in the user authentication module"
-        - "Show me functions with the longest call chains"
-        - "Which files contain functions related to database operations"
-        """
-        logger.info(f"[Tool:QueryGraph] Received NL query: '{natural_language_query}'")
-        cypher_query = "N/A"
+        logger.info(LOG_TOOL_QUERY_RECEIVED.format(query=natural_language_query))
+        cypher_query = QUERY_NOT_AVAILABLE
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
 
@@ -71,29 +64,27 @@ def create_query_tool(
                 console.print(
                     Panel(
                         table,
-                        title="[bold blue]Cypher Query Results[/bold blue]",
+                        title=QUERY_RESULTS_PANEL_TITLE,
                         expand=False,
                     )
                 )
 
-            summary = f"Successfully retrieved {len(results)} item(s) from the graph."
+            summary = QUERY_SUMMARY_SUCCESS.format(count=len(results))
             return QueryGraphData(
                 query_used=cypher_query, results=results, summary=summary
             )
         except LLMGenerationError as e:
             return QueryGraphData(
-                query_used="N/A",
+                query_used=QUERY_NOT_AVAILABLE,
                 results=[],
-                summary=f"I couldn't translate your request into a database query. Error: {e}",
+                summary=QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
             )
         except Exception as e:
-            logger.error(
-                f"[Tool:QueryGraph] Error during query execution: {e}", exc_info=True
-            )
+            logger.error(LOG_TOOL_QUERY_ERROR.format(error=e), exc_info=True)
             return QueryGraphData(
                 query_used=cypher_query,
                 results=[],
-                summary=f"There was an error querying the database: {e}",
+                summary=QUERY_SUMMARY_DB_ERROR.format(error=e),
             )
 
     return Tool(

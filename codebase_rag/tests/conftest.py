@@ -116,6 +116,9 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
 @pytest.fixture(scope="session")
 def memgraph_container() -> Generator[dict[str, str | int], None, None]:
     pytest.importorskip("testcontainers")
+    import socket
+    import time
+
     from testcontainers.core.container import DockerContainer
     from testcontainers.core.waiting_utils import wait_for_logs
 
@@ -128,6 +131,22 @@ def memgraph_container() -> Generator[dict[str, str | int], None, None]:
     host = container.get_container_host_ip()
     port = int(container.get_exposed_port(7687))
 
+    max_retries = 30
+    for attempt in range(max_retries):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            sock.connect((host, port))
+            sock.close()
+            break
+        except (TimeoutError, ConnectionRefusedError, OSError):
+            if attempt == max_retries - 1:
+                container.stop()
+                pytest.fail(
+                    f"Memgraph port {port} not ready after {max_retries} attempts"
+                )
+            time.sleep(0.5)
+
     yield {"host": host, "port": port}
 
     container.stop()
@@ -137,17 +156,33 @@ def memgraph_container() -> Generator[dict[str, str | int], None, None]:
 def memgraph_connection(
     memgraph_container: dict[str, str | int],
 ) -> Generator[mgclient.Connection, None, None]:
+    import time
+
     import mgclient  # ty: ignore[unresolved-import]
 
-    conn = mgclient.connect(
-        host=str(memgraph_container["host"]),
-        port=int(memgraph_container["port"]),
-    )
-    conn.autocommit = True
+    host = str(memgraph_container["host"])
+    port = int(memgraph_container["port"])
 
-    cursor = conn.cursor()
-    cursor.execute("MATCH (n) DETACH DELETE n")
-    cursor.close()
+    max_retries = 10
+    conn: mgclient.Connection | None = None
+
+    for attempt in range(max_retries):
+        try:
+            conn = mgclient.connect(host=host, port=port)
+            conn.autocommit = True
+            cursor = conn.cursor()
+            cursor.execute("MATCH (n) DETACH DELETE n")
+            cursor.close()
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                pytest.fail(
+                    f"Failed to connect to Memgraph after {max_retries} attempts: {e}"
+                )
+            time.sleep(0.5)
+
+    if conn is None:
+        pytest.fail("Failed to establish Memgraph connection")
 
     yield conn
 
@@ -161,13 +196,25 @@ def memgraph_connection(
 def memgraph_ingestor(
     memgraph_container: dict[str, str | int],
 ) -> Generator[MemgraphIngestor, None, None]:
-    ingestor = MemgraphIngestor(
-        host=str(memgraph_container["host"]),
-        port=int(memgraph_container["port"]),
-    )
-    ingestor.__enter__()
+    import time
 
-    ingestor._execute_query("MATCH (n) DETACH DELETE n")
+    host = str(memgraph_container["host"])
+    port = int(memgraph_container["port"])
+
+    max_retries = 10
+
+    for attempt in range(max_retries):
+        try:
+            ingestor = MemgraphIngestor(host=host, port=port)
+            ingestor.__enter__()
+            ingestor._execute_query("MATCH (n) DETACH DELETE n")
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                pytest.fail(
+                    f"Failed to connect to Memgraph after {max_retries} attempts: {e}"
+                )
+            time.sleep(0.5)
 
     yield ingestor
 
