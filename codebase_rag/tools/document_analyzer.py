@@ -142,6 +142,6 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
 
     return Tool(
         function=analyze_document,
-        name="analyze_document",
+        name=cs.ToolName.ANALYZE_DOCUMENT,
         description=td.ANALYZE_DOCUMENT,
     )
