@@ -338,3 +338,13 @@ CALL_JAVA_RESOLVED = "Java method call resolved: {call_text} -> {method_qn}"
 CALL_UNEXPECTED_PARENT = (
     "Unexpected parent type for node {node}: {parent_type}. Skipping."
 )
+
+# (H) Dependency parser logs
+DEP_PARSE_ERROR_PYPROJECT = "Error parsing pyproject.toml {path}: {error}"
+DEP_PARSE_ERROR_REQUIREMENTS = "Error parsing requirements.txt {path}: {error}"
+DEP_PARSE_ERROR_PACKAGE_JSON = "Error parsing package.json {path}: {error}"
+DEP_PARSE_ERROR_CARGO = "Error parsing Cargo.toml {path}: {error}"
+DEP_PARSE_ERROR_GOMOD = "Error parsing go.mod {path}: {error}"
+DEP_PARSE_ERROR_GEMFILE = "Error parsing Gemfile {path}: {error}"
+DEP_PARSE_ERROR_COMPOSER = "Error parsing composer.json {path}: {error}"
+DEP_PARSE_ERROR_CSPROJ = "Error parsing .csproj {path}: {error}"

@@ -950,3 +950,44 @@ CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
 CPP_OPERATOR_TEXT_PREFIX = "operator"
 CPP_DESTRUCTOR_PREFIX = "~"
+
+# (H) Dependency parser TOML/JSON keys
+DEP_KEY_TOOL = "tool"
+DEP_KEY_POETRY = "poetry"
+DEP_KEY_DEPENDENCIES = "dependencies"
+DEP_KEY_DEV_DEPENDENCIES = "dev-dependencies"
+DEP_KEY_PROJECT = "project"
+DEP_KEY_OPTIONAL_DEPS = "optional-dependencies"
+DEP_KEY_DEV_DEPS_JSON = "devDependencies"
+DEP_KEY_PEER_DEPS = "peerDependencies"
+DEP_KEY_REQUIRE = "require"
+DEP_KEY_REQUIRE_DEV = "require-dev"
+DEP_KEY_VERSION = "version"
+DEP_KEY_GROUP = "group"
+
+# (H) Dependency parser XML attributes
+DEP_ATTR_INCLUDE = "Include"
+DEP_ATTR_VERSION = "Version"
+DEP_XML_PACKAGE_REF = "PackageReference"
+
+# (H) Dependency parser language exclusions
+DEP_EXCLUDE_PYTHON = "python"
+DEP_EXCLUDE_PHP = "php"
+
+# (H) Dependency file names (lowercase)
+DEP_FILE_PYPROJECT = "pyproject.toml"
+DEP_FILE_REQUIREMENTS = "requirements.txt"
+DEP_FILE_PACKAGE_JSON = "package.json"
+DEP_FILE_CARGO = "cargo.toml"
+DEP_FILE_GOMOD = "go.mod"
+DEP_FILE_GEMFILE = "gemfile"
+DEP_FILE_COMPOSER = "composer.json"
+
+# (H) Go.mod parsing patterns
+GOMOD_REQUIRE_BLOCK_START = "require ("
+GOMOD_BLOCK_END = ")"
+GOMOD_REQUIRE_LINE_PREFIX = "require "
+GOMOD_COMMENT_PREFIX = "//"
+
+# (H) Gemfile parsing patterns
+GEMFILE_GEM_PREFIX = "gem "

@@ -1,271 +1,268 @@
 import json
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import toml
 from loguru import logger
 
-from ..constants import ENCODING_UTF8
+from .. import constants as cs
+from .. import logs as ls
+from ..models import Dependency
 
 
-@dataclass
-class Dependency:
-    name: str
-    spec: str
-    properties: dict[str, str] = field(default_factory=dict)
+def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
+    match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", dep_string.strip())
+    if not match:
+        return "", ""
+    name_with_extras = match[1]
+    name_match = re.match(r"^([a-zA-Z0-9_.-]+)", name_with_extras)
+    if not name_match:
+        return "", ""
+    name = name_match[1]
+    spec = dep_string[len(name_with_extras) :].strip()
+    return name, spec
 
 
 class DependencyParser:
-    """Base class for dependency parsers."""
-
     def parse(self, file_path: Path) -> list[Dependency]:
-        """Parse the dependency file and return a list of dependencies."""
         raise NotImplementedError
 
 
 class PyProjectTomlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
             data = toml.load(file_path)
 
-            poetry_deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+            poetry_deps = (
+                data.get(cs.DEP_KEY_TOOL, {})
+                .get(cs.DEP_KEY_POETRY, {})
+                .get(cs.DEP_KEY_DEPENDENCIES, {})
+            )
             if poetry_deps:
                 for dep_name, dep_spec in poetry_deps.items():
-                    if dep_name.lower() == "python":
+                    if dep_name.lower() == cs.DEP_EXCLUDE_PYTHON:
                         continue
                     dependencies.append(Dependency(dep_name, str(dep_spec)))
 
-            project_deps = data.get("project", {}).get("dependencies", [])
+            project_deps = data.get(cs.DEP_KEY_PROJECT, {}).get(
+                cs.DEP_KEY_DEPENDENCIES, []
+            )
             if project_deps:
                 for dep_line in project_deps:
-                    dep_name, _ = self._extract_pep508_package_name(dep_line)
+                    dep_name, _ = _extract_pep508_package_name(dep_line)
                     if dep_name:
                         dependencies.append(Dependency(dep_name, dep_line))
 
-            optional_deps = data.get("project", {}).get("optional-dependencies", {})
+            optional_deps = data.get(cs.DEP_KEY_PROJECT, {}).get(
+                cs.DEP_KEY_OPTIONAL_DEPS, {}
+            )
             for group_name, deps in optional_deps.items():
                 for dep_line in deps:
-                    dep_name, _ = self._extract_pep508_package_name(dep_line)
+                    dep_name, _ = _extract_pep508_package_name(dep_line)
                     if dep_name:
                         dependencies.append(
-                            Dependency(dep_name, dep_line, {"group": group_name})
+                            Dependency(
+                                dep_name, dep_line, {cs.DEP_KEY_GROUP: group_name}
+                            )
                         )
         except Exception as e:
-            logger.error(f"Error parsing pyproject.toml {file_path}: {e}")
+            logger.error(ls.DEP_PARSE_ERROR_PYPROJECT.format(path=file_path, error=e))
         return dependencies
-
-    def _extract_pep508_package_name(self, dep_string: str) -> tuple[str, str]:
-        match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", dep_string.strip())
-        if not match:
-            return "", ""
-        name_with_extras = match.group(1)
-        name_match = re.match(r"^([a-zA-Z0-9_.-]+)", name_with_extras)
-        if not name_match:
-            return "", ""
-        name = name_match.group(1)
-        spec = dep_string[len(name_with_extras) :].strip()
-        return name, spec
 
 
 class RequirementsTxtParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
-            with open(file_path, encoding=ENCODING_UTF8) as f:
+            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#") or line.startswith("-"):
                         continue
 
-                    # (H) Reuse extraction logic from PyProjectTomlParser or duplicate simple logic
-                    # (H) Duplicating simple logic here to avoid complex inheritance or mixins for now
-                    dep_name, version_spec = self._extract_pep508_package_name(line)
+                    dep_name, version_spec = _extract_pep508_package_name(line)
                     if dep_name:
                         dependencies.append(Dependency(dep_name, version_spec))
         except Exception as e:
-            logger.error(f"Error parsing requirements.txt {file_path}: {e}")
+            logger.error(
+                ls.DEP_PARSE_ERROR_REQUIREMENTS.format(path=file_path, error=e)
+            )
         return dependencies
-
-    def _extract_pep508_package_name(self, dep_string: str) -> tuple[str, str]:
-        match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", dep_string.strip())
-        if not match:
-            return "", ""
-        name_with_extras = match.group(1)
-        name_match = re.match(r"^([a-zA-Z0-9_.-]+)", name_with_extras)
-        if not name_match:
-            return "", ""
-        name = name_match.group(1)
-        spec = dep_string[len(name_with_extras) :].strip()
-        return name, spec
 
 
 class PackageJsonParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
-            with open(file_path, encoding=ENCODING_UTF8) as f:
+            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 data = json.load(f)
 
-            deps = data.get("dependencies", {})
+            deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
             for dep_name, dep_spec in deps.items():
                 dependencies.append(Dependency(dep_name, dep_spec))
 
-            dev_deps = data.get("devDependencies", {})
+            dev_deps = data.get(cs.DEP_KEY_DEV_DEPS_JSON, {})
             for dep_name, dep_spec in dev_deps.items():
                 dependencies.append(Dependency(dep_name, dep_spec))
 
-            peer_deps = data.get("peerDependencies", {})
+            peer_deps = data.get(cs.DEP_KEY_PEER_DEPS, {})
             for dep_name, dep_spec in peer_deps.items():
                 dependencies.append(Dependency(dep_name, dep_spec))
         except Exception as e:
-            logger.error(f"Error parsing package.json {file_path}: {e}")
+            logger.error(
+                ls.DEP_PARSE_ERROR_PACKAGE_JSON.format(path=file_path, error=e)
+            )
         return dependencies
 
 
 class CargoTomlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
             data = toml.load(file_path)
 
-            deps = data.get("dependencies", {})
+            deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
             for dep_name, dep_spec in deps.items():
                 version = (
                     dep_spec
                     if isinstance(dep_spec, str)
-                    else dep_spec.get("version", "")
+                    else dep_spec.get(cs.DEP_KEY_VERSION, "")
                 )
                 dependencies.append(Dependency(dep_name, version))
 
-            dev_deps = data.get("dev-dependencies", {})
+            dev_deps = data.get(cs.DEP_KEY_DEV_DEPENDENCIES, {})
             for dep_name, dep_spec in dev_deps.items():
                 version = (
                     dep_spec
                     if isinstance(dep_spec, str)
-                    else dep_spec.get("version", "")
+                    else dep_spec.get(cs.DEP_KEY_VERSION, "")
                 )
                 dependencies.append(Dependency(dep_name, version))
         except Exception as e:
-            logger.error(f"Error parsing Cargo.toml {file_path}: {e}")
+            logger.error(ls.DEP_PARSE_ERROR_CARGO.format(path=file_path, error=e))
         return dependencies
 
 
 class GoModParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
-            with open(file_path, encoding=ENCODING_UTF8) as f:
+            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 in_require_block = False
                 for line in f:
                     line = line.strip()
 
-                    if line.startswith("require ("):
+                    if line.startswith(cs.GOMOD_REQUIRE_BLOCK_START):
                         in_require_block = True
                         continue
-                    elif line == ")" and in_require_block:
+                    elif line == cs.GOMOD_BLOCK_END and in_require_block:
                         in_require_block = False
                         continue
-                    elif line.startswith("require ") and not in_require_block:
+                    elif (
+                        line.startswith(cs.GOMOD_REQUIRE_LINE_PREFIX)
+                        and not in_require_block
+                    ):
                         parts = line.split()[1:]
                         if len(parts) >= 2:
                             dependencies.append(Dependency(parts[0], parts[1]))
-                    elif in_require_block and line and not line.startswith("//"):
+                    elif (
+                        in_require_block
+                        and line
+                        and not line.startswith(cs.GOMOD_COMMENT_PREFIX)
+                    ):
                         parts = line.split()
                         if len(parts) >= 2:
                             dep_name = parts[0]
                             version = parts[1]
-                            if not version.startswith("//"):
+                            if not version.startswith(cs.GOMOD_COMMENT_PREFIX):
                                 dependencies.append(Dependency(dep_name, version))
         except Exception as e:
-            logger.error(f"Error parsing go.mod {file_path}: {e}")
+            logger.error(ls.DEP_PARSE_ERROR_GOMOD.format(path=file_path, error=e))
         return dependencies
 
 
 class GemfileParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
-            with open(file_path, encoding=ENCODING_UTF8) as f:
+            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("gem "):
-                        match = re.match(
+                    if line.startswith(cs.GEMFILE_GEM_PREFIX):
+                        if gem_match := re.match(
                             r'gem\s+["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])?',
                             line,
-                        )
-                        if match:
-                            dep_name = match.group(1)
-                            version = match.group(2) if match.group(2) else ""
+                        ):
+                            dep_name = gem_match[1]
+                            version = gem_match[2] or ""
                             dependencies.append(Dependency(dep_name, version))
         except Exception as e:
-            logger.error(f"Error parsing Gemfile {file_path}: {e}")
+            logger.error(ls.DEP_PARSE_ERROR_GEMFILE.format(path=file_path, error=e))
         return dependencies
 
 
 class ComposerJsonParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
-            with open(file_path, encoding=ENCODING_UTF8) as f:
+            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 data = json.load(f)
 
-            deps = data.get("require", {})
-            for dep_name, dep_spec in deps.items():
-                if dep_name != "php":
-                    dependencies.append(Dependency(dep_name, dep_spec))
-
-            dev_deps = data.get("require-dev", {})
-            for dep_name, dep_spec in dev_deps.items():
-                dependencies.append(Dependency(dep_name, dep_spec))
+            deps = data.get(cs.DEP_KEY_REQUIRE, {})
+            dependencies.extend(
+                Dependency(dep_name, dep_spec)
+                for dep_name, dep_spec in deps.items()
+                if dep_name != cs.DEP_EXCLUDE_PHP
+            )
+            dev_deps = data.get(cs.DEP_KEY_REQUIRE_DEV, {})
+            dependencies.extend(
+                Dependency(dep_name, dep_spec)
+                for dep_name, dep_spec in dev_deps.items()
+            )
         except Exception as e:
-            logger.error(f"Error parsing composer.json {file_path}: {e}")
+            logger.error(ls.DEP_PARSE_ERROR_COMPOSER.format(path=file_path, error=e))
         return dependencies
 
 
 class CsprojParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
-        dependencies = []
+        dependencies: list[Dependency] = []
         try:
             tree = ET.parse(file_path)
             root = tree.getroot()
 
-            for pkg_ref in root.iter("PackageReference"):
-                include = pkg_ref.get("Include")
-                version = pkg_ref.get("Version")
+            for pkg_ref in root.iter(cs.DEP_XML_PACKAGE_REF):
+                include = pkg_ref.get(cs.DEP_ATTR_INCLUDE)
+                version = pkg_ref.get(cs.DEP_ATTR_VERSION)
 
                 if include:
                     dependencies.append(Dependency(include, version or ""))
         except Exception as e:
-            logger.error(f"Error parsing .csproj {file_path}: {e}")
+            logger.error(ls.DEP_PARSE_ERROR_CSPROJ.format(path=file_path, error=e))
         return dependencies
 
 
 def parse_dependencies(file_path: Path) -> list[Dependency]:
-    """Parse dependencies from a file based on its name/extension."""
     file_name = file_path.name.lower()
-    parser: DependencyParser | None = None
 
-    if file_name == "pyproject.toml":
-        parser = PyProjectTomlParser()
-    elif file_name == "requirements.txt":
-        parser = RequirementsTxtParser()
-    elif file_name == "package.json":
-        parser = PackageJsonParser()
-    elif file_name == "cargo.toml":
-        parser = CargoTomlParser()
-    elif file_name == "go.mod":
-        parser = GoModParser()
-    elif file_name == "gemfile":
-        parser = GemfileParser()
-    elif file_name == "composer.json":
-        parser = ComposerJsonParser()
-    elif file_path.suffix.lower() == ".csproj":
-        parser = CsprojParser()
-
-    if parser:
-        return parser.parse(file_path)
-
-    return []
+    match file_name:
+        case cs.DEP_FILE_PYPROJECT:
+            return PyProjectTomlParser().parse(file_path)
+        case cs.DEP_FILE_REQUIREMENTS:
+            return RequirementsTxtParser().parse(file_path)
+        case cs.DEP_FILE_PACKAGE_JSON:
+            return PackageJsonParser().parse(file_path)
+        case cs.DEP_FILE_CARGO:
+            return CargoTomlParser().parse(file_path)
+        case cs.DEP_FILE_GOMOD:
+            return GoModParser().parse(file_path)
+        case cs.DEP_FILE_GEMFILE:
+            return GemfileParser().parse(file_path)
+        case cs.DEP_FILE_COMPOSER:
+            return ComposerJsonParser().parse(file_path)
+        case _ if file_path.suffix.lower() == cs.CSPROJ_SUFFIX:
+            return CsprojParser().parse(file_path)
+        case _:
+            return []

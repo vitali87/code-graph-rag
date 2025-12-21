@@ -70,3 +70,10 @@ class LanguageSpec:
     function_query: str | None = None
     class_query: str | None = None
     call_query: str | None = None
+
+
+@dataclass
+class Dependency:
+    name: str
+    spec: str
+    properties: dict[str, str] = field(default_factory=dict)
