@@ -4,7 +4,15 @@ from loguru import logger
 from tree_sitter import Node
 
 from .. import logs as ls
-from ..constants import SEPARATOR_DOT
+from ..constants import (
+    SEPARATOR_DOT,
+    TS_CALL_EXPRESSION,
+    TS_IDENTIFIER,
+    TS_MEMBER_EXPRESSION,
+    TS_NEW_EXPRESSION,
+    TS_RETURN,
+    TS_VARIABLE_DECLARATOR,
+)
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .js_utils import (
@@ -42,7 +50,7 @@ class JsTypeInferenceEngine:
         while stack:
             current = stack.pop()
 
-            if current.type == "variable_declarator":
+            if current.type == TS_VARIABLE_DECLARATOR:
                 declarator_count += 1
                 name_node = current.child_by_field_name("name")
                 value_node = current.child_by_field_name("value")
@@ -87,18 +95,18 @@ class JsTypeInferenceEngine:
     ) -> str | None:
         logger.debug(ls.JS_INFER_VALUE_NODE.format(node_type=value_node.type))
 
-        if value_node.type == "new_expression":
+        if value_node.type == TS_NEW_EXPRESSION:
             class_name = extract_js_constructor_name(value_node)
             if class_name:
                 class_qn = self._resolve_js_class_name(class_name, module_qn)
                 return class_qn if class_qn else class_name
 
-        elif value_node.type == "call_expression":
+        elif value_node.type == TS_CALL_EXPRESSION:
             func_node = value_node.child_by_field_name("function")
             func_type = func_node.type if func_node else "None"
             logger.debug(ls.JS_CALL_EXPR_FUNC_NODE.format(func_type=func_type))
 
-            if func_node and func_node.type == "member_expression":
+            if func_node and func_node.type == TS_MEMBER_EXPRESSION:
                 method_call_text = extract_js_method_call(func_node)
                 logger.debug(
                     ls.JS_EXTRACTED_METHOD_CALL.format(method_call=method_call_text)
@@ -122,7 +130,7 @@ class JsTypeInferenceEngine:
                             )
                         )
 
-            elif func_node and func_node.type == "identifier":
+            elif func_node and func_node.type == TS_IDENTIFIER:
                 func_name = func_node.text
                 if func_name:
                     return safe_decode_text(func_node)
@@ -183,7 +191,7 @@ class JsTypeInferenceEngine:
             if class_name in import_map:
                 imported_qn = import_map[class_name]
 
-                full_class_qn = f"{imported_qn}.{class_name}"
+                full_class_qn = f"{imported_qn}{SEPARATOR_DOT}{class_name}"
                 if (
                     full_class_qn in self.function_registry
                     and self.function_registry[full_class_qn] == NodeType.CLASS
@@ -192,7 +200,7 @@ class JsTypeInferenceEngine:
 
                 return imported_qn
 
-        local_class_qn = f"{module_qn}.{class_name}"
+        local_class_qn = f"{module_qn}{SEPARATOR_DOT}{class_name}"
         if (
             local_class_qn in self.function_registry
             and self.function_registry[local_class_qn] == NodeType.CLASS
@@ -209,7 +217,7 @@ class JsTypeInferenceEngine:
 
         for return_node in return_nodes:
             for child in return_node.children:
-                if child.type == "return":
+                if child.type == TS_RETURN:
                     continue
 
                 inferred_type = analyze_js_return_expression(child, method_qn)
