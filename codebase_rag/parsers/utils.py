@@ -37,10 +37,7 @@ def safe_decode_with_fallback(node: Node | None, fallback: str = "") -> str:
 def contains_node(parent: Node, target: Node) -> bool:
     if parent == target:
         return True
-    for child in parent.children:
-        if contains_node(child, target):
-            return True
-    return False
+    return any(contains_node(child, target) for child in parent.children)
 
 
 def ingest_method(

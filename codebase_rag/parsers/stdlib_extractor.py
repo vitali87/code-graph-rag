@@ -42,11 +42,13 @@ def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | 
     if cache_key not in _STDLIB_CACHE:
         return None
 
-    if cache_key in _CACHE_TIMESTAMPS:
-        if time.time() - _CACHE_TIMESTAMPS[cache_key] > _CACHE_TTL:
-            del _STDLIB_CACHE[cache_key]
-            del _CACHE_TIMESTAMPS[cache_key]
-            return None
+    if (
+        cache_key in _CACHE_TIMESTAMPS
+        and time.time() - _CACHE_TIMESTAMPS[cache_key] > _CACHE_TTL
+    ):
+        del _STDLIB_CACHE[cache_key]
+        del _CACHE_TIMESTAMPS[cache_key]
+        return None
 
     return _STDLIB_CACHE[cache_key].get(full_qualified_name)
 
@@ -463,7 +465,6 @@ int main() {{
                 except (
                     subprocess.TimeoutExpired,
                     subprocess.CalledProcessError,
-                    FileNotFoundError,
                     OSError,
                 ):
                     pass
@@ -582,14 +583,13 @@ public class StdlibCheck {
                         temp_file = os.path.splitext(java_file)[0] + ext
                         try:
                             os.unlink(temp_file)
-                        except (FileNotFoundError, OSError):
+                        except OSError:
                             pass
 
             except (
                 subprocess.TimeoutExpired,
                 subprocess.CalledProcessError,
                 json.JSONDecodeError,
-                FileNotFoundError,
                 OSError,
             ):
                 pass

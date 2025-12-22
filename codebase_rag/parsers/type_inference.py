@@ -629,8 +629,7 @@ class TypeInferenceEngine:
                     )
 
         elif node.type == "list_comprehension":
-            body_node = node.child_by_field_name("body")
-            if body_node:
+            if body_node := node.child_by_field_name("body"):
                 return self._infer_type_from_expression(body_node, module_qn)
 
         return None
