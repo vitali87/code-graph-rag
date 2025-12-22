@@ -35,21 +35,19 @@ class PyProjectTomlParser(DependencyParser):
         try:
             data = toml.load(file_path)
 
-            poetry_deps = (
+            if poetry_deps := (
                 data.get(cs.DEP_KEY_TOOL, {})
                 .get(cs.DEP_KEY_POETRY, {})
                 .get(cs.DEP_KEY_DEPENDENCIES, {})
-            )
-            if poetry_deps:
-                for dep_name, dep_spec in poetry_deps.items():
-                    if dep_name.lower() == cs.DEP_EXCLUDE_PYTHON:
-                        continue
-                    dependencies.append(Dependency(dep_name, str(dep_spec)))
-
-            project_deps = data.get(cs.DEP_KEY_PROJECT, {}).get(
+            ):
+                dependencies.extend(
+                    Dependency(dep_name, str(dep_spec))
+                    for dep_name, dep_spec in poetry_deps.items()
+                    if dep_name.lower() != cs.DEP_EXCLUDE_PYTHON
+                )
+            if project_deps := data.get(cs.DEP_KEY_PROJECT, {}).get(
                 cs.DEP_KEY_DEPENDENCIES, []
-            )
-            if project_deps:
+            ):
                 for dep_line in project_deps:
                     dep_name, _ = _extract_pep508_package_name(dep_line)
                     if dep_name:

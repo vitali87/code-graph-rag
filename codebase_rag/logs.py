@@ -424,3 +424,37 @@ JAVA_FOUND_INSTANCE = "Found instance method: {result}"
 JAVA_INSTANCE_NOT_FOUND = "Instance method not found: {type}.{method}"
 JAVA_ENHANCED_FOR_VAR = "Enhanced for loop variable: {name} -> {type}"
 JAVA_ENHANCED_FOR_VAR_ALT = "Enhanced for loop variable (alt): {name} -> {type}"
+
+# (H) JS type inference logs
+JS_VAR_DECLARATOR_FOUND = "Found variable declarator: {var_name} in {module_qn}"
+JS_VAR_INFERRED = "Inferred JS variable: {var_name} -> {var_type}"
+JS_VAR_INFER_FAILED = "Could not infer type for variable: {var_name}"
+JS_VAR_TYPE_MAP_BUILT = "Built JS variable type map with {count} variables (found {declarator_count} declarators total)"
+JS_INFER_VALUE_NODE = "Inferring type from value node type: {node_type}"
+JS_CALL_EXPR_FUNC_NODE = "Call expression func_node type: {func_type}"
+JS_EXTRACTED_METHOD_CALL = "Extracted method call: {method_call}"
+JS_TYPE_INFERRED = "JS type inference: {method_call}() returns {inferred_type}"
+JS_RETURN_TYPE_INFER_FAILED = "Could not infer return type for {method_call}()"
+JS_NO_PATTERN_MATCHED = (
+    "No type inference pattern matched for value node type: {node_type}"
+)
+JS_METHOD_CALL_INVALID = "Method call {method_call} doesn't have 2 parts"
+JS_CLASS_RESOLVE_FAILED = (
+    "Could not resolve class name {class_name} in module {module_qn}"
+)
+JS_CLASS_RESOLVED = "Resolved {class_name} to {class_qn}"
+JS_LOOKING_FOR_METHOD = "Looking for method {method_qn} in function registry"
+JS_METHOD_AST_NOT_FOUND = "Could not find AST node for method {method_qn}"
+JS_RETURN_ANALYZED = (
+    "Analyzed return statements for {method_qn}, got type: {return_type}"
+)
+JS_METHOD_RETURN_ERROR = (
+    "Error inferring JS method return type for {method_call}: {error}"
+)
+
+# (H) Lua type inference logs
+LUA_VAR_TYPE_MAP_BUILT = "Built Lua variable type map with {count} variables"
+LUA_VAR_INFERRED = "Inferred Lua variable: {var_name} -> {var_type}"
+LUA_TYPE_INFERENCE_RETURN = (
+    "Lua type inference: {class_name}:{method_name}() returns {class_qn}"
+)

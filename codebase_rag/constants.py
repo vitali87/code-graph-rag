@@ -350,6 +350,13 @@ INDEX_MOD = "mod"
 # (H) AST field names for name extraction
 NAME_FIELDS = ("identifier", "name", "id")
 
+# (H) Tree-sitter field name constants for child_by_field_name
+FIELD_OBJECT = "object"
+FIELD_PROPERTY = "property"
+FIELD_NAME = "name"
+FIELD_BODY = "body"
+FIELD_CONSTRUCTOR = "constructor"
+
 # (H) Image file extensions for chat image handling
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
 
@@ -1087,6 +1094,20 @@ TS_TYPE_IDENTIFIER = "type_identifier"
 
 # (H) Tree-sitter Lua node types
 TS_DOT_INDEX_EXPRESSION = "dot_index_expression"
+TS_LUA_VARIABLE_DECLARATION = "variable_declaration"
+TS_LUA_ASSIGNMENT_STATEMENT = "assignment_statement"
+TS_LUA_VARIABLE_LIST = "variable_list"
+TS_LUA_EXPRESSION_LIST = "expression_list"
+TS_LUA_FUNCTION_CALL = "function_call"
+TS_LUA_METHOD_INDEX_EXPRESSION = "method_index_expression"
+TS_LUA_IDENTIFIER = "identifier"
+
+# (H) Lua method separator
+LUA_METHOD_SEPARATOR = ":"
+
+# (H) Tree-sitter JS/TS utility node types
+TS_RETURN_STATEMENT = "return_statement"
+TS_NEW_EXPRESSION = "new_expression"
 
 # (H) Tree-sitter class/module node types for class_ingest
 TS_MODULE_DECLARATION = "module_declaration"
@@ -1273,3 +1294,124 @@ JAVA_TYPE_OBJECT = "Object"
 # (H) Java heuristic return type names
 JAVA_HEURISTIC_USER = "User"
 JAVA_HEURISTIC_ORDER = "Order"
+
+# (H) Java tree-sitter node types for java_utils
+TS_PACKAGE_DECLARATION = "package_declaration"
+TS_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
+TS_CONSTRUCTOR_DECLARATION = "constructor_declaration"
+TS_ANNOTATION = "annotation"
+TS_GENERIC_TYPE = "generic_type"
+TS_TYPE_PARAMETER = "type_parameter"
+TS_MODIFIERS = "modifiers"
+TS_VOID_TYPE = "void_type"
+TS_PROGRAM = "program"
+TS_THIS = "this"
+TS_SUPER = "super"
+
+# (H) Java modifier node types
+JAVA_MODIFIER_PUBLIC = "public"
+JAVA_MODIFIER_PRIVATE = "private"
+JAVA_MODIFIER_PROTECTED = "protected"
+JAVA_MODIFIER_STATIC = "static"
+JAVA_MODIFIER_FINAL = "final"
+JAVA_MODIFIER_ABSTRACT = "abstract"
+JAVA_MODIFIER_SYNCHRONIZED = "synchronized"
+JAVA_MODIFIER_TRANSIENT = "transient"
+JAVA_MODIFIER_VOLATILE = "volatile"
+
+JAVA_CLASS_MODIFIERS = frozenset(
+    {
+        JAVA_MODIFIER_PUBLIC,
+        JAVA_MODIFIER_PRIVATE,
+        JAVA_MODIFIER_PROTECTED,
+        JAVA_MODIFIER_STATIC,
+        JAVA_MODIFIER_FINAL,
+        JAVA_MODIFIER_ABSTRACT,
+    }
+)
+
+JAVA_METHOD_MODIFIERS = frozenset(
+    {
+        JAVA_MODIFIER_PUBLIC,
+        JAVA_MODIFIER_PRIVATE,
+        JAVA_MODIFIER_PROTECTED,
+        JAVA_MODIFIER_STATIC,
+        JAVA_MODIFIER_FINAL,
+        JAVA_MODIFIER_ABSTRACT,
+        JAVA_MODIFIER_SYNCHRONIZED,
+    }
+)
+
+JAVA_FIELD_MODIFIERS = frozenset(
+    {
+        JAVA_MODIFIER_PUBLIC,
+        JAVA_MODIFIER_PRIVATE,
+        JAVA_MODIFIER_PROTECTED,
+        JAVA_MODIFIER_STATIC,
+        JAVA_MODIFIER_FINAL,
+        JAVA_MODIFIER_TRANSIENT,
+        JAVA_MODIFIER_VOLATILE,
+    }
+)
+
+# (H) Java visibility values
+JAVA_VISIBILITY_PUBLIC = "public"
+JAVA_VISIBILITY_PROTECTED = "protected"
+JAVA_VISIBILITY_PRIVATE = "private"
+JAVA_VISIBILITY_PACKAGE = "package"
+
+# (H) Java class type suffixes and names
+JAVA_DECLARATION_SUFFIX = "_declaration"
+JAVA_TYPE_METHOD = "method"
+JAVA_TYPE_CONSTRUCTOR = "constructor"
+
+# (H) Java class node types for matching
+JAVA_CLASS_NODE_TYPES = frozenset(
+    {
+        TS_CLASS_DECLARATION,
+        TS_INTERFACE_DECLARATION,
+        TS_ENUM_DECLARATION,
+        TS_ANNOTATION_TYPE_DECLARATION,
+        TS_RECORD_DECLARATION,
+    }
+)
+
+# (H) Java method node types
+JAVA_METHOD_NODE_TYPES = frozenset(
+    {
+        TS_METHOD_DECLARATION,
+        TS_CONSTRUCTOR_DECLARATION,
+    }
+)
+
+# (H) Java main method constants
+JAVA_MAIN_METHOD_NAME = "main"
+JAVA_MAIN_PARAM_ARRAY = "String[]"
+JAVA_MAIN_PARAM_VARARGS = "String..."
+JAVA_MAIN_PARAM_TYPE = "String"
+
+# (H) Java path parsing constants
+JAVA_PATH_JAVA = "java"
+JAVA_PATH_KOTLIN = "kotlin"
+JAVA_PATH_SCALA = "scala"
+JAVA_PATH_SRC = "src"
+JAVA_PATH_MAIN = "main"
+JAVA_PATH_TEST = "test"
+
+JAVA_JVM_LANGUAGES = frozenset(
+    {
+        JAVA_PATH_JAVA,
+        JAVA_PATH_KOTLIN,
+        JAVA_PATH_SCALA,
+    }
+)
+
+JAVA_SRC_FOLDERS = frozenset(
+    {
+        JAVA_PATH_MAIN,
+        JAVA_PATH_TEST,
+    }
+)
+
+# (H) Delimiter tokens for argument parsing
+DELIMITER_TOKENS = frozenset({"(", ")", ","})
