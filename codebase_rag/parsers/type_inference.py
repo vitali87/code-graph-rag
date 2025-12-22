@@ -1,12 +1,18 @@
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
-from ..constants import SEPARATOR_DOT, SupportedLanguage
-from ..types_defs import LanguageQueries, NodeType, SimpleNameLookup
+from .. import constants as cs
+from .. import logs as lg
+from ..types_defs import (
+    FunctionRegistryTrieProtocol,
+    LanguageQueries,
+    NodeType,
+    SimpleNameLookup,
+)
 from .import_processor import ImportProcessor
 from .java_type_inference import JavaTypeInferenceEngine
 from .js_type_inference import JsTypeInferenceEngine
@@ -17,18 +23,18 @@ from .utils import safe_decode_text
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
 
-_JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
+_JS_TYPESCRIPT_LANGUAGES = {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}
 
 
 class TypeInferenceEngine:
     def __init__(
         self,
         import_processor: ImportProcessor,
-        function_registry: Any,
+        function_registry: FunctionRegistryTrieProtocol,
         repo_path: Path,
         project_name: str,
         ast_cache: "ASTCacheProtocol",
-        queries: dict[SupportedLanguage, LanguageQueries],
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
@@ -88,22 +94,22 @@ class TypeInferenceEngine:
         return self._js_type_inference
 
     def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str, language: SupportedLanguage
+        self, caller_node: Node, module_qn: str, language: cs.SupportedLanguage
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
 
         match language:
-            case SupportedLanguage.PYTHON:
+            case cs.SupportedLanguage.PYTHON:
                 pass
-            case SupportedLanguage.JS | SupportedLanguage.TS:
+            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 return self.js_type_inference.build_js_local_variable_type_map(
                     caller_node, module_qn, language
                 )
-            case SupportedLanguage.JAVA:
+            case cs.SupportedLanguage.JAVA:
                 return self.java_type_inference.build_java_variable_type_map(
                     caller_node, module_qn
                 )
-            case SupportedLanguage.LUA:
+            case cs.SupportedLanguage.LUA:
                 return self.lua_type_inference.build_lua_local_variable_type_map(
                     caller_node, module_qn
                 )
@@ -112,12 +118,11 @@ class TypeInferenceEngine:
 
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
-
-            """(H) Single-pass traversal avoids O(5*N) multiple traversals for type inference."""
+            # (H) Single-pass traversal avoids O(5*N) multiple traversals for type inference.
             self._traverse_single_pass(caller_node, local_var_types, module_qn)
 
         except Exception as e:
-            logger.debug(f"Failed to build local variable type map: {e}")
+            logger.debug(lg.PY_BUILD_VAR_MAP_FAILED.format(error=e))
 
         return local_var_types
 
@@ -129,7 +134,7 @@ class TypeInferenceEngine:
             return
 
         for param in params_node.children:
-            if param.type == "identifier":
+            if param.type == cs.TS_PY_IDENTIFIER:
                 param_text = param.text
                 if param_text is not None:
                     param_name = safe_decode_text(param)
@@ -141,10 +146,12 @@ class TypeInferenceEngine:
                         if inferred_type:
                             local_var_types[param_name] = inferred_type
                             logger.debug(
-                                f"Inferred parameter type: {param_name} -> {inferred_type}"
+                                lg.PY_PARAM_TYPE_INFERRED.format(
+                                    param=param_name, type=inferred_type
+                                )
                             )
 
-            elif param.type == "typed_parameter":
+            elif param.type == cs.TS_PY_TYPED_PARAMETER:
                 param_name_node = param.child_by_field_name("name")
                 param_type_node = param.child_by_field_name("type")
                 if (
@@ -162,14 +169,14 @@ class TypeInferenceEngine:
         self, param_name: str, module_qn: str
     ) -> str | None:
         logger.debug(
-            f"Attempting to infer type for parameter '{param_name}' in module '{module_qn}'"
+            lg.PY_TYPE_INFER_ATTEMPT.format(param=param_name, module=module_qn)
         )
         available_class_names = []
 
         for qn, node_type in self.function_registry.find_with_prefix(module_qn):
             if node_type == NodeType.CLASS:
-                if SEPARATOR_DOT.join(qn.split(SEPARATOR_DOT)[:-1]) == module_qn:
-                    available_class_names.append(qn.split(SEPARATOR_DOT)[-1])
+                if cs.SEPARATOR_DOT.join(qn.split(cs.SEPARATOR_DOT)[:-1]) == module_qn:
+                    available_class_names.append(qn.split(cs.SEPARATOR_DOT)[-1])
 
         if module_qn in self.import_processor.import_mapping:
             for local_name, imported_qn in self.import_processor.import_mapping[
@@ -178,7 +185,7 @@ class TypeInferenceEngine:
                 if self.function_registry.get(imported_qn) == NodeType.CLASS:
                     available_class_names.append(local_name)
 
-        logger.debug(f"Available classes in scope: {available_class_names}")
+        logger.debug(lg.PY_AVAILABLE_CLASSES.format(classes=available_class_names))
 
         param_lower = param_name.lower()
         best_match = None
@@ -200,7 +207,9 @@ class TypeInferenceEngine:
                 best_match = class_name
 
         logger.debug(
-            f"Best match for '{param_name}' is '{best_match}' with score {highest_score}"
+            lg.PY_BEST_MATCH.format(
+                param=param_name, match=best_match, score=highest_score
+            )
         )
         return best_match
 
@@ -218,7 +227,7 @@ class TypeInferenceEngine:
     def _find_comprehensions(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        if node.type == "list_comprehension":
+        if node.type == cs.TS_PY_LIST_COMPREHENSION:
             self._analyze_comprehension(node, local_var_types, module_qn)
 
         for child in node.children:
@@ -227,7 +236,7 @@ class TypeInferenceEngine:
     def _find_for_loops(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        if node.type == "for_statement":
+        if node.type == cs.TS_PY_FOR_STATEMENT:
             self._analyze_for_loop(node, local_var_types, module_qn)
 
         for child in node.children:
@@ -237,7 +246,7 @@ class TypeInferenceEngine:
         self, comp_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         for child in comp_node.children:
-            if child.type == "for_in_clause":
+            if child.type == cs.TS_PY_FOR_IN_CLAUSE:
                 self._analyze_for_in_clause(child, local_var_types, module_qn)
 
     def _analyze_for_loop(
@@ -278,17 +287,19 @@ class TypeInferenceEngine:
         )
         if element_type:
             local_var_types[loop_var] = element_type
-            logger.debug(f"Inferred loop variable type: {loop_var} -> {element_type}")
+            logger.debug(
+                lg.PY_LOOP_VAR_INFERRED.format(var=loop_var, type=element_type)
+            )
 
     def _infer_iterable_element_type(
         self, iterable_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
-        if iterable_node.type == "list":
+        if iterable_node.type == cs.TS_PY_LIST:
             return self._infer_list_element_type(
                 iterable_node, local_var_types, module_qn
             )
 
-        elif iterable_node.type == "identifier":
+        elif iterable_node.type == cs.TS_PY_IDENTIFIER:
             var_text = iterable_node.text
             if var_text is not None:
                 var_name = safe_decode_text(iterable_node)
@@ -303,9 +314,9 @@ class TypeInferenceEngine:
         self, list_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
         for child in list_node.children:
-            if child.type == "call":
+            if child.type == cs.TS_PY_CALL:
                 func_node = child.child_by_field_name("function")
-                if func_node and func_node.type == "identifier":
+                if func_node and func_node.type == cs.TS_PY_IDENTIFIER:
                     func_text = func_node.text
                     if func_text is not None:
                         class_name = safe_decode_text(func_node)
@@ -320,13 +331,7 @@ class TypeInferenceEngine:
     def _infer_instance_variable_types(
         self, caller_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Infer types for instance variables by analyzing assignments.
-
-        NOTE: This does a full traversal. For better performance, use
-        _infer_instance_variable_types_from_assignments with pre-collected assignments.
-        """
         self._analyze_self_assignments(caller_node, local_var_types, module_qn)
-
         self._analyze_class_init_assignments(caller_node, local_var_types, module_qn)
 
     def _infer_instance_variable_types_from_assignments(
@@ -336,18 +341,21 @@ class TypeInferenceEngine:
             left_node = assignment.child_by_field_name("left")
             right_node = assignment.child_by_field_name("right")
 
-            if left_node and right_node and left_node.type == "attribute":
+            if left_node and right_node and left_node.type == cs.TS_PY_ATTRIBUTE:
                 left_text = left_node.text
-                if left_text and left_text.decode("utf8").startswith("self."):
-                    attr_name = left_text.decode("utf8")
+                if left_text and left_text.decode(cs.ENCODING_UTF8).startswith(
+                    cs.PY_SELF_PREFIX
+                ):
+                    attr_name = left_text.decode(cs.ENCODING_UTF8)
                     assigned_type = self._infer_type_from_expression(
                         right_node, module_qn
                     )
                     if assigned_type:
                         local_var_types[attr_name] = assigned_type
                         logger.debug(
-                            f"Inferred instance variable: "
-                            f"{attr_name} -> {assigned_type}"
+                            lg.PY_INSTANCE_VAR_INFERRED.format(
+                                attr=attr_name, type=assigned_type
+                            )
                         )
 
     def _analyze_class_init_assignments(
@@ -355,63 +363,60 @@ class TypeInferenceEngine:
     ) -> None:
         class_node = self._find_containing_class(caller_node)
         if not class_node:
-            logger.debug("No containing class found for method")
+            logger.debug(lg.PY_NO_CONTAINING_CLASS)
             return
 
         init_method = self._find_init_method(class_node)
         if not init_method:
-            logger.debug("No __init__ method found in class")
+            logger.debug(lg.PY_NO_INIT_METHOD)
             return
 
-        logger.debug("Found __init__ method, analyzing self assignments...")
+        logger.debug(lg.PY_FOUND_INIT)
         self._analyze_self_assignments(init_method, local_var_types, module_qn)
 
     def _find_containing_class(self, method_node: Node) -> Node | None:
         current = method_node.parent
         level = 1
         while current:
-            logger.debug(f"Level {level}: node type = {current.type}")
-            if current.type == "class_definition":
-                logger.debug(f"Found class_definition at level {level}")
+            logger.debug(
+                lg.PY_SEARCHING_LEVEL.format(level=level, node_type=current.type)
+            )
+            if current.type == cs.TS_PY_CLASS_DEFINITION:
+                logger.debug(lg.PY_FOUND_CLASS_AT_LEVEL.format(level=level))
                 return current
             current = current.parent
             level += 1
             if level > 10:
                 break
-        logger.debug("No class_definition found in parent hierarchy")
+        logger.debug(lg.PY_NO_CLASS_IN_HIERARCHY)
         return None
 
     def _find_init_method(self, class_node: Node) -> Node | None:
-        logger.debug(
-            f"Searching for __init__ method in class with "
-            f"{len(class_node.children)} children"
-        )
+        logger.debug(lg.PY_SEARCHING_INIT.format(count=len(class_node.children)))
 
         class_body = None
         for child in class_node.children:
-            logger.debug(f"  Child type: {child.type}")
-            if child.type == "block":
+            logger.debug(lg.PY_CHILD_TYPE.format(type=child.type))
+            if child.type == cs.TS_PY_BLOCK:
                 class_body = child
                 break
 
         if not class_body:
-            logger.debug("  No class body (block) found")
+            logger.debug(lg.PY_NO_CLASS_BODY)
             return None
 
-        logger.debug(
-            f"  Searching in class body with {len(class_body.children)} children"
-        )
+        logger.debug(lg.PY_SEARCHING_BODY.format(count=len(class_body.children)))
         for child in class_body.children:
-            logger.debug(f"    Body child type: {child.type}")
-            if child.type == "function_definition":
+            logger.debug(lg.PY_BODY_CHILD.format(type=child.type))
+            if child.type == cs.TS_PY_FUNCTION_DEFINITION:
                 name_node = child.child_by_field_name("name")
                 if name_node and name_node.text:
                     method_name = safe_decode_text(name_node)
-                    logger.debug(f"      Found method: {method_name}")
-                    if method_name == "__init__":
-                        logger.debug("      Found __init__ method!")
+                    logger.debug(lg.PY_FOUND_METHOD.format(name=method_name))
+                    if method_name == cs.PY_METHOD_INIT:
+                        logger.debug(lg.PY_FOUND_INIT_METHOD)
                         return child
-        logger.debug("  No __init__ method found in class body")
+        logger.debug(lg.PY_INIT_NOT_FOUND)
         return None
 
     def _analyze_self_assignments(
@@ -422,14 +427,18 @@ class TypeInferenceEngine:
         while stack:
             current = stack.pop()
 
-            if current.type == "assignment":
+            if current.type == cs.TS_PY_ASSIGNMENT:
                 left_node = current.child_by_field_name("left")
                 right_node = current.child_by_field_name("right")
 
-                if left_node and right_node and left_node.type == "attribute":
+                if left_node and right_node and left_node.type == cs.TS_PY_ATTRIBUTE:
                     left_text = left_node.text
                     left_decoded = safe_decode_text(left_node)
-                    if left_text and left_decoded and left_decoded.startswith("self."):
+                    if (
+                        left_text
+                        and left_decoded
+                        and left_decoded.startswith(cs.PY_SELF_PREFIX)
+                    ):
                         attr_name = left_decoded
                         assigned_type = self._infer_type_from_expression(
                             right_node, module_qn
@@ -437,8 +446,9 @@ class TypeInferenceEngine:
                         if assigned_type:
                             local_var_types[attr_name] = assigned_type
                             logger.debug(
-                                f"Inferred instance variable: "
-                                f"{attr_name} -> {assigned_type}"
+                                lg.PY_INSTANCE_VAR_INFERRED.format(
+                                    attr=attr_name, type=assigned_type
+                                )
                             )
 
             stack.extend(reversed(current.children))
@@ -448,7 +458,7 @@ class TypeInferenceEngine:
     ) -> str | None:
         if var_name in local_var_types:
             var_type = local_var_types[var_name]
-            if var_type and var_type != "list":
+            if var_type and var_type != cs.TYPE_INFERENCE_LIST:
                 return var_type
 
         return self._infer_method_return_element_type(
@@ -465,14 +475,14 @@ class TypeInferenceEngine:
 
     def _analyze_repository_item_type(self, module_qn: str) -> str | None:
         repo_qn_patterns = [
-            f"{module_qn.split('.')[0]}.models.base.Repository",
+            f"{module_qn.split(cs.SEPARATOR_DOT)[0]}.models.base.Repository",
             "Repository",
         ]
 
         for repo_qn in repo_qn_patterns:
             create_method = f"{repo_qn}.create"
             if create_method in self.function_registry:
-                return "BaseModel"
+                return cs.TYPE_INFERENCE_BASE_MODEL
 
         return None
 
@@ -488,11 +498,11 @@ class TypeInferenceEngine:
             current = stack.pop()
             node_type = current.type
 
-            if node_type == "assignment":
+            if node_type == cs.TS_PY_ASSIGNMENT:
                 assignments.append(current)
-            elif node_type == "list_comprehension":
+            elif node_type == cs.TS_PY_LIST_COMPREHENSION:
                 comprehensions.append(current)
-            elif node_type == "for_statement":
+            elif node_type == cs.TS_PY_FOR_STATEMENT:
                 for_statements.append(current)
 
             stack.extend(reversed(current.children))
@@ -520,7 +530,7 @@ class TypeInferenceEngine:
 
         while stack:
             current = stack.pop()
-            if current.type == "assignment":
+            if current.type == cs.TS_PY_ASSIGNMENT:
                 self._process_assignment_simple(current, local_var_types, module_qn)
 
             stack.extend(reversed(current.children))
@@ -528,16 +538,14 @@ class TypeInferenceEngine:
     def _traverse_for_assignments_complex(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """(H) DELETE??? Traverse AST for complex assignments (method calls) using existing variable types.
-
-        NOTE: This is kept for backwards compatibility but _traverse_single_pass
-        should be preferred for better performance.
-        """
+        # (H) DELETE??? Traverse AST for complex assignments (method calls) using existing variable types.
+        # (H) NOTE: This is kept for backwards compatibility but _traverse_single_pass
+        # (H) should be preferred for better performance.
         stack: list[Node] = [node]
 
         while stack:
             current = stack.pop()
-            if current.type == "assignment":
+            if current.type == cs.TS_PY_ASSIGNMENT:
                 self._process_assignment_complex(current, local_var_types, module_qn)
 
             stack.extend(reversed(current.children))
@@ -558,7 +566,7 @@ class TypeInferenceEngine:
         inferred_type = self._infer_type_from_expression_simple(right_node, module_qn)
         if inferred_type:
             local_var_types[var_name] = inferred_type
-            logger.debug(f"Inferred type (simple): {var_name} -> {inferred_type}")
+            logger.debug(lg.PY_TYPE_SIMPLE.format(var=var_name, type=inferred_type))
 
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -581,7 +589,7 @@ class TypeInferenceEngine:
         )
         if inferred_type:
             local_var_types[var_name] = inferred_type
-            logger.debug(f"Inferred type (complex): {var_name} -> {inferred_type}")
+            logger.debug(lg.PY_TYPE_COMPLEX.format(var=var_name, type=inferred_type))
 
     def _process_assignment_for_type_inference(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -599,36 +607,35 @@ class TypeInferenceEngine:
         inferred_type = self._infer_type_from_expression(right_node, module_qn)
         if inferred_type:
             local_var_types[var_name] = inferred_type
-            logger.debug(f"Inferred type: {var_name} -> {inferred_type}")
+            logger.debug(lg.PY_TYPE_INFERRED.format(var=var_name, type=inferred_type))
 
     def _extract_variable_name(self, node: Node) -> str | None:
-        if node.type == "identifier":
+        if node.type == cs.TS_PY_IDENTIFIER:
             text = node.text
             if text is not None:
                 decoded = safe_decode_text(node)
                 if decoded:
-                    result: str = decoded
-                    return result
+                    return decoded
         return None
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
-        if node.type == "call":
+        if node.type == cs.TS_PY_CALL:
             func_node = node.child_by_field_name("function")
-            if func_node and func_node.type == "identifier":
+            if func_node and func_node.type == cs.TS_PY_IDENTIFIER:
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = safe_decode_text(func_node)
                     if class_name and len(class_name) > 0 and class_name[0].isupper():
                         return class_name
 
-            elif func_node and func_node.type == "attribute":
+            elif func_node and func_node.type == cs.TS_PY_ATTRIBUTE:
                 method_call_text = self._extract_full_method_call(func_node)
                 if method_call_text:
                     return self._infer_method_call_return_type(
                         method_call_text, module_qn, local_var_types=None
                     )
 
-        elif node.type == "list_comprehension":
+        elif node.type == cs.TS_PY_LIST_COMPREHENSION:
             if body_node := node.child_by_field_name("body"):
                 return self._infer_type_from_expression(body_node, module_qn)
 
@@ -637,16 +644,16 @@ class TypeInferenceEngine:
     def _infer_type_from_expression_simple(
         self, node: Node, module_qn: str
     ) -> str | None:
-        if node.type == "call":
+        if node.type == cs.TS_PY_CALL:
             func_node = node.child_by_field_name("function")
-            if func_node and func_node.type == "identifier":
+            if func_node and func_node.type == cs.TS_PY_IDENTIFIER:
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = safe_decode_text(func_node)
                     if class_name and len(class_name) > 0 and class_name[0].isupper():
                         return class_name
 
-        elif node.type == "list_comprehension":
+        elif node.type == cs.TS_PY_LIST_COMPREHENSION:
             body_node = node.child_by_field_name("body")
             if body_node:
                 return self._infer_type_from_expression_simple(body_node, module_qn)
@@ -656,9 +663,9 @@ class TypeInferenceEngine:
     def _infer_type_from_expression_complex(
         self, node: Node, module_qn: str, local_var_types: dict[str, str]
     ) -> str | None:
-        if node.type == "call":
+        if node.type == cs.TS_PY_CALL:
             func_node = node.child_by_field_name("function")
-            if func_node and func_node.type == "attribute":
+            if func_node and func_node.type == cs.TS_PY_ATTRIBUTE:
                 method_call_text = self._extract_full_method_call(func_node)
                 if method_call_text:
                     return self._infer_method_call_return_type(
@@ -671,8 +678,7 @@ class TypeInferenceEngine:
         if attr_node.text:
             decoded = safe_decode_text(attr_node)
             if decoded:
-                result: str = decoded
-                return result
+                return decoded
         return None
 
     def _infer_method_call_return_type(
@@ -683,14 +689,14 @@ class TypeInferenceEngine:
     ) -> str | None:
         cache_key = f"{module_qn}:{method_call}"
 
-        """(H) Recursion guard: prevent infinite loops in recursive type inference."""
+        # (H) Recursion guard: prevent infinite loops in recursive type inference.
         if cache_key in self._type_inference_in_progress:
-            logger.debug(f"Recursion guard (method call): skipping {method_call}")
+            logger.debug(lg.PY_RECURSION_GUARD.format(method=method_call))
             return None
 
         self._type_inference_in_progress.add(cache_key)
         try:
-            if SEPARATOR_DOT in method_call and self._is_method_chain(method_call):
+            if cs.SEPARATOR_DOT in method_call and self._is_method_chain(method_call):
                 return self._infer_chained_call_return_type_fixed(
                     method_call, module_qn, local_var_types
                 )
@@ -726,7 +732,7 @@ class TypeInferenceEngine:
 
         if object_type:
             full_object_type = object_type
-            if SEPARATOR_DOT not in object_type:
+            if cs.SEPARATOR_DOT not in object_type:
                 resolved_class = self._resolve_class_name(object_type, module_qn)
                 if resolved_class:
                     full_object_type = resolved_class
@@ -789,7 +795,7 @@ class TypeInferenceEngine:
         if method_qn in self._method_return_type_cache:
             return self._method_return_type_cache[method_qn]
         if method_qn in self._type_inference_in_progress:
-            logger.debug(f"Recursion guard: skipping {method_qn}")
+            logger.debug(lg.PY_RECURSION_GUARD_QN.format(method_qn=method_qn))
             return None
 
         self._type_inference_in_progress.add(method_qn)
@@ -836,7 +842,7 @@ class TypeInferenceEngine:
             return self._analyze_method_return_statements(method_node, method_qn)
 
         except Exception as e:
-            logger.debug(f"Failed to infer return type for {method_call}: {e}")
+            logger.debug(lg.PY_INFER_RETURN_FAILED.format(method=method_call, error=e))
             return None
 
     def _resolve_method_qualified_name(
@@ -845,10 +851,10 @@ class TypeInferenceEngine:
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        if SEPARATOR_DOT not in method_call:
+        if cs.SEPARATOR_DOT not in method_call:
             return None
 
-        parts = method_call.split(SEPARATOR_DOT)
+        parts = method_call.split(cs.SEPARATOR_DOT)
         if len(parts) < 2:
             return None
 
@@ -867,7 +873,7 @@ class TypeInferenceEngine:
 
             return self._resolve_class_method(class_name, method_name, module_qn)
 
-        if parts[0] == "self" and len(parts) >= 3:
+        if parts[0] == cs.PY_KEYWORD_SELF and len(parts) >= 3:
             attribute_name = parts[1]
             method_name = parts[-1]
 
@@ -924,7 +930,11 @@ class TypeInferenceEngine:
                         and self.function_registry[method_qn] == NodeType.METHOD
                     ):
                         logger.debug(
-                            f"Resolved {class_name}.{method_name} to {method_qn}"
+                            lg.PY_RESOLVED_METHOD.format(
+                                class_name=class_name,
+                                method_name=method_name,
+                                method_qn=method_qn,
+                            )
                         )
                         return method_qn
 
@@ -936,21 +946,18 @@ class TypeInferenceEngine:
                 file_path = self.module_qn_to_file_path[module_qn]
                 if file_path in self.ast_cache:
                     root_node, language = self.ast_cache[file_path]
-                    if language == SupportedLanguage.PYTHON:
+                    if language == cs.SupportedLanguage.PYTHON:
                         instance_vars: dict[str, str] = {}
                         self._analyze_self_assignments(
                             root_node, instance_vars, module_qn
                         )
 
-                        full_attr_name = f"self.{attribute_name}"
+                        full_attr_name = f"{cs.PY_SELF_PREFIX}{attribute_name}"
                         if full_attr_name in instance_vars:
-                            attr_type: str = instance_vars[full_attr_name]
-                            return attr_type
+                            return instance_vars[full_attr_name]
 
         except Exception as e:
-            logger.debug(
-                f"Failed to analyze instance variables for {attribute_name}: {e}"
-            )
+            logger.debug(lg.PY_INFER_ATTR_FAILED.format(attr=attribute_name, error=e))
 
         if "_" in attribute_name:
             parts = attribute_name.split("_")
@@ -986,14 +993,14 @@ class TypeInferenceEngine:
         return None
 
     def _find_method_ast_node(self, method_qn: str) -> Node | None:
-        qn_parts = method_qn.split(SEPARATOR_DOT)
+        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
         if len(qn_parts) < 3:
             return None
 
         class_name = qn_parts[-2]
         method_name = qn_parts[-1]
 
-        expected_module = SEPARATOR_DOT.join(qn_parts[:-2])
+        expected_module = cs.SEPARATOR_DOT.join(qn_parts[:-2])
         if expected_module in self.module_qn_to_file_path:
             file_path = self.module_qn_to_file_path[expected_module]
             if file_path in self.ast_cache:
@@ -1009,14 +1016,14 @@ class TypeInferenceEngine:
         root_node: Node,
         class_name: str,
         method_name: str,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
     ) -> Node | None:
         match language:
-            case SupportedLanguage.PYTHON:
+            case cs.SupportedLanguage.PYTHON:
                 return self._find_python_method_in_ast(
                     root_node, class_name, method_name
                 )
-            case SupportedLanguage.JS | SupportedLanguage.TS:
+            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 return self.js_type_inference.find_js_method_in_ast(
                     root_node, class_name, method_name
                 )
@@ -1026,7 +1033,7 @@ class TypeInferenceEngine:
     def _find_python_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:
-        lang_queries = self.queries[SupportedLanguage.PYTHON]
+        lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
         class_query = lang_queries["classes"]
         if not class_query:
             return None
@@ -1084,7 +1091,7 @@ class TypeInferenceEngine:
         for return_node in return_nodes:
             return_value = None
             for child in return_node.children:
-                if child.type not in ["return", "keyword"]:
+                if child.type not in (cs.TS_PY_RETURN, cs.TS_PY_KEYWORD):
                     return_value = child
                     break
 
@@ -1100,21 +1107,21 @@ class TypeInferenceEngine:
 
         while stack:
             current = stack.pop()
-            if current.type == "return_statement":
+            if current.type == cs.TS_PY_RETURN_STATEMENT:
                 return_nodes.append(current)
 
             stack.extend(reversed(current.children))
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
-        if expr_node.type == "call":
+        if expr_node.type == cs.TS_PY_CALL:
             func_node = expr_node.child_by_field_name("function")
-            if func_node and func_node.type == "identifier":
+            if func_node and func_node.type == cs.TS_PY_IDENTIFIER:
                 func_text = func_node.text
                 if func_text is not None:
                     class_name = safe_decode_text(func_node)
                     if class_name:
-                        if class_name == "cls":
-                            qn_parts = method_qn.split(SEPARATOR_DOT)
+                        if class_name == cs.PY_KEYWORD_CLS:
+                            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
                             if len(qn_parts) >= 2:
                                 return qn_parts[-2]
                         elif (
@@ -1122,57 +1129,64 @@ class TypeInferenceEngine:
                             and len(class_name) > 0
                             and class_name[0].isupper()
                         ):
-                            module_qn = SEPARATOR_DOT.join(
-                                method_qn.split(SEPARATOR_DOT)[:-2]
+                            module_qn = cs.SEPARATOR_DOT.join(
+                                method_qn.split(cs.SEPARATOR_DOT)[:-2]
                             )
                             resolved_class = self._find_class_in_scope(
                                 class_name, module_qn
                             )
                             return resolved_class or class_name
 
-            elif func_node and func_node.type == "attribute":
+            elif func_node and func_node.type == cs.TS_PY_ATTRIBUTE:
                 method_call_text = self._extract_full_method_call(func_node)
                 if method_call_text:
-                    module_qn = SEPARATOR_DOT.join(method_qn.split(SEPARATOR_DOT)[:-2])
+                    module_qn = cs.SEPARATOR_DOT.join(
+                        method_qn.split(cs.SEPARATOR_DOT)[:-2]
+                    )
                     return self._infer_method_call_return_type(
                         method_call_text, module_qn
                     )
 
-        elif expr_node.type == "identifier":
+        elif expr_node.type == cs.TS_PY_IDENTIFIER:
             text = expr_node.text
             if text is not None:
                 identifier = safe_decode_text(expr_node)
-                if identifier == "self" or identifier == "cls":
-                    qn_parts = method_qn.split(SEPARATOR_DOT)
+                if identifier == cs.PY_KEYWORD_SELF or identifier == cs.PY_KEYWORD_CLS:
+                    qn_parts = method_qn.split(cs.SEPARATOR_DOT)
                     if len(qn_parts) >= 2:
                         return qn_parts[-2]
                 else:
-                    module_qn = SEPARATOR_DOT.join(method_qn.split(SEPARATOR_DOT)[:-2])
+                    module_qn = cs.SEPARATOR_DOT.join(
+                        method_qn.split(cs.SEPARATOR_DOT)[:-2]
+                    )
 
                     method_node = self._find_method_ast_node(method_qn)
                     if method_node:
                         local_vars = self.build_local_variable_type_map(
-                            method_node, module_qn, SupportedLanguage.PYTHON
+                            method_node, module_qn, cs.SupportedLanguage.PYTHON
                         )
                         if identifier in local_vars:
                             logger.debug(
-                                f"Found variable type from method context: {identifier} -> {local_vars[identifier]}"
+                                lg.PY_VAR_FROM_CONTEXT.format(
+                                    var=identifier, type=local_vars[identifier]
+                                )
                             )
                             return local_vars[identifier]
 
-                    logger.debug(
-                        f"Cannot infer type for variable reference: {identifier}"
-                    )
+                    logger.debug(lg.PY_VAR_CANNOT_INFER.format(var=identifier))
                     return None
 
-        elif expr_node.type == "attribute":
+        elif expr_node.type == cs.TS_PY_ATTRIBUTE:
             object_node = expr_node.child_by_field_name("object")
-            if object_node and object_node.type == "identifier":
+            if object_node and object_node.type == cs.TS_PY_IDENTIFIER:
                 object_text = object_node.text
                 if object_text is not None:
                     object_name = safe_decode_text(object_node)
-                    if object_name == "cls" or object_name == "self":
-                        qn_parts = method_qn.split(SEPARATOR_DOT)
+                    if (
+                        object_name == cs.PY_KEYWORD_CLS
+                        or object_name == cs.PY_KEYWORD_SELF
+                    ):
+                        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
                         if len(qn_parts) >= 2:
                             return qn_parts[-2]
 

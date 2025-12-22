@@ -66,11 +66,11 @@ def _build_deep_return_tree(depth: int) -> NodeStub:
 def _make_engine() -> TypeInferenceEngine:
     return TypeInferenceEngine(
         import_processor=MagicMock(),
-        function_registry={},
+        function_registry=MagicMock(),
         simple_name_lookup=defaultdict(set),
         repo_path=Path("."),
         project_name="proj",
-        ast_cache={},  # ty: ignore[invalid-argument-type]
+        ast_cache=MagicMock(),
         queries={},
         module_qn_to_file_path={},
         class_inheritance={},

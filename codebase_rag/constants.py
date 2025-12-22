@@ -1416,3 +1416,32 @@ JAVA_SRC_FOLDERS = frozenset(
 
 # (H) Delimiter tokens for argument parsing
 DELIMITER_TOKENS = frozenset({"(", ")", ","})
+
+# (H) Python tree-sitter node types for type inference
+TS_PY_IDENTIFIER = "identifier"
+TS_PY_TYPED_PARAMETER = "typed_parameter"
+TS_PY_ATTRIBUTE = "attribute"
+TS_PY_CALL = "call"
+TS_PY_LIST = "list"
+TS_PY_LIST_COMPREHENSION = "list_comprehension"
+TS_PY_FOR_STATEMENT = "for_statement"
+TS_PY_FOR_IN_CLAUSE = "for_in_clause"
+TS_PY_ASSIGNMENT = "assignment"
+TS_PY_CLASS_DEFINITION = "class_definition"
+TS_PY_BLOCK = "block"
+TS_PY_FUNCTION_DEFINITION = "function_definition"
+TS_PY_RETURN_STATEMENT = "return_statement"
+TS_PY_RETURN = "return"
+TS_PY_KEYWORD = "keyword"
+
+# (H) Python keyword identifiers
+PY_KEYWORD_SELF = "self"
+PY_KEYWORD_CLS = "cls"
+PY_METHOD_INIT = "__init__"
+
+# (H) Python attribute prefixes
+PY_SELF_PREFIX = "self."
+
+# (H) Type inference defaults
+TYPE_INFERENCE_LIST = "list"
+TYPE_INFERENCE_BASE_MODEL = "BaseModel"
