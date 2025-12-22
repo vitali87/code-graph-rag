@@ -32,7 +32,7 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["java.util.ArrayList"] = NodeType.CLASS
         mock_updater.function_registry["java.util.HashMap"] = NodeType.CLASS
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "List", module_qn
         )
         assert result is not None
@@ -40,13 +40,13 @@ class TestWildcardImportResolution:
         assert resolved_qn == "java.util.List"
         assert func_type == NodeType.CLASS
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "ArrayList", module_qn
         )
         assert result is not None
         assert result[1] == "java.util.ArrayList"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "NonExistentClass", module_qn
         )
         assert result is None
@@ -64,7 +64,7 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["std::collections::BTreeMap"] = NodeType.FUNCTION
         mock_updater.function_registry["std::collections::VecDeque"] = NodeType.FUNCTION
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "HashMap", module_qn
         )
         assert result is not None
@@ -72,7 +72,7 @@ class TestWildcardImportResolution:
         assert resolved_qn == "std::collections::HashMap"
         assert func_type == NodeType.FUNCTION
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "BTreeMap", module_qn
         )
         assert result is not None
@@ -91,7 +91,7 @@ class TestWildcardImportResolution:
 
         mock_updater.function_registry["src.utils"] = NodeType.MODULE
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "utils", module_qn
         )
         assert result is not None
@@ -114,14 +114,14 @@ class TestWildcardImportResolution:
         )
         mock_updater.function_registry["myproject.utils.UtilityClass"] = NodeType.CLASS
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "helper_function", module_qn
         )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "myproject.utils.helper_function"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "UtilityClass", module_qn
         )
         assert result is not None
@@ -141,20 +141,20 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["std::string"] = NodeType.CLASS
         mock_updater.function_registry["boost::algorithm::trim"] = NodeType.FUNCTION
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "vector", module_qn
         )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "std::vector"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "string", module_qn
         )
         assert result is not None
         assert result[1] == "std::string"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "trim", module_qn
         )
         assert result is not None
@@ -176,20 +176,20 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["scala.collection.Map"] = NodeType.CLASS
         mock_updater.function_registry["scala.util.Try"] = NodeType.CLASS
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "List", module_qn
         )
         assert result is not None
         func_type, resolved_qn = result
         assert resolved_qn == "scala.collection.List"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "Map", module_qn
         )
         assert result is not None
         assert result[1] == "scala.collection.Map"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "Try", module_qn
         )
         assert result is not None
@@ -208,7 +208,7 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["fmt"] = NodeType.PACKAGE
         mock_updater.function_registry["strings"] = NodeType.PACKAGE
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "fmt", module_qn
         )
         assert result is not None
@@ -232,7 +232,7 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["my.custom.List"] = NodeType.CLASS
         mock_updater.function_registry["java.util.List"] = NodeType.CLASS
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "List", module_qn
         )
         assert result is not None
@@ -258,19 +258,19 @@ class TestWildcardImportResolution:
         mock_updater.function_registry["java.io.File"] = NodeType.CLASS
         mock_updater.function_registry["std::collections::HashMap"] = NodeType.FUNCTION
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "List", module_qn
         )
         assert result is not None
         assert result[1] == "java.util.List"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "File", module_qn
         )
         assert result is not None
         assert result[1] == "java.io.File"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "HashMap", module_qn
         )
         assert result is not None
@@ -289,7 +289,7 @@ class TestWildcardImportResolution:
 
         mock_updater.function_registry["java.util.List"] = NodeType.CLASS
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "NonExistentClass", module_qn
         )
         assert result is None
@@ -312,7 +312,7 @@ class TestWildcardImportResolution:
             "com.example.service.LocalService"
         )
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             "LocalService", module_qn
         )
         assert result is not None

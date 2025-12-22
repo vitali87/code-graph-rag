@@ -201,54 +201,58 @@ class TestResolveBuiltinCall:
     def test_js_builtin_pattern_object_keys(
         self, call_processor: CallProcessor
     ) -> None:
-        result = call_processor._resolve_builtin_call("Object.keys")
+        result = call_processor._resolver.resolve_builtin_call("Object.keys")
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Object.keys"
 
     def test_js_builtin_pattern_json_parse(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_builtin_call("JSON.parse")
+        result = call_processor._resolver.resolve_builtin_call("JSON.parse")
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
         assert result[1] == f"{cs.BUILTIN_PREFIX}.JSON.parse"
 
     def test_bind_method(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_builtin_call("someFunc.bind")
+        result = call_processor._resolver.resolve_builtin_call("someFunc.bind")
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.bind"
 
     def test_call_method(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_builtin_call("someFunc.call")
+        result = call_processor._resolver.resolve_builtin_call("someFunc.call")
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.call"
 
     def test_apply_method(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_builtin_call("someFunc.apply")
+        result = call_processor._resolver.resolve_builtin_call("someFunc.apply")
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.apply"
 
     def test_prototype_call(self, call_processor: CallProcessor) -> None:
         # (H) .call suffix is matched first, returns Function.prototype.call
-        result = call_processor._resolve_builtin_call("Array.prototype.slice.call")
+        result = call_processor._resolver.resolve_builtin_call(
+            "Array.prototype.slice.call"
+        )
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.call"
 
     def test_prototype_apply(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_builtin_call("String.prototype.split.apply")
+        result = call_processor._resolver.resolve_builtin_call(
+            "String.prototype.split.apply"
+        )
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.apply"
 
     def test_non_builtin_returns_none(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_builtin_call("myCustomFunction")
+        result = call_processor._resolver.resolve_builtin_call("myCustomFunction")
         assert result is None
 
     def test_unknown_method_returns_none(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_builtin_call("obj.unknownMethod")
+        result = call_processor._resolver.resolve_builtin_call("obj.unknownMethod")
         assert result is None
 
 
@@ -266,36 +270,36 @@ class TestResolveSuperCall:
         )
         processor = updater.factory.call_processor
 
-        processor.class_inheritance["proj.module.ChildClass"] = [
+        processor._resolver.class_inheritance["proj.module.ChildClass"] = [
             "proj.module.ParentClass"
         ]
-        processor.class_inheritance["proj.module.ParentClass"] = [
+        processor._resolver.class_inheritance["proj.module.ParentClass"] = [
             "proj.module.GrandparentClass"
         ]
 
-        processor.function_registry["proj.module.ParentClass.constructor"] = (
+        processor._resolver.function_registry["proj.module.ParentClass.constructor"] = (
             NodeType.METHOD
         )
-        processor.function_registry["proj.module.ParentClass.someMethod"] = (
+        processor._resolver.function_registry["proj.module.ParentClass.someMethod"] = (
             NodeType.METHOD
         )
-        processor.function_registry["proj.module.GrandparentClass.inheritedMethod"] = (
-            NodeType.METHOD
-        )
+        processor._resolver.function_registry[
+            "proj.module.GrandparentClass.inheritedMethod"
+        ] = NodeType.METHOD
 
         return processor
 
     def test_super_calls_constructor(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_super_call(
+        result = processor_with_inheritance._resolver._resolve_super_call(
             cs.KEYWORD_SUPER, class_context="proj.module.ChildClass"
         )
         assert result is not None
         assert result[1] == "proj.module.ParentClass.constructor"
 
     def test_super_dot_method(self, processor_with_inheritance: CallProcessor) -> None:
-        result = processor_with_inheritance._resolve_super_call(
+        result = processor_with_inheritance._resolver._resolve_super_call(
             f"{cs.KEYWORD_SUPER}.someMethod", class_context="proj.module.ChildClass"
         )
         assert result is not None
@@ -304,7 +308,7 @@ class TestResolveSuperCall:
     def test_super_inherited_from_grandparent(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_super_call(
+        result = processor_with_inheritance._resolver._resolve_super_call(
             f"{cs.KEYWORD_SUPER}.inheritedMethod",
             class_context="proj.module.ChildClass",
         )
@@ -314,7 +318,7 @@ class TestResolveSuperCall:
     def test_super_no_class_context_returns_none(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_super_call(
+        result = processor_with_inheritance._resolver._resolve_super_call(
             cs.KEYWORD_SUPER, class_context=None
         )
         assert result is None
@@ -322,7 +326,7 @@ class TestResolveSuperCall:
     def test_super_unknown_class_returns_none(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_super_call(
+        result = processor_with_inheritance._resolver._resolve_super_call(
             cs.KEYWORD_SUPER, class_context="proj.module.UnknownClass"
         )
         assert result is None
@@ -330,7 +334,7 @@ class TestResolveSuperCall:
     def test_super_method_not_found_returns_none(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_super_call(
+        result = processor_with_inheritance._resolver._resolve_super_call(
             f"{cs.KEYWORD_SUPER}.nonExistentMethod",
             class_context="proj.module.ChildClass",
         )
@@ -339,7 +343,7 @@ class TestResolveSuperCall:
 
 class TestResolveCppOperatorCall:
     def test_builtin_operator_plus(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_cpp_operator_call(
+        result = call_processor._resolver.resolve_cpp_operator_call(
             "operator_plus", "proj.module"
         )
         assert result is not None
@@ -347,7 +351,7 @@ class TestResolveCppOperatorCall:
         assert result[1] == cs.CPP_OPERATORS["operator_plus"]
 
     def test_builtin_operator_equal(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_cpp_operator_call(
+        result = call_processor._resolver.resolve_cpp_operator_call(
             "operator_equal", "proj.module"
         )
         assert result is not None
@@ -355,7 +359,7 @@ class TestResolveCppOperatorCall:
         assert result[1] == cs.CPP_OPERATORS["operator_equal"]
 
     def test_non_operator_returns_none(self, call_processor: CallProcessor) -> None:
-        result = call_processor._resolve_cpp_operator_call(
+        result = call_processor._resolver.resolve_cpp_operator_call(
             "someFunction", "proj.module"
         )
         assert result is None
@@ -372,11 +376,13 @@ class TestResolveCppOperatorCall:
         )
         processor = updater.factory.call_processor
 
-        processor.function_registry["proj.module.MyClass.operator_custom"] = (
+        processor._resolver.function_registry["proj.module.MyClass.operator_custom"] = (
             NodeType.METHOD
         )
 
-        result = processor._resolve_cpp_operator_call("operator_custom", "proj.module")
+        result = processor._resolver.resolve_cpp_operator_call(
+            "operator_custom", "proj.module"
+        )
         assert result is not None
         assert result[1] == "proj.module.MyClass.operator_custom"
 
@@ -395,12 +401,14 @@ class TestResolveInheritedMethod:
         )
         processor = updater.factory.call_processor
 
-        processor.class_inheritance["proj.Child"] = ["proj.Parent"]
-        processor.class_inheritance["proj.Parent"] = ["proj.Grandparent"]
-        processor.class_inheritance["proj.Grandparent"] = []
+        processor._resolver.class_inheritance["proj.Child"] = ["proj.Parent"]
+        processor._resolver.class_inheritance["proj.Parent"] = ["proj.Grandparent"]
+        processor._resolver.class_inheritance["proj.Grandparent"] = []
 
-        processor.function_registry["proj.Parent.parentMethod"] = NodeType.METHOD
-        processor.function_registry["proj.Grandparent.grandparentMethod"] = (
+        processor._resolver.function_registry["proj.Parent.parentMethod"] = (
+            NodeType.METHOD
+        )
+        processor._resolver.function_registry["proj.Grandparent.grandparentMethod"] = (
             NodeType.METHOD
         )
 
@@ -409,7 +417,7 @@ class TestResolveInheritedMethod:
     def test_finds_method_in_parent(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_inherited_method(
+        result = processor_with_inheritance._resolver._resolve_inherited_method(
             "proj.Child", "parentMethod"
         )
         assert result is not None
@@ -418,7 +426,7 @@ class TestResolveInheritedMethod:
     def test_finds_method_in_grandparent(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_inherited_method(
+        result = processor_with_inheritance._resolver._resolve_inherited_method(
             "proj.Child", "grandparentMethod"
         )
         assert result is not None
@@ -427,7 +435,7 @@ class TestResolveInheritedMethod:
     def test_method_not_found_returns_none(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_inherited_method(
+        result = processor_with_inheritance._resolver._resolve_inherited_method(
             "proj.Child", "nonExistent"
         )
         assert result is None
@@ -435,7 +443,7 @@ class TestResolveInheritedMethod:
     def test_unknown_class_returns_none(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolve_inherited_method(
+        result = processor_with_inheritance._resolver._resolve_inherited_method(
             "proj.Unknown", "someMethod"
         )
         assert result is None
@@ -443,30 +451,30 @@ class TestResolveInheritedMethod:
 
 class TestIsMethodChain:
     def test_simple_method_not_chain(self, call_processor: CallProcessor) -> None:
-        assert call_processor._is_method_chain("obj.method") is False
+        assert call_processor._resolver._is_method_chain("obj.method") is False
 
     def test_method_with_parens_is_chain(self, call_processor: CallProcessor) -> None:
-        assert call_processor._is_method_chain("obj.method().other") is True
+        assert call_processor._resolver._is_method_chain("obj.method().other") is True
 
     def test_chained_calls_is_chain(self, call_processor: CallProcessor) -> None:
-        assert call_processor._is_method_chain("a.b().c().d") is True
+        assert call_processor._resolver._is_method_chain("a.b().c().d") is True
 
     def test_no_dots_not_chain(self, call_processor: CallProcessor) -> None:
-        assert call_processor._is_method_chain("method()") is False
+        assert call_processor._resolver._is_method_chain("method()") is False
 
     def test_empty_string_not_chain(self, call_processor: CallProcessor) -> None:
-        assert call_processor._is_method_chain("") is False
+        assert call_processor._resolver._is_method_chain("") is False
 
 
 class TestCalculateImportDistance:
     def test_same_module_distance_zero(self, call_processor: CallProcessor) -> None:
-        distance = call_processor._calculate_import_distance(
+        distance = call_processor._resolver._calculate_import_distance(
             "proj.pkg.mod.func", "proj.pkg.mod"
         )
         assert distance == 0
 
     def test_sibling_module_distance_one(self, call_processor: CallProcessor) -> None:
-        distance = call_processor._calculate_import_distance(
+        distance = call_processor._resolver._calculate_import_distance(
             "proj.pkg.other.func", "proj.pkg.mod"
         )
         assert distance == 1
@@ -474,7 +482,7 @@ class TestCalculateImportDistance:
     def test_distant_module_higher_distance(
         self, call_processor: CallProcessor
     ) -> None:
-        distance = call_processor._calculate_import_distance(
+        distance = call_processor._resolver._calculate_import_distance(
             "other.pkg.mod.func", "proj.pkg.mod"
         )
         assert distance > 2
@@ -482,10 +490,10 @@ class TestCalculateImportDistance:
     def test_common_prefix_reduces_distance(
         self, call_processor: CallProcessor
     ) -> None:
-        close_distance = call_processor._calculate_import_distance(
+        close_distance = call_processor._resolver._calculate_import_distance(
             "proj.pkg.other.func", "proj.pkg.mod"
         )
-        far_distance = call_processor._calculate_import_distance(
+        far_distance = call_processor._resolver._calculate_import_distance(
             "other.pkg.other.func", "proj.pkg.mod"
         )
         assert close_distance < far_distance
@@ -731,12 +739,18 @@ class TestResolveFunctionCall:
         )
         processor = updater.factory.call_processor
 
-        processor.function_registry["proj.module.local_func"] = NodeType.FUNCTION
-        processor.function_registry["proj.module.MyClass.method"] = NodeType.METHOD
-        processor.function_registry["proj.other.other_func"] = NodeType.FUNCTION
-        processor.function_registry["proj.utils.helper"] = NodeType.FUNCTION
+        processor._resolver.function_registry["proj.module.local_func"] = (
+            NodeType.FUNCTION
+        )
+        processor._resolver.function_registry["proj.module.MyClass.method"] = (
+            NodeType.METHOD
+        )
+        processor._resolver.function_registry["proj.other.other_func"] = (
+            NodeType.FUNCTION
+        )
+        processor._resolver.function_registry["proj.utils.helper"] = NodeType.FUNCTION
 
-        processor.import_processor.import_mapping["proj.module"] = {
+        processor._resolver.import_processor.import_mapping["proj.module"] = {
             "other_func": "proj.other.other_func",
             "helper": "proj.utils.helper",
             "MyClass": "proj.module.MyClass",
@@ -747,7 +761,7 @@ class TestResolveFunctionCall:
     def test_resolves_same_module_function(
         self, processor_with_registry: CallProcessor
     ) -> None:
-        result = processor_with_registry._resolve_function_call(
+        result = processor_with_registry._resolver.resolve_function_call(
             "local_func", "proj.module"
         )
         assert result is not None
@@ -756,7 +770,7 @@ class TestResolveFunctionCall:
     def test_resolves_imported_function(
         self, processor_with_registry: CallProcessor
     ) -> None:
-        result = processor_with_registry._resolve_function_call(
+        result = processor_with_registry._resolver.resolve_function_call(
             "other_func", "proj.module"
         )
         assert result is not None
@@ -765,7 +779,7 @@ class TestResolveFunctionCall:
     def test_resolves_method_on_imported_class(
         self, processor_with_registry: CallProcessor
     ) -> None:
-        result = processor_with_registry._resolve_function_call(
+        result = processor_with_registry._resolver.resolve_function_call(
             "MyClass.method", "proj.module"
         )
         assert result is not None
@@ -774,7 +788,7 @@ class TestResolveFunctionCall:
     def test_returns_none_for_unknown_function(
         self, processor_with_registry: CallProcessor
     ) -> None:
-        result = processor_with_registry._resolve_function_call(
+        result = processor_with_registry._resolver.resolve_function_call(
             "unknown_func", "proj.module"
         )
         assert result is None
@@ -791,14 +805,14 @@ class TestResolveFunctionCall:
         )
         processor = updater.factory.call_processor
 
-        processor.function_registry["proj.models.User.save"] = NodeType.METHOD
-        processor.import_processor.import_mapping["proj.service"] = {
+        processor._resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        processor._resolver.import_processor.import_mapping["proj.service"] = {
             "User": "proj.models.User"
         }
 
         local_var_types = {"user": "User"}
 
-        result = processor._resolve_function_call(
+        result = processor._resolver.resolve_function_call(
             "user.save", "proj.service", local_var_types
         )
         assert result is not None
@@ -817,9 +831,11 @@ class TestResolveFunctionCall:
         processor = updater.factory.call_processor
 
         iife_qn = "proj.module.__iife_func_1_5"
-        processor.function_registry[iife_qn] = NodeType.FUNCTION
+        processor._resolver.function_registry[iife_qn] = NodeType.FUNCTION
 
-        result = processor._resolve_function_call("__iife_func_1_5", "proj.module")
+        result = processor._resolver.resolve_function_call(
+            "__iife_func_1_5", "proj.module"
+        )
         assert result is not None
         assert result[1] == iife_qn
 
@@ -838,11 +854,17 @@ class TestResolveChainedCall:
         )
         processor = updater.factory.call_processor
 
-        processor.function_registry["proj.models.QuerySet.filter"] = NodeType.METHOD
-        processor.function_registry["proj.models.QuerySet.all"] = NodeType.METHOD
-        processor.function_registry["proj.models.User.objects"] = NodeType.METHOD
+        processor._resolver.function_registry["proj.models.QuerySet.filter"] = (
+            NodeType.METHOD
+        )
+        processor._resolver.function_registry["proj.models.QuerySet.all"] = (
+            NodeType.METHOD
+        )
+        processor._resolver.function_registry["proj.models.User.objects"] = (
+            NodeType.METHOD
+        )
 
-        processor.import_processor.import_mapping["proj.views"] = {
+        processor._resolver.import_processor.import_mapping["proj.views"] = {
             "User": "proj.models.User",
             "QuerySet": "proj.models.QuerySet",
         }
@@ -852,7 +874,7 @@ class TestResolveChainedCall:
     def test_returns_none_for_unresolvable_chain(
         self, processor_with_types: CallProcessor
     ) -> None:
-        result = processor_with_types._resolve_chained_call(
+        result = processor_with_types._resolver._resolve_chained_call(
             "unknown().method", "proj.views"
         )
         assert result is None
@@ -860,13 +882,15 @@ class TestResolveChainedCall:
     def test_returns_none_for_non_chained_expression(
         self, processor_with_types: CallProcessor
     ) -> None:
-        result = processor_with_types._resolve_chained_call("simple_call", "proj.views")
+        result = processor_with_types._resolver._resolve_chained_call(
+            "simple_call", "proj.views"
+        )
         assert result is None
 
     def test_returns_none_for_chain_without_type_info(
         self, processor_with_types: CallProcessor
     ) -> None:
-        result = processor_with_types._resolve_chained_call(
+        result = processor_with_types._resolver._resolve_chained_call(
             "unknown_object.method_one().method_two", "proj.views"
         )
         assert result is None
@@ -886,24 +910,30 @@ class TestTryResolveMethod:
         )
         processor = updater.factory.call_processor
 
-        processor.function_registry["proj.models.User.save"] = NodeType.METHOD
-        processor.function_registry["proj.models.BaseModel.validate"] = NodeType.METHOD
+        processor._resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        processor._resolver.function_registry["proj.models.BaseModel.validate"] = (
+            NodeType.METHOD
+        )
 
-        processor.class_inheritance["proj.models.User"] = ["proj.models.BaseModel"]
+        processor._resolver.class_inheritance["proj.models.User"] = [
+            "proj.models.BaseModel"
+        ]
 
         return processor
 
     def test_resolves_direct_method(
         self, processor_with_methods: CallProcessor
     ) -> None:
-        result = processor_with_methods._try_resolve_method("proj.models.User", "save")
+        result = processor_with_methods._resolver._try_resolve_method(
+            "proj.models.User", "save"
+        )
         assert result is not None
         assert result[1] == "proj.models.User.save"
 
     def test_resolves_inherited_method(
         self, processor_with_methods: CallProcessor
     ) -> None:
-        result = processor_with_methods._try_resolve_method(
+        result = processor_with_methods._resolver._try_resolve_method(
             "proj.models.User", "validate"
         )
         assert result is not None
@@ -912,7 +942,7 @@ class TestTryResolveMethod:
     def test_returns_none_for_unknown_method(
         self, processor_with_methods: CallProcessor
     ) -> None:
-        result = processor_with_methods._try_resolve_method(
+        result = processor_with_methods._resolver._try_resolve_method(
             "proj.models.User", "unknown_method"
         )
         assert result is None
@@ -932,8 +962,8 @@ class TestResolveClassQnFromType:
         )
         processor = updater.factory.call_processor
 
-        processor.function_registry["proj.models.User"] = NodeType.CLASS
-        processor.import_processor.import_mapping["proj.service"] = {
+        processor._resolver.function_registry["proj.models.User"] = NodeType.CLASS
+        processor._resolver.import_processor.import_mapping["proj.service"] = {
             "User": "proj.models.User"
         }
 
@@ -943,7 +973,7 @@ class TestResolveClassQnFromType:
         self, processor_with_imports: CallProcessor
     ) -> None:
         import_map = {"User": "proj.models.User"}
-        result = processor_with_imports._resolve_class_qn_from_type(
+        result = processor_with_imports._resolver._resolve_class_qn_from_type(
             "User", import_map, "proj.service"
         )
         assert result == "proj.models.User"
@@ -952,7 +982,7 @@ class TestResolveClassQnFromType:
         self, processor_with_imports: CallProcessor
     ) -> None:
         import_map: dict[str, str] = {}
-        result = processor_with_imports._resolve_class_qn_from_type(
+        result = processor_with_imports._resolver._resolve_class_qn_from_type(
             "proj.models.User", import_map, "proj.service"
         )
         assert result == "proj.models.User"
@@ -961,7 +991,7 @@ class TestResolveClassQnFromType:
         self, processor_with_imports: CallProcessor
     ) -> None:
         import_map: dict[str, str] = {}
-        result = processor_with_imports._resolve_class_qn_from_type(
+        result = processor_with_imports._resolver._resolve_class_qn_from_type(
             "UnknownClass", import_map, "proj.service"
         )
         assert result == ""

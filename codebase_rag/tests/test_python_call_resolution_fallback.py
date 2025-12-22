@@ -46,7 +46,7 @@ class TestCallResolutionFallback:
         caller_module = "proj.main_package.caller_module"
         call_name = "process_data"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             call_name, caller_module
         )
 
@@ -57,7 +57,7 @@ class TestCallResolutionFallback:
         for qn in mock_updater.function_registry.keys():
             if qn.endswith(".process_data"):
                 distances[qn] = (
-                    mock_updater.factory.call_processor._calculate_import_distance(
+                    mock_updater.factory.call_processor._resolver._calculate_import_distance(
                         qn, caller_module
                     )
                 )
@@ -66,7 +66,7 @@ class TestCallResolutionFallback:
         best_distance = distances[best_qn]
 
         resolved_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 resolved_qn, caller_module
             )
         )
@@ -103,7 +103,7 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "helper"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             call_name, caller_module
         )
 
@@ -111,12 +111,12 @@ class TestCallResolutionFallback:
         func_type, resolved_qn = result
 
         resolved_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 resolved_qn, caller_module
             )
         )
         distant_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 "proj.distant.far_mod.SomeClass.helper", caller_module
             )
         )
@@ -138,7 +138,7 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "unique_func"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             call_name, caller_module
         )
 
@@ -153,7 +153,7 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "nonexistent_func"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             call_name, caller_module
         )
 
@@ -176,7 +176,7 @@ class TestCallResolutionFallback:
         caller_module = "proj.main.caller_mod"
         call_name = "local_func"
 
-        result = mock_updater.factory.call_processor._resolve_function_call(
+        result = mock_updater.factory.call_processor._resolver.resolve_function_call(
             call_name, caller_module
         )
 

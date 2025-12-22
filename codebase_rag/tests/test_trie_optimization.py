@@ -122,21 +122,21 @@ class TestTrieOptimization:
         """Test that function resolution works correctly with Trie optimization."""
         updater = graph_updater_with_trie
 
-        result = updater.factory.call_processor._resolve_function_call(
+        result = updater.factory.call_processor._resolver.resolve_function_call(
             "create_user", "test.services.user.UserService"
         )
         assert result is not None
         func_type, qn = result
         assert qn == "test.services.user.UserService.create_user"
 
-        result = updater.factory.call_processor._resolve_function_call(
+        result = updater.factory.call_processor._resolver.resolve_function_call(
             "process", "test.services.user"
         )
         assert result is not None
         func_type, qn = result
         assert qn == "test.utils.helper.Helper.process"
 
-        result = updater.factory.call_processor._resolve_function_call(
+        result = updater.factory.call_processor._resolver.resolve_function_call(
             "nonexistent", "test.services.user"
         )
         assert result is None

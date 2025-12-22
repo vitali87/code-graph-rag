@@ -28,8 +28,10 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
 
         assert distance == 1, (
@@ -43,8 +45,10 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        distance = mock_updater.factory.call_processor._calculate_import_distance(
-            method_qn, caller_module
+        distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                method_qn, caller_module
+            )
         )
 
         assert distance == 2, (
@@ -62,11 +66,13 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )
@@ -86,11 +92,13 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )
@@ -111,11 +119,13 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )
@@ -133,8 +143,10 @@ class TestImportDistanceCalculation:
         unknown_qn = "proj.pkg.sibling_mod.unknown_func"
         caller_module = "proj.pkg.caller_mod"
 
-        distance = mock_updater.factory.call_processor._calculate_import_distance(
-            unknown_qn, caller_module
+        distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                unknown_qn, caller_module
+            )
         )
         assert isinstance(distance, int), (
             "Should return integer distance even for unknown candidates"
@@ -150,11 +162,13 @@ class TestImportDistanceCalculation:
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )

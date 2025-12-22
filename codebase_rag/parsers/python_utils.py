@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
 from ..constants import SEPARATOR_DOT
+from ..types_defs import FunctionRegistryTrieProtocol
 
 if TYPE_CHECKING:
-    from ..graph_updater import FunctionRegistryTrie
     from .import_processor import ImportProcessor
 
 
@@ -11,20 +11,8 @@ def resolve_class_name(
     class_name: str,
     module_qn: str,
     import_processor: "ImportProcessor",
-    function_registry: "FunctionRegistryTrie",
+    function_registry: FunctionRegistryTrieProtocol,
 ) -> str | None:
-    """
-    Convert a simple class name to its fully qualified name.
-
-    Args:
-        class_name: The simple class name to resolve
-        module_qn: The qualified name of the current module
-        import_processor: ImportProcessor instance with import mappings
-        function_registry: FunctionRegistry instance for lookups
-
-    Returns:
-        The fully qualified class name if found, None otherwise
-    """
     if module_qn in import_processor.import_mapping:
         import_map = import_processor.import_mapping[module_qn]
         if class_name in import_map:

@@ -133,8 +133,10 @@ class TestImportParsing:
         assert len(graph_updater.function_registry) == 0
 
         try:
-            result = graph_updater.factory.call_processor._resolve_function_call(
-                "nonexistent", module_qn
+            result = (
+                graph_updater.factory.call_processor._resolver.resolve_function_call(
+                    "nonexistent", module_qn
+                )
             )
             assert result is None
         except Exception as e:
