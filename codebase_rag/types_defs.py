@@ -91,6 +91,15 @@ class ASTCacheProtocol(Protocol):
     def items(self) -> ItemsView[Path, tuple["Node", SupportedLanguage]]: ...
 
 
+class TreeSitterNodeProtocol(Protocol):
+    @property
+    def type(self) -> str: ...
+    @property
+    def children(self) -> list["TreeSitterNodeProtocol"]: ...
+    @property
+    def text(self) -> bytes: ...
+
+
 class ModelConfigKwargs(TypedDict, total=False):
     api_key: str | None
     endpoint: str | None

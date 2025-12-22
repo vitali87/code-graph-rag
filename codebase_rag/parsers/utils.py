@@ -5,7 +5,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ..constants import ENCODING_UTF8
-from ..types_defs import NodeType, SimpleNameLookup
+from ..types_defs import NodeType, SimpleNameLookup, TreeSitterNodeProtocol
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -16,7 +16,7 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(ENCODING_UTF8)
 
 
-def safe_decode_text(node: Node | None) -> str | None:
+def safe_decode_text(node: Node | TreeSitterNodeProtocol | None) -> str | None:
     if node is None or node.text is None:
         return None
     text_bytes = node.text

@@ -1,9 +1,8 @@
 from loguru import logger
-from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
-from ..types_defs import FunctionRegistryTrieProtocol
+from ..types_defs import FunctionRegistryTrieProtocol, TreeSitterNodeProtocol
 from .import_processor import ImportProcessor
 from .utils import safe_decode_text
 
@@ -20,11 +19,11 @@ class LuaTypeInferenceEngine:
         self.project_name = project_name
 
     def build_lua_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
+        self, caller_node: TreeSitterNodeProtocol, module_qn: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
 
-        stack: list[Node] = [caller_node]
+        stack: list[TreeSitterNodeProtocol] = [caller_node]
 
         while stack:
             current = stack.pop()
@@ -71,7 +70,7 @@ class LuaTypeInferenceEngine:
         return local_var_types
 
     def _infer_lua_variable_type_from_value(
-        self, value_node: Node, module_qn: str
+        self, value_node: TreeSitterNodeProtocol, module_qn: str
     ) -> str | None:
         if value_node.type == cs.TS_LUA_FUNCTION_CALL:
             for child in value_node.children:
