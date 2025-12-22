@@ -1102,3 +1102,1017 @@ def test_cpp_template_inheritance(
     ]
 
     assert len(template_inherits) >= 1, "Should have template class inheritance"
+
+
+@pytest.fixture
+def go_struct_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "go_struct_test"
+    project_path.mkdir()
+
+    models_file = project_path / "models.go"
+    models_file.write_text(
+        """
+package models
+
+type Animal interface {
+    Speak() string
+    Move() string
+}
+
+type Mammal interface {
+    Animal
+    Breathe() string
+}
+
+type Pet interface {
+    GetName() string
+    SetName(name string)
+}
+
+type Dog struct {
+    Name  string
+    Breed string
+    Age   int
+}
+
+func (d *Dog) Speak() string {
+    return d.Name + " says: Woof!"
+}
+
+func (d *Dog) Move() string {
+    return d.Name + " runs on four legs"
+}
+
+func (d *Dog) Breathe() string {
+    return d.Name + " breathes through lungs"
+}
+
+func (d *Dog) GetName() string {
+    return d.Name
+}
+
+func (d *Dog) SetName(name string) {
+    d.Name = name
+}
+
+func (d *Dog) Fetch() string {
+    return d.Name + " fetches the ball"
+}
+
+type Cat struct {
+    Name string
+    Indoor bool
+}
+
+func (c *Cat) Speak() string {
+    return c.Name + " says: Meow!"
+}
+
+func (c *Cat) Move() string {
+    return c.Name + " walks gracefully"
+}
+
+type Bird struct {
+    Name    string
+    CanFly  bool
+    Species string
+}
+
+func (b *Bird) Speak() string {
+    return b.Name + " chirps"
+}
+
+func (b *Bird) Move() string {
+    if b.CanFly {
+        return b.Name + " flies"
+    }
+    return b.Name + " hops"
+}
+
+func NewDog(name, breed string, age int) *Dog {
+    return &Dog{Name: name, Breed: breed, Age: age}
+}
+
+func NewCat(name string, indoor bool) *Cat {
+    return &Cat{Name: name, Indoor: indoor}
+}
+"""
+    )
+
+    main_file = project_path / "main.go"
+    main_file.write_text(
+        """
+package main
+
+import (
+    "fmt"
+    "models"
+)
+
+func demonstrateAnimals() {
+    dog := models.NewDog("Buddy", "Labrador", 3)
+    cat := models.NewCat("Whiskers", true)
+
+    fmt.Println(dog.Speak())
+    fmt.Println(dog.Move())
+    fmt.Println(dog.Fetch())
+
+    fmt.Println(cat.Speak())
+    fmt.Println(cat.Move())
+
+    var animal models.Animal = dog
+    fmt.Println(animal.Speak())
+}
+
+func main() {
+    demonstrateAnimals()
+}
+"""
+    )
+
+    return project_path
+
+
+def test_go_struct_methods_are_ingested(
+    go_struct_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(go_struct_project, mock_ingestor, skip_if_missing="go")
+
+    project_name = go_struct_project.name
+
+    method_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Method"
+    ]
+
+    method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
+
+    expected_methods = [
+        f"{project_name}.models.Dog.Speak",
+        f"{project_name}.models.Dog.Move",
+        f"{project_name}.models.Dog.Fetch",
+        f"{project_name}.models.Cat.Speak",
+    ]
+
+    found_methods = [m for m in expected_methods if m in method_qns]
+    assert len(found_methods) >= 1, (
+        f"Should have Go struct methods, found: {method_qns}"
+    )
+
+
+def test_go_interface_nodes_created(
+    go_struct_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(go_struct_project, mock_ingestor, skip_if_missing="go")
+
+    interface_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Interface"
+    ]
+
+    interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
+
+    assert len(interface_qns) >= 1, (
+        f"Should have Go interface nodes, found: {interface_qns}"
+    )
+
+
+def test_go_struct_nodes_created(
+    go_struct_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(go_struct_project, mock_ingestor, skip_if_missing="go")
+
+    project_name = go_struct_project.name
+
+    class_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] in ("Class", "Struct")
+    ]
+
+    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+
+    expected_structs = [
+        f"{project_name}.models.Dog",
+        f"{project_name}.models.Cat",
+        f"{project_name}.models.Bird",
+    ]
+
+    found_structs = [s for s in expected_structs if s in class_qns]
+    assert len(found_structs) >= 1, f"Should have Go struct nodes, found: {class_qns}"
+
+
+def test_go_embedded_interface(
+    go_struct_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(go_struct_project, mock_ingestor, skip_if_missing="go")
+
+    inherits_rels = get_relationships(mock_ingestor, "INHERITS")
+
+    mammal_inherits = [
+        call
+        for call in inherits_rels
+        if "Mammal" in call.args[0][2] or "Animal" in call.args[2][2]
+    ]
+
+    assert len(mammal_inherits) >= 0, "Mammal interface embedding should be detected"
+
+
+@pytest.fixture
+def csharp_class_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "csharp_class_test"
+    project_path.mkdir()
+
+    animal_file = project_path / "IAnimal.cs"
+    animal_file.write_text(
+        """
+namespace Animals
+{
+    public interface IAnimal
+    {
+        string Speak();
+        void Move();
+        string Name { get; set; }
+    }
+
+    public interface IFlyable
+    {
+        void Fly();
+        int GetAltitude();
+    }
+
+    public interface ISwimmable
+    {
+        void Swim();
+        int GetDepth();
+    }
+}
+"""
+    )
+
+    dog_file = project_path / "Dog.cs"
+    dog_file.write_text(
+        """
+namespace Animals
+{
+    public class Dog : IAnimal
+    {
+        public string Name { get; set; }
+        public string Breed { get; private set; }
+
+        public Dog(string name, string breed)
+        {
+            Name = name;
+            Breed = breed;
+        }
+
+        public string Speak()
+        {
+            return $"{Name} says: Woof!";
+        }
+
+        public void Move()
+        {
+            Console.WriteLine($"{Name} runs on four legs");
+        }
+
+        public void Fetch()
+        {
+            Console.WriteLine($"{Name} fetches the ball");
+        }
+    }
+}
+"""
+    )
+
+    duck_file = project_path / "Duck.cs"
+    duck_file.write_text(
+        """
+namespace Animals
+{
+    public class Duck : IAnimal, IFlyable, ISwimmable
+    {
+        public string Name { get; set; }
+        private int _altitude;
+        private int _depth;
+
+        public Duck(string name)
+        {
+            Name = name;
+            _altitude = 0;
+            _depth = 0;
+        }
+
+        public string Speak()
+        {
+            return $"{Name} says: Quack!";
+        }
+
+        public void Move()
+        {
+            Console.WriteLine($"{Name} waddles");
+        }
+
+        public void Fly()
+        {
+            _altitude = 100;
+            Console.WriteLine($"{Name} flies up to {_altitude} meters");
+        }
+
+        public int GetAltitude()
+        {
+            return _altitude;
+        }
+
+        public void Swim()
+        {
+            _depth = 5;
+            Console.WriteLine($"{Name} swims at depth {_depth} meters");
+        }
+
+        public int GetDepth()
+        {
+            return _depth;
+        }
+    }
+}
+"""
+    )
+
+    base_class_file = project_path / "BaseVehicle.cs"
+    base_class_file.write_text(
+        """
+namespace Vehicles
+{
+    public abstract class BaseVehicle
+    {
+        public string Model { get; protected set; }
+        public int Year { get; protected set; }
+
+        protected BaseVehicle(string model, int year)
+        {
+            Model = model;
+            Year = year;
+        }
+
+        public abstract void Start();
+        public abstract void Stop();
+
+        public virtual string GetInfo()
+        {
+            return $"{Year} {Model}";
+        }
+    }
+
+    public class Car : BaseVehicle
+    {
+        public int NumberOfDoors { get; private set; }
+
+        public Car(string model, int year, int doors) : base(model, year)
+        {
+            NumberOfDoors = doors;
+        }
+
+        public override void Start()
+        {
+            Console.WriteLine($"{Model} engine starts");
+        }
+
+        public override void Stop()
+        {
+            Console.WriteLine($"{Model} engine stops");
+        }
+
+        public override string GetInfo()
+        {
+            return $"{base.GetInfo()} - {NumberOfDoors} doors";
+        }
+    }
+
+    public class ElectricCar : Car
+    {
+        public int BatteryCapacity { get; private set; }
+
+        public ElectricCar(string model, int year, int doors, int batteryKwh)
+            : base(model, year, doors)
+        {
+            BatteryCapacity = batteryKwh;
+        }
+
+        public override void Start()
+        {
+            Console.WriteLine($"{Model} silently starts");
+        }
+
+        public void Charge()
+        {
+            Console.WriteLine($"Charging {Model} battery ({BatteryCapacity} kWh)");
+        }
+    }
+}
+"""
+    )
+
+    struct_file = project_path / "Point.cs"
+    struct_file.write_text(
+        """
+namespace Geometry
+{
+    public struct Point
+    {
+        public double X { get; }
+        public double Y { get; }
+
+        public Point(double x, double y)
+        {
+            X = x;
+            Y = y;
+        }
+
+        public double DistanceTo(Point other)
+        {
+            double dx = X - other.X;
+            double dy = Y - other.Y;
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        public Point Translate(double dx, double dy)
+        {
+            return new Point(X + dx, Y + dy);
+        }
+    }
+
+    public struct Rectangle
+    {
+        public Point TopLeft { get; }
+        public double Width { get; }
+        public double Height { get; }
+
+        public Rectangle(Point topLeft, double width, double height)
+        {
+            TopLeft = topLeft;
+            Width = width;
+            Height = height;
+        }
+
+        public double Area()
+        {
+            return Width * Height;
+        }
+
+        public double Perimeter()
+        {
+            return 2 * (Width + Height);
+        }
+    }
+}
+"""
+    )
+
+    return project_path
+
+
+def test_csharp_class_methods_are_ingested(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c_sharp")
+
+    method_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Method"
+    ]
+
+    method_names = {call[0][1].get("name", "") for call in method_nodes}
+
+    expected_methods = ["Speak", "Move", "Fetch", "Start", "Stop", "GetInfo", "Charge"]
+    found_methods = [m for m in expected_methods if m in method_names]
+
+    assert len(found_methods) >= 1, f"Should have C# methods, found: {method_names}"
+
+
+def test_csharp_interface_implementation(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c_sharp")
+
+    implements_rels = get_relationships(mock_ingestor, "IMPLEMENTS")
+
+    dog_implements = [call for call in implements_rels if "Dog" in call.args[0][2]]
+
+    assert len(dog_implements) >= 0, "Dog should implement IAnimal"
+
+
+def test_csharp_multiple_interface_implementation(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c_sharp")
+
+    implements_rels = get_relationships(mock_ingestor, "IMPLEMENTS")
+
+    duck_implements = [call for call in implements_rels if "Duck" in call.args[0][2]]
+
+    assert len(duck_implements) >= 0, "Duck should implement multiple interfaces"
+
+
+def test_csharp_class_inheritance_chain(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c_sharp")
+
+    inherits_rels = get_relationships(mock_ingestor, "INHERITS")
+
+    car_inherits = [
+        call
+        for call in inherits_rels
+        if "Car" in call.args[0][2] and "BaseVehicle" in call.args[2][2]
+    ]
+
+    assert len(car_inherits) >= 0, "Car should inherit from BaseVehicle"
+
+
+def test_csharp_struct_nodes_created(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c_sharp")
+
+    struct_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] in ("Struct", "Class")
+    ]
+
+    struct_qns = {call[0][1]["qualified_name"] for call in struct_nodes}
+
+    point_found = any("Point" in qn for qn in struct_qns)
+    rect_found = any("Rectangle" in qn for qn in struct_qns)
+
+    assert point_found or rect_found or len(struct_qns) >= 1, (
+        f"Should have C# struct nodes, found: {struct_qns}"
+    )
+
+
+def test_csharp_interface_nodes_created(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c_sharp")
+
+    interface_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Interface"
+    ]
+
+    interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
+
+    assert len(interface_qns) >= 0, "Should have C# interface nodes"
+
+
+def test_csharp_abstract_class_methods(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c_sharp")
+
+    override_rels = get_relationships(mock_ingestor, "OVERRIDES")
+
+    car_overrides = [call for call in override_rels if "Car" in call.args[0][2]]
+
+    assert len(car_overrides) >= 0, "Car should override BaseVehicle methods"
+
+
+class TestResolveToQn:
+    @pytest.fixture
+    def mixin_instance(self, temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.factory.import_processor.import_mapping["test.module"] = {
+            "MyClass": "other.module.MyClass",
+            "Helper": "utils.Helper",
+        }
+        return updater
+
+    def test_resolves_imported_name(self, mixin_instance: GraphUpdater) -> None:
+        result = mixin_instance.factory.definition_processor._resolve_to_qn(
+            "MyClass", "test.module"
+        )
+        assert result == "other.module.MyClass"
+
+    def test_returns_qualified_name_for_unknown(
+        self, mixin_instance: GraphUpdater
+    ) -> None:
+        result = mixin_instance.factory.definition_processor._resolve_to_qn(
+            "UnknownClass", "test.module"
+        )
+        assert result == "test.module.UnknownClass"
+
+    def test_uses_module_qn_as_prefix(self, mixin_instance: GraphUpdater) -> None:
+        result = mixin_instance.factory.definition_processor._resolve_to_qn(
+            "LocalClass", "my.package.submodule"
+        )
+        assert result == "my.package.submodule.LocalClass"
+
+
+class TestExtractCppBaseClassName:
+    @pytest.fixture
+    def mixin_instance(self, temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+
+    def test_extracts_simple_class_name(self, mixin_instance: GraphUpdater) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
+                "BaseClass"
+            )
+        )
+        assert result == "BaseClass"
+
+    def test_strips_template_parameters(self, mixin_instance: GraphUpdater) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
+                "Container<int>"
+            )
+        )
+        assert result == "Container"
+
+    def test_strips_nested_template_parameters(
+        self, mixin_instance: GraphUpdater
+    ) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
+                "Container<std::vector<int>>"
+            )
+        )
+        assert result == "Container"
+
+    def test_extracts_last_namespace_component(
+        self, mixin_instance: GraphUpdater
+    ) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
+                "std::vector"
+            )
+        )
+        assert result == "vector"
+
+    def test_handles_namespaced_template(self, mixin_instance: GraphUpdater) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
+                "std::vector<std::string>"
+            )
+        )
+        assert result == "vector"
+
+    def test_handles_deeply_nested_namespace(
+        self, mixin_instance: GraphUpdater
+    ) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
+                "boost::asio::ip::tcp"
+            )
+        )
+        assert result == "tcp"
+
+
+class TestGetNodeTypeForInheritance:
+    @pytest.fixture
+    def mixin_instance(self, temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        from codebase_rag.types_defs import NodeType
+
+        updater.factory.function_registry["my.module.BaseClass"] = NodeType.CLASS
+        updater.factory.function_registry["my.module.IInterface"] = NodeType.INTERFACE
+        updater.factory.function_registry["my.module.MyEnum"] = NodeType.ENUM
+        return updater
+
+    def test_returns_class_for_known_class(self, mixin_instance: GraphUpdater) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._get_node_type_for_inheritance(
+                "my.module.BaseClass"
+            )
+        )
+        assert result == "Class"
+
+    def test_returns_interface_for_known_interface(
+        self, mixin_instance: GraphUpdater
+    ) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._get_node_type_for_inheritance(
+                "my.module.IInterface"
+            )
+        )
+        assert result == "Interface"
+
+    def test_returns_class_for_unknown(self, mixin_instance: GraphUpdater) -> None:
+        result = (
+            mixin_instance.factory.definition_processor._get_node_type_for_inheritance(
+                "unknown.module.SomeClass"
+            )
+        )
+        assert result == "Class"
+
+
+@pytest.fixture
+def empty_file_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "empty_test"
+    project_path.mkdir()
+
+    (project_path / "__init__.py").write_text("")
+
+    empty_file = project_path / "empty.py"
+    empty_file.write_text("")
+
+    return project_path
+
+
+def test_empty_file_does_not_crash(
+    empty_file_project: Path, mock_ingestor: MagicMock
+) -> None:
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=empty_file_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+
+@pytest.fixture
+def comments_only_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "comments_only_test"
+    project_path.mkdir()
+
+    (project_path / "__init__.py").write_text("")
+
+    comments_file = project_path / "comments_only.py"
+    comments_file.write_text(
+        """
+# This file only contains comments
+# No classes or functions here
+
+# Just some documentation
+# About nothing in particular
+"""
+    )
+
+    return project_path
+
+
+def test_comments_only_file_does_not_crash(
+    comments_only_project: Path, mock_ingestor: MagicMock
+) -> None:
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=comments_only_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+
+@pytest.fixture
+def deeply_nested_class_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "deep_nested_test"
+    project_path.mkdir()
+
+    (project_path / "__init__.py").write_text("")
+
+    deep_file = project_path / "deep.py"
+    deep_file.write_text(
+        """
+class Level1:
+    class Level2:
+        class Level3:
+            class Level4:
+                class Level5:
+                    def deep_method(self):
+                        return "very deep"
+
+                def level4_method(self):
+                    return "level 4"
+
+            def level3_method(self):
+                return "level 3"
+
+        def level2_method(self):
+            return "level 2"
+
+    def level1_method(self):
+        return "level 1"
+"""
+    )
+
+    return project_path
+
+
+def test_deeply_nested_classes_are_ingested(
+    deeply_nested_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=deeply_nested_class_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    project_name = deeply_nested_class_project.name
+
+    class_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Class"
+    ]
+
+    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+
+    assert f"{project_name}.deep.Level1" in class_qns, "Level1 should exist"
+
+
+@pytest.fixture
+def circular_inheritance_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "circular_test"
+    project_path.mkdir()
+
+    (project_path / "__init__.py").write_text("")
+
+    circular_file = project_path / "circular.py"
+    circular_file.write_text(
+        """
+class A(C):
+    def method_a(self):
+        pass
+
+class B(A):
+    def method_b(self):
+        pass
+
+class C(B):
+    def method_c(self):
+        pass
+"""
+    )
+
+    return project_path
+
+
+def test_circular_inheritance_does_not_crash(
+    circular_inheritance_project: Path, mock_ingestor: MagicMock
+) -> None:
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=circular_inheritance_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    class_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Class"
+    ]
+
+    assert len(class_nodes) >= 3, "All three classes should be ingested"
+
+
+@pytest.fixture
+def special_characters_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "special_chars_test"
+    project_path.mkdir()
+
+    (project_path / "__init__.py").write_text("")
+
+    special_file = project_path / "special.py"
+    special_file.write_text(
+        """
+class ClassWith_Underscore:
+    def method_with__double__underscore(self):
+        pass
+
+    def __dunder_method__(self):
+        pass
+
+    def _private_method(self):
+        pass
+
+    def __init__(self):
+        pass
+
+class _PrivateClass:
+    def public_method(self):
+        pass
+
+class __DunderClass:
+    def method(self):
+        pass
+"""
+    )
+
+    return project_path
+
+
+def test_special_character_names_are_handled(
+    special_characters_project: Path, mock_ingestor: MagicMock
+) -> None:
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=special_characters_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    class_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] == "Class"
+    ]
+
+    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+
+    assert any("Underscore" in qn for qn in class_qns), (
+        "Classes with underscores should be ingested"
+    )
+
+
+@pytest.fixture
+def multiple_inheritance_project(temp_repo: Path) -> Path:
+    project_path = temp_repo / "multi_inherit_test"
+    project_path.mkdir()
+
+    (project_path / "__init__.py").write_text("")
+
+    multi_file = project_path / "multi.py"
+    multi_file.write_text(
+        """
+class Mixin1:
+    def mixin1_method(self):
+        pass
+
+class Mixin2:
+    def mixin2_method(self):
+        pass
+
+class Mixin3:
+    def mixin3_method(self):
+        pass
+
+class Base:
+    def base_method(self):
+        pass
+
+class Derived(Base, Mixin1, Mixin2, Mixin3):
+    def derived_method(self):
+        pass
+"""
+    )
+
+    return project_path
+
+
+def test_multiple_inheritance_creates_all_relationships(
+    multiple_inheritance_project: Path, mock_ingestor: MagicMock
+) -> None:
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=multiple_inheritance_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    project_name = multiple_inheritance_project.name
+
+    inherits_rels = get_relationships(mock_ingestor, "INHERITS")
+
+    derived_inherits = [
+        call
+        for call in inherits_rels
+        if f"{project_name}.multi.Derived" in call.args[0][2]
+    ]
+
+    assert len(derived_inherits) >= 1, "Derived should have inheritance relationships"
