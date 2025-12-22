@@ -34,6 +34,7 @@ class TestExtractJsMethodCall:
         expr_stmt = tree.root_node.children[0]
         call_expr = expr_stmt.children[0]
         member_expr = call_expr.child_by_field_name("function")
+        assert member_expr is not None
 
         result = extract_js_method_call(member_expr)
         assert result == "Storage.getInstance"
@@ -44,6 +45,7 @@ class TestExtractJsMethodCall:
         expr_stmt = tree.root_node.children[0]
         call_expr = expr_stmt.children[0]
         member_expr = call_expr.child_by_field_name("function")
+        assert member_expr is not None
 
         result = extract_js_method_call(member_expr)
         assert result is not None
@@ -90,6 +92,7 @@ class MyClass {
         tree = js_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
 
         result = find_js_method_in_class_body(class_body, "myMethod")
         assert result is not None
@@ -106,6 +109,7 @@ class MyClass {
         tree = js_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
 
         result = find_js_method_in_class_body(class_body, "constructor")
         assert result is not None
@@ -121,6 +125,7 @@ class MyClass {
         tree = js_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
 
         result = find_js_method_in_class_body(class_body, "getInstance")
         assert result is not None
@@ -134,6 +139,7 @@ class MyClass {
         tree = js_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
 
         result = find_js_method_in_class_body(class_body, "nonExistentMethod")
         assert result is None
@@ -149,6 +155,7 @@ class MyClass {
         tree = js_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
 
         result = find_js_method_in_class_body(class_body, "methodB")
         assert result is not None

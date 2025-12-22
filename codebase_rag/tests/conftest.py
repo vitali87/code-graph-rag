@@ -5,8 +5,9 @@ import shutil
 import sys
 import tempfile
 from collections.abc import Generator
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, Self
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +21,71 @@ if TYPE_CHECKING:
     import mgclient  # ty: ignore[unresolved-import]
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+
+class NodeProtocol(Protocol):
+    @property
+    def type(self) -> str: ...
+    @property
+    def children(self) -> list[Self]: ...
+    @property
+    def parent(self) -> Self | None: ...
+    @property
+    def text(self) -> bytes: ...
+    def child_by_field_name(self, name: str) -> Self | None: ...
+
+
+@dataclass
+class MockNode:
+    node_type: str
+    node_children: list[MockNode] = field(default_factory=list)
+    node_parent: MockNode | None = None
+    node_fields: dict[str, MockNode | None] = field(default_factory=dict)
+    node_text: bytes = b""
+
+    @property
+    def type(self) -> str:
+        return self.node_type
+
+    @property
+    def children(self) -> list[MockNode]:
+        return self.node_children
+
+    @property
+    def parent(self) -> MockNode | None:
+        return self.node_parent
+
+    @parent.setter
+    def parent(self, value: MockNode | None) -> None:
+        self.node_parent = value
+
+    @property
+    def text(self) -> bytes:
+        return self.node_text
+
+    def child_by_field_name(self, name: str) -> MockNode | None:
+        return self.node_fields.get(name)
+
+
+def create_mock_node(
+    node_type: str,
+    text: str = "",
+    fields: dict[str, MockNode | None] | None = None,
+    children: list[MockNode] | None = None,
+    parent: MockNode | None = None,
+) -> MockNode:
+    node = MockNode(
+        node_type=node_type,
+        node_children=children or [],
+        node_parent=parent,
+        node_fields=fields or {},
+        node_text=text.encode(),
+    )
+    for child in node.node_children:
+        child.node_parent = node
+    return node
+
+
 logger.remove()
 
 

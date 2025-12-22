@@ -1,5 +1,4 @@
 from collections import defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -8,34 +7,6 @@ import pytest
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java_type_inference import JavaTypeInferenceEngine
 from codebase_rag.types_defs import NodeType
-
-
-@dataclass
-class MockNode:
-    type: str
-    children: list["MockNode"] = field(default_factory=list)
-    parent: "MockNode | None" = None
-    node_fields: dict[str, "MockNode | None"] = field(default_factory=dict)
-    text: bytes = b""
-
-    def child_by_field_name(self, name: str) -> "MockNode | None":
-        return self.node_fields.get(name)
-
-
-def create_mock_node(
-    node_type: str,
-    text: str = "",
-    fields: dict[str, "MockNode | None"] | None = None,
-    children: list["MockNode"] | None = None,
-    parent: "MockNode | None" = None,
-) -> MockNode:
-    return MockNode(
-        type=node_type,
-        children=children or [],
-        parent=parent,
-        node_fields=fields or {},
-        text=text.encode(),
-    )
 
 
 @pytest.fixture

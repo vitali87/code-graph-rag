@@ -1,4 +1,3 @@
-from dataclasses import dataclass, field
 from unittest.mock import MagicMock
 
 import pytest
@@ -6,27 +5,8 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.lua_type_inference import LuaTypeInferenceEngine
+from codebase_rag.tests.conftest import MockNode, create_mock_node
 from codebase_rag.types_defs import NodeType
-
-
-@dataclass
-class MockNode:
-    type: str
-    children: list["MockNode"] = field(default_factory=list)
-    parent: "MockNode | None" = None
-    text: bytes = b""
-
-
-def create_mock_node(
-    node_type: str,
-    text: str = "",
-    children: list["MockNode"] | None = None,
-) -> MockNode:
-    return MockNode(
-        type=node_type,
-        children=children or [],
-        text=text.encode(),
-    )
 
 
 def create_lua_variable_declaration(
@@ -415,3 +395,350 @@ class TestLuaTypeInferenceEdgeCases:
         result = lua_type_engine._resolve_lua_class_name("Widget", "myapp.main")
 
         assert result == "myapp.main.Widget"
+
+
+class TestBuildLuaLocalVariableTypeMapEdgeCases:
+    def test_variable_declaration_without_assignment(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+    ) -> None:
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert result == {}
+
+    def test_assignment_with_empty_variable_list(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+    ) -> None:
+        expression_list = create_mock_node(
+            cs.TS_LUA_EXPRESSION_LIST,
+            children=[
+                create_mock_node(cs.TS_LUA_FUNCTION_CALL, children=[]),
+            ],
+        )
+        variable_list = create_mock_node(cs.TS_LUA_VARIABLE_LIST, children=[])
+        assignment_stmt = create_mock_node(
+            cs.TS_LUA_ASSIGNMENT_STATEMENT,
+            children=[variable_list, expression_list],
+        )
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[assignment_stmt],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert result == {}
+
+    def test_assignment_with_empty_expression_list(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+    ) -> None:
+        var_identifier = create_mock_node(cs.TS_LUA_IDENTIFIER, "myVar")
+        variable_list = create_mock_node(
+            cs.TS_LUA_VARIABLE_LIST,
+            children=[var_identifier],
+        )
+        expression_list = create_mock_node(cs.TS_LUA_EXPRESSION_LIST, children=[])
+        assignment_stmt = create_mock_node(
+            cs.TS_LUA_ASSIGNMENT_STATEMENT,
+            children=[variable_list, expression_list],
+        )
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[assignment_stmt],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert result == {}
+
+    def test_more_variables_than_values(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+        mock_function_registry: MagicMock,
+    ) -> None:
+        mock_function_registry.__contains__ = MagicMock(
+            side_effect=lambda x: x == "myapp.main.Person"
+        )
+
+        var_id1 = create_mock_node(cs.TS_LUA_IDENTIFIER, "a")
+        var_id2 = create_mock_node(cs.TS_LUA_IDENTIFIER, "b")
+        var_id3 = create_mock_node(cs.TS_LUA_IDENTIFIER, "c")
+        variable_list = create_mock_node(
+            cs.TS_LUA_VARIABLE_LIST,
+            children=[var_id1, var_id2, var_id3],
+        )
+
+        identifier_class = create_mock_node(cs.TS_LUA_IDENTIFIER, "Person")
+        identifier_method = create_mock_node(cs.TS_LUA_IDENTIFIER, "new")
+        method_index_expr = create_mock_node(
+            cs.TS_LUA_METHOD_INDEX_EXPRESSION,
+            children=[identifier_class, identifier_method],
+        )
+        function_call = create_mock_node(
+            cs.TS_LUA_FUNCTION_CALL,
+            children=[method_index_expr],
+        )
+        expression_list = create_mock_node(
+            cs.TS_LUA_EXPRESSION_LIST,
+            children=[function_call],
+        )
+
+        assignment_stmt = create_mock_node(
+            cs.TS_LUA_ASSIGNMENT_STATEMENT,
+            children=[variable_list, expression_list],
+        )
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[assignment_stmt],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert "a" in result
+        assert result["a"] == "myapp.main.Person"
+        assert "b" not in result
+        assert "c" not in result
+
+    def test_non_function_call_in_expression_list(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+    ) -> None:
+        var_identifier = create_mock_node(cs.TS_LUA_IDENTIFIER, "myVar")
+        variable_list = create_mock_node(
+            cs.TS_LUA_VARIABLE_LIST,
+            children=[var_identifier],
+        )
+        string_expr = create_mock_node("string", "hello")
+        expression_list = create_mock_node(
+            cs.TS_LUA_EXPRESSION_LIST,
+            children=[string_expr],
+        )
+        assignment_stmt = create_mock_node(
+            cs.TS_LUA_ASSIGNMENT_STATEMENT,
+            children=[variable_list, expression_list],
+        )
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[assignment_stmt],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert result == {}
+
+    def test_function_call_without_method_index_expression(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+    ) -> None:
+        var_identifier = create_mock_node(cs.TS_LUA_IDENTIFIER, "result")
+        variable_list = create_mock_node(
+            cs.TS_LUA_VARIABLE_LIST,
+            children=[var_identifier],
+        )
+        func_name = create_mock_node(cs.TS_LUA_IDENTIFIER, "someFunc")
+        function_call = create_mock_node(
+            cs.TS_LUA_FUNCTION_CALL,
+            children=[func_name],
+        )
+        expression_list = create_mock_node(
+            cs.TS_LUA_EXPRESSION_LIST,
+            children=[function_call],
+        )
+        assignment_stmt = create_mock_node(
+            cs.TS_LUA_ASSIGNMENT_STATEMENT,
+            children=[variable_list, expression_list],
+        )
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[assignment_stmt],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert result == {}
+
+    def test_method_index_with_only_class_identifier(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+        mock_function_registry: MagicMock,
+    ) -> None:
+        mock_function_registry.__contains__ = MagicMock(return_value=True)
+
+        var_identifier = create_mock_node(cs.TS_LUA_IDENTIFIER, "obj")
+        variable_list = create_mock_node(
+            cs.TS_LUA_VARIABLE_LIST,
+            children=[var_identifier],
+        )
+        identifier_class = create_mock_node(cs.TS_LUA_IDENTIFIER, "Person")
+        method_index_expr = create_mock_node(
+            cs.TS_LUA_METHOD_INDEX_EXPRESSION,
+            children=[identifier_class],
+        )
+        function_call = create_mock_node(
+            cs.TS_LUA_FUNCTION_CALL,
+            children=[method_index_expr],
+        )
+        expression_list = create_mock_node(
+            cs.TS_LUA_EXPRESSION_LIST,
+            children=[function_call],
+        )
+        assignment_stmt = create_mock_node(
+            cs.TS_LUA_ASSIGNMENT_STATEMENT,
+            children=[variable_list, expression_list],
+        )
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[assignment_stmt],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert result == {}
+
+    def test_deeply_nested_variable_declaration(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+        mock_function_registry: MagicMock,
+    ) -> None:
+        mock_function_registry.__contains__ = MagicMock(
+            side_effect=lambda x: x == "myapp.main.Deep"
+        )
+
+        var_decl = create_lua_variable_declaration("deep", "Deep", "create")
+        inner_block = create_mock_node("block", children=[var_decl])
+        outer_block = create_mock_node("block", children=[inner_block])
+        root = create_mock_node("chunk", children=[outer_block])
+
+        result = lua_type_engine.build_lua_local_variable_type_map(root, "myapp.main")
+
+        assert "deep" in result
+        assert result["deep"] == "myapp.main.Deep"
+
+    def test_variable_with_empty_text(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+        mock_function_registry: MagicMock,
+    ) -> None:
+        mock_function_registry.__contains__ = MagicMock(return_value=True)
+
+        var_identifier = create_mock_node(cs.TS_LUA_IDENTIFIER, "")
+        variable_list = create_mock_node(
+            cs.TS_LUA_VARIABLE_LIST,
+            children=[var_identifier],
+        )
+        identifier_class = create_mock_node(cs.TS_LUA_IDENTIFIER, "Person")
+        identifier_method = create_mock_node(cs.TS_LUA_IDENTIFIER, "new")
+        method_index_expr = create_mock_node(
+            cs.TS_LUA_METHOD_INDEX_EXPRESSION,
+            children=[identifier_class, identifier_method],
+        )
+        function_call = create_mock_node(
+            cs.TS_LUA_FUNCTION_CALL,
+            children=[method_index_expr],
+        )
+        expression_list = create_mock_node(
+            cs.TS_LUA_EXPRESSION_LIST,
+            children=[function_call],
+        )
+        assignment_stmt = create_mock_node(
+            cs.TS_LUA_ASSIGNMENT_STATEMENT,
+            children=[variable_list, expression_list],
+        )
+        var_decl = create_mock_node(
+            cs.TS_LUA_VARIABLE_DECLARATION,
+            children=[assignment_stmt],
+        )
+
+        result = lua_type_engine.build_lua_local_variable_type_map(
+            var_decl, "myapp.main"
+        )
+
+        assert result == {}
+
+
+class TestInferLuaVariableTypeFromValueEdgeCases:
+    def test_method_index_with_non_identifier_children(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+    ) -> None:
+        non_id_node = create_mock_node("expression", "something")
+        method_index_expr = create_mock_node(
+            cs.TS_LUA_METHOD_INDEX_EXPRESSION,
+            children=[non_id_node],
+        )
+        function_call = create_mock_node(
+            cs.TS_LUA_FUNCTION_CALL,
+            children=[method_index_expr],
+        )
+
+        result = lua_type_engine._infer_lua_variable_type_from_value(
+            function_call, "myapp.main"
+        )
+
+        assert result is None
+
+    def test_method_index_with_empty_class_name(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+    ) -> None:
+        identifier_class = create_mock_node(cs.TS_LUA_IDENTIFIER, "")
+        identifier_method = create_mock_node(cs.TS_LUA_IDENTIFIER, "new")
+        method_index_expr = create_mock_node(
+            cs.TS_LUA_METHOD_INDEX_EXPRESSION,
+            children=[identifier_class, identifier_method],
+        )
+        function_call = create_mock_node(
+            cs.TS_LUA_FUNCTION_CALL,
+            children=[method_index_expr],
+        )
+
+        result = lua_type_engine._infer_lua_variable_type_from_value(
+            function_call, "myapp.main"
+        )
+
+        assert result is None
+
+    def test_method_index_with_empty_method_name(
+        self,
+        lua_type_engine: LuaTypeInferenceEngine,
+        mock_function_registry: MagicMock,
+    ) -> None:
+        mock_function_registry.__contains__ = MagicMock(return_value=True)
+
+        identifier_class = create_mock_node(cs.TS_LUA_IDENTIFIER, "Person")
+        identifier_method = create_mock_node(cs.TS_LUA_IDENTIFIER, "")
+        method_index_expr = create_mock_node(
+            cs.TS_LUA_METHOD_INDEX_EXPRESSION,
+            children=[identifier_class, identifier_method],
+        )
+        function_call = create_mock_node(
+            cs.TS_LUA_FUNCTION_CALL,
+            children=[method_index_expr],
+        )
+
+        result = lua_type_engine._infer_lua_variable_type_from_value(
+            function_call, "myapp.main"
+        )
+
+        assert result is None
