@@ -1107,6 +1107,7 @@ LUA_METHOD_SEPARATOR = ":"
 
 # (H) Tree-sitter JS/TS utility node types
 TS_RETURN_STATEMENT = "return_statement"
+TS_RETURN = "return"
 TS_NEW_EXPRESSION = "new_expression"
 
 # (H) Tree-sitter class/module node types for class_ingest
