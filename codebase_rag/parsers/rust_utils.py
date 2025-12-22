@@ -6,20 +6,6 @@ from .utils import safe_decode_text
 
 
 def extract_rust_impl_target(impl_node: Node) -> str | None:
-    """Extract the type being implemented for in an impl block.
-
-    Handles patterns like:
-    - impl MyStruct { ... }
-    - impl<T> MyStruct<T> { ... }
-    - impl Display for MyStruct { ... }
-    - impl<T: Clone> Display for MyStruct<T> { ... }
-
-    Args:
-        impl_node: The impl_item node.
-
-    Returns:
-        The name of the type being implemented for, or None if not found.
-    """
     if impl_node.type != "impl_item":
         return None
 
@@ -37,26 +23,13 @@ def extract_rust_impl_target(impl_node: Node) -> str | None:
             elif type_node.type == "scoped_type_identifier":
                 for child in type_node.children:
                     if child.type == "type_identifier":
-                        name = safe_decode_text(child)
-                        if name:
+                        if name := safe_decode_text(child):
                             return name
 
     return None
 
 
 def extract_rust_trait_name(impl_node: Node) -> str | None:
-    """Extract the trait name from an impl block implementing a trait.
-
-    Handles patterns like:
-    - impl Display for MyStruct { ... }
-    - impl<T> Clone for MyStruct<T> { ... }
-
-    Args:
-        impl_node: The impl_item node.
-
-    Returns:
-        The name of the trait being implemented, or None if not found.
-    """
     if impl_node.type != "impl_item":
         return None
 
@@ -74,48 +47,24 @@ def extract_rust_trait_name(impl_node: Node) -> str | None:
             elif trait_node.type == "scoped_type_identifier":
                 for child in trait_node.children:
                     if child.type == "type_identifier":
-                        name = safe_decode_text(child)
-                        if name:
+                        if name := safe_decode_text(child):
                             return name
 
     return None
 
 
 def is_rust_async_function(func_node: Node) -> bool:
-    """Check if a Rust function is async.
-
-    Args:
-        func_node: The function_item node.
-
-    Returns:
-        True if the function is async, False otherwise.
-    """
     if func_node.type != "function_item":
         return False
 
-    for child in func_node.children:
-        if child.type == "async" or (
-            child.type == "identifier" and safe_decode_text(child) == "async"
-        ):
-            return True
-
-    return False
+    return any(
+        child.type == "async"
+        or (child.type == "identifier" and safe_decode_text(child) == "async")
+        for child in func_node.children
+    )
 
 
 def extract_rust_macro_name(macro_node: Node) -> str | None:
-    """Extract the name of a macro invocation.
-
-    Handles patterns like:
-    - println!("Hello")
-    - vec![1, 2, 3]
-    - assert_eq!(a, b)
-
-    Args:
-        macro_node: The macro_invocation node.
-
-    Returns:
-        The name of the macro, or None if not found.
-    """
     if macro_node.type != "macro_invocation":
         return None
 
@@ -129,35 +78,20 @@ def extract_rust_macro_name(macro_node: Node) -> str | None:
             elif macro_name_node.type == "scoped_identifier":
                 for child in macro_name_node.children:
                     if child.type == "identifier":
-                        name = safe_decode_text(child)
-                        if name:
+                        if name := safe_decode_text(child):
                             return name
 
     return None
 
 
 def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
-    """Extract imports from a Rust use declaration with proper path mapping.
-
-    Handles patterns like:
-    - use std::collections::HashMap; -> {"HashMap": "std::collections::HashMap"}
-    - use std::io::{self, Read, Write}; -> {"self": "std::io", "Read": "std::io::Read", "Write": "std::io::Write"}
-    - use std::collections::HashMap as Map; -> {"Map": "std::collections::HashMap"}
-    - use crate::utils::*; -> {"*crate::utils": "crate::utils"}
-
-    Args:
-        use_node: The use_declaration node.
-
-    Returns:
-        Dictionary mapping imported names to their full paths.
-    """
     if use_node.type != "use_declaration":
         return {}
 
     imports = {}
 
     def extract_path_from_node(node: Node) -> str:
-        if node.type == "identifier" or node.type == "type_identifier":
+        if node.type in ["identifier", "type_identifier"]:
             return safe_decode_text(node) or ""
         elif node.type in ("scoped_identifier", "scoped_type_identifier"):
             parts = []
@@ -271,27 +205,14 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
 
 
 def extract_rust_use_path(use_node: Node) -> list[str]:
-    """Legacy function - use extract_rust_use_imports instead.
-
-    This function is deprecated and may not handle complex import patterns correctly.
-    """
     import_dict = extract_rust_use_imports(use_node)
     return list(import_dict.keys())
 
 
 def get_rust_visibility(node: Node) -> str:
-    """Get the visibility modifier of a Rust item.
-
-    Args:
-        node: Any Rust item node (function, struct, enum, etc.).
-
-    Returns:
-        The visibility level: "public", "crate", "super", "private", or "module".
-    """
     for child in node.children:
         if child.type == "visibility_modifier":
-            text = safe_decode_text(child)
-            if text:
+            if text := safe_decode_text(child):
                 if "pub(crate)" in text:
                     return "crate"
                 elif "pub(super)" in text:
@@ -310,22 +231,6 @@ def build_rust_module_path(
     include_classes: bool = False,
     class_node_types: Sequence[str] | None = None,
 ) -> list[str]:
-    """Build a path of containing modules/types for a Rust node.
-
-    Traverses up the AST from the given node to find all containing modules,
-    impl blocks, and optionally classes.
-
-    Args:
-        node: The tree-sitter node to start from.
-        include_impl_targets: If True, include impl block targets in the path.
-        include_classes: If True, include containing class types in the path.
-        class_node_types: List of node types to consider as classes (for include_classes).
-
-    Returns:
-        List of path components from outermost to innermost (excluding source_file).
-        For example: ["outer_mod", "inner_mod", "MyStruct"] for a method inside
-        nested modules and an impl block.
-    """
     path_parts = []
     current = node.parent
 
@@ -336,8 +241,7 @@ def build_rust_module_path(
                 if text is not None:
                     path_parts.append(text.decode("utf8"))
         elif include_impl_targets and current.type == "impl_item":
-            impl_target = extract_rust_impl_target(current)
-            if impl_target:
+            if impl_target := extract_rust_impl_target(current):
                 path_parts.append(impl_target)
         elif include_classes and class_node_types and current.type in class_node_types:
             if current.type != "impl_item":

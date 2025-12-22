@@ -66,10 +66,9 @@ class JsTypeInferenceEngine:
                                 )
                             )
 
-                            var_type = self._infer_js_variable_type_from_value(
+                            if var_type := self._infer_js_variable_type_from_value(
                                 value_node, module_qn
-                            )
-                            if var_type:
+                            ):
                                 local_var_types[var_name] = var_type
                                 logger.debug(
                                     ls.JS_VAR_INFERRED.format(
@@ -96,10 +95,9 @@ class JsTypeInferenceEngine:
         logger.debug(ls.JS_INFER_VALUE_NODE.format(node_type=value_node.type))
 
         if value_node.type == TS_NEW_EXPRESSION:
-            class_name = extract_js_constructor_name(value_node)
-            if class_name:
+            if class_name := extract_js_constructor_name(value_node):
                 class_qn = self._resolve_js_class_name(class_name, module_qn)
-                return class_qn if class_qn else class_name
+                return class_qn or class_name
 
         elif value_node.type == TS_CALL_EXPRESSION:
             func_node = value_node.child_by_field_name("function")
@@ -112,10 +110,9 @@ class JsTypeInferenceEngine:
                     ls.JS_EXTRACTED_METHOD_CALL.format(method_call=method_call_text)
                 )
                 if method_call_text:
-                    inferred_type = self._infer_js_method_return_type(
+                    if inferred_type := self._infer_js_method_return_type(
                         method_call_text, module_qn
-                    )
-                    if inferred_type:
+                    ):
                         logger.debug(
                             ls.JS_TYPE_INFERRED.format(
                                 method_call=method_call_text,
@@ -220,8 +217,7 @@ class JsTypeInferenceEngine:
                 if child.type == TS_RETURN:
                     continue
 
-                inferred_type = analyze_js_return_expression(child, method_qn)
-                if inferred_type:
+                if inferred_type := analyze_js_return_expression(child, method_qn):
                     return inferred_type
 
         return None

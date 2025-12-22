@@ -64,8 +64,7 @@ def find_js_method_in_ast(
             if name_node and name_node.text:
                 found_class_name = safe_decode_text(name_node)
                 if found_class_name == class_name:
-                    body_node = current.child_by_field_name(FIELD_BODY)
-                    if body_node:
+                    if body_node := current.child_by_field_name(FIELD_BODY):
                         return find_js_method_in_class_body(body_node, method_name)
 
         stack.extend(reversed(current.children))
@@ -100,8 +99,7 @@ def extract_js_constructor_name(new_expr_node: Node) -> str | None:
 
 def analyze_js_return_expression(expr_node: Node, method_qn: str) -> str | None:
     if expr_node.type == TS_NEW_EXPRESSION:
-        class_name = extract_js_constructor_name(expr_node)
-        if class_name:
+        if class_name := extract_js_constructor_name(expr_node):
             qn_parts = method_qn.split(SEPARATOR_DOT)
             if len(qn_parts) >= 2:
                 return SEPARATOR_DOT.join(qn_parts[:-1])
@@ -113,8 +111,7 @@ def analyze_js_return_expression(expr_node: Node, method_qn: str) -> str | None:
             return SEPARATOR_DOT.join(qn_parts[:-1])
 
     elif expr_node.type == TS_MEMBER_EXPRESSION:
-        object_node = expr_node.child_by_field_name(FIELD_OBJECT)
-        if object_node:
+        if object_node := expr_node.child_by_field_name(FIELD_OBJECT):
             if object_node.type == TS_THIS:
                 qn_parts = method_qn.split(SEPARATOR_DOT)
                 if len(qn_parts) >= 2:

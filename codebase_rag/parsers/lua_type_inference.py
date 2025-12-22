@@ -29,13 +29,14 @@ class LuaTypeInferenceEngine:
             current = stack.pop()
 
             if current.type == cs.TS_LUA_VARIABLE_DECLARATION:
-                assignment = None
-                for child in current.children:
-                    if child.type == cs.TS_LUA_ASSIGNMENT_STATEMENT:
-                        assignment = child
-                        break
-
-                if assignment:
+                if assignment := next(
+                    (
+                        child
+                        for child in current.children
+                        if child.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
+                    ),
+                    None,
+                ):
                     var_names = []
                     var_values = []
 
@@ -46,17 +47,17 @@ class LuaTypeInferenceEngine:
                                     if decoded_name := safe_decode_text(var_node):
                                         var_names.append(decoded_name)
                         elif child.type == cs.TS_LUA_EXPRESSION_LIST:
-                            for expr_node in child.children:
-                                if expr_node.type == cs.TS_LUA_FUNCTION_CALL:
-                                    var_values.append(expr_node)
-
+                            var_values.extend(
+                                expr_node
+                                for expr_node in child.children
+                                if expr_node.type == cs.TS_LUA_FUNCTION_CALL
+                            )
                     for i, var_name in enumerate(var_names):
                         if i < len(var_values):
                             value_node = var_values[i]
-                            var_type = self._infer_lua_variable_type_from_value(
+                            if var_type := self._infer_lua_variable_type_from_value(
                                 value_node, module_qn
-                            )
-                            if var_type:
+                            ):
                                 local_var_types[var_name] = var_type
                                 logger.debug(
                                     ls.LUA_VAR_INFERRED.format(
@@ -86,8 +87,9 @@ class LuaTypeInferenceEngine:
                                 method_name = safe_decode_text(grandchild)
 
                     if class_name and method_name:
-                        class_qn = self._resolve_lua_class_name(class_name, module_qn)
-                        if class_qn:
+                        if class_qn := self._resolve_lua_class_name(
+                            class_name, module_qn
+                        ):
                             logger.debug(
                                 ls.LUA_TYPE_INFERENCE_RETURN.format(
                                     class_name=class_name,
@@ -112,8 +114,11 @@ class LuaTypeInferenceEngine:
             return local_class_qn
 
         method_prefix = f"{local_class_qn}{cs.LUA_METHOD_SEPARATOR}"
-        for qn, _ in self.function_registry.find_with_prefix(local_class_qn):
-            if qn.startswith(method_prefix):
-                return local_class_qn
-
-        return None
+        return next(
+            (
+                local_class_qn
+                for qn, _ in self.function_registry.find_with_prefix(local_class_qn)
+                if qn.startswith(method_prefix)
+            ),
+            None,
+        )
