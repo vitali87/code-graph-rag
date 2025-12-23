@@ -10,7 +10,10 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
-from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from codebase_rag.tools.code_retrieval import (
+    CodeRetriever,
+    create_code_retrieval_tool,
+)
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
@@ -71,10 +74,27 @@ class MCPToolsRegistry:
             directory_lister=self.directory_lister
         )
 
+        self._semantic_search_tool = None  # (H) It is optionally initialised below
+
+        try:
+            from codebase_rag.tools.semantic_search import (
+                create_semantic_search_tool,
+            )
+
+            self._semantic_search_tool = create_semantic_search_tool()
+            self._semantic_search_available = True
+        except ImportError:
+            self._semantic_search_available = False
+            logger.info(
+                "[MCP] Semantic search dependencies not installed. "
+                "Install with: uv sync --extra semantic"
+            )
+
         self._tools: dict[str, ToolMetadata] = {
             "index_repository": ToolMetadata(
                 name="index_repository",
-                description="Parse and ingest the repository into the Memgraph knowledge graph. "
+                description="NEVER USE THIS EXCEPT YOU ARE DIRECTLY ASKED TO, IT CLEANS ALL EXISTING EMBEDDINGS!!! "
+                "Parse and ingest the repository into the Memgraph knowledge graph. "
                 "This builds a comprehensive graph of functions, classes, dependencies, and relationships.",
                 input_schema={
                     "type": "object",
@@ -84,9 +104,21 @@ class MCPToolsRegistry:
                 handler=self.index_repository,
                 returns_json=False,
             ),
+            "update_repository": ToolMetadata(
+                name="update_repository",
+                description="Update the repository in the Memgraph knowledge graph WITHOUT clearing existing data first.",
+                input_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                handler=self.update_repository,
+                returns_json=False,
+            ),
             "query_code_graph": ToolMetadata(
                 name="query_code_graph",
-                description="Query the codebase knowledge graph using natural language. "
+                description="Pefere to use semantic_search, except you know exact names of classes/functions in the code you are searching for. "
+                "Query the codebase knowledge graph using natural language, based on structural and syntactic relationships in the code. "
                 "Ask questions like 'What functions call UserService.create_user?' or "
                 "'Show me all classes that implement the Repository interface'.",
                 input_schema={
@@ -139,7 +171,11 @@ class MCPToolsRegistry:
                             "description": "New code to insert",
                         },
                     },
-                    "required": ["file_path", "target_code", "replacement_code"],
+                    "required": [
+                        "file_path",
+                        "target_code",
+                        "replacement_code",
+                    ],
                 },
                 handler=self.surgical_replace_code,
                 returns_json=False,
@@ -206,9 +242,33 @@ class MCPToolsRegistry:
                 returns_json=False,
             ),
         }
+        if self._semantic_search_available:
+            self._tools["semantic_search"] = ToolMetadata(
+                name="semantic_search",
+                description="Use this when the user asks where or how something is implemented, "
+                "especially when exact names or locations are unknown.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "natural_language_query": {
+                            "type": "string",
+                            "description": "Natural language description of what you want to find",
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "default": 5,
+                            "description": "Max number of results to return",
+                        },
+                    },
+                    "required": ["natural_language_query"],
+                },
+                handler=self.semantic_search,
+                returns_json=False,
+            )
 
     async def index_repository(self) -> str:
-        """Parse and ingest the repository into the Memgraph knowledge graph.
+        """NEVER USE THIS, EXCEPT YOU GET DIRECTLY ASK TO DO SO!!!
+        Parse and ingest the repository into the Memgraph knowledge graph.
 
         This tool analyzes the codebase using Tree-sitter parsers and builds
         a comprehensive knowledge graph with functions, classes, dependencies,
@@ -240,8 +300,33 @@ class MCPToolsRegistry:
             logger.error(f"[MCP] Error indexing repository: {e}")
             return f"Error indexing repository: {str(e)}"
 
+    async def update_repository(self) -> str:
+        """Update (re-index) the repository WITHOUT clearing the database first."""
+        logger.info(f"[MCP] Updating repository at: {self.project_root}")
+
+        try:
+            updater = GraphUpdater(
+                ingestor=self.ingestor,
+                repo_path=Path(self.project_root),
+                parsers=self.parsers,
+                queries=self.queries,
+            )
+            updater.run()
+
+            return (
+                f"Successfully updated repository at {self.project_root}. "
+                "Knowledge graph has been updated (no database wipe)."
+            )
+        except Exception as e:
+            logger.error(f"[MCP] Error updating repository: {e}")
+            return f"Error updating repository: {str(e)}"
+
     async def query_code_graph(self, natural_language_query: str) -> dict[str, Any]:
-        """Query the codebase knowledge graph using natural language.
+        """Query the codebase knowledge graph for exact names in the codebase.
+
+        This tool should not be used for semantic search!
+
+        Please use semantic_search, if you are not very certain, that you are looking for exact names.
 
         This tool converts your natural language question into a Cypher query,
         executes it against the knowledge graph, and returns structured results
@@ -256,10 +341,12 @@ class MCPToolsRegistry:
                 - cypher_query: The generated Cypher query
                 - results: List of result rows from the graph
                 - summary: Natural language summary of findings
+
+        if this tool returns 0 results, do NOT try to index the Repository, but use semantic_search instead!!
         """
         logger.info(f"[MCP] query_code_graph: {natural_language_query}")
         try:
-            graph_data = await self._query_tool.function(natural_language_query)  # type: ignore[arg-type]
+            graph_data = await self._query_tool.function(natural_language_query)
             result_dict = cast(dict[str, Any], graph_data.model_dump())
             logger.info(
                 f"[MCP] Query returned {len(result_dict.get('results', []))} results"
@@ -326,7 +413,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] surgical_replace_code in {file_path}")
         try:
-            result = await self._file_editor_tool.function(  # type: ignore[call-arg]
+            result = await self._file_editor_tool.function(
                 file_path=file_path,
                 target_code=target_code,
                 replacement_code=replacement_code,
@@ -337,7 +424,10 @@ class MCPToolsRegistry:
             return f"Error: {str(e)}"
 
     async def read_file(
-        self, file_path: str, offset: int | None = None, limit: int | None = None
+        self,
+        file_path: str,
+        offset: int | None = None,
+        limit: int | None = None,
     ) -> str:
         """Read the contents of a file with optional pagination.
 
@@ -373,7 +463,7 @@ class MCPToolsRegistry:
                     header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
                     return header + paginated_content
             else:
-                result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
+                result = await self._file_reader_tool.function(file_path=file_path)
                 return cast(str, result)
 
         except Exception as e:
@@ -392,7 +482,7 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] write_file: {file_path}")
         try:
-            result = await self._file_writer_tool.function(  # type: ignore[call-arg]
+            result = await self._file_writer_tool.function(
                 file_path=file_path, content=content
             )
             if result.success:
@@ -414,13 +504,51 @@ class MCPToolsRegistry:
         """
         logger.info(f"[MCP] list_directory: {directory_path}")
         try:
-            result = self._directory_lister_tool.function(  # type: ignore[call-arg]
-                directory_path=directory_path
-            )
+            result = self._directory_lister_tool.function(directory_path=directory_path)
             return cast(str, result)
         except Exception as e:
             logger.error(f"[MCP] Error listing directory: {e}")
             return f"Error: {str(e)}"
+
+    async def semantic_search(self, natural_language_query: str, top_k: int = 5) -> str:
+        """Search for relevant functions or methods with natural language, by semantic intent using embeddings.
+
+        Use this tool when the user describes *what the code should do* rather than
+        referring to exact symbol names or known relationships. This is especially
+        useful for questions like:
+            - "Where is authentication implemented?"
+            - "Find code that validates user input"
+            - "Which functions handle retries or error handling?"
+            - "Where is file I/O or parsing logic implemented?"
+
+        This tool performs embedding-based vector similarity search over the codebase
+        and returns the most relevant functions or methods ranked by semantic similarity.
+
+        Do NOT use this tool for:
+            - questions about call graphs, inheritance, or dependencies
+            - questions that require exact relationships between known symbols
+            - retrieving source code when a qualified name or node ID is already known
+
+        After identifying relevant results, use follow-up tools such as
+        `get_code_snippet` or `get_function_source_by_id` to inspect implementations.
+
+        Args:
+            query: Natural language description of the desired functionality.
+            top_k: Maximum number of results to return (default: 5).
+
+        Returns:
+            A human-readable list of matching functions or methods with similarity scores.
+        """
+        if self._semantic_search_tool is None:
+            return (
+                "Semantic search is not available because optional dependencies are missing. "
+                "Install with: uv sync --extra semantic"
+            )
+        logger.info(f"[MCP] semantic_search: {natural_language_query}")
+        result = await self._semantic_search_tool.function(
+            query=natural_language_query, top_k=top_k
+        )
+        return cast(str, result)
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get MCP tool schemas for all registered tools.
