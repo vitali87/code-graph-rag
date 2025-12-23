@@ -22,6 +22,7 @@ from codebase_rag.tools.directory_lister import (
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+from codebase_rag.utils.dependencies import has_semantic_dependencies
 
 
 @dataclass
@@ -74,20 +75,19 @@ class MCPToolsRegistry:
             directory_lister=self.directory_lister
         )
 
-        self._semantic_search_tool = None  # (H) It is optionally initialised below
+        self._semantic_search_tool = None
+        self._semantic_search_available = False
 
-        try:
+        if has_semantic_dependencies():
             from codebase_rag.tools.semantic_search import (
                 create_semantic_search_tool,
             )
 
             self._semantic_search_tool = create_semantic_search_tool()
             self._semantic_search_available = True
-        except ImportError:
-            self._semantic_search_available = False
+        else:
             logger.info(
-                "[MCP] Semantic search dependencies not installed. "
-                "Install with: uv sync --extra semantic"
+                "[MCP] Semantic search not available. Install with: uv sync --extra semantic"
             )
 
         self._tools: dict[str, ToolMetadata] = {
