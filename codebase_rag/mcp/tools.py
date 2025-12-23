@@ -117,7 +117,7 @@ class MCPToolsRegistry:
             ),
             "query_code_graph": ToolMetadata(
                 name="query_code_graph",
-                description="Pefere to use semantic_search, except you know exact names of classes/functions in the code you are searching for. "
+                description="Prefer to use semantic_search, except you know exact names of classes/functions in the code you are searching for. "
                 "Query the codebase knowledge graph using natural language, based on structural and syntactic relationships in the code. "
                 "Ask questions like 'What functions call UserService.create_user?' or "
                 "'Show me all classes that implement the Repository interface'.",
