@@ -171,18 +171,16 @@ class ImportProcessor:
             return
 
         if module_name_node.type == "dotted_name":
-            decoded_name = safe_decode_text(module_name_node)
-            if not decoded_name:
+            if decoded_name := safe_decode_text(module_name_node):
+                module_name = decoded_name
+            else:
                 return
-            module_name = decoded_name
         elif module_name_node.type == "relative_import":
             module_name = self._resolve_relative_import(module_name_node, module_qn)
         else:
             return
 
         imported_items = []
-        is_wildcard = False
-
         for name_node in import_node.children_by_field_name("name"):
             if name_node.type == "dotted_name":
                 decoded_name = safe_decode_text(name_node)
@@ -200,11 +198,9 @@ class ImportProcessor:
                         continue
                     imported_items.append((alias, original_name))
 
-        for child in import_node.children:
-            if child.type == "wildcard_import":
-                is_wildcard = True
-                break
-
+        is_wildcard = any(
+            child.type == "wildcard_import" for child in import_node.children
+        )
         if module_name and (imported_items or is_wildcard):
             if module_name.startswith(self.project_name):
                 base_module = module_name
@@ -235,15 +231,11 @@ class ImportProcessor:
 
         for child in relative_node.children:
             if child.type == "import_prefix":
-                decoded_text = safe_decode_text(child)
-                if not decoded_text:
-                    continue
-                dots = len(decoded_text)
+                if decoded_text := safe_decode_text(child):
+                    dots = len(decoded_text)
             elif child.type == "dotted_name":
-                decoded_name = safe_decode_text(child)
-                if not decoded_name:
-                    continue
-                module_name = decoded_name
+                if decoded_name := safe_decode_text(child):
+                    module_name = decoded_name
 
         target_parts = module_parts[:-dots] if dots > 0 else module_parts
 
@@ -393,7 +385,11 @@ class ImportProcessor:
             return
 
         for child in export_node.children:
-            if child.type == "export_clause":
+            if child.type == "*":
+                wildcard_key = f"*{source_module}"
+                self.import_mapping[current_module][wildcard_key] = source_module
+                logger.debug(f"JS namespace re-export: * -> {source_module}")
+            elif child.type == "export_clause":
                 for grandchild in child.children:
                     if grandchild.type == "export_specifier":
                         name_node = grandchild.child_by_field_name("name")
@@ -412,10 +408,6 @@ class ImportProcessor:
                                 f"JS re-export: {exported_name} -> "
                                 f"{source_module}.{original_name}"
                             )
-            elif child.type == "*":
-                wildcard_key = f"*{source_module}"
-                self.import_mapping[current_module][wildcard_key] = source_module
-                logger.debug(f"JS namespace re-export: * -> {source_module}")
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get("import", []):
@@ -438,15 +430,13 @@ class ImportProcessor:
                 if is_wildcard:
                     logger.debug(f"Java wildcard import: {imported_path}.*")
                     self.import_mapping[module_qn][f"*{imported_path}"] = imported_path
-                else:
-                    parts = imported_path.split(cs.SEPARATOR_DOT)
-                    if parts:
-                        imported_name = parts[-1]
-                        self.import_mapping[module_qn][imported_name] = imported_path
-                        import_type = "static import" if is_static else "import"
-                        logger.debug(
-                            f"Java {import_type}: {imported_name} -> {imported_path}"
-                        )
+                elif parts := imported_path.split(cs.SEPARATOR_DOT):
+                    imported_name = parts[-1]
+                    self.import_mapping[module_qn][imported_name] = imported_path
+                    import_type = "static import" if is_static else "import"
+                    logger.debug(
+                        f"Java {import_type}: {imported_name} -> {imported_path}"
+                    )
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get("import", []):
@@ -519,9 +509,9 @@ class ImportProcessor:
 
             if is_system_include:
                 full_name = (
-                    f"std.{include_path}"
-                    if not include_path.startswith("std")
-                    else include_path
+                    include_path
+                    if include_path.startswith("std")
+                    else f"std.{include_path}"
                 )
             else:
                 path_parts = (
@@ -546,24 +536,27 @@ class ImportProcessor:
             elif child.type == "template_argument_list":
                 template_args_child = child
 
-        if identifier_child and safe_decode_text(identifier_child) == "import":
-            if template_args_child:
-                module_name = None
-                for child in template_args_child.children:
-                    if child.type == "type_descriptor":
-                        for desc_child in child.children:
-                            if desc_child.type == "type_identifier":
-                                module_name = safe_decode_with_fallback(desc_child)
-                                break
-                    elif child.type == "type_identifier":
-                        module_name = safe_decode_with_fallback(child)
+        if (
+            identifier_child
+            and safe_decode_text(identifier_child) == "import"
+            and template_args_child
+        ):
+            module_name = None
+            for child in template_args_child.children:
+                if child.type == "type_descriptor":
+                    for desc_child in child.children:
+                        if desc_child.type == "type_identifier":
+                            module_name = safe_decode_with_fallback(desc_child)
+                            break
+                elif child.type == "type_identifier":
+                    module_name = safe_decode_with_fallback(child)
 
-                if module_name:
-                    local_name = module_name
-                    full_name = f"std.{module_name}"
+            if module_name:
+                local_name = module_name
+                full_name = f"std.{module_name}"
 
-                    self.import_mapping[module_qn][local_name] = full_name
-                    logger.debug(f"C++20 module import: {local_name} -> {full_name}")
+                self.import_mapping[module_qn][local_name] = full_name
+                logger.debug(f"C++20 module import: {local_name} -> {full_name}")
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
         decoded_text = safe_decode_text(decl_node)
@@ -574,32 +567,34 @@ class ImportProcessor:
         if decl_text.startswith("module ") and not decl_text.startswith("module ;"):
             parts = decl_text.split()
             if len(parts) >= 2:
-                module_name = parts[1].rstrip(";")
-                self.import_mapping[module_qn][module_name] = (
-                    f"{self.project_name}.{module_name}"
+                self._register_cpp_module_mapping(
+                    parts, 1, module_qn, "C++20 module implementation: "
                 )
-                logger.debug(f"C++20 module implementation: {module_name}")
-
         elif decl_text.startswith("export module "):
             parts = decl_text.split()
             if len(parts) >= 3:
-                module_name = parts[2].rstrip(";")
-                self.import_mapping[module_qn][module_name] = (
-                    f"{self.project_name}.{module_name}"
+                self._register_cpp_module_mapping(
+                    parts, 2, module_qn, "C++20 module interface: "
                 )
-                logger.debug(f"C++20 module interface: {module_name}")
-
         elif "import :" in decl_text:
             colon_pos = decl_text.find(":")
             if colon_pos != -1:
-                partition_part = decl_text[colon_pos + 1 :].split(";")[0].strip()
-                if partition_part:
+                if partition_part := decl_text[colon_pos + 1 :].split(";")[0].strip():
                     partition_name = f"partition_{partition_part}"
                     full_name = f"{self.project_name}.{partition_part}"
                     self.import_mapping[module_qn][partition_name] = full_name
                     logger.debug(
                         f"C++20 module partition import: {partition_name} -> {full_name}"
                     )
+
+    def _register_cpp_module_mapping(
+        self, parts: list[str], name_index: int, module_qn: str, log_prefix: str
+    ) -> None:
+        module_name = parts[name_index].rstrip(";")
+        self.import_mapping[module_qn][module_name] = (
+            f"{self.project_name}.{module_name}"
+        )
+        logger.debug(f"{log_prefix}{module_name}")
 
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageSpec
@@ -612,8 +607,7 @@ class ImportProcessor:
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get("import", []):
             if self._lua_is_require_call(call_node):
-                module_path = self._lua_extract_require_arg(call_node)
-                if module_path:
+                if module_path := self._lua_extract_require_arg(call_node):
                     local_name = (
                         self._lua_extract_assignment_lhs(call_node)
                         or module_path.split(cs.SEPARATOR_DOT)[-1]
@@ -621,8 +615,7 @@ class ImportProcessor:
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
             elif self._lua_is_pcall_require(call_node):
-                module_path = self._lua_extract_pcall_require_arg(call_node)
-                if module_path:
+                if module_path := self._lua_extract_pcall_require_arg(call_node):
                     local_name = (
                         self._lua_extract_pcall_assignment_lhs(call_node)
                         or module_path.split(cs.SEPARATOR_DOT)[-1]
@@ -631,8 +624,7 @@ class ImportProcessor:
                     self.import_mapping[module_qn][local_name] = resolved
 
             elif self._lua_is_stdlib_call(call_node):
-                stdlib_module = self._lua_extract_stdlib_module(call_node)
-                if stdlib_module:
+                if stdlib_module := self._lua_extract_stdlib_module(call_node):
                     self.import_mapping[module_qn][stdlib_module] = stdlib_module
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
@@ -670,8 +662,7 @@ class ImportProcessor:
         candidates = args.children if args else call_node.children
         for node in candidates:
             if node.type in ("string", "string_literal"):
-                decoded = safe_decode_text(node)
-                if decoded:
+                if decoded := safe_decode_text(node):
                     return decoded.strip("'\"")
         return None
 
@@ -682,12 +673,10 @@ class ImportProcessor:
         found_require = False
         for child in args.children:
             if found_require and child.type in ("string", "string_literal"):
-                decoded = safe_decode_text(child)
-                if decoded:
+                if decoded := safe_decode_text(child):
                     return decoded.strip("'\"")
-            if child.type == "identifier":
-                if safe_decode_text(child) == "require":
-                    found_require = True
+            if child.type == "identifier" and safe_decode_text(child) == "require":
+                found_require = True
         return None
 
     def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
@@ -701,7 +690,7 @@ class ImportProcessor:
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
         if import_path.startswith("./") or import_path.startswith("../"):
             parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
-            rel_parts = [p for p in import_path.replace("\\", "/").split("/")]
+            rel_parts = list(import_path.replace("\\", "/").split("/"))
             for p in rel_parts:
                 if p == ".":
                     continue
@@ -729,10 +718,11 @@ class ImportProcessor:
             return False
 
         first_child = call_node.children[0]
-        if first_child.type == "dot_index_expression":
-            if first_child.children and first_child.children[0].type == "identifier":
-                module_name = safe_decode_text(first_child.children[0])
-                return module_name in cs.LUA_STDLIB_MODULES
+        if first_child.type == "dot_index_expression" and (
+            first_child.children and first_child.children[0].type == "identifier"
+        ):
+            module_name = safe_decode_text(first_child.children[0])
+            return module_name in cs.LUA_STDLIB_MODULES
 
         return False
 
@@ -741,8 +731,9 @@ class ImportProcessor:
             return None
 
         first_child = call_node.children[0]
-        if first_child.type == "dot_index_expression":
-            if first_child.children and first_child.children[0].type == "identifier":
-                return safe_decode_text(first_child.children[0])
+        if first_child.type == "dot_index_expression" and (
+            first_child.children and first_child.children[0].type == "identifier"
+        ):
+            return safe_decode_text(first_child.children[0])
 
         return None
