@@ -9,7 +9,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
-from .python_utils import resolve_class_name
+from .py import resolve_class_name
 from .type_inference import TypeInferenceEngine
 
 
@@ -408,8 +408,11 @@ class CallResolver:
 
         object_expr = call_name[: match.start()]
 
-        if object_type := self.type_inference._infer_expression_return_type(
-            object_expr, module_qn, local_var_types
+        if (
+            object_type
+            := self.type_inference.python_type_inference._infer_expression_return_type(
+                object_expr, module_qn, local_var_types
+            )
         ):
             full_object_type = object_type
             if cs.SEPARATOR_DOT not in object_type:

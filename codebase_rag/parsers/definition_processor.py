@@ -11,7 +11,7 @@ from ..types_defs import SimpleNameLookup
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
-from .js_ts_ingest import JsTsIngestMixin
+from .js_ts.ingest import JsTsIngestMixin
 from .utils import safe_decode_with_fallback
 
 if TYPE_CHECKING:

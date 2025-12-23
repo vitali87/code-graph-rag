@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from ..constants import (
+from ...constants import (
     DELIMITER_TOKENS,
     JAVA_CLASS_MODIFIERS,
     JAVA_CLASS_NODE_TYPES,
@@ -51,8 +51,8 @@ from ..constants import (
     TS_VARIABLE_DECLARATOR,
     TS_VOID_TYPE,
 )
-from ..types_defs import ASTNode
-from .utils import safe_decode_text
+from ...types_defs import ASTNode
+from ..utils import safe_decode_text
 
 
 class JavaClassInfo(TypedDict):
@@ -86,7 +86,7 @@ class JavaAnnotationInfo(TypedDict):
     arguments: list[str]
 
 
-def extract_java_package_name(package_node: ASTNode) -> str | None:
+def extract_package_name(package_node: ASTNode) -> str | None:
     if package_node.type != TS_PACKAGE_DECLARATION:
         return None
 
@@ -99,7 +99,7 @@ def extract_java_package_name(package_node: ASTNode) -> str | None:
     return None
 
 
-def extract_java_import_path(import_node: ASTNode) -> dict[str, str]:
+def extract_import_path(import_node: ASTNode) -> dict[str, str]:
     if import_node.type != TS_IMPORT_DECLARATION:
         return {}
 
@@ -132,7 +132,7 @@ def extract_java_import_path(import_node: ASTNode) -> dict[str, str]:
     return imports
 
 
-def extract_java_class_info(class_node: ASTNode) -> JavaClassInfo:
+def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
     if class_node.type not in JAVA_CLASS_NODE_TYPES:
         return JavaClassInfo(
             name=None,
@@ -201,7 +201,7 @@ def extract_java_class_info(class_node: ASTNode) -> JavaClassInfo:
     return info
 
 
-def extract_java_method_info(method_node: ASTNode) -> JavaMethodInfo:
+def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
     if method_node.type not in JAVA_METHOD_NODE_TYPES:
         return JavaMethodInfo(
             name=None,
@@ -267,7 +267,7 @@ def extract_java_method_info(method_node: ASTNode) -> JavaMethodInfo:
     return info
 
 
-def extract_java_field_info(field_node: ASTNode) -> JavaFieldInfo:
+def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
     if field_node.type != TS_FIELD_DECLARATION:
         return JavaFieldInfo(
             name=None,
@@ -308,7 +308,7 @@ def extract_java_field_info(field_node: ASTNode) -> JavaFieldInfo:
     return info
 
 
-def extract_java_method_call_info(
+def extract_method_call_info(
     call_node: ASTNode,
 ) -> dict[str, str | int | None]:
     if call_node.type != TS_METHOD_INVOCATION:
@@ -342,7 +342,7 @@ def extract_java_method_call_info(
     return info
 
 
-def is_java_main_method(method_node: ASTNode) -> bool:
+def is_main_method(method_node: ASTNode) -> bool:
     if method_node.type != TS_METHOD_DECLARATION:
         return False
 
@@ -415,7 +415,7 @@ def get_java_visibility(node: ASTNode) -> str:
     return JAVA_VISIBILITY_PACKAGE
 
 
-def build_java_qualified_name(
+def build_qualified_name(
     node: ASTNode,
     include_classes: bool = True,
     include_methods: bool = False,
@@ -443,7 +443,7 @@ def build_java_qualified_name(
     return path_parts
 
 
-def extract_java_annotation_info(
+def extract_annotation_info(
     annotation_node: ASTNode,
 ) -> JavaAnnotationInfo:
     if annotation_node.type != TS_ANNOTATION:
@@ -466,7 +466,7 @@ def extract_java_annotation_info(
     return info
 
 
-def find_java_package_start_index(parts: list[str]) -> int | None:
+def find_package_start_index(parts: list[str]) -> int | None:
     for i, part in enumerate(parts):
         if part in JAVA_JVM_LANGUAGES and i > 0:
             return i + 1

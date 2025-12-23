@@ -11,7 +11,7 @@ from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from .call_resolver import CallResolver
-from .cpp_utils import convert_operator_symbol_to_name, extract_cpp_function_name
+from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 
@@ -96,7 +96,7 @@ class CallProcessor:
                 continue
 
             if language == cs.SupportedLanguage.CPP:
-                func_name = extract_cpp_function_name(func_node)
+                func_name = cpp_utils.extract_function_name(func_node)
             else:
                 func_name = self._get_node_name(func_node)
             if not func_name:
@@ -212,7 +212,7 @@ class CallProcessor:
                 operator_node = call_node.child_by_field_name("operator")
                 if operator_node and operator_node.text:
                     operator_text = operator_node.text.decode(cs.ENCODING_UTF8)
-                    return convert_operator_symbol_to_name(operator_text)
+                    return cpp_utils.convert_operator_symbol_to_name(operator_text)
             case "method_invocation":
                 object_node = call_node.child_by_field_name("object")
                 name_node = call_node.child_by_field_name("name")

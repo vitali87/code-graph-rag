@@ -7,11 +7,8 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..language_spec import LanguageSpec
 from ..types_defs import LanguageQueries
-from .lua_utils import (
-    extract_lua_assigned_name,
-    extract_lua_pcall_second_identifier,
-)
-from .rust_utils import extract_rust_use_imports
+from .lua import utils as lua_utils
+from .rs import utils as rs_utils
 from .stdlib_extractor import (
     StdlibExtractor,
     clear_stdlib_cache,
@@ -457,7 +454,7 @@ class ImportProcessor:
                 self._parse_rust_use_declaration(import_node, module_qn)
 
     def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
-        imports = extract_rust_use_imports(use_node)
+        imports = rs_utils.extract_use_imports(use_node)
 
         for imported_name, full_path in imports.items():
             self.import_mapping[module_qn][imported_name] = full_path
@@ -694,10 +691,12 @@ class ImportProcessor:
         return None
 
     def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
-        return extract_lua_assigned_name(call_node, accepted_var_types=("identifier",))
+        return lua_utils.extract_assigned_name(
+            call_node, accepted_var_types=("identifier",)
+        )
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
-        return extract_lua_pcall_second_identifier(call_node)
+        return lua_utils.extract_pcall_second_identifier(call_node)
 
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
         if import_path.startswith("./") or import_path.startswith("../"):

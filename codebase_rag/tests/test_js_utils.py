@@ -1,13 +1,13 @@
 import pytest
 from tree_sitter import Language, Parser
 
-from codebase_rag.parsers.js_utils import (
-    analyze_js_return_expression,
-    extract_js_constructor_name,
-    extract_js_method_call,
-    find_js_method_in_ast,
-    find_js_method_in_class_body,
-    find_js_return_statements,
+from codebase_rag.parsers.js_ts.utils import (
+    analyze_return_expression,
+    extract_constructor_name,
+    extract_method_call,
+    find_method_in_ast,
+    find_method_in_class_body,
+    find_return_statements,
 )
 
 try:
@@ -36,7 +36,7 @@ class TestExtractJsMethodCall:
         member_expr = call_expr.child_by_field_name("function")
         assert member_expr is not None
 
-        result = extract_js_method_call(member_expr)
+        result = extract_method_call(member_expr)
         assert result == "Storage.getInstance"
 
     def test_chained_method_call(self, js_parser: Parser) -> None:
@@ -47,7 +47,7 @@ class TestExtractJsMethodCall:
         member_expr = call_expr.child_by_field_name("function")
         assert member_expr is not None
 
-        result = extract_js_method_call(member_expr)
+        result = extract_method_call(member_expr)
         assert result is not None
         assert "method2" in result
 
@@ -57,7 +57,7 @@ class TestExtractJsMethodCall:
         expr_stmt = tree.root_node.children[0]
         member_expr = expr_stmt.children[0]
 
-        result = extract_js_method_call(member_expr)
+        result = extract_method_call(member_expr)
         assert result == "obj.property"
 
     def test_nested_object_access(self, js_parser: Parser) -> None:
@@ -66,7 +66,7 @@ class TestExtractJsMethodCall:
         expr_stmt = tree.root_node.children[0]
         member_expr = expr_stmt.children[0]
 
-        result = extract_js_method_call(member_expr)
+        result = extract_method_call(member_expr)
         assert result is not None
 
     def test_non_member_expression_returns_none(self, js_parser: Parser) -> None:
@@ -75,7 +75,7 @@ class TestExtractJsMethodCall:
         expr_stmt = tree.root_node.children[0]
         call_expr = expr_stmt.children[0]
 
-        result = extract_js_method_call(call_expr)
+        result = extract_method_call(call_expr)
         assert result is None
 
 
@@ -94,7 +94,7 @@ class MyClass {
         class_body = class_node.child_by_field_name("body")
         assert class_body is not None
 
-        result = find_js_method_in_class_body(class_body, "myMethod")
+        result = find_method_in_class_body(class_body, "myMethod")
         assert result is not None
         assert result.type == "method_definition"
 
@@ -111,7 +111,7 @@ class MyClass {
         class_body = class_node.child_by_field_name("body")
         assert class_body is not None
 
-        result = find_js_method_in_class_body(class_body, "constructor")
+        result = find_method_in_class_body(class_body, "constructor")
         assert result is not None
 
     def test_finds_static_method(self, js_parser: Parser) -> None:
@@ -127,7 +127,7 @@ class MyClass {
         class_body = class_node.child_by_field_name("body")
         assert class_body is not None
 
-        result = find_js_method_in_class_body(class_body, "getInstance")
+        result = find_method_in_class_body(class_body, "getInstance")
         assert result is not None
 
     def test_returns_none_for_nonexistent_method(self, js_parser: Parser) -> None:
@@ -141,7 +141,7 @@ class MyClass {
         class_body = class_node.child_by_field_name("body")
         assert class_body is not None
 
-        result = find_js_method_in_class_body(class_body, "nonExistentMethod")
+        result = find_method_in_class_body(class_body, "nonExistentMethod")
         assert result is None
 
     def test_multiple_methods_finds_correct_one(self, js_parser: Parser) -> None:
@@ -157,7 +157,7 @@ class MyClass {
         class_body = class_node.child_by_field_name("body")
         assert class_body is not None
 
-        result = find_js_method_in_class_body(class_body, "methodB")
+        result = find_method_in_class_body(class_body, "methodB")
         assert result is not None
 
 
@@ -173,7 +173,7 @@ class Storage {
 """
         tree = js_parser.parse(code)
 
-        result = find_js_method_in_ast(tree.root_node, "Storage", "getInstance")
+        result = find_method_in_ast(tree.root_node, "Storage", "getInstance")
         assert result is not None
         assert result.type == "method_definition"
 
@@ -189,7 +189,7 @@ function outer() {
 """
         tree = js_parser.parse(code)
 
-        result = find_js_method_in_ast(tree.root_node, "Inner", "innerMethod")
+        result = find_method_in_ast(tree.root_node, "Inner", "innerMethod")
         assert result is not None
 
     def test_returns_none_for_nonexistent_class(self, js_parser: Parser) -> None:
@@ -200,7 +200,7 @@ class ExistingClass {
 """
         tree = js_parser.parse(code)
 
-        result = find_js_method_in_ast(tree.root_node, "NonExistent", "method")
+        result = find_method_in_ast(tree.root_node, "NonExistent", "method")
         assert result is None
 
     def test_returns_none_for_nonexistent_method(self, js_parser: Parser) -> None:
@@ -211,7 +211,7 @@ class MyClass {
 """
         tree = js_parser.parse(code)
 
-        result = find_js_method_in_ast(tree.root_node, "MyClass", "nonExistent")
+        result = find_method_in_ast(tree.root_node, "MyClass", "nonExistent")
         assert result is None
 
     def test_multiple_classes_finds_correct_one(self, js_parser: Parser) -> None:
@@ -225,7 +225,7 @@ class ClassB {
 """
         tree = js_parser.parse(code)
 
-        result = find_js_method_in_ast(tree.root_node, "ClassB", "methodB")
+        result = find_method_in_ast(tree.root_node, "ClassB", "methodB")
         assert result is not None
 
 
@@ -241,7 +241,7 @@ function myFunc() {
         func_node = tree.root_node.children[0]
 
         return_nodes: list = []
-        find_js_return_statements(func_node, return_nodes)
+        find_return_statements(func_node, return_nodes)
         assert len(return_nodes) == 1
         assert return_nodes[0].type == "return_statement"
 
@@ -260,7 +260,7 @@ function myFunc(x) {
         func_node = tree.root_node.children[0]
 
         return_nodes: list = []
-        find_js_return_statements(func_node, return_nodes)
+        find_return_statements(func_node, return_nodes)
         assert len(return_nodes) == 3
 
     def test_finds_nested_returns(self, js_parser: Parser) -> None:
@@ -276,7 +276,7 @@ function outer() {
         func_node = tree.root_node.children[0]
 
         return_nodes: list = []
-        find_js_return_statements(func_node, return_nodes)
+        find_return_statements(func_node, return_nodes)
         assert len(return_nodes) == 2
 
     def test_no_returns_empty_list(self, js_parser: Parser) -> None:
@@ -289,7 +289,7 @@ function noReturn() {
         func_node = tree.root_node.children[0]
 
         return_nodes: list = []
-        find_js_return_statements(func_node, return_nodes)
+        find_return_statements(func_node, return_nodes)
         assert len(return_nodes) == 0
 
     def test_empty_return(self, js_parser: Parser) -> None:
@@ -303,7 +303,7 @@ function earlyExit() {
         func_node = tree.root_node.children[0]
 
         return_nodes: list = []
-        find_js_return_statements(func_node, return_nodes)
+        find_return_statements(func_node, return_nodes)
         assert len(return_nodes) == 1
 
 
@@ -315,7 +315,7 @@ class TestExtractJsConstructorName:
         expr_stmt = tree.root_node.children[0]
         new_expr = expr_stmt.children[0]
 
-        result = extract_js_constructor_name(new_expr)
+        result = extract_constructor_name(new_expr)
         assert result == "Storage"
 
     def test_new_with_arguments(self, js_parser: Parser) -> None:
@@ -324,7 +324,7 @@ class TestExtractJsConstructorName:
         expr_stmt = tree.root_node.children[0]
         new_expr = expr_stmt.children[0]
 
-        result = extract_js_constructor_name(new_expr)
+        result = extract_constructor_name(new_expr)
         assert result == "Person"
 
     def test_new_date(self, js_parser: Parser) -> None:
@@ -333,7 +333,7 @@ class TestExtractJsConstructorName:
         expr_stmt = tree.root_node.children[0]
         new_expr = expr_stmt.children[0]
 
-        result = extract_js_constructor_name(new_expr)
+        result = extract_constructor_name(new_expr)
         assert result == "Date"
 
     def test_non_new_expression_returns_none(self, js_parser: Parser) -> None:
@@ -342,7 +342,7 @@ class TestExtractJsConstructorName:
         expr_stmt = tree.root_node.children[0]
         call_expr = expr_stmt.children[0]
 
-        result = extract_js_constructor_name(call_expr)
+        result = extract_constructor_name(call_expr)
         assert result is None
 
     def test_new_with_member_expression(self, js_parser: Parser) -> None:
@@ -351,7 +351,7 @@ class TestExtractJsConstructorName:
         expr_stmt = tree.root_node.children[0]
         new_expr = expr_stmt.children[0]
 
-        result = extract_js_constructor_name(new_expr)
+        result = extract_constructor_name(new_expr)
         assert result is None
 
 
@@ -363,7 +363,7 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(expr_node, "project.Storage.getInstance")
+        result = analyze_return_expression(expr_node, "project.Storage.getInstance")
         assert result == "project.Storage"
 
     def test_return_this(self, js_parser: Parser) -> None:
@@ -372,7 +372,7 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(expr_node, "project.MyClass.chainMethod")
+        result = analyze_return_expression(expr_node, "project.MyClass.chainMethod")
         assert result == "project.MyClass"
 
     def test_return_this_property(self, js_parser: Parser) -> None:
@@ -381,9 +381,7 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(
-            expr_node, "project.Singleton.getInstance"
-        )
+        result = analyze_return_expression(expr_node, "project.Singleton.getInstance")
         assert result == "project.Singleton"
 
     def test_return_class_property(self, js_parser: Parser) -> None:
@@ -392,7 +390,7 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(expr_node, "project.Storage.getInstance")
+        result = analyze_return_expression(expr_node, "project.Storage.getInstance")
         assert result == "project.Storage"
 
     def test_return_unrelated_expression(self, js_parser: Parser) -> None:
@@ -401,7 +399,7 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(expr_node, "project.MyClass.method")
+        result = analyze_return_expression(expr_node, "project.MyClass.method")
         assert result is None
 
     def test_return_literal_returns_none(self, js_parser: Parser) -> None:
@@ -410,7 +408,7 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(expr_node, "project.MyClass.method")
+        result = analyze_return_expression(expr_node, "project.MyClass.method")
         assert result is None
 
     def test_short_qualified_name(self, js_parser: Parser) -> None:
@@ -419,7 +417,7 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(expr_node, "getInstance")
+        result = analyze_return_expression(expr_node, "getInstance")
         assert result == "Storage"
 
     def test_return_member_with_different_class_name(self, js_parser: Parser) -> None:
@@ -428,5 +426,5 @@ class TestAnalyzeJsReturnExpression:
         return_stmt = tree.root_node.children[0]
         expr_node = return_stmt.children[1]
 
-        result = analyze_js_return_expression(expr_node, "project.Storage.getInstance")
+        result = analyze_return_expression(expr_node, "project.Storage.getInstance")
         assert result is None

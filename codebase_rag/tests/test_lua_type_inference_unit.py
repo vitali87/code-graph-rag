@@ -4,7 +4,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.parsers.lua_type_inference import LuaTypeInferenceEngine
+from codebase_rag.parsers.lua.type_inference import LuaTypeInferenceEngine
 from codebase_rag.tests.conftest import MockNode, create_mock_node
 from codebase_rag.types_defs import NodeType
 
@@ -261,9 +261,7 @@ class TestBuildLuaLocalVariableTypeMap:
 
         var_decl = create_lua_variable_declaration("alice", "Person", "new")
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert "alice" in result
         assert result["alice"] == "myapp.main.Person"
@@ -286,7 +284,7 @@ class TestBuildLuaLocalVariableTypeMap:
 
         root = create_mock_node("chunk", children=[var_decl1, var_decl2])
 
-        result = lua_type_engine.build_lua_local_variable_type_map(root, "myapp.main")
+        result = lua_type_engine.build_local_variable_type_map(root, "myapp.main")
 
         assert "person" in result
         assert result["person"] == "myapp.main.Person"
@@ -299,9 +297,7 @@ class TestBuildLuaLocalVariableTypeMap:
     ) -> None:
         other_node = create_mock_node("function_declaration")
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            other_node, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(other_node, "myapp.main")
 
         assert result == {}
 
@@ -315,9 +311,7 @@ class TestBuildLuaLocalVariableTypeMap:
 
         var_decl = create_lua_variable_declaration("unknown", "UnknownClass", "new")
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert "unknown" not in result
 
@@ -330,9 +324,7 @@ class TestBuildLuaLocalVariableTypeMap:
 
         var_decl = create_lua_variable_declaration("db", "Database", "connect")
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert "db" in result
         assert result["db"] == "myapp.db.Database"
@@ -407,9 +399,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert result == {}
 
@@ -433,9 +423,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[assignment_stmt],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert result == {}
 
@@ -458,9 +446,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[assignment_stmt],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert result == {}
 
@@ -505,9 +491,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[assignment_stmt],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert "a" in result
         assert result["a"] == "myapp.main.Person"
@@ -537,9 +521,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[assignment_stmt],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert result == {}
 
@@ -570,9 +552,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[assignment_stmt],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert result == {}
 
@@ -610,9 +590,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[assignment_stmt],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert result == {}
 
@@ -630,7 +608,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
         outer_block = create_mock_node("block", children=[inner_block])
         root = create_mock_node("chunk", children=[outer_block])
 
-        result = lua_type_engine.build_lua_local_variable_type_map(root, "myapp.main")
+        result = lua_type_engine.build_local_variable_type_map(root, "myapp.main")
 
         assert "deep" in result
         assert result["deep"] == "myapp.main.Deep"
@@ -670,9 +648,7 @@ class TestBuildLuaLocalVariableTypeMapEdgeCases:
             children=[assignment_stmt],
         )
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
-            var_decl, "myapp.main"
-        )
+        result = lua_type_engine.build_local_variable_type_map(var_decl, "myapp.main")
 
         assert result == {}
 

@@ -5,7 +5,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.parsers.lua_type_inference import LuaTypeInferenceEngine
+from codebase_rag.parsers.lua.type_inference import LuaTypeInferenceEngine
 from codebase_rag.types_defs import NodeType
 
 
@@ -59,7 +59,7 @@ class TestLuaTypeInferenceWithRealParsing:
         code = b"local person = Person:new()"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -84,7 +84,7 @@ local config = Config:load()
 """
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -113,7 +113,7 @@ end
 """
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -133,7 +133,7 @@ end
         code = b"local client = HttpClient:new()"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -148,7 +148,7 @@ end
         code = b"local x = 42"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -162,7 +162,7 @@ end
         code = b"local result = someFunction()"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -176,7 +176,7 @@ end
         code = b"local tbl = {}"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -190,7 +190,7 @@ end
         code = b'local name = "hello"'
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -213,7 +213,7 @@ end
         code = b"local widget = Widget:new()"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -232,7 +232,7 @@ end
         code = b"local obj = UnknownClass:create()"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -255,7 +255,7 @@ local c = Known:create()
 """
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -282,7 +282,7 @@ end
 """
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -306,7 +306,7 @@ end
 """
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -326,7 +326,7 @@ end
         code = b"local result = Builder:new():build()"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -353,7 +353,7 @@ local obj = M.Class:new()
 """
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -367,7 +367,7 @@ local obj = M.Class:new()
         code = b""
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -381,7 +381,7 @@ local obj = M.Class:new()
         code = b"-- This is a comment\n--[[ Multi-line comment ]]"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -400,7 +400,7 @@ local obj = M.Class:new()
         code = b"globalPerson = Person:new()"
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 
@@ -419,7 +419,7 @@ local obj = M.Class:new()
         code = "local персона = Person:new()".encode()
         tree = lua_parser.parse(code)
 
-        result = lua_type_engine.build_lua_local_variable_type_map(
+        result = lua_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main"
         )
 

@@ -3,12 +3,12 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
-from .. import constants as cs
-from .. import logs as ls
-from .java_utils import (
-    extract_java_class_info,
-    extract_java_field_info,
-    extract_java_method_call_info,
+from ... import constants as cs
+from ... import logs as ls
+from .utils import (
+    extract_class_info,
+    extract_field_info,
+    extract_method_call_info,
     safe_decode_text,
 )
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from ..types_defs import ASTCacheProtocol
+    from ...types_defs import ASTCacheProtocol
 
 
 class JavaVariableAnalyzerMixin:
@@ -28,7 +28,7 @@ class JavaVariableAnalyzerMixin:
     _resolve_java_type_name: "Callable[[str, str], str]"
     _resolve_java_method_return_type: "Callable[[str, str], str | None]"
     _find_containing_java_class: "Callable[[Node], Node | None]"
-    build_java_variable_type_map: "Callable[[Node, str], dict[str, str]]"
+    build_variable_type_map: "Callable[[Node, str], dict[str, str]]"
 
     def _collect_all_variable_types(
         self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -171,7 +171,7 @@ class JavaVariableAnalyzerMixin:
 
         for child in body_node.children:
             if child.type == cs.TS_FIELD_DECLARATION:
-                field_info = extract_java_field_info(child)
+                field_info = extract_field_info(child)
                 if field_info.get("name") and field_info.get("type"):
                     field_name = field_info["name"]
                     field_type = field_info["type"]
@@ -358,7 +358,7 @@ class JavaVariableAnalyzerMixin:
     def _infer_java_method_return_type(
         self, method_call_node: Node, module_qn: str
     ) -> str | None:
-        call_info = extract_java_method_call_info(method_call_node)
+        call_info = extract_method_call_info(method_call_node)
 
         if not (method_name := call_info.get("name")):
             return None
@@ -417,7 +417,7 @@ class JavaVariableAnalyzerMixin:
             return None
 
         root_node, _ = self.ast_cache[file_path]
-        variable_types = self.build_java_variable_type_map(root_node, module_qn)
+        variable_types = self.build_variable_type_map(root_node, module_qn)
 
         this_var = f"{cs.JAVA_KEYWORD_THIS}.{var_name}"
         return variable_types.get(var_name) or variable_types.get(this_var)
@@ -458,12 +458,12 @@ class JavaVariableAnalyzerMixin:
     ) -> str | None:
         for child in root_node.children:
             if child.type == cs.TS_CLASS_DECLARATION:
-                class_info = extract_java_class_info(child)
+                class_info = extract_class_info(child)
                 if class_info.get("name") == class_name:
                     if class_body := child.child_by_field_name("body"):
                         for field_child in class_body.children:
                             if field_child.type == cs.TS_FIELD_DECLARATION:
-                                field_info = extract_java_field_info(field_child)
+                                field_info = extract_field_info(field_child)
                                 if field_info.get("name") == field_name:
                                     if field_type := field_info.get("type"):
                                         return self._resolve_java_type_name(

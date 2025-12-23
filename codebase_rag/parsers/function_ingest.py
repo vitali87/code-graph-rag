@@ -11,13 +11,9 @@ from ..constants import SEPARATOR_DOT, SupportedLanguage
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import NodeType
 from ..utils.fqn_resolver import resolve_fqn_from_ast
-from .cpp_utils import (
-    build_cpp_qualified_name,
-    extract_cpp_function_name,
-    is_cpp_exported,
-)
-from .lua_utils import extract_lua_assigned_name
-from .rust_utils import build_rust_module_path
+from .cpp import utils as cpp_utils
+from .lua import utils as lua_utils
+from .rs import utils as rs_utils
 from .utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -77,19 +73,21 @@ class FunctionIngestMixin:
                 if func_qn:
                     func_name = func_qn.split(SEPARATOR_DOT)[-1]
                     if language == SupportedLanguage.CPP:
-                        is_exported = is_cpp_exported(func_node)
+                        is_exported = cpp_utils.is_exported(func_node)
 
             # (H) Fallback to legacy logic if resolution failed
             if not func_qn:
                 if language == SupportedLanguage.CPP:
-                    func_name = extract_cpp_function_name(func_node)
+                    func_name = cpp_utils.extract_function_name(func_node)
                     if not func_name:
                         if func_node.type == "lambda_expression":
                             func_name = f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
                         else:
                             continue
-                    func_qn = build_cpp_qualified_name(func_node, module_qn, func_name)
-                    is_exported = is_cpp_exported(func_node)
+                    func_qn = cpp_utils.build_qualified_name(
+                        func_node, module_qn, func_name
+                    )
+                    is_exported = cpp_utils.is_exported(func_node)
                 else:
                     is_exported = False
                     func_name = self._extract_function_name(func_node)
@@ -200,7 +198,7 @@ class FunctionIngestMixin:
         return f"anonymous_{func_node.start_point[0]}_{func_node.start_point[1]}"
 
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
-        return extract_lua_assigned_name(
+        return lua_utils.extract_assigned_name(
             func_node, accepted_var_types=("dot_index_expression", "identifier")
         )
 
@@ -258,7 +256,7 @@ class FunctionIngestMixin:
     def _build_rust_method_qualified_name(
         self, method_node: Node, module_qn: str, method_name: str
     ) -> str:
-        path_parts = build_rust_module_path(method_node, include_impl_targets=True)
+        path_parts = rs_utils.build_module_path(method_node, include_impl_targets=True)
         if path_parts:
             return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{method_name}"
         return f"{module_qn}.{method_name}"
@@ -266,7 +264,7 @@ class FunctionIngestMixin:
     def _build_rust_function_qualified_name(
         self, func_node: Node, module_qn: str, func_name: str
     ) -> str:
-        path_parts = build_rust_module_path(func_node)
+        path_parts = rs_utils.build_module_path(func_node)
         if path_parts:
             return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"

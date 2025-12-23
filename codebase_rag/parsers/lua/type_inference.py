@@ -1,10 +1,16 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from loguru import logger
 
-from .. import constants as cs
-from .. import logs as ls
-from ..types_defs import FunctionRegistryTrieProtocol, TreeSitterNodeProtocol
-from .import_processor import ImportProcessor
-from .utils import safe_decode_text
+from ... import constants as cs
+from ... import logs as ls
+from ...types_defs import FunctionRegistryTrieProtocol, TreeSitterNodeProtocol
+from ..utils import safe_decode_text
+
+if TYPE_CHECKING:
+    from ..import_processor import ImportProcessor
 
 
 class LuaTypeInferenceEngine:
@@ -18,7 +24,7 @@ class LuaTypeInferenceEngine:
         self.function_registry = function_registry
         self.project_name = project_name
 
-    def build_lua_local_variable_type_map(
+    def build_local_variable_type_map(
         self, caller_node: TreeSitterNodeProtocol, module_qn: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}

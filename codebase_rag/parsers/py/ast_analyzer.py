@@ -1,0 +1,382 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from loguru import logger
+from tree_sitter import Node, QueryCursor
+
+from ... import constants as cs
+from ... import logs as lg
+from ...types_defs import LanguageQueries
+from ..utils import safe_decode_text
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from ..factory import ASTCacheProtocol
+    from ..js_ts.type_inference import JsTypeInferenceEngine
+
+
+class PythonAstAnalyzerMixin:
+    queries: dict[cs.SupportedLanguage, LanguageQueries]
+    module_qn_to_file_path: dict[str, Path]
+    ast_cache: ASTCacheProtocol
+
+    _js_type_inference_getter: Callable[[], JsTypeInferenceEngine]
+
+    _infer_type_from_expression: Callable[[Node, str], str | None]
+    _infer_type_from_expression_simple: Callable[[Node, str], str | None]
+    _infer_type_from_expression_complex: Callable[
+        [Node, str, dict[str, str]], str | None
+    ]
+    _infer_method_call_return_type: Callable[
+        [str, str, dict[str, str] | None], str | None
+    ]
+    _find_class_in_scope: Callable[[str, str], str | None]
+    build_local_variable_type_map: Callable[[Node, str], dict[str, str]]
+
+    _analyze_comprehension: Callable[[Node, dict[str, str], str], None]
+    _analyze_for_loop: Callable[[Node, dict[str, str], str], None]
+    _infer_instance_variable_types_from_assignments: Callable[
+        [list[Node], dict[str, str], str], None
+    ]
+
+    def _traverse_single_pass(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        assignments: list[Node] = []
+        comprehensions: list[Node] = []
+        for_statements: list[Node] = []
+
+        stack: list[Node] = [node]
+        while stack:
+            current = stack.pop()
+            node_type = current.type
+
+            if node_type == cs.TS_PY_ASSIGNMENT:
+                assignments.append(current)
+            elif node_type == cs.TS_PY_LIST_COMPREHENSION:
+                comprehensions.append(current)
+            elif node_type == cs.TS_PY_FOR_STATEMENT:
+                for_statements.append(current)
+
+            stack.extend(reversed(current.children))
+
+        for assignment in assignments:
+            self._process_assignment_simple(assignment, local_var_types, module_qn)
+
+        for assignment in assignments:
+            self._process_assignment_complex(assignment, local_var_types, module_qn)
+
+        for comp in comprehensions:
+            self._analyze_comprehension(comp, local_var_types, module_qn)
+
+        for for_stmt in for_statements:
+            self._analyze_for_loop(for_stmt, local_var_types, module_qn)
+
+        self._infer_instance_variable_types_from_assignments(
+            assignments, local_var_types, module_qn
+        )
+
+    def _traverse_for_assignments_simple(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        stack: list[Node] = [node]
+
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_PY_ASSIGNMENT:
+                self._process_assignment_simple(current, local_var_types, module_qn)
+
+            stack.extend(reversed(current.children))
+
+    def _traverse_for_assignments_complex(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # (H) DELETE??? Traverse AST for complex assignments (method calls) using existing variable types.
+        # (H) NOTE: This is kept for backwards compatibility but _traverse_single_pass
+        # (H) should be preferred for better performance.
+        stack: list[Node] = [node]
+
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_PY_ASSIGNMENT:
+                self._process_assignment_complex(current, local_var_types, module_qn)
+
+            stack.extend(reversed(current.children))
+
+    def _process_assignment_simple(
+        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        left_node = assignment_node.child_by_field_name("left")
+        right_node = assignment_node.child_by_field_name("right")
+
+        if not left_node or not right_node:
+            return
+
+        var_name = self._extract_assignment_variable_name(left_node)
+        if not var_name:
+            return
+
+        inferred_type = self._infer_type_from_expression_simple(right_node, module_qn)
+        if inferred_type:
+            local_var_types[var_name] = inferred_type
+            logger.debug(lg.PY_TYPE_SIMPLE.format(var=var_name, type=inferred_type))
+
+    def _process_assignment_complex(
+        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        left_node = assignment_node.child_by_field_name("left")
+        right_node = assignment_node.child_by_field_name("right")
+
+        if not left_node or not right_node:
+            return
+
+        var_name = self._extract_assignment_variable_name(left_node)
+        if not var_name:
+            return
+
+        if var_name in local_var_types:
+            return
+
+        inferred_type = self._infer_type_from_expression_complex(
+            right_node, module_qn, local_var_types
+        )
+        if inferred_type:
+            local_var_types[var_name] = inferred_type
+            logger.debug(lg.PY_TYPE_COMPLEX.format(var=var_name, type=inferred_type))
+
+    def _process_assignment_for_type_inference(
+        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        left_node = assignment_node.child_by_field_name("left")
+        right_node = assignment_node.child_by_field_name("right")
+
+        if not left_node or not right_node:
+            return
+
+        var_name = self._extract_assignment_variable_name(left_node)
+        if not var_name:
+            return
+
+        inferred_type = self._infer_type_from_expression(right_node, module_qn)
+        if inferred_type:
+            local_var_types[var_name] = inferred_type
+            logger.debug(lg.PY_TYPE_INFERRED.format(var=var_name, type=inferred_type))
+
+    def _extract_assignment_variable_name(self, node: Node) -> str | None:
+        if node.type == cs.TS_PY_IDENTIFIER:
+            text = node.text
+            if text is not None:
+                decoded = safe_decode_text(node)
+                if decoded:
+                    return decoded
+        return None
+
+    def _find_method_ast_node(self, method_qn: str) -> Node | None:
+        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+        if len(qn_parts) < 3:
+            return None
+
+        class_name = qn_parts[-2]
+        method_name = qn_parts[-1]
+
+        expected_module = cs.SEPARATOR_DOT.join(qn_parts[:-2])
+        if expected_module in self.module_qn_to_file_path:
+            file_path = self.module_qn_to_file_path[expected_module]
+            if file_path in self.ast_cache:
+                root_node, language = self.ast_cache[file_path]
+                return self._find_method_in_ast(
+                    root_node, class_name, method_name, language
+                )
+
+        return None
+
+    def _find_method_in_ast(
+        self,
+        root_node: Node,
+        class_name: str,
+        method_name: str,
+        language: cs.SupportedLanguage,
+    ) -> Node | None:
+        match language:
+            case cs.SupportedLanguage.PYTHON:
+                return self._find_python_method_in_ast(
+                    root_node, class_name, method_name
+                )
+            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
+                return self._js_type_inference_getter().find_method_in_ast(
+                    root_node, class_name, method_name
+                )
+            case _:
+                return None
+
+    def _find_python_method_in_ast(
+        self, root_node: Node, class_name: str, method_name: str
+    ) -> Node | None:
+        lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
+        class_query = lang_queries["classes"]
+        if not class_query:
+            return None
+        cursor = QueryCursor(class_query)
+        captures = cursor.captures(root_node)
+
+        for class_node in captures.get("class", []):
+            if not isinstance(class_node, Node):
+                continue
+
+            name_node = class_node.child_by_field_name("name")
+            if not name_node:
+                continue
+
+            text = name_node.text
+            if text is None:
+                continue
+
+            found_class_name = safe_decode_text(name_node)
+            if found_class_name != class_name:
+                continue
+
+            body_node = class_node.child_by_field_name("body")
+            method_query = lang_queries["functions"]
+            if not body_node or not method_query:
+                continue
+
+            method_cursor = QueryCursor(method_query)
+            method_captures = method_cursor.captures(body_node)
+
+            for method_node in method_captures.get("function", []):
+                if not isinstance(method_node, Node):
+                    continue
+
+                method_name_node = method_node.child_by_field_name("name")
+                if not method_name_node:
+                    continue
+
+                method_text = method_name_node.text
+                if method_text is None:
+                    continue
+
+                found_method_name = safe_decode_text(method_name_node)
+                if found_method_name == method_name:
+                    return method_node
+
+        return None
+
+    def _analyze_method_return_statements(
+        self, method_node: Node, method_qn: str
+    ) -> str | None:
+        return_nodes: list[Node] = []
+        self._find_return_statements(method_node, return_nodes)
+
+        for return_node in return_nodes:
+            return_value = None
+            for child in return_node.children:
+                if child.type not in (cs.TS_PY_RETURN, cs.TS_PY_KEYWORD):
+                    return_value = child
+                    break
+
+            if return_value:
+                inferred_type = self._analyze_return_expression(return_value, method_qn)
+                if inferred_type:
+                    return inferred_type
+
+        return None
+
+    def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
+        stack: list[Node] = [node]
+
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_PY_RETURN_STATEMENT:
+                return_nodes.append(current)
+
+            stack.extend(reversed(current.children))
+
+    def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
+        if expr_node.type == cs.TS_PY_CALL:
+            func_node = expr_node.child_by_field_name("function")
+            if func_node and func_node.type == cs.TS_PY_IDENTIFIER:
+                func_text = func_node.text
+                if func_text is not None:
+                    class_name = safe_decode_text(func_node)
+                    if class_name:
+                        if class_name == cs.PY_KEYWORD_CLS:
+                            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+                            if len(qn_parts) >= 2:
+                                return qn_parts[-2]
+                        elif (
+                            class_name
+                            and len(class_name) > 0
+                            and class_name[0].isupper()
+                        ):
+                            module_qn = cs.SEPARATOR_DOT.join(
+                                method_qn.split(cs.SEPARATOR_DOT)[:-2]
+                            )
+                            resolved_class = self._find_class_in_scope(
+                                class_name, module_qn
+                            )
+                            return resolved_class or class_name
+
+            elif func_node and func_node.type == cs.TS_PY_ATTRIBUTE:
+                method_call_text = self._extract_method_call_from_attr(func_node)
+                if method_call_text:
+                    module_qn = cs.SEPARATOR_DOT.join(
+                        method_qn.split(cs.SEPARATOR_DOT)[:-2]
+                    )
+                    return self._infer_method_call_return_type(
+                        method_call_text, module_qn, None
+                    )
+
+        elif expr_node.type == cs.TS_PY_IDENTIFIER:
+            text = expr_node.text
+            if text is not None:
+                identifier = safe_decode_text(expr_node)
+                if identifier == cs.PY_KEYWORD_SELF or identifier == cs.PY_KEYWORD_CLS:
+                    qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+                    if len(qn_parts) >= 2:
+                        return qn_parts[-2]
+                else:
+                    module_qn = cs.SEPARATOR_DOT.join(
+                        method_qn.split(cs.SEPARATOR_DOT)[:-2]
+                    )
+
+                    method_node = self._find_method_ast_node(method_qn)
+                    if method_node:
+                        local_vars = self.build_local_variable_type_map(
+                            method_node, module_qn
+                        )
+                        if identifier in local_vars:
+                            logger.debug(
+                                lg.PY_VAR_FROM_CONTEXT.format(
+                                    var=identifier, type=local_vars[identifier]
+                                )
+                            )
+                            return local_vars[identifier]
+
+                    logger.debug(lg.PY_VAR_CANNOT_INFER.format(var=identifier))
+                    return None
+
+        elif expr_node.type == cs.TS_PY_ATTRIBUTE:
+            object_node = expr_node.child_by_field_name("object")
+            if object_node and object_node.type == cs.TS_PY_IDENTIFIER:
+                object_text = object_node.text
+                if object_text is not None:
+                    object_name = safe_decode_text(object_node)
+                    if (
+                        object_name == cs.PY_KEYWORD_CLS
+                        or object_name == cs.PY_KEYWORD_SELF
+                    ):
+                        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+                        if len(qn_parts) >= 2:
+                            return qn_parts[-2]
+
+        return None
+
+    def _extract_method_call_from_attr(self, attr_node: Node) -> str | None:
+        if attr_node.text:
+            decoded = safe_decode_text(attr_node)
+            if decoded:
+                return decoded
+        return None

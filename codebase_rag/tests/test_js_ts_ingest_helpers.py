@@ -60,7 +60,7 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_static_method_in_class(method_node)
@@ -79,7 +79,7 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_static_method_in_class(method_node)
@@ -90,7 +90,7 @@ class MyClass {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_static_method_in_class(func_node)
@@ -112,7 +112,7 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_method_in_class(method_node)
@@ -123,7 +123,7 @@ class MyClass {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_method_in_class(func_node)
@@ -144,7 +144,7 @@ const obj = {
         assert obj is not None
         method_node = obj.children[1]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_method_in_class(method_node)
@@ -166,7 +166,7 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_class_method(method_node)
@@ -177,7 +177,7 @@ class MyClass {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_class_method(func_node)
@@ -191,7 +191,7 @@ class TestIsExportInsideFunction:
         tree = js_parser.parse(code)
         export_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_export_inside_function(export_node)
@@ -209,7 +209,7 @@ function outer() {
         assert body is not None
         expr_stmt = body.children[1]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_export_inside_function(expr_stmt)
@@ -236,7 +236,7 @@ const myObject = {
         pair = obj.children[1]
         method_name_node = pair.children[0]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._find_object_name_for_method(method_name_node)
@@ -259,7 +259,7 @@ doSomething({
         pair = obj.children[1]
         method_name_node = pair.children[0]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._find_object_name_for_method(method_name_node)
@@ -291,7 +291,7 @@ class MyClass {
         pair = obj.children[1]
         nested_func = pair.children[0]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_inside_method_with_object_literals(nested_func)
@@ -312,7 +312,7 @@ const obj = {
         assert obj is not None
         pair = obj.children[1]
 
-        from codebase_rag.parsers.js_ts_ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
 
         mixin = JsTsIngestMixin()
         result = mixin._is_inside_method_with_object_literals(pair)

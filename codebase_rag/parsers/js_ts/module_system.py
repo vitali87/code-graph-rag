@@ -8,17 +8,17 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
-from ..constants import SupportedLanguage
-from .utils import (
+from ...constants import SupportedLanguage
+from ..utils import (
     ingest_exported_function,
     safe_decode_text,
     safe_decode_with_fallback,
 )
 
 if TYPE_CHECKING:
-    from ..services import IngestorProtocol
-    from ..types_defs import LanguageQueries
-    from .import_processor import ImportProcessor
+    from ...services import IngestorProtocol
+    from ...types_defs import LanguageQueries
+    from ..import_processor import ImportProcessor
 
 _JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
 

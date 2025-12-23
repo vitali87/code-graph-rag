@@ -4,17 +4,17 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
-from .. import constants as cs
-from .. import logs as ls
-from ..types_defs import NodeType
-from .java_utils import extract_java_method_call_info, safe_decode_text
+from ... import constants as cs
+from ... import logs as ls
+from ...types_defs import NodeType
+from .utils import extract_method_call_info, safe_decode_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from ..types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
-    from .import_processor import ImportProcessor
+    from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
+    from ..import_processor import ImportProcessor
 
 
 class JavaMethodResolverMixin:
@@ -323,7 +323,7 @@ class JavaMethodResolverMixin:
         if call_node.type != cs.TS_METHOD_INVOCATION:
             return None
 
-        call_info = extract_java_method_call_info(call_node)
+        call_info = extract_method_call_info(call_node)
         method_name = call_info.get("name")
         object_ref = call_info.get("object")
 

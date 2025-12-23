@@ -3,15 +3,15 @@ from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
-from .. import constants as cs
-from ..types_defs import NodeType
-from .java_utils import find_java_package_start_index, safe_decode_text
+from ... import constants as cs
+from ...types_defs import NodeType
+from .utils import find_package_start_index, safe_decode_text
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
-    from .import_processor import ImportProcessor
+    from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
+    from ..import_processor import ImportProcessor
 
 
 class JavaTypeResolverMixin:
@@ -23,7 +23,7 @@ class JavaTypeResolverMixin:
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
         parts = module_qn.split(cs.SEPARATOR_DOT)
-        package_start_idx = find_java_package_start_index(parts)
+        package_start_idx = find_package_start_index(parts)
         if package_start_idx is None:
             return None
         class_parts = parts[package_start_idx:]

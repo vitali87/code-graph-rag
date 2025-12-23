@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.parsers.java_type_inference import JavaTypeInferenceEngine
+from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.types_defs import NodeType
 
 

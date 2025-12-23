@@ -7,19 +7,16 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
-from ..constants import SEPARATOR_DOT, SupportedLanguage
-from ..types_defs import NodeType
-from .js_ts_module_system import JsTsModuleSystemMixin
-from .utils import (
-    safe_decode_text,
-    safe_decode_with_fallback,
-)
+from ...constants import SEPARATOR_DOT, SupportedLanguage
+from ...types_defs import NodeType
+from ..utils import safe_decode_text, safe_decode_with_fallback
+from .module_system import JsTsModuleSystemMixin
 
 if TYPE_CHECKING:
-    from ..language_spec import LanguageSpec
-    from ..services import IngestorProtocol
-    from ..types_defs import LanguageQueries
-    from .import_processor import ImportProcessor
+    from ...language_spec import LanguageSpec
+    from ...services import IngestorProtocol
+    from ...types_defs import LanguageQueries
+    from ..import_processor import ImportProcessor
 
 _JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
 

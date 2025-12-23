@@ -1,6 +1,6 @@
 from tree_sitter import Node
 
-from ..constants import (
+from ...constants import (
     FIELD_BODY,
     FIELD_CONSTRUCTOR,
     FIELD_NAME,
@@ -15,10 +15,10 @@ from ..constants import (
     TS_RETURN_STATEMENT,
     TS_THIS,
 )
-from .utils import safe_decode_text
+from ..utils import safe_decode_text
 
 
-def extract_js_method_call(member_expr_node: Node) -> str | None:
+def extract_method_call(member_expr_node: Node) -> str | None:
     try:
         object_node = member_expr_node.child_by_field_name(FIELD_OBJECT)
         property_node = member_expr_node.child_by_field_name(FIELD_PROPERTY)
@@ -37,9 +37,7 @@ def extract_js_method_call(member_expr_node: Node) -> str | None:
     return None
 
 
-def find_js_method_in_class_body(
-    class_body_node: Node, method_name: str
-) -> Node | None:
+def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node | None:
     for child in class_body_node.children:
         if child.type == TS_METHOD_DEFINITION:
             name_node = child.child_by_field_name(FIELD_NAME)
@@ -51,7 +49,7 @@ def find_js_method_in_class_body(
     return None
 
 
-def find_js_method_in_ast(
+def find_method_in_ast(
     root_node: Node, class_name: str, method_name: str
 ) -> Node | None:
     stack: list[Node] = [root_node]
@@ -65,14 +63,14 @@ def find_js_method_in_ast(
                 found_class_name = safe_decode_text(name_node)
                 if found_class_name == class_name:
                     if body_node := current.child_by_field_name(FIELD_BODY):
-                        return find_js_method_in_class_body(body_node, method_name)
+                        return find_method_in_class_body(body_node, method_name)
 
         stack.extend(reversed(current.children))
 
     return None
 
 
-def find_js_return_statements(node: Node, return_nodes: list[Node]) -> None:
+def find_return_statements(node: Node, return_nodes: list[Node]) -> None:
     stack: list[Node] = [node]
 
     while stack:
@@ -84,7 +82,7 @@ def find_js_return_statements(node: Node, return_nodes: list[Node]) -> None:
         stack.extend(reversed(current.children))
 
 
-def extract_js_constructor_name(new_expr_node: Node) -> str | None:
+def extract_constructor_name(new_expr_node: Node) -> str | None:
     if new_expr_node.type != TS_NEW_EXPRESSION:
         return None
 
@@ -97,9 +95,9 @@ def extract_js_constructor_name(new_expr_node: Node) -> str | None:
     return None
 
 
-def analyze_js_return_expression(expr_node: Node, method_qn: str) -> str | None:
+def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
     if expr_node.type == TS_NEW_EXPRESSION:
-        if class_name := extract_js_constructor_name(expr_node):
+        if class_name := extract_constructor_name(expr_node):
             qn_parts = method_qn.split(SEPARATOR_DOT)
             if len(qn_parts) >= 2:
                 return SEPARATOR_DOT.join(qn_parts[:-1])

@@ -13,14 +13,10 @@ from .. import logs
 from ..language_spec import LANGUAGE_FQN_SPECS
 from ..types_defs import NodeType
 from ..utils.fqn_resolver import resolve_fqn_from_ast
-from .cpp_utils import (
-    build_cpp_qualified_name,
-    extract_cpp_exported_class_name,
-    is_cpp_exported,
-)
-from .java_utils import extract_java_method_info
-from .python_utils import resolve_class_name
-from .rust_utils import build_rust_module_path, extract_rust_impl_target
+from .cpp import utils as cpp_utils
+from .java import utils as java_utils
+from .py import resolve_class_name
+from .rs import utils as rs_utils
 from .utils import ingest_method, safe_decode_text, safe_decode_with_fallback
 
 if TYPE_CHECKING:
@@ -274,7 +270,7 @@ class ClassIngestMixin:
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
     ) -> None:
-        if not (impl_target := extract_rust_impl_target(class_node)):
+        if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
 
         class_qn = f"{module_qn}.{impl_target}"
@@ -315,7 +311,7 @@ class ClassIngestMixin:
                 class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
                 is_exported = language == cs.SupportedLanguage.CPP and (
                     class_node.type == cs.CppNodeType.FUNCTION_DEFINITION
-                    or is_cpp_exported(class_node)
+                    or cpp_utils.is_exported(class_node)
                 )
                 return class_qn, class_name, is_exported
 
@@ -332,15 +328,15 @@ class ClassIngestMixin:
     ) -> tuple[str, str, bool] | None:
         if language == cs.SupportedLanguage.CPP:
             if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                class_name = extract_cpp_exported_class_name(class_node)
+                class_name = cpp_utils.extract_exported_class_name(class_node)
                 is_exported = True
             else:
                 class_name = self._extract_cpp_class_name(class_node)
-                is_exported = is_cpp_exported(class_node)
+                is_exported = cpp_utils.is_exported(class_node)
 
             if not class_name:
                 return None
-            class_qn = build_cpp_qualified_name(class_node, module_qn, class_name)
+            class_qn = cpp_utils.build_qualified_name(class_node, module_qn, class_name)
             return class_qn, class_name, is_exported
 
         class_name = self._extract_class_name(class_node)
@@ -476,7 +472,7 @@ class ClassIngestMixin:
 
             method_qualified_name = None
             if language == cs.SupportedLanguage.JAVA:
-                method_info = extract_java_method_info(method_node)
+                method_info = java_utils.extract_method_info(method_node)
                 if method_name := method_info.get(cs.KEY_NAME):
                     parameters = method_info.get("parameters", [])
                     param_sig = f"({','.join(parameters)})" if parameters else "()"
@@ -622,7 +618,7 @@ class ClassIngestMixin:
         if not isinstance(class_node.parent, Node):
             return None
 
-        path_parts = build_rust_module_path(
+        path_parts = rs_utils.build_module_path(
             class_node,
             include_classes=True,
             class_node_types=lang_config.class_node_types,
@@ -663,7 +659,7 @@ class ClassIngestMixin:
             if base_child.type in base_type_nodes and base_child.text:
                 if parent_name := safe_decode_text(base_child):
                     base_name = self._extract_cpp_base_class_name(parent_name)
-                    parent_qn = build_cpp_qualified_name(
+                    parent_qn = cpp_utils.build_qualified_name(
                         class_node, module_qn, base_name
                     )
                     parent_classes.append(parent_qn)

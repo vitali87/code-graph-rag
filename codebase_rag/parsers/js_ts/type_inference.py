@@ -3,8 +3,8 @@ from collections.abc import Callable
 from loguru import logger
 from tree_sitter import Node
 
-from .. import logs as ls
-from ..constants import (
+from ... import logs as ls
+from ...constants import (
     SEPARATOR_DOT,
     TS_CALL_EXPRESSION,
     TS_IDENTIFIER,
@@ -13,16 +13,16 @@ from ..constants import (
     TS_RETURN,
     TS_VARIABLE_DECLARATOR,
 )
-from ..types_defs import FunctionRegistryTrieProtocol, NodeType
-from .import_processor import ImportProcessor
-from .js_utils import (
-    analyze_js_return_expression,
-    extract_js_constructor_name,
-    extract_js_method_call,
-    find_js_method_in_ast,
-    find_js_return_statements,
+from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..import_processor import ImportProcessor
+from ..utils import safe_decode_text
+from .utils import (
+    analyze_return_expression,
+    extract_constructor_name,
+    extract_method_call,
+    find_method_in_ast,
+    find_return_statements,
 )
-from .utils import safe_decode_text
 
 
 class JsTypeInferenceEngine:
@@ -38,7 +38,7 @@ class JsTypeInferenceEngine:
         self.project_name = project_name
         self._find_method_ast_node = find_method_ast_node_func
 
-    def build_js_local_variable_type_map(
+    def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, language: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
@@ -95,7 +95,7 @@ class JsTypeInferenceEngine:
         logger.debug(ls.JS_INFER_VALUE_NODE.format(node_type=value_node.type))
 
         if value_node.type == TS_NEW_EXPRESSION:
-            if class_name := extract_js_constructor_name(value_node):
+            if class_name := extract_constructor_name(value_node):
                 class_qn = self._resolve_js_class_name(class_name, module_qn)
                 return class_qn or class_name
 
@@ -105,7 +105,7 @@ class JsTypeInferenceEngine:
             logger.debug(ls.JS_CALL_EXPR_FUNC_NODE.format(func_type=func_type))
 
             if func_node and func_node.type == TS_MEMBER_EXPRESSION:
-                method_call_text = extract_js_method_call(func_node)
+                method_call_text = extract_method_call(func_node)
                 logger.debug(
                     ls.JS_EXTRACTED_METHOD_CALL.format(method_call=method_call_text)
                 )
@@ -167,7 +167,7 @@ class JsTypeInferenceEngine:
                 logger.debug(ls.JS_METHOD_AST_NOT_FOUND.format(method_qn=method_qn))
                 return None
 
-            return_type = self._analyze_js_return_statements(method_node, method_qn)
+            return_type = self._analyze_return_statements(method_node, method_qn)
             logger.debug(
                 ls.JS_RETURN_ANALYZED.format(
                     method_qn=method_qn, return_type=return_type
@@ -206,23 +206,23 @@ class JsTypeInferenceEngine:
 
         return None
 
-    def _analyze_js_return_statements(
+    def _analyze_return_statements(
         self, method_node: Node, method_qn: str
     ) -> str | None:
         return_nodes: list[Node] = []
-        find_js_return_statements(method_node, return_nodes)
+        find_return_statements(method_node, return_nodes)
 
         for return_node in return_nodes:
             for child in return_node.children:
                 if child.type == TS_RETURN:
                     continue
 
-                if inferred_type := analyze_js_return_expression(child, method_qn):
+                if inferred_type := analyze_return_expression(child, method_qn):
                     return inferred_type
 
         return None
 
-    def find_js_method_in_ast(
+    def find_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:
-        return find_js_method_in_ast(root_node, class_name, method_name)
+        return find_method_in_ast(root_node, class_name, method_name)

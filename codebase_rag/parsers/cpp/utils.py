@@ -1,7 +1,7 @@
 from tree_sitter import Node
 
-from .. import constants as cs
-from .utils import safe_decode_text, safe_decode_with_fallback
+from ... import constants as cs
+from ..utils import safe_decode_text, safe_decode_with_fallback
 
 
 def convert_operator_symbol_to_name(symbol: str) -> str:
@@ -10,7 +10,7 @@ def convert_operator_symbol_to_name(symbol: str) -> str:
     )
 
 
-def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
+def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
     module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
     is_module_file = len(module_parts) >= 3 and (
@@ -56,7 +56,7 @@ def build_cpp_qualified_name(node: Node, module_qn: str, name: str) -> str:
     return f"{module_qn}.{name}"
 
 
-def is_cpp_exported(node: Node) -> bool:
+def is_exported(node: Node) -> bool:
     current = node
     while current and current.parent:
         parent = current.parent
@@ -91,7 +91,7 @@ def is_cpp_exported(node: Node) -> bool:
     return False
 
 
-def extract_cpp_exported_class_name(class_node: Node) -> str | None:
+def extract_exported_class_name(class_node: Node) -> str | None:
     for child in class_node.children:
         if child.type == cs.CppNodeType.IDENTIFIER and child.text:
             return safe_decode_text(child)
@@ -122,7 +122,7 @@ def extract_destructor_name(destructor_node: Node) -> str:
 def _extract_name_from_function_definition(func_node: Node) -> str | None:
     def find_function_declarator(node: Node) -> str | None:
         if node.type == cs.CppNodeType.FUNCTION_DECLARATOR:
-            return extract_cpp_function_name(node)
+            return extract_function_name(node)
 
         for child in node.children:
             if child.type in (
@@ -141,7 +141,7 @@ def _extract_name_from_function_definition(func_node: Node) -> str | None:
 def _extract_name_from_declaration(func_node: Node) -> str | None:
     return next(
         (
-            extract_cpp_function_name(child)
+            extract_function_name(child)
             for child in func_node.children
             if child.type == cs.CppNodeType.FUNCTION_DECLARATOR
         ),
@@ -217,7 +217,7 @@ def _find_rightmost_name(node: Node) -> str | None:
 def _extract_name_from_template_declaration(func_node: Node) -> str | None:
     return next(
         (
-            extract_cpp_function_name(child)
+            extract_function_name(child)
             for child in func_node.children
             if child.type
             in (
@@ -230,7 +230,7 @@ def _extract_name_from_template_declaration(func_node: Node) -> str | None:
     )
 
 
-def extract_cpp_function_name(func_node: Node) -> str | None:
+def extract_function_name(func_node: Node) -> str | None:
     match func_node.type:
         case (
             cs.CppNodeType.FUNCTION_DEFINITION

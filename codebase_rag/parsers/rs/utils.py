@@ -2,10 +2,10 @@ from collections.abc import Sequence
 
 from tree_sitter import Node
 
-from .utils import safe_decode_text
+from ..utils import safe_decode_text
 
 
-def extract_rust_impl_target(impl_node: Node) -> str | None:
+def extract_impl_target(impl_node: Node) -> str | None:
     if impl_node.type != "impl_item":
         return None
 
@@ -29,7 +29,7 @@ def extract_rust_impl_target(impl_node: Node) -> str | None:
     return None
 
 
-def extract_rust_trait_name(impl_node: Node) -> str | None:
+def extract_trait_name(impl_node: Node) -> str | None:
     if impl_node.type != "impl_item":
         return None
 
@@ -53,7 +53,7 @@ def extract_rust_trait_name(impl_node: Node) -> str | None:
     return None
 
 
-def is_rust_async_function(func_node: Node) -> bool:
+def is_async_function(func_node: Node) -> bool:
     if func_node.type != "function_item":
         return False
 
@@ -64,7 +64,7 @@ def is_rust_async_function(func_node: Node) -> bool:
     )
 
 
-def extract_rust_macro_name(macro_node: Node) -> str | None:
+def extract_macro_name(macro_node: Node) -> str | None:
     if macro_node.type != "macro_invocation":
         return None
 
@@ -84,7 +84,7 @@ def extract_rust_macro_name(macro_node: Node) -> str | None:
     return None
 
 
-def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
+def extract_use_imports(use_node: Node) -> dict[str, str]:
     if use_node.type != "use_declaration":
         return {}
 
@@ -204,8 +204,8 @@ def extract_rust_use_imports(use_node: Node) -> dict[str, str]:
     return imports
 
 
-def extract_rust_use_path(use_node: Node) -> list[str]:
-    import_dict = extract_rust_use_imports(use_node)
+def extract_use_path(use_node: Node) -> list[str]:
+    import_dict = extract_use_imports(use_node)
     return list(import_dict.keys())
 
 
@@ -225,7 +225,7 @@ def get_rust_visibility(node: Node) -> str:
     return "private"
 
 
-def build_rust_module_path(
+def build_module_path(
     node: Node,
     include_impl_targets: bool = False,
     include_classes: bool = False,
@@ -241,7 +241,7 @@ def build_rust_module_path(
                 if text is not None:
                     path_parts.append(text.decode("utf8"))
         elif include_impl_targets and current.type == "impl_item":
-            if impl_target := extract_rust_impl_target(current):
+            if impl_target := extract_impl_target(current):
                 path_parts.append(impl_target)
         elif include_classes and class_node_types and current.type in class_node_types:
             if current.type != "impl_item":

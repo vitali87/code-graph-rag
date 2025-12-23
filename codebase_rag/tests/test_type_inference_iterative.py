@@ -79,24 +79,26 @@ def _make_engine() -> TypeInferenceEngine:
 
 def test_analyze_self_assignments_handles_deep_tree_without_recursion_error() -> None:
     engine = _make_engine()
+    py_engine = engine.python_type_inference
 
-    engine._infer_type_from_expression = MagicMock(return_value="MockType")  # type: ignore[method-assign]
+    py_engine._infer_type_from_expression = MagicMock(return_value="MockType")  # type: ignore[method-assign]
 
     root = _build_deep_assignment_chain(depth=1500)
     local_types: dict[str, Any] = {}
 
-    engine._analyze_self_assignments(root, local_types, "proj.module")  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
+    py_engine._analyze_self_assignments(root, local_types, "proj.module")  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
 
     assert local_types, "Expected at least one inferred instance variable"
-    assert engine._infer_type_from_expression.call_count == 1500  # type: ignore[attr-defined]
+    assert py_engine._infer_type_from_expression.call_count == 1500  # type: ignore[attr-defined]
 
 
 def test_find_return_statements_handles_deep_tree_without_recursion_error() -> None:
     engine = _make_engine()
+    py_engine = engine.python_type_inference
 
     root = _build_deep_return_tree(depth=1500)
     returns: list[NodeStub] = []
 
-    engine._find_return_statements(root, returns)  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
+    py_engine._find_return_statements(root, returns)  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
 
     assert len(returns) == 1501

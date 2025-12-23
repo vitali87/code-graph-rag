@@ -53,9 +53,9 @@ def ingest_method(
     method_qualified_name: str | None = None,
 ) -> None:
     if language == "cpp":
-        from .cpp_utils import extract_cpp_function_name
+        from .cpp import utils as cpp_utils
 
-        method_name = extract_cpp_function_name(method_node)
+        method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
             return
     else:

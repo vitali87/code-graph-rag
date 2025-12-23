@@ -4,21 +4,21 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
-from .. import constants as cs
-from .. import logs as ls
-from ..types_defs import (
+from ... import constants as cs
+from ... import logs as ls
+from ...types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     SimpleNameLookup,
 )
-from .import_processor import ImportProcessor
-from .java_method_resolver import JavaMethodResolverMixin
-from .java_type_resolver import JavaTypeResolverMixin
-from .java_utils import find_java_package_start_index
-from .java_variable_analyzer import JavaVariableAnalyzerMixin
+from ..import_processor import ImportProcessor
+from .method_resolver import JavaMethodResolverMixin
+from .type_resolver import JavaTypeResolverMixin
+from .utils import find_package_start_index
+from .variable_analyzer import JavaVariableAnalyzerMixin
 
 if TYPE_CHECKING:
-    from .factory import ASTCacheProtocol
+    from ..factory import ASTCacheProtocol
 
 
 class JavaTypeInferenceEngine(
@@ -63,7 +63,7 @@ class JavaTypeInferenceEngine(
 
         for module_qn in self.module_qn_to_file_path.keys():
             parts = module_qn.split(cs.SEPARATOR_DOT)
-            if package_start_idx := find_java_package_start_index(parts):
+            if package_start_idx := find_package_start_index(parts):
                 if simple_class_name := cs.SEPARATOR_DOT.join(
                     parts[package_start_idx:]
                 ):
@@ -76,7 +76,7 @@ class JavaTypeInferenceEngine(
 
         return fqn_map
 
-    def build_java_variable_type_map(
+    def build_variable_type_map(
         self, scope_node: Node, module_qn: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}

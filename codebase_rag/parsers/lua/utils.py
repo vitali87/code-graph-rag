@@ -1,9 +1,9 @@
 from tree_sitter import Node
 
-from .utils import contains_node, safe_decode_text
+from ..utils import contains_node, safe_decode_text
 
 
-def extract_lua_assigned_name(
+def extract_assigned_name(
     target_node: Node, accepted_var_types: tuple[str, ...] = ("identifier",)
 ) -> str | None:
     current = target_node.parent
@@ -58,7 +58,7 @@ def extract_lua_assigned_name(
     return None
 
 
-def find_lua_ancestor_statement(node: Node) -> Node | None:
+def find_ancestor_statement(node: Node) -> Node | None:
     stmt = node.parent
     while stmt and not (
         stmt.type.endswith("statement")
@@ -68,8 +68,8 @@ def find_lua_ancestor_statement(node: Node) -> Node | None:
     return stmt
 
 
-def extract_lua_pcall_second_identifier(call_node: Node) -> str | None:
-    stmt = find_lua_ancestor_statement(call_node)
+def extract_pcall_second_identifier(call_node: Node) -> str | None:
+    stmt = find_ancestor_statement(call_node)
     if not stmt:
         return None
 

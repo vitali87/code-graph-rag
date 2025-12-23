@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING
 
-from ..constants import SEPARATOR_DOT
-from ..types_defs import FunctionRegistryTrieProtocol
+from ...constants import SEPARATOR_DOT
+from ...types_defs import FunctionRegistryTrieProtocol
 
 if TYPE_CHECKING:
-    from .import_processor import ImportProcessor
+    from ..import_processor import ImportProcessor
 
 
 def resolve_class_name(
