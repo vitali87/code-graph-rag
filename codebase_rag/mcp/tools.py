@@ -533,7 +533,7 @@ class MCPToolsRegistry:
         `get_code_snippet` or `get_function_source_by_id` to inspect implementations.
 
         Args:
-            query: Natural language description of the desired functionality.
+            natural_language_query: Natural language description of the desired functionality.
             top_k: Maximum number of results to return (default: 5).
 
         Returns:
