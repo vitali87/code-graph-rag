@@ -691,105 +691,137 @@ class ClassIngestMixin:
                 return self._resolve_to_qn(parent_name, module_qn)
         return None
 
-    def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
+    def _extract_cpp_parent_classes(
+        self, class_node: Node, module_qn: str
+    ) -> list[str]:
+        parent_classes: list[str] = []
+        for child in class_node.children:
+            if child.type == cs.TS_BASE_CLASS_CLAUSE:
+                parent_classes.extend(
+                    self._parse_cpp_base_classes(child, class_node, module_qn)
+                )
+        return parent_classes
+
+    def _extract_java_superclass(self, class_node: Node, module_qn: str) -> list[str]:
+        superclass_node = class_node.child_by_field_name("superclass")
+        if not superclass_node:
+            return []
+
+        if superclass_node.type == cs.TS_TYPE_IDENTIFIER:
+            if resolved := self._resolve_superclass_from_type_identifier(
+                superclass_node, module_qn
+            ):
+                return [resolved]
+            return []
+
+        for child in superclass_node.children:
+            if child.type == cs.TS_TYPE_IDENTIFIER:
+                if resolved := self._resolve_superclass_from_type_identifier(
+                    child, module_qn
+                ):
+                    return [resolved]
+        return []
+
+    def _extract_python_superclasses(
+        self, class_node: Node, module_qn: str
+    ) -> list[str]:
+        superclasses_node = class_node.child_by_field_name("superclasses")
+        if not superclasses_node:
+            return []
+
+        parent_classes: list[str] = []
+        import_map = self.import_processor.import_mapping.get(module_qn)
+
+        for child in superclasses_node.children:
+            if child.type != cs.TS_IDENTIFIER or not child.text:
+                continue
+            if not (parent_name := safe_decode_text(child)):
+                continue
+
+            if import_map and parent_name in import_map:
+                parent_classes.append(import_map[parent_name])
+            elif import_map:
+                parent_classes.append(self._resolve_to_qn(parent_name, module_qn))
+            else:
+                parent_classes.append(f"{module_qn}.{parent_name}")
+
+        return parent_classes
+
+    def _extract_js_ts_heritage_parents(
+        self, class_heritage_node: Node, module_qn: str
+    ) -> list[str]:
         parent_classes: list[str] = []
 
-        if class_node.type in cs.CPP_CLASS_TYPES:
-            for child in class_node.children:
-                if child.type == cs.TS_BASE_CLASS_CLAUSE:
-                    parent_classes.extend(
-                        self._parse_cpp_base_classes(child, class_node, module_qn)
-                    )
-            return parent_classes
-
-        if class_node.type == cs.TS_CLASS_DECLARATION:
-            if superclass_node := class_node.child_by_field_name("superclass"):
-                if superclass_node.type == cs.TS_TYPE_IDENTIFIER:
-                    if (
-                        resolved_superclass
-                        := self._resolve_superclass_from_type_identifier(
-                            superclass_node, module_qn
-                        )
-                    ):
-                        parent_classes.append(resolved_superclass)
-                else:
-                    for child in superclass_node.children:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            if resolved_superclass := (
-                                self._resolve_superclass_from_type_identifier(
-                                    child, module_qn
-                                )
-                            ):
-                                parent_classes.append(resolved_superclass)
-                                break
-
-        if superclasses_node := class_node.child_by_field_name("superclasses"):
-            for child in superclasses_node.children:
-                if child.type != cs.TS_IDENTIFIER or not child.text:
-                    continue
-                if not (parent_name := safe_decode_text(child)):
-                    continue
-                import_map = self.import_processor.import_mapping.get(module_qn)
-                if import_map and parent_name in import_map:
-                    parent_classes.append(import_map[parent_name])
-                elif import_map:
-                    parent_classes.append(self._resolve_to_qn(parent_name, module_qn))
-                else:
-                    parent_classes.append(f"{module_qn}.{parent_name}")
-
-        if class_heritage_node := _find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
-            for child in class_heritage_node.children:
-                if child.type == cs.TS_EXTENDS_CLAUSE:
-                    for grandchild in child.children:
-                        if grandchild.type in cs.JS_TS_PARENT_REF_TYPES:
-                            if parent_text := grandchild.text:
-                                parent_name = parent_text.decode(cs.ENCODING_UTF8)
-                                parent_classes.append(
-                                    self._resolve_js_ts_parent_class(
-                                        parent_name, module_qn
-                                    )
-                                )
-                            break
-                    break
-                elif child.type in cs.JS_TS_PARENT_REF_TYPES:
-                    child_index = class_heritage_node.children.index(child)
-                    if (
-                        child_index > 0
-                        and class_heritage_node.children[child_index - 1].type
-                        == cs.TS_EXTENDS
-                    ):
-                        parent_text = child.text
-                        if parent_text:
-                            if parent_name := safe_decode_text(child):
-                                parent_classes.append(
-                                    self._resolve_js_ts_parent_class(
-                                        parent_name, module_qn
-                                    )
-                                )
-                elif child.type == cs.TS_CALL_EXPRESSION:
-                    child_index = class_heritage_node.children.index(child)
-                    if (
-                        child_index > 0
-                        and class_heritage_node.children[child_index - 1].type
-                        == cs.TS_EXTENDS
-                    ):
-                        parent_classes.extend(
-                            self._extract_mixin_parent_classes(child, module_qn)
-                        )
-
-        if class_node.type == cs.TS_INTERFACE_DECLARATION:
-            if extends_type_clause_node := _find_child_by_type(
-                class_node, cs.TS_EXTENDS_TYPE_CLAUSE
-            ):
-                for child in extends_type_clause_node.children:
-                    if (
-                        child.type == cs.TS_TYPE_IDENTIFIER
-                        and child.text
-                        and (parent_name := safe_decode_text(child))
-                    ):
+        for child in class_heritage_node.children:
+            if child.type == cs.TS_EXTENDS_CLAUSE:
+                parent_classes.extend(
+                    self._extract_from_extends_clause(child, module_qn)
+                )
+                break
+            if child.type in cs.JS_TS_PARENT_REF_TYPES:
+                if self._is_preceded_by_extends(child, class_heritage_node):
+                    if parent_name := safe_decode_text(child):
                         parent_classes.append(
                             self._resolve_js_ts_parent_class(parent_name, module_qn)
                         )
+            elif child.type == cs.TS_CALL_EXPRESSION:
+                if self._is_preceded_by_extends(child, class_heritage_node):
+                    parent_classes.extend(
+                        self._extract_mixin_parent_classes(child, module_qn)
+                    )
+
+        return parent_classes
+
+    def _extract_from_extends_clause(
+        self, extends_clause: Node, module_qn: str
+    ) -> list[str]:
+        for grandchild in extends_clause.children:
+            if grandchild.type in cs.JS_TS_PARENT_REF_TYPES and grandchild.text:
+                parent_name = grandchild.text.decode(cs.ENCODING_UTF8)
+                return [self._resolve_js_ts_parent_class(parent_name, module_qn)]
+        return []
+
+    def _is_preceded_by_extends(self, child: Node, parent_node: Node) -> bool:
+        child_index = parent_node.children.index(child)
+        return (
+            child_index > 0
+            and parent_node.children[child_index - 1].type == cs.TS_EXTENDS
+        )
+
+    def _extract_interface_parents(self, class_node: Node, module_qn: str) -> list[str]:
+        extends_clause = _find_child_by_type(class_node, cs.TS_EXTENDS_TYPE_CLAUSE)
+        if not extends_clause:
+            return []
+
+        parent_classes: list[str] = []
+        for child in extends_clause.children:
+            if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
+                if parent_name := safe_decode_text(child):
+                    parent_classes.append(
+                        self._resolve_js_ts_parent_class(parent_name, module_qn)
+                    )
+        return parent_classes
+
+    def _extract_parent_classes(self, class_node: Node, module_qn: str) -> list[str]:
+        if class_node.type in cs.CPP_CLASS_TYPES:
+            return self._extract_cpp_parent_classes(class_node, module_qn)
+
+        parent_classes: list[str] = []
+
+        if class_node.type == cs.TS_CLASS_DECLARATION:
+            parent_classes.extend(self._extract_java_superclass(class_node, module_qn))
+
+        parent_classes.extend(self._extract_python_superclasses(class_node, module_qn))
+
+        if class_heritage_node := _find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
+            parent_classes.extend(
+                self._extract_js_ts_heritage_parents(class_heritage_node, module_qn)
+            )
+
+        if class_node.type == cs.TS_INTERFACE_DECLARATION:
+            parent_classes.extend(
+                self._extract_interface_parents(class_node, module_qn)
+            )
 
         return parent_classes
 
