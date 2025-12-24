@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -18,21 +20,21 @@ if TYPE_CHECKING:
 
 
 class JavaMethodResolverMixin:
-    import_processor: "ImportProcessor"
-    function_registry: "FunctionRegistryTrieProtocol"
+    import_processor: ImportProcessor
+    function_registry: FunctionRegistryTrieProtocol
     project_name: str
-    module_qn_to_file_path: dict[str, "Path"]
-    ast_cache: "ASTCacheProtocol"
+    module_qn_to_file_path: dict[str, Path]
+    ast_cache: ASTCacheProtocol
     class_inheritance: dict[str, list[str]]
     _fqn_to_module_qn: dict[str, list[str]]
 
-    _resolve_java_type_name: "Callable[[str, str], str]"
-    _rank_module_candidates: "Callable[[list[str], str, str | None], list[str]]"
-    _find_registry_entries_under: "Callable[[str], Iterable[tuple[str, str]]]"
-    _get_superclass_name: "Callable[[str], str | None]"
-    _get_implemented_interfaces: "Callable[[str], list[str]]"
-    _get_current_class_name: "Callable[[str], str | None]"
-    _lookup_variable_type: "Callable[[str, str], str | None]"
+    _resolve_java_type_name: Callable[[str, str], str]
+    _rank_module_candidates: Callable[[list[str], str, str | None], list[str]]
+    _find_registry_entries_under: Callable[[str], Iterable[tuple[str, str]]]
+    _get_superclass_name: Callable[[str], str | None]
+    _get_implemented_interfaces: Callable[[str], list[str]]
+    _get_current_class_name: Callable[[str], str | None]
+    _lookup_variable_type: Callable[[str, str], str | None]
 
     def _resolve_java_object_type(
         self, object_ref: str, local_var_types: dict[str, str], module_qn: str
