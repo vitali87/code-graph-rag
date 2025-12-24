@@ -233,79 +233,149 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         object_name, method_name = parts
 
-        if local_var_types and object_name in local_var_types:
-            var_type = local_var_types[object_name]
-            if class_qn := self._resolve_class_qn_from_type(
-                var_type, import_map, module_qn
+        if result := self._try_resolve_via_local_type(
+            object_name,
+            method_name,
+            separator,
+            call_name,
+            import_map,
+            module_qn,
+            local_var_types,
+        ):
+            return result
+
+        if result := self._try_resolve_via_import(
+            object_name, method_name, separator, call_name, import_map
+        ):
+            return result
+
+        return self._try_resolve_module_method(method_name, call_name, module_qn)
+
+    def _try_resolve_via_local_type(
+        self,
+        object_name: str,
+        method_name: str,
+        separator: str,
+        call_name: str,
+        import_map: dict[str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[str, str] | None:
+        if not local_var_types or object_name not in local_var_types:
+            return None
+
+        var_type = local_var_types[object_name]
+
+        if class_qn := self._resolve_class_qn_from_type(
+            var_type, import_map, module_qn
+        ):
+            if result := self._try_method_on_class(
+                class_qn, method_name, separator, call_name, object_name, var_type
             ):
-                method_qn = f"{class_qn}{separator}{method_name}"
-                if method_qn in self.function_registry:
-                    logger.debug(
-                        ls.CALL_TYPE_INFERRED.format(
-                            call_name=call_name,
-                            method_qn=method_qn,
-                            obj=object_name,
-                            var_type=var_type,
-                        )
-                    )
-                    return self.function_registry[method_qn], method_qn
+                return result
 
-                if inherited_method := self._resolve_inherited_method(
-                    class_qn, method_name
-                ):
-                    logger.debug(
-                        ls.CALL_TYPE_INFERRED_INHERITED.format(
-                            call_name=call_name,
-                            method_qn=inherited_method[1],
-                            obj=object_name,
-                            var_type=var_type,
-                        )
-                    )
-                    return inherited_method
-
-            if var_type in cs.JS_BUILTIN_TYPES:
-                return (
-                    cs.NodeLabel.FUNCTION,
-                    f"{cs.BUILTIN_PREFIX}.{var_type}.prototype.{method_name}",
-                )
-
-        if object_name in import_map:
-            class_qn = import_map[object_name]
-
-            if cs.SEPARATOR_DOUBLE_COLON in class_qn:
-                rust_parts = class_qn.split(cs.SEPARATOR_DOUBLE_COLON)
-                class_name = rust_parts[-1]
-
-                matching_qns = self.function_registry.find_ending_with(class_name)
-                for qn in matching_qns:
-                    if self.function_registry.get(qn) == NodeType.CLASS:
-                        class_qn = qn
-                        break
-
-            potential_class_qn = f"{class_qn}.{object_name}"
-            test_method_qn = f"{potential_class_qn}{separator}{method_name}"
-            if test_method_qn in self.function_registry:
-                class_qn = potential_class_qn
-
-            registry_separator = (
-                separator if separator == cs.SEPARATOR_COLON else cs.SEPARATOR_DOT
+        if var_type in cs.JS_BUILTIN_TYPES:
+            return (
+                cs.NodeLabel.FUNCTION,
+                f"{cs.BUILTIN_PREFIX}.{var_type}.prototype.{method_name}",
             )
-            method_qn = f"{class_qn}{registry_separator}{method_name}"
-            if method_qn in self.function_registry:
-                logger.debug(
-                    ls.CALL_IMPORT_STATIC.format(
-                        call_name=call_name, method_qn=method_qn
-                    )
-                )
-                return self.function_registry[method_qn], method_qn
+        return None
 
+    def _try_method_on_class(
+        self,
+        class_qn: str,
+        method_name: str,
+        separator: str,
+        call_name: str,
+        object_name: str,
+        var_type: str,
+    ) -> tuple[str, str] | None:
+        method_qn = f"{class_qn}{separator}{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_TYPE_INFERRED.format(
+                    call_name=call_name,
+                    method_qn=method_qn,
+                    obj=object_name,
+                    var_type=var_type,
+                )
+            )
+            return self.function_registry[method_qn], method_qn
+
+        if inherited := self._resolve_inherited_method(class_qn, method_name):
+            logger.debug(
+                ls.CALL_TYPE_INFERRED_INHERITED.format(
+                    call_name=call_name,
+                    method_qn=inherited[1],
+                    obj=object_name,
+                    var_type=var_type,
+                )
+            )
+            return inherited
+        return None
+
+    def _try_resolve_via_import(
+        self,
+        object_name: str,
+        method_name: str,
+        separator: str,
+        call_name: str,
+        import_map: dict[str, str],
+    ) -> tuple[str, str] | None:
+        if object_name not in import_map:
+            return None
+
+        class_qn = self._resolve_imported_class_qn(
+            import_map[object_name], object_name, method_name, separator
+        )
+
+        registry_separator = (
+            separator if separator == cs.SEPARATOR_COLON else cs.SEPARATOR_DOT
+        )
+        method_qn = f"{class_qn}{registry_separator}{method_name}"
+
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_IMPORT_STATIC.format(call_name=call_name, method_qn=method_qn)
+            )
+            return self.function_registry[method_qn], method_qn
+        return None
+
+    def _resolve_imported_class_qn(
+        self,
+        class_qn: str,
+        object_name: str,
+        method_name: str,
+        separator: str,
+    ) -> str:
+        if cs.SEPARATOR_DOUBLE_COLON in class_qn:
+            class_qn = self._resolve_rust_class_qn(class_qn)
+
+        potential_class_qn = f"{class_qn}.{object_name}"
+        test_method_qn = f"{potential_class_qn}{separator}{method_name}"
+        if test_method_qn in self.function_registry:
+            return potential_class_qn
+        return class_qn
+
+    def _resolve_rust_class_qn(self, class_qn: str) -> str:
+        rust_parts = class_qn.split(cs.SEPARATOR_DOUBLE_COLON)
+        class_name = rust_parts[-1]
+
+        matching_qns = self.function_registry.find_ending_with(class_name)
+        for qn in matching_qns:
+            if self.function_registry.get(qn) == NodeType.CLASS:
+                return qn
+        return class_qn
+
+    def _try_resolve_module_method(
+        self, method_name: str, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
         method_qn = f"{module_qn}.{method_name}"
         if method_qn in self.function_registry:
             logger.debug(
                 ls.CALL_OBJECT_METHOD.format(call_name=call_name, method_qn=method_qn)
             )
             return self.function_registry[method_qn], method_qn
-
         return None
 
     def _resolve_self_attribute_call(
