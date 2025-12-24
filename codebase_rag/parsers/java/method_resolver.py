@@ -66,7 +66,7 @@ class JavaMethodResolverMixin:
             if object_ref in import_map:
                 return import_map[object_ref]
 
-        simple_class_qn = f"{module_qn}.{object_ref}"
+        simple_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_ref}"
         if (
             simple_class_qn in self.function_registry
             and self.function_registry[simple_class_qn] == NodeType.CLASS
@@ -157,7 +157,7 @@ class JavaMethodResolverMixin:
         simple_class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
 
         for module_qn in ranked_candidates:
-            registry_class_qn = f"{module_qn}.{simple_class_name}"
+            registry_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{simple_class_name}"
             if result := self._search_method_in_class(registry_class_qn, method_name):
                 return result
 
@@ -228,7 +228,7 @@ class JavaMethodResolverMixin:
             if object_type := self._lookup_variable_type(object_part, module_qn):
                 return self._find_method_return_type(object_type, method_name)
 
-            potential_class_qn = f"{module_qn}.{object_part}"
+            potential_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_part}"
             if potential_class_qn in self.function_registry:
                 return self._find_method_return_type(potential_class_qn, method_name)
 
@@ -259,10 +259,10 @@ class JavaMethodResolverMixin:
         self, node: Node, class_name: str, method_name: str, module_qn: str
     ) -> str | None:
         if node.type == cs.TS_CLASS_DECLARATION:
-            if (name_node := node.child_by_field_name("name")) and safe_decode_text(
+            if (name_node := node.child_by_field_name(cs.KEY_NAME)) and safe_decode_text(
                 name_node
             ) == class_name:
-                if body_node := node.child_by_field_name("body"):
+                if body_node := node.child_by_field_name(cs.FIELD_BODY):
                     return self._search_methods_in_class_body(
                         body_node, method_name, module_qn
                     )
@@ -281,9 +281,9 @@ class JavaMethodResolverMixin:
         for child in body_node.children:
             if child.type == cs.TS_METHOD_DECLARATION:
                 if (
-                    name_node := child.child_by_field_name("name")
+                    name_node := child.child_by_field_name(cs.KEY_NAME)
                 ) and safe_decode_text(name_node) == method_name:
-                    if (type_node := child.child_by_field_name("type")) and (
+                    if (type_node := child.child_by_field_name(cs.KEY_TYPE)) and (
                         return_type := safe_decode_text(type_node)
                     ):
                         return self._resolve_java_type_name(return_type, module_qn)
