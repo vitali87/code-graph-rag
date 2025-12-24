@@ -43,9 +43,7 @@ class CallProcessor:
         if not name_node:
             return None
         text = name_node.text
-        if text is None:
-            return None
-        return text.decode(cs.ENCODING_UTF8)
+        return None if text is None else text.decode(cs.ENCODING_UTF8)
 
     def process_calls_in_file(
         self,

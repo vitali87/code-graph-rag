@@ -19,8 +19,6 @@ from .stdlib_extractor import (
 )
 from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
-_JS_TYPESCRIPT_LANGUAGES = {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}
-
 
 class ImportProcessor:
     def __init__(

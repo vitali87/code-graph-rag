@@ -18,8 +18,6 @@ from .py import PythonTypeInferenceEngine, resolve_class_name
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
 
-_JS_TYPESCRIPT_LANGUAGES = {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}
-
 
 class TypeInferenceEngine:
     def __init__(

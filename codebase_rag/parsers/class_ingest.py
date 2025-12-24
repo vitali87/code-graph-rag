@@ -304,10 +304,13 @@ class ClassIngestMixin:
         file_path: Path | None,
     ) -> tuple[str, str, bool] | None:
         if (fqn_config := LANGUAGE_FQN_SPECS.get(language)) and file_path:
-            class_qn = resolve_fqn_from_ast(
-                class_node, file_path, self.repo_path, self.project_name, fqn_config
-            )
-            if class_qn:
+            if class_qn := resolve_fqn_from_ast(
+                class_node,
+                file_path,
+                self.repo_path,
+                self.project_name,
+                fqn_config,
+            ):
                 class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
                 is_exported = language == cs.SupportedLanguage.CPP and (
                     class_node.type == cs.CppNodeType.FUNCTION_DEFINITION

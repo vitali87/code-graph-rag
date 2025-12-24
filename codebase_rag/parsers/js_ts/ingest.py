@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
-from ...constants import SEPARATOR_DOT, SupportedLanguage
+from ...constants import JS_TS_LANGUAGES, SEPARATOR_DOT, SupportedLanguage
 from ...types_defs import NodeType
 from ..utils import safe_decode_text, safe_decode_with_fallback
 from .module_system import JsTsModuleSystemMixin
@@ -17,8 +17,6 @@ if TYPE_CHECKING:
     from ...services import IngestorProtocol
     from ...types_defs import LanguageQueries
     from ..import_processor import ImportProcessor
-
-_JS_TYPESCRIPT_LANGUAGES = {SupportedLanguage.JS, SupportedLanguage.TS}
 
 
 class JsTsIngestMixin(JsTsModuleSystemMixin):
@@ -40,7 +38,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        if language not in _JS_TYPESCRIPT_LANGUAGES:
+        if language not in JS_TS_LANGUAGES:
             return
 
         self._ingest_prototype_inheritance_links(
@@ -198,7 +196,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        if language not in _JS_TYPESCRIPT_LANGUAGES:
+        if language not in JS_TS_LANGUAGES:
             return
 
         lang_queries = queries[language]
@@ -299,7 +297,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        if language not in _JS_TYPESCRIPT_LANGUAGES:
+        if language not in JS_TS_LANGUAGES:
             return
 
         try:

@@ -110,11 +110,10 @@ class CallResolver:
                         parts, call_name, import_map, module_qn, local_var_types
                     ):
                         return result
-                else:
-                    if result := self._resolve_multi_part_call(
-                        parts, call_name, import_map, module_qn, local_var_types
-                    ):
-                        return result
+                elif result := self._resolve_multi_part_call(
+                    parts, call_name, import_map, module_qn, local_var_types
+                ):
+                    return result
 
             for local_name, imported_qn in import_map.items():
                 if local_name.startswith("*"):
@@ -175,9 +174,9 @@ class CallResolver:
 
         if local_var_types and object_name in local_var_types:
             var_type = local_var_types[object_name]
-            class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
-
-            if class_qn:
+            if class_qn := self._resolve_class_qn_from_type(
+                var_type, import_map, module_qn
+            ):
                 method_qn = f"{class_qn}{separator}{method_name}"
                 if method_qn in self.function_registry:
                     logger.debug(
@@ -261,9 +260,9 @@ class CallResolver:
 
         if local_var_types and attribute_ref in local_var_types:
             var_type = local_var_types[attribute_ref]
-            class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
-
-            if class_qn:
+            if class_qn := self._resolve_class_qn_from_type(
+                var_type, import_map, module_qn
+            ):
                 method_qn = f"{class_qn}.{method_name}"
                 if method_qn in self.function_registry:
                     logger.debug(
@@ -315,9 +314,9 @@ class CallResolver:
 
         if local_var_types and class_name in local_var_types:
             var_type = local_var_types[class_name]
-            class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
-
-            if class_qn:
+            if class_qn := self._resolve_class_qn_from_type(
+                var_type, import_map, module_qn
+            ):
                 method_qn = f"{class_qn}.{method_name}"
                 if method_qn in self.function_registry:
                     logger.debug(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -299,9 +299,7 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
         skip_classes: bool = False,
     ) -> str | None:
-        path_parts: list[str] = []
         current = func_node.parent
-
         if not isinstance(current, Node):
             logger.warning(
                 f"Unexpected parent type for node {func_node}: {type(current)}. "
@@ -309,33 +307,77 @@ class FunctionIngestMixin:
             )
             return None
 
-        while current and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.function_node_types:
-                if name_node := current.child_by_field_name("name"):
-                    if name_node.text is not None:
-                        if decoded := safe_decode_text(name_node):
-                            path_parts.append(decoded)
-                elif func_name_from_assignment := self._extract_function_name(current):
-                    path_parts.append(func_name_from_assignment)
-            elif current.type in lang_config.class_node_types:
-                if skip_classes:
-                    pass
-                elif self._is_inside_method_with_object_literals(func_node):
-                    if name_node := current.child_by_field_name("name"):
-                        if name_node.text is not None:
-                            if decoded := safe_decode_text(name_node):
-                                path_parts.append(decoded)
-                else:
-                    return None
-            elif current.type == "method_definition":
-                if name_node := current.child_by_field_name("name"):
-                    if name_node.text is not None:
-                        if decoded := safe_decode_text(name_node):
-                            path_parts.append(decoded)
+        path_parts = self._collect_ancestor_path_parts(
+            func_node, current, lang_config, skip_classes
+        )
+        if path_parts is None:
+            return None
 
+        return self._format_nested_qn(module_qn, path_parts, func_name)
+
+    def _collect_ancestor_path_parts(
+        self,
+        func_node: Node,
+        current: Node | None,
+        lang_config: LanguageSpec,
+        skip_classes: bool,
+    ) -> list[str] | None:
+        path_parts: list[str] = []
+
+        while current and current.type not in lang_config.module_node_types:
+            result = self._process_ancestor_for_path(
+                func_node, current, lang_config, skip_classes
+            )
+            if result is False:
+                return None
+            if result is not None:
+                path_parts.append(result)
             current = current.parent
 
         path_parts.reverse()
+        return path_parts
+
+    def _process_ancestor_for_path(
+        self,
+        func_node: Node,
+        current: Node,
+        lang_config: LanguageSpec,
+        skip_classes: bool,
+    ) -> str | None | Literal[False]:
+        if current.type in lang_config.function_node_types:
+            return self._get_name_from_function_ancestor(current)
+
+        if current.type in lang_config.class_node_types:
+            return self._handle_class_ancestor(func_node, current, skip_classes)
+
+        if current.type == "method_definition":
+            return self._extract_node_name(current)
+
+        return None
+
+    def _get_name_from_function_ancestor(self, node: Node) -> str | None:
+        if name := self._extract_node_name(node):
+            return name
+        return self._extract_function_name(node)
+
+    def _handle_class_ancestor(
+        self, func_node: Node, class_node: Node, skip_classes: bool
+    ) -> str | None | Literal[False]:
+        if skip_classes:
+            return None
+        if self._is_inside_method_with_object_literals(func_node):
+            return self._extract_node_name(class_node)
+        return False
+
+    def _extract_node_name(self, node: Node) -> str | None:
+        name_node = node.child_by_field_name("name")
+        if name_node and name_node.text is not None:
+            return safe_decode_text(name_node)
+        return None
+
+    def _format_nested_qn(
+        self, module_qn: str, path_parts: list[str], func_name: str
+    ) -> str:
         if path_parts:
             return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"
