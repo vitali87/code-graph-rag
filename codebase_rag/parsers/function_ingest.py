@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -19,6 +19,12 @@ from .utils import safe_decode_text
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
+
+
+class FunctionResolution(NamedTuple):
+    qualified_name: str
+    name: str
+    is_exported: bool
 
 
 class FunctionIngestMixin:
@@ -45,111 +51,194 @@ class FunctionIngestMixin:
         query = lang_queries["functions"]
         if not query:
             return
+
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
-
-        func_nodes = captures.get("function", [])
         file_path = self.module_qn_to_file_path.get(module_qn)
 
-        for func_node in func_nodes:
+        for func_node in captures.get("function", []):
             if not isinstance(func_node, Node):
-                logger.warning(
-                    f"Expected Node object but got {type(func_node)}: {func_node}"
-                )
+                logger.warning(f"Expected Node but got {type(func_node)}: {func_node}")
                 continue
             if self._is_method(func_node, lang_config):
                 continue
 
-            func_qn = None
-            func_name = None
-            is_exported = False
-
-            # (H) Try unified FQN resolution first
-            fqn_config = LANGUAGE_FQN_SPECS.get(language)
-            if fqn_config and file_path:
-                func_qn = resolve_fqn_from_ast(
-                    func_node, file_path, self.repo_path, self.project_name, fqn_config
-                )
-                if func_qn:
-                    func_name = func_qn.split(SEPARATOR_DOT)[-1]
-                    if language == SupportedLanguage.CPP:
-                        is_exported = cpp_utils.is_exported(func_node)
-
-            # (H) Fallback to legacy logic if resolution failed
-            if not func_qn:
-                if language == SupportedLanguage.CPP:
-                    func_name = cpp_utils.extract_function_name(func_node)
-                    if not func_name:
-                        if func_node.type == "lambda_expression":
-                            func_name = f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
-                        else:
-                            continue
-                    func_qn = cpp_utils.build_qualified_name(
-                        func_node, module_qn, func_name
-                    )
-                    is_exported = cpp_utils.is_exported(func_node)
-                else:
-                    is_exported = False
-                    func_name = self._extract_function_name(func_node)
-
-                    if (
-                        not func_name
-                        and language == SupportedLanguage.LUA
-                        and func_node.type == "function_definition"
-                    ):
-                        func_name = self._extract_lua_assignment_function_name(
-                            func_node
-                        )
-
-                    if not func_name:
-                        func_name = self._generate_anonymous_function_name(
-                            func_node, module_qn
-                        )
-
-                    if language == SupportedLanguage.RUST:
-                        func_qn = self._build_rust_function_qualified_name(
-                            func_node, module_qn, func_name
-                        )
-                    else:
-                        func_qn = (
-                            self._build_nested_qualified_name(
-                                func_node, module_qn, func_name, lang_config
-                            )
-                            or f"{module_qn}.{func_name}"
-                        )
-
-            decorators = self._extract_decorators(func_node)
-            func_props: dict[str, Any] = {
-                "qualified_name": func_qn,
-                "name": func_name,
-                "decorators": decorators,
-                "start_line": func_node.start_point[0] + 1,
-                "end_line": func_node.end_point[0] + 1,
-                "docstring": self._get_docstring(func_node),
-                "is_exported": is_exported,
-            }
-            logger.info(f"  Found Function: {func_name} (qn: {func_qn})")
-            self.ingestor.ensure_node_batch("Function", func_props)
-
-            self.function_registry[func_qn] = NodeType.FUNCTION
-            if func_name:
-                self.simple_name_lookup[func_name].add(func_qn)
-
-            parent_type, parent_qn = self._determine_function_parent(
-                func_node, module_qn, lang_config
+            resolution = self._resolve_function_identity(
+                func_node, module_qn, language, lang_config, file_path
             )
+            if not resolution:
+                continue
+
+            self._register_function(
+                func_node, resolution, module_qn, language, lang_config
+            )
+
+    def _resolve_function_identity(
+        self,
+        func_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+    ) -> FunctionResolution | None:
+        resolution = self._try_unified_fqn_resolution(func_node, language, file_path)
+        if resolution:
+            return resolution
+
+        return self._fallback_function_resolution(
+            func_node, module_qn, language, lang_config
+        )
+
+    def _try_unified_fqn_resolution(
+        self,
+        func_node: Node,
+        language: SupportedLanguage,
+        file_path: Path | None,
+    ) -> FunctionResolution | None:
+        fqn_config = LANGUAGE_FQN_SPECS.get(language)
+        if not fqn_config or not file_path:
+            return None
+
+        func_qn = resolve_fqn_from_ast(
+            func_node, file_path, self.repo_path, self.project_name, fqn_config
+        )
+        if not func_qn:
+            return None
+
+        func_name = func_qn.split(SEPARATOR_DOT)[-1]
+        is_exported = (
+            cpp_utils.is_exported(func_node)
+            if language == SupportedLanguage.CPP
+            else False
+        )
+        return FunctionResolution(func_qn, func_name, is_exported)
+
+    def _fallback_function_resolution(
+        self,
+        func_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> FunctionResolution | None:
+        if language == SupportedLanguage.CPP:
+            return self._resolve_cpp_function(func_node, module_qn)
+        return self._resolve_generic_function(
+            func_node, module_qn, language, lang_config
+        )
+
+    def _resolve_cpp_function(
+        self, func_node: Node, module_qn: str
+    ) -> FunctionResolution | None:
+        func_name = cpp_utils.extract_function_name(func_node)
+        if not func_name:
+            if func_node.type == "lambda_expression":
+                func_name = (
+                    f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
+                )
+            else:
+                return None
+
+        func_qn = cpp_utils.build_qualified_name(func_node, module_qn, func_name)
+        is_exported = cpp_utils.is_exported(func_node)
+        return FunctionResolution(func_qn, func_name, is_exported)
+
+    def _resolve_generic_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        language: SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> FunctionResolution:
+        func_name = self._extract_function_name(func_node)
+
+        if not func_name and language == SupportedLanguage.LUA:
+            if func_node.type == "function_definition":
+                func_name = self._extract_lua_assignment_function_name(func_node)
+
+        if not func_name:
+            func_name = self._generate_anonymous_function_name(func_node, module_qn)
+
+        func_qn = self._build_function_qn(
+            func_node, module_qn, func_name, language, lang_config
+        )
+        return FunctionResolution(func_qn, func_name, is_exported=False)
+
+    def _build_function_qn(
+        self,
+        func_node: Node,
+        module_qn: str,
+        func_name: str,
+        language: SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> str:
+        if language == SupportedLanguage.RUST:
+            return self._build_rust_function_qualified_name(
+                func_node, module_qn, func_name
+            )
+
+        nested_qn = self._build_nested_qualified_name(
+            func_node, module_qn, func_name, lang_config
+        )
+        return nested_qn or f"{module_qn}.{func_name}"
+
+    def _register_function(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        language: SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> None:
+        func_props = self._build_function_props(func_node, resolution)
+        logger.info(
+            f"  Found Function: {resolution.name} (qn: {resolution.qualified_name})"
+        )
+        self.ingestor.ensure_node_batch("Function", func_props)
+
+        self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        if resolution.name:
+            self.simple_name_lookup[resolution.name].add(resolution.qualified_name)
+
+        self._create_function_relationships(
+            func_node, resolution, module_qn, language, lang_config
+        )
+
+    def _build_function_props(
+        self, func_node: Node, resolution: FunctionResolution
+    ) -> dict[str, Any]:
+        return {
+            "qualified_name": resolution.qualified_name,
+            "name": resolution.name,
+            "decorators": self._extract_decorators(func_node),
+            "start_line": func_node.start_point[0] + 1,
+            "end_line": func_node.end_point[0] + 1,
+            "docstring": self._get_docstring(func_node),
+            "is_exported": resolution.is_exported,
+        }
+
+    def _create_function_relationships(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        language: SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> None:
+        parent_type, parent_qn = self._determine_function_parent(
+            func_node, module_qn, lang_config
+        )
+        self.ingestor.ensure_relationship_batch(
+            (parent_type, "qualified_name", parent_qn),
+            "DEFINES",
+            ("Function", "qualified_name", resolution.qualified_name),
+        )
+
+        if resolution.is_exported and language == SupportedLanguage.CPP:
             self.ingestor.ensure_relationship_batch(
-                (parent_type, "qualified_name", parent_qn),
-                "DEFINES",
-                ("Function", "qualified_name", func_qn),
+                ("Module", "qualified_name", module_qn),
+                "EXPORTS",
+                ("Function", "qualified_name", resolution.qualified_name),
             )
-
-            if is_exported and language == SupportedLanguage.CPP:
-                self.ingestor.ensure_relationship_batch(
-                    ("Module", "qualified_name", module_qn),
-                    "EXPORTS",
-                    ("Function", "qualified_name", func_qn),
-                )
 
     def _ingest_top_level_functions(
         self,
@@ -226,10 +315,8 @@ class FunctionIngestMixin:
                     if name_node.text is not None:
                         if decoded := safe_decode_text(name_node):
                             path_parts.append(decoded)
-                else:
-                    func_name_from_assignment = self._extract_function_name(current)
-                    if func_name_from_assignment:
-                        path_parts.append(func_name_from_assignment)
+                elif func_name_from_assignment := self._extract_function_name(current):
+                    path_parts.append(func_name_from_assignment)
             elif current.type in lang_config.class_node_types:
                 if skip_classes:
                     pass
