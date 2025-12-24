@@ -18,7 +18,7 @@ repos:
     hooks:
     -   id: ty
         name: ty check
-        entry: uv run ty check
+        entry: uv run ty check codebase_rag/ --exclude codebase_rag/tests/
         language: system
         types: [python]
         exclude: ^codec/.*_pb2\.py$

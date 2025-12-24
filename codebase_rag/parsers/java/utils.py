@@ -86,17 +86,27 @@ class JavaAnnotationInfo(TypedDict):
     arguments: list[str]
 
 
+class _MethodModifiersAndAnnotations:
+    modifiers: list[str]
+    annotations: list[str]
+
+    def __init__(self) -> None:
+        self.modifiers = []
+        self.annotations = []
+
+
 def extract_package_name(package_node: ASTNode) -> str | None:
     if package_node.type != TS_PACKAGE_DECLARATION:
         return None
 
-    for child in package_node.children:
-        if child.type == TS_SCOPED_IDENTIFIER:
-            return safe_decode_text(child)
-        elif child.type == TS_IDENTIFIER:
-            return safe_decode_text(child)
-
-    return None
+    return next(
+        (
+            safe_decode_text(child)
+            for child in package_node.children
+            if child.type in [TS_SCOPED_IDENTIFIER, TS_IDENTIFIER]
+        ),
+        None,
+    )
 
 
 def extract_import_path(import_node: ASTNode) -> dict[str, str]:
@@ -110,9 +120,7 @@ def extract_import_path(import_node: ASTNode) -> dict[str, str]:
     for child in import_node.children:
         if child.type == TS_STATIC:
             pass
-        elif child.type == TS_SCOPED_IDENTIFIER:
-            imported_path = safe_decode_text(child)
-        elif child.type == TS_IDENTIFIER:
+        elif child.type in [TS_SCOPED_IDENTIFIER, TS_IDENTIFIER]:
             imported_path = safe_decode_text(child)
         elif child.type == TS_ASTERISK:
             is_wildcard = True
@@ -123,11 +131,9 @@ def extract_import_path(import_node: ASTNode) -> dict[str, str]:
     if is_wildcard:
         wildcard_key = f"*{imported_path}"
         imports[wildcard_key] = imported_path
-    else:
-        parts = imported_path.split(SEPARATOR_DOT)
-        if parts:
-            imported_name = parts[-1]
-            imports[imported_name] = imported_path
+    elif parts := imported_path.split(SEPARATOR_DOT):
+        imported_name = parts[-1]
+        imports[imported_name] = imported_path
 
     return imports
 
@@ -152,12 +158,10 @@ def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
         "type_parameters": [],
     }
 
-    name_node = class_node.child_by_field_name("name")
-    if name_node:
+    if name_node := class_node.child_by_field_name("name"):
         info["name"] = safe_decode_text(name_node)
 
-    superclass_node = class_node.child_by_field_name("superclass")
-    if superclass_node:
+    if superclass_node := class_node.child_by_field_name("superclass"):
         if superclass_node.type == TS_TYPE_IDENTIFIER:
             info["superclass"] = safe_decode_text(superclass_node)
         elif superclass_node.type == TS_GENERIC_TYPE:
@@ -166,8 +170,7 @@ def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
                     info["superclass"] = safe_decode_text(child)
                     break
 
-    interfaces_node = class_node.child_by_field_name("interfaces")
-    if interfaces_node:
+    if interfaces_node := class_node.child_by_field_name("interfaces"):
         for child in interfaces_node.children:
             if child.type == TS_TYPE_LIST:
                 for type_child in child.children:
@@ -182,23 +185,82 @@ def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
                     if interface_name:
                         info["interfaces"].append(interface_name)
 
-    type_params_node = class_node.child_by_field_name("type_parameters")
-    if type_params_node:
+    if type_params_node := class_node.child_by_field_name("type_parameters"):
         for child in type_params_node.children:
             if child.type == TS_TYPE_PARAMETER:
-                param_name = safe_decode_text(child.child_by_field_name("name"))
-                if param_name:
+                if param_name := safe_decode_text(child.child_by_field_name("name")):
                     info["type_parameters"].append(param_name)
 
     for child in class_node.children:
         if child.type == TS_MODIFIERS:
             for modifier_child in child.children:
                 if modifier_child.type in JAVA_CLASS_MODIFIERS:
-                    modifier = safe_decode_text(modifier_child)
-                    if modifier:
+                    if modifier := safe_decode_text(modifier_child):
                         info["modifiers"].append(modifier)
 
     return info
+
+
+def _get_method_type(method_node: ASTNode) -> str:
+    if method_node.type == TS_CONSTRUCTOR_DECLARATION:
+        return JAVA_TYPE_CONSTRUCTOR
+    return JAVA_TYPE_METHOD
+
+
+def _extract_method_return_type(method_node: ASTNode) -> str | None:
+    if method_node.type != TS_METHOD_DECLARATION:
+        return None
+    if type_node := method_node.child_by_field_name("type"):
+        return safe_decode_text(type_node)
+    return None
+
+
+def _extract_formal_param_type(param_node: ASTNode) -> str | None:
+    if param_type_node := param_node.child_by_field_name("type"):
+        return safe_decode_text(param_type_node)
+    return None
+
+
+def _extract_spread_param_type(spread_node: ASTNode) -> str | None:
+    for subchild in spread_node.children:
+        if subchild.type == TS_TYPE_IDENTIFIER:
+            if param_type_text := safe_decode_text(subchild):
+                return f"{param_type_text}..."
+    return None
+
+
+def _extract_method_parameters(method_node: ASTNode) -> list[str]:
+    params_node = method_node.child_by_field_name("parameters")
+    if not params_node:
+        return []
+
+    parameters: list[str] = []
+    for child in params_node.children:
+        param_type: str | None = None
+        if child.type == TS_FORMAL_PARAMETER:
+            param_type = _extract_formal_param_type(child)
+        elif child.type == TS_SPREAD_PARAMETER:
+            param_type = _extract_spread_param_type(child)
+        if param_type:
+            parameters.append(param_type)
+    return parameters
+
+
+def _extract_modifiers_and_annotations(
+    method_node: ASTNode,
+) -> _MethodModifiersAndAnnotations:
+    result = _MethodModifiersAndAnnotations()
+    for child in method_node.children:
+        if child.type != TS_MODIFIERS:
+            continue
+        for modifier_child in child.children:
+            if modifier_child.type in JAVA_METHOD_MODIFIERS:
+                if modifier := safe_decode_text(modifier_child):
+                    result.modifiers.append(modifier)
+            elif modifier_child.type == TS_ANNOTATION:
+                if annotation := safe_decode_text(modifier_child):
+                    result.annotations.append(annotation)
+    return result
 
 
 def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
@@ -213,58 +275,17 @@ def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
             annotations=[],
         )
 
-    info: JavaMethodInfo = {
-        "name": None,
-        "type": JAVA_TYPE_CONSTRUCTOR
-        if method_node.type == TS_CONSTRUCTOR_DECLARATION
-        else JAVA_TYPE_METHOD,
-        "return_type": None,
-        "parameters": [],
-        "modifiers": [],
-        "type_parameters": [],
-        "annotations": [],
-    }
+    mods_and_annots = _extract_modifiers_and_annotations(method_node)
 
-    name_node = method_node.child_by_field_name("name")
-    if name_node:
-        info["name"] = safe_decode_text(name_node)
-
-    if method_node.type == TS_METHOD_DECLARATION:
-        type_node = method_node.child_by_field_name("type")
-        if type_node:
-            info["return_type"] = safe_decode_text(type_node)
-
-    params_node = method_node.child_by_field_name("parameters")
-    if params_node:
-        for child in params_node.children:
-            if child.type == TS_FORMAL_PARAMETER:
-                param_type_node = child.child_by_field_name("type")
-                if param_type_node:
-                    param_type = safe_decode_text(param_type_node)
-                    if param_type:
-                        info["parameters"].append(param_type)
-            elif child.type == TS_SPREAD_PARAMETER:
-                for subchild in child.children:
-                    if subchild.type == TS_TYPE_IDENTIFIER:
-                        param_type_text = safe_decode_text(subchild)
-                        if param_type_text:
-                            param_type = param_type_text + "..."
-                            info["parameters"].append(param_type)
-                        break
-
-    for child in method_node.children:
-        if child.type == TS_MODIFIERS:
-            for modifier_child in child.children:
-                if modifier_child.type in JAVA_METHOD_MODIFIERS:
-                    modifier = safe_decode_text(modifier_child)
-                    if modifier:
-                        info["modifiers"].append(modifier)
-                elif modifier_child.type == TS_ANNOTATION:
-                    annotation = safe_decode_text(modifier_child)
-                    if annotation:
-                        info["annotations"].append(annotation)
-
-    return info
+    return JavaMethodInfo(
+        name=safe_decode_text(method_node.child_by_field_name("name")),
+        type=_get_method_type(method_node),
+        return_type=_extract_method_return_type(method_node),
+        parameters=_extract_method_parameters(method_node),
+        modifiers=mods_and_annots.modifiers,
+        type_parameters=[],
+        annotations=mods_and_annots.annotations,
+    )
 
 
 def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
@@ -283,26 +304,22 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
         "annotations": [],
     }
 
-    type_node = field_node.child_by_field_name("type")
-    if type_node:
+    if type_node := field_node.child_by_field_name("type"):
         info["type"] = safe_decode_text(type_node)
 
     declarator_node = field_node.child_by_field_name("declarator")
     if declarator_node and declarator_node.type == TS_VARIABLE_DECLARATOR:
-        name_node = declarator_node.child_by_field_name("name")
-        if name_node:
+        if name_node := declarator_node.child_by_field_name("name"):
             info["name"] = safe_decode_text(name_node)
 
     for child in field_node.children:
         if child.type == TS_MODIFIERS:
             for modifier_child in child.children:
                 if modifier_child.type in JAVA_FIELD_MODIFIERS:
-                    modifier = safe_decode_text(modifier_child)
-                    if modifier:
+                    if modifier := safe_decode_text(modifier_child):
                         info["modifiers"].append(modifier)
                 elif modifier_child.type == TS_ANNOTATION:
-                    annotation = safe_decode_text(modifier_child)
-                    if annotation:
+                    if annotation := safe_decode_text(modifier_child):
                         info["annotations"].append(annotation)
 
     return info
@@ -320,23 +337,22 @@ def extract_method_call_info(
     if name_node:
         info["name"] = safe_decode_text(name_node)
 
-    object_node = call_node.child_by_field_name("object")
-    if object_node:
-        if object_node.type == TS_IDENTIFIER:
+    if object_node := call_node.child_by_field_name("object"):
+        if (
+            object_node.type == TS_IDENTIFIER
+            or object_node.type != TS_THIS
+            and object_node.type != TS_SUPER
+            and object_node.type == TS_FIELD_ACCESS
+        ):
             info["object"] = safe_decode_text(object_node)
         elif object_node.type == TS_THIS:
             info["object"] = TS_THIS
         elif object_node.type == TS_SUPER:
             info["object"] = TS_SUPER
-        elif object_node.type == TS_FIELD_ACCESS:
-            info["object"] = safe_decode_text(object_node)
-
-    args_node = call_node.child_by_field_name("arguments")
-    if args_node:
-        argument_count = 0
-        for child in args_node.children:
-            if child.type not in DELIMITER_TOKENS:
-                argument_count += 1
+    if args_node := call_node.child_by_field_name("arguments"):
+        argument_count = sum(
+            1 for child in args_node.children if child.type not in DELIMITER_TOKENS
+        )
         info["arguments"] = argument_count
 
     return info
@@ -379,8 +395,7 @@ def is_main_method(method_node: ASTNode) -> bool:
         if child.type == TS_FORMAL_PARAMETER:
             param_count += 1
 
-            type_node = child.child_by_field_name("type")
-            if type_node:
+            if type_node := child.child_by_field_name("type"):
                 type_text = safe_decode_text(type_node)
                 if type_text and (
                     JAVA_MAIN_PARAM_ARRAY in type_text
@@ -425,16 +440,12 @@ def build_qualified_name(
 
     while current and current.type != TS_PROGRAM:
         if current.type in JAVA_CLASS_NODE_TYPES and include_classes:
-            name_node = current.child_by_field_name("name")
-            if name_node:
-                class_name = safe_decode_text(name_node)
-                if class_name:
+            if name_node := current.child_by_field_name("name"):
+                if class_name := safe_decode_text(name_node):
                     path_parts.append(class_name)
         elif current.type in JAVA_METHOD_NODE_TYPES and include_methods:
-            name_node = current.child_by_field_name("name")
-            if name_node:
-                method_name = safe_decode_text(name_node)
-                if method_name:
+            if name_node := current.child_by_field_name("name"):
+                if method_name := safe_decode_text(name_node):
                     path_parts.append(method_name)
 
         current = current.parent
@@ -451,16 +462,13 @@ def extract_annotation_info(
 
     info: JavaAnnotationInfo = {"name": None, "arguments": []}
 
-    name_node = annotation_node.child_by_field_name("name")
-    if name_node:
+    if name_node := annotation_node.child_by_field_name("name"):
         info["name"] = safe_decode_text(name_node)
 
-    args_node = annotation_node.child_by_field_name("arguments")
-    if args_node:
+    if args_node := annotation_node.child_by_field_name("arguments"):
         for child in args_node.children:
             if child.type not in DELIMITER_TOKENS:
-                arg_value = safe_decode_text(child)
-                if arg_value:
+                if arg_value := safe_decode_text(child):
                     info["arguments"].append(arg_value)
 
     return info

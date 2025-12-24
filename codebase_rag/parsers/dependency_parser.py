@@ -12,7 +12,8 @@ from ..models import Dependency
 
 
 def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
-    match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", dep_string.strip())
+    stripped = dep_string.strip()
+    match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", stripped)
     if not match:
         return "", ""
     name_with_extras = match[1]
@@ -20,7 +21,7 @@ def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
     if not name_match:
         return "", ""
     name = name_match[1]
-    spec = dep_string[len(name_with_extras) :].strip()
+    spec = stripped[len(name_with_extras) :].strip()
     return name, spec
 
 

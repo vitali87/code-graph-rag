@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -140,6 +140,136 @@ class TestGetCallTargetName:
 
         result = call_processor._get_call_target_name(root)
         assert result is None
+
+    def test_java_method_invocation_with_object(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.JAVA not in parsers:
+            pytest.skip("Java parser not available")
+
+        code = "class Test { void test() { obj.method(); } }"
+        root = parse_code(code, cs.SupportedLanguage.JAVA, parsers)
+        call_node = find_first_node_of_type(root, "method_invocation")
+        assert call_node is not None
+
+        result = call_processor._get_call_target_name(call_node)
+        assert result == "obj.method"
+
+    def test_java_method_invocation_without_object(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.JAVA not in parsers:
+            pytest.skip("Java parser not available")
+
+        code = "class Test { void test() { helper(); } }"
+        root = parse_code(code, cs.SupportedLanguage.JAVA, parsers)
+        call_node = find_first_node_of_type(root, "method_invocation")
+        assert call_node is not None
+
+        result = call_processor._get_call_target_name(call_node)
+        assert result == "helper"
+
+    def test_java_chained_method_invocation(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.JAVA not in parsers:
+            pytest.skip("Java parser not available")
+
+        code = 'class Test { void test() { builder.setName("x").build(); } }'
+        root = parse_code(code, cs.SupportedLanguage.JAVA, parsers)
+        call_nodes = []
+
+        def find_all_method_invocations(node: Node) -> None:
+            if node.type == "method_invocation":
+                call_nodes.append(node)
+            for child in node.children:
+                find_all_method_invocations(child)
+
+        find_all_method_invocations(root)
+        assert len(call_nodes) >= 1
+
+        outer_call = call_nodes[0]
+        result = call_processor._get_call_target_name(outer_call)
+        assert result is not None
+        assert "build" in result or "setName" in result
+
+    def test_cpp_binary_expression_plus(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.CPP not in parsers:
+            pytest.skip("C++ parser not available")
+
+        code = "int x = a + b;"
+        root = parse_code(code, cs.SupportedLanguage.CPP, parsers)
+        binary_expr = find_first_node_of_type(root, "binary_expression")
+        assert binary_expr is not None
+
+        result = call_processor._get_call_target_name(binary_expr)
+        assert result == "operator_plus"
+
+    def test_cpp_binary_expression_minus(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.CPP not in parsers:
+            pytest.skip("C++ parser not available")
+
+        code = "int x = a - b;"
+        root = parse_code(code, cs.SupportedLanguage.CPP, parsers)
+        binary_expr = find_first_node_of_type(root, "binary_expression")
+        assert binary_expr is not None
+
+        result = call_processor._get_call_target_name(binary_expr)
+        assert result == "operator_minus"
+
+    def test_cpp_unary_expression(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.CPP not in parsers:
+            pytest.skip("C++ parser not available")
+
+        code = "int x = -a;"
+        root = parse_code(code, cs.SupportedLanguage.CPP, parsers)
+        unary_expr = find_first_node_of_type(root, "unary_expression")
+        assert unary_expr is not None
+
+        result = call_processor._get_call_target_name(unary_expr)
+        assert result == "operator_minus"
+
+    def test_cpp_update_expression(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.CPP not in parsers:
+            pytest.skip("C++ parser not available")
+
+        code = "void f() { int x = 0; x++; }"
+        root = parse_code(code, cs.SupportedLanguage.CPP, parsers)
+        update_expr = find_first_node_of_type(root, "update_expression")
+        assert update_expr is not None
+
+        result = call_processor._get_call_target_name(update_expr)
+        assert result is not None
+        assert "operator_" in result
 
 
 class TestGetIifeTargetName:
@@ -995,3 +1125,84 @@ class TestResolveClassQnFromType:
             "UnknownClass", import_map, "proj.service"
         )
         assert result == ""
+
+
+class TestProcessCallsInFileErrorHandling:
+    def test_logs_error_on_processing_failure(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text("def foo(): pass")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        call_processor = updater.factory.call_processor
+
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(b"def foo(): pass")
+        root_node = tree.root_node
+
+        with patch.object(
+            call_processor,
+            "_process_calls_in_functions",
+            side_effect=RuntimeError("Simulated failure"),
+        ):
+            with patch("codebase_rag.parsers.call_processor.logger") as mock_logger:
+                call_processor.process_calls_in_file(
+                    test_file,
+                    root_node,
+                    cs.SupportedLanguage.PYTHON,
+                    queries,
+                )
+                mock_logger.error.assert_called_once()
+                error_call_args = mock_logger.error.call_args[0][0]
+                assert "test_module.py" in error_call_args
+                assert "Simulated failure" in error_call_args
+
+    def test_continues_after_error_in_single_file(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text("def foo(): pass")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        call_processor = updater.factory.call_processor
+
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(b"def foo(): pass")
+        root_node = tree.root_node
+
+        with patch.object(
+            call_processor,
+            "_process_calls_in_functions",
+            side_effect=ValueError("Test exception"),
+        ):
+            call_processor.process_calls_in_file(
+                test_file,
+                root_node,
+                cs.SupportedLanguage.PYTHON,
+                queries,
+            )

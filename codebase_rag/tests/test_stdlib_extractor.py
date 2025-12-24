@@ -368,3 +368,368 @@ class TestEdgeCases:
         )
 
         assert result == "module"
+
+
+class TestCachePersistenceErrorHandling:
+    def test_load_persistent_cache_handles_json_decode_error(
+        self, tmp_path: Path
+    ) -> None:
+        with patch.object(Path, "home", return_value=tmp_path):
+            cache_dir = tmp_path / ".cache" / "codebase_rag"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / "stdlib_cache.json"
+            cache_file.write_text("invalid json {{{")
+
+            se._cache_stdlib_result("python", "existing.module", "existing")
+
+            se.load_persistent_cache()
+
+            assert "python:existing.module" in se._STDLIB_CACHE
+
+    def test_load_persistent_cache_handles_missing_file(self, tmp_path: Path) -> None:
+        with patch.object(Path, "home", return_value=tmp_path):
+            se.load_persistent_cache()
+
+            assert len(se._STDLIB_CACHE) == 0
+
+    def test_save_persistent_cache_handles_os_error(self, tmp_path: Path) -> None:
+        with patch.object(Path, "home", return_value=tmp_path):
+            with patch.object(Path, "mkdir", side_effect=OSError("Permission denied")):
+                se._cache_stdlib_result("python", "test.func", "test")
+
+                se.save_persistent_cache()
+
+    def test_clear_stdlib_cache_handles_unlink_error(self, tmp_path: Path) -> None:
+        with patch.object(Path, "home", return_value=tmp_path):
+            cache_dir = tmp_path / ".cache" / "codebase_rag"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / "stdlib_cache.json"
+            cache_file.write_text("{}")
+
+            se._cache_stdlib_result("python", "test.module", "test")
+
+            with patch.object(Path, "unlink", side_effect=OSError("Permission denied")):
+                se.clear_stdlib_cache()
+
+            assert len(se._STDLIB_CACHE) == 0
+
+
+class TestGoExtractorWithMockedSubprocess:
+    @pytest.fixture
+    def extractor(self) -> StdlibExtractor:
+        return StdlibExtractor(function_registry=None)
+
+    def test_go_extractor_returns_package_on_successful_introspection(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_list_result = MagicMock()
+        mock_list_result.returncode = 0
+        mock_list_result.stdout = "/usr/local/go/src/fmt"
+
+        mock_popen = MagicMock()
+        mock_popen.__enter__ = MagicMock(return_value=mock_popen)
+        mock_popen.__exit__ = MagicMock(return_value=False)
+        mock_popen.returncode = 0
+        mock_popen.communicate.return_value = (
+            '{"hasEntity": true, "entityType": "function"}',
+            "",
+        )
+
+        with (
+            patch("subprocess.run", return_value=mock_list_result),
+            patch("subprocess.Popen", return_value=mock_popen),
+        ):
+            result = extractor.extract_module_path(
+                "fmt/Println", cs.SupportedLanguage.GO
+            )
+
+            assert result == "fmt"
+
+    def test_go_extractor_fallback_on_go_list_failure(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = extractor.extract_module_path(
+                "fmt/Println", cs.SupportedLanguage.GO
+            )
+
+            assert result == "fmt"
+
+    def test_go_extractor_fallback_on_timeout(self, extractor: StdlibExtractor) -> None:
+        import subprocess
+
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("go", 5)):
+            result = extractor.extract_module_path(
+                "fmt/Println", cs.SupportedLanguage.GO
+            )
+
+            assert result == "fmt"
+
+    def test_go_extractor_lowercase_entity_returns_unchanged(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = extractor.extract_module_path(
+                "fmt/lowercase", cs.SupportedLanguage.GO
+            )
+
+            assert result == "fmt/lowercase"
+
+
+class TestJavaExtractorWithMockedSubprocess:
+    @pytest.fixture
+    def extractor(self) -> StdlibExtractor:
+        return StdlibExtractor(function_registry=None)
+
+    def test_java_extractor_fallback_on_compile_failure(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_compile = MagicMock()
+        mock_compile.returncode = 1
+
+        with patch("subprocess.run", return_value=mock_compile):
+            result = extractor.extract_module_path(
+                "java.util.ArrayList", cs.SupportedLanguage.JAVA
+            )
+
+            assert result == "java.util"
+
+    def test_java_extractor_fallback_on_timeout(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        import subprocess
+
+        with patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired("javac", 10)
+        ):
+            result = extractor.extract_module_path(
+                "java.util.HashMap", cs.SupportedLanguage.JAVA
+            )
+
+            assert result == "java.util"
+
+    def test_java_extractor_fallback_on_file_not_found(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = extractor.extract_module_path(
+                "java.lang.String", cs.SupportedLanguage.JAVA
+            )
+
+            assert result == "java.lang"
+
+    def test_java_extractor_builder_suffix(self, extractor: StdlibExtractor) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = extractor.extract_module_path(
+                "java.lang.StringBuilder", cs.SupportedLanguage.JAVA
+            )
+
+            assert result == "java.lang"
+
+    def test_java_extractor_error_suffix(self, extractor: StdlibExtractor) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = extractor.extract_module_path(
+                "java.lang.OutOfMemoryError", cs.SupportedLanguage.JAVA
+            )
+
+            assert result == "java.lang"
+
+
+class TestLuaExtractorWithMockedSubprocess:
+    @pytest.fixture
+    def extractor(self) -> StdlibExtractor:
+        return StdlibExtractor(function_registry=None)
+
+    def test_lua_extractor_returns_module_on_successful_introspection(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "hasEntity=true"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = extractor.extract_module_path(
+                "string.upper", cs.SupportedLanguage.LUA
+            )
+
+            assert result == "string"
+
+    def test_lua_extractor_fallback_on_entity_not_found(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "hasEntity=false"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = extractor.extract_module_path(
+                "string.nonexistent", cs.SupportedLanguage.LUA
+            )
+
+            assert result == "string.nonexistent"
+
+    def test_lua_extractor_fallback_on_timeout(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        import subprocess
+
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("lua", 5)):
+            result = extractor.extract_module_path(
+                "math.floor", cs.SupportedLanguage.LUA
+            )
+
+            assert result == "math.floor"
+
+    def test_lua_extractor_fallback_on_lua_not_found(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = extractor.extract_module_path(
+                "table.insert", cs.SupportedLanguage.LUA
+            )
+
+            assert result == "table.insert"
+
+    def test_lua_extractor_stdlib_module_in_set(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = extractor.extract_module_path(
+                "custom.string", cs.SupportedLanguage.LUA
+            )
+
+            assert result == "custom"
+
+
+class TestPythonExtractorEdgeCases:
+    @pytest.fixture
+    def extractor(self) -> StdlibExtractor:
+        return StdlibExtractor(function_registry=None)
+
+    def test_python_lowercase_entity_with_import_failure(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        with patch("importlib.import_module", side_effect=ImportError):
+            result = extractor.extract_module_path(
+                "nonexistent_module.lowercase_func", cs.SupportedLanguage.PYTHON
+            )
+
+            assert result == "nonexistent_module.lowercase_func"
+
+    def test_python_uppercase_entity_with_import_failure(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        with patch("importlib.import_module", side_effect=ImportError):
+            result = extractor.extract_module_path(
+                "nonexistent_module.UppercaseClass", cs.SupportedLanguage.PYTHON
+            )
+
+            assert result == "nonexistent_module"
+
+    def test_python_entity_not_found_in_module(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_module = MagicMock(spec=[])
+
+        with patch("importlib.import_module", return_value=mock_module):
+            result = extractor.extract_module_path(
+                "real_module.NonexistentClass", cs.SupportedLanguage.PYTHON
+            )
+
+            assert result == "real_module"
+
+    def test_python_entity_is_module_not_class(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        import types
+
+        mock_module = MagicMock()
+        mock_submodule = types.ModuleType("submodule")
+        mock_module.submodule = mock_submodule
+
+        with (
+            patch("importlib.import_module", return_value=mock_module),
+            patch("inspect.ismodule", return_value=True),
+            patch("inspect.isclass", return_value=False),
+            patch("inspect.isfunction", return_value=False),
+        ):
+            result = extractor.extract_module_path(
+                "parent.submodule", cs.SupportedLanguage.PYTHON
+            )
+
+            assert result == "parent.submodule"
+
+
+class TestJsExtractorWithMockedNode:
+    @pytest.fixture
+    def extractor(self) -> StdlibExtractor:
+        return StdlibExtractor(function_registry=None)
+
+    def test_js_extractor_returns_module_on_successful_introspection(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"hasEntity": true, "entityType": "function"}'
+
+        with (
+            patch.object(se, "_is_tool_available", return_value=True),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            result = extractor.extract_module_path(
+                "fs.readFile", cs.SupportedLanguage.JS
+            )
+
+            assert result == "fs"
+
+    def test_js_extractor_fallback_on_entity_not_found(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"hasEntity": false, "entityType": null}'
+
+        with (
+            patch.object(se, "_is_tool_available", return_value=True),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            result = extractor.extract_module_path(
+                "fs.nonexistent", cs.SupportedLanguage.JS
+            )
+
+            assert result == "fs.nonexistent"
+
+    def test_js_extractor_fallback_on_json_decode_error(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "invalid json"
+
+        with (
+            patch.object(se, "_is_tool_available", return_value=True),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            result = extractor.extract_module_path("path.join", cs.SupportedLanguage.JS)
+
+            assert result == "path.join"
+
+    def test_js_extractor_fallback_on_timeout(self, extractor: StdlibExtractor) -> None:
+        import subprocess
+
+        with (
+            patch.object(se, "_is_tool_available", return_value=True),
+            patch("subprocess.run", side_effect=subprocess.TimeoutExpired("node", 5)),
+        ):
+            result = extractor.extract_module_path(
+                "http.createServer", cs.SupportedLanguage.JS
+            )
+
+            assert result == "http.createServer"

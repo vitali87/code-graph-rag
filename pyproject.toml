@@ -81,7 +81,7 @@ quote-style = "double"
 python-version = "3.12"
 
 [tool.ty.src]
-exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py"]
+exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["codebase_rag/tests"]

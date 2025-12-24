@@ -208,8 +208,7 @@ def _find_rightmost_name(node: Node) -> str | None:
             case cs.CppNodeType.DESTRUCTOR_NAME:
                 last_name = extract_destructor_name(qchild)
             case cs.CppNodeType.QUALIFIED_IDENTIFIER:
-                nested = _find_rightmost_name(qchild)
-                if nested:
+                if nested := _find_rightmost_name(qchild):
                     last_name = nested
     return last_name
 

@@ -1,14 +1,23 @@
+from collections.abc import Callable
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ..constants import ENCODING_UTF8
-from ..types_defs import NodeType, SimpleNameLookup, TreeSitterNodeProtocol
+from ..types_defs import (
+    NodeType,
+    PropertyDict,
+    SimpleNameLookup,
+    TreeSitterNodeProtocol,
+)
 
 if TYPE_CHECKING:
+    from tree_sitter import Query
+
     from ..services import IngestorProtocol
+    from ..types_defs import FunctionRegistryTrieProtocol
 
 
 @lru_cache(maxsize=10000)
@@ -25,7 +34,7 @@ def safe_decode_text(node: Node | TreeSitterNodeProtocol | None) -> str | None:
     return str(text_bytes)
 
 
-def get_query_cursor(query: Any) -> QueryCursor:
+def get_query_cursor(query: "Query") -> QueryCursor:
     return QueryCursor(query)
 
 
@@ -45,11 +54,11 @@ def ingest_method(
     container_qn: str,
     container_type: str,
     ingestor: "IngestorProtocol",
-    function_registry: dict[str, str],
+    function_registry: "FunctionRegistryTrieProtocol",
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Any,
+    get_docstring_func: Callable[[Node], str | None],
     language: str = "",
-    extract_decorators_func: Any = None,
+    extract_decorators_func: Callable[[Node], list[str]] | None = None,
     method_qualified_name: str | None = None,
 ) -> None:
     if language == "cpp":
@@ -76,7 +85,7 @@ def ingest_method(
     if extract_decorators_func:
         decorators = extract_decorators_func(method_node)
 
-    method_props: dict[str, Any] = {
+    method_props: PropertyDict = {
         "qualified_name": method_qn,
         "name": method_name,
         "decorators": decorators,
@@ -103,10 +112,10 @@ def ingest_exported_function(
     module_qn: str,
     export_type: str,
     ingestor: "IngestorProtocol",
-    function_registry: dict[str, str],
+    function_registry: "FunctionRegistryTrieProtocol",
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Any,
-    is_export_inside_function_func: Any,
+    get_docstring_func: Callable[[Node], str | None],
+    is_export_inside_function_func: Callable[[Node], bool],
 ) -> None:
     if is_export_inside_function_func(function_node):
         return

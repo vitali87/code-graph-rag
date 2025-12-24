@@ -8,6 +8,7 @@ from tree_sitter import Language, Parser
 
 from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.types_defs import NodeType
 
 
@@ -218,3 +219,39 @@ class TestImportParsing:
                         f"Incorrect mapping for '{local_name}' in '{import_statement}': "
                         f"expected {expected_full_name}, got {actual_mappings[local_name]}"
                     )
+
+
+class TestImportProcessorCacheUtilities:
+    """Test static cache utility methods on ImportProcessor."""
+
+    @pytest.fixture
+    def import_processor(self) -> ImportProcessor:
+        return ImportProcessor(
+            repo_path=Path("/test"),
+            project_name="test_project",
+            ingestor=None,
+            function_registry=None,
+        )
+
+    def test_get_stdlib_cache_stats_returns_dict(
+        self, import_processor: ImportProcessor
+    ) -> None:
+        stats = ImportProcessor.get_stdlib_cache_stats()
+
+        assert isinstance(stats, dict), "Cache stats should return a dictionary"
+
+    def test_clear_stdlib_cache_does_not_raise(
+        self, import_processor: ImportProcessor
+    ) -> None:
+        ImportProcessor.clear_stdlib_cache()
+
+    def test_flush_stdlib_cache_does_not_raise(
+        self, import_processor: ImportProcessor
+    ) -> None:
+        ImportProcessor.flush_stdlib_cache()
+
+    def test_cache_stats_after_clear(self, import_processor: ImportProcessor) -> None:
+        ImportProcessor.clear_stdlib_cache()
+
+        stats = ImportProcessor.get_stdlib_cache_stats()
+        assert isinstance(stats, dict), "Cache stats should return a dictionary"

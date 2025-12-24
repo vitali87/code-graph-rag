@@ -858,3 +858,112 @@ void demonstrateAllIncludes() {
     assert inheritance_found, (
         "Expected inheritance relationship ComprehensiveIncludeDemo -> Base"
     )
+
+
+def test_cpp20_module_import_syntax(
+    cpp_includes_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Test C++20 module import syntax parsing."""
+    test_file = cpp_includes_project / "module_imports.cpp"
+    test_file.write_text(
+        """
+// C++20 module import declarations
+import std.core;
+import std.io;
+import <iostream>;
+import <vector>;
+import <string>;
+
+// Module implementation unit
+module my_module;
+
+// Module partition import
+import :partition1;
+import :utilities;
+
+// Export module declaration
+export module my_export_module;
+
+class ModuleUser {
+public:
+    void useModules() {
+        std::cout << "Using C++20 modules" << std::endl;
+    }
+};
+"""
+    )
+
+    run_updater(cpp_includes_project, mock_ingestor)
+
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+
+    module_imports = [
+        call for call in import_relationships if "module_imports" in call.args[0][2]
+    ]
+
+    assert len(module_imports) >= 3, (
+        f"Expected at least 3 module imports, found {len(module_imports)}"
+    )
+
+    imported_modules = [call.args[2][2] for call in module_imports]
+
+    expected_patterns = ["iostream", "vector", "string"]
+    for pattern in expected_patterns:
+        assert any(pattern in module for module in imported_modules), (
+            f"Missing C++20 module import: {pattern}\nFound: {imported_modules}"
+        )
+
+
+def test_cpp20_module_partition_imports(
+    cpp_includes_project: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    """Test C++20 module partition import syntax."""
+    test_file = cpp_includes_project / "partition_imports.cpp"
+    test_file.write_text(
+        """
+// Primary module interface
+export module data_processor;
+
+// Standard library imports
+import <vector>;
+import <algorithm>;
+import <functional>;
+
+// Partition imports
+import :core;
+import :algorithms;
+import :utilities;
+
+export namespace processor {
+    class DataProcessor {
+    public:
+        void process() {
+            std::vector<int> data = {1, 2, 3, 4, 5};
+            std::sort(data.begin(), data.end());
+        }
+    };
+}
+"""
+    )
+
+    run_updater(cpp_includes_project, mock_ingestor)
+
+    import_relationships = get_relationships(mock_ingestor, "IMPORTS")
+
+    partition_imports = [
+        call for call in import_relationships if "partition_imports" in call.args[0][2]
+    ]
+
+    assert len(partition_imports) >= 3, (
+        f"Expected at least 3 partition imports, found {len(partition_imports)}"
+    )
+
+    imported_modules = [call.args[2][2] for call in partition_imports]
+
+    expected_stdlib = ["vector", "algorithm", "functional"]
+    for pattern in expected_stdlib:
+        assert any(pattern in module for module in imported_modules), (
+            f"Missing stdlib import: {pattern}\nFound: {imported_modules}"
+        )

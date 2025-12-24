@@ -62,11 +62,13 @@ class ImportProcessor:
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        if language not in queries or not queries[language].get("imports"):
+        if language not in queries:
+            return
+        imports_query = queries[language]["imports"]
+        if not imports_query:
             return
 
         lang_config = queries[language]["config"]
-        imports_query = queries[language]["imports"]
 
         self.import_mapping[module_qn] = {}
 
