@@ -22,7 +22,7 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
         project_name = module_parts[0]
         filename = module_parts[-1]
 
-        return f"{project_name}.{filename}.{name}"
+        return cs.SEPARATOR_DOT.join([project_name, filename, name])
 
     path_parts: list[str] = []
     current = node.parent
@@ -52,8 +52,8 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
     path_parts.reverse()
 
     if path_parts:
-        return f"{module_qn}.{cs.SEPARATOR_DOT.join(path_parts)}.{name}"
-    return f"{module_qn}.{name}"
+        return cs.SEPARATOR_DOT.join([module_qn, *path_parts, name])
+    return cs.SEPARATOR_DOT.join([module_qn, name])
 
 
 def is_exported(node: Node) -> bool:
@@ -158,7 +158,7 @@ def _extract_name_from_field_declaration(func_node: Node) -> str | None:
 
     for child in func_node.children:
         if child.type == cs.CppNodeType.FUNCTION_DECLARATOR:
-            declarator = child.child_by_field_name("declarator")
+            declarator = child.child_by_field_name(cs.FIELD_DECLARATOR)
             if (
                 declarator
                 and declarator.type == cs.CppNodeType.FIELD_IDENTIFIER

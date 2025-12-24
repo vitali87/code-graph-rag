@@ -81,7 +81,7 @@ class JavaVariableAnalyzerMixin:
         for subchild in param_node.children:
             if subchild.type == cs.TS_TYPE_IDENTIFIER:
                 if decoded_text := safe_decode_text(subchild):
-                    param_type = f"{decoded_text}[]"
+                    param_type = f"{decoded_text}{cs.JAVA_ARRAY_SUFFIX}"
             elif subchild.type == cs.TS_VARIABLE_DECLARATOR:
                 if name_node := subchild.child_by_field_name("name"):
                     param_name = safe_decode_text(name_node)
@@ -348,7 +348,7 @@ class JavaVariableAnalyzerMixin:
             case cs.TS_ARRAY_CREATION_EXPRESSION:
                 if type_node := expr_node.child_by_field_name("type"):
                     if base_type := safe_decode_text(type_node):
-                        return f"{base_type}[]"
+                        return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
 
             case _:
                 pass
@@ -390,7 +390,7 @@ class JavaVariableAnalyzerMixin:
         if not var_name or not module_qn:
             return None
 
-        cache_key = f"{module_qn}:{var_name}"
+        cache_key = f"{module_qn}{cs.SEPARATOR_COLON}{var_name}"
         if cache_key in self._lookup_cache:
             return self._lookup_cache[cache_key]
 

@@ -88,8 +88,10 @@ class JavaMethodResolverMixin:
                 for qn, entity_type in self.function_registry.find_with_prefix(
                     module_qn
                 )
-                if entity_type in [NodeType.METHOD, cs.ENTITY_CONSTRUCTOR]
-                and qn.split("(")[0].endswith(f".{method_name}")
+                if entity_type in cs.JAVA_CALLABLE_ENTITY_TYPES
+                and qn.split(cs.CHAR_PAREN_OPEN)[0].endswith(
+                    f"{cs.SEPARATOR_DOT}{method_name}"
+                )
             ),
             None,
         )
@@ -132,7 +134,7 @@ class JavaMethodResolverMixin:
             if qn == class_qn:
                 continue
             suffix = qn[len(class_qn) :]
-            if not suffix.startswith("."):
+            if not suffix.startswith(cs.SEPARATOR_DOT):
                 continue
             member = suffix[1:]
             if self._is_matching_method(member, method_name):
@@ -177,8 +179,8 @@ class JavaMethodResolverMixin:
     def _is_matching_method(self, member: str, method_name: str) -> bool:
         return (
             member == method_name
-            or member.startswith(f"{method_name}(")
-            or member == f"{method_name}()"
+            or member.startswith(f"{method_name}{cs.CHAR_PAREN_OPEN}")
+            or member == f"{method_name}{cs.EMPTY_PARENS}"
         )
 
     def _find_inherited_method(

@@ -86,7 +86,7 @@ class JavaTypeResolverMixin:
 
         items = getattr(self.function_registry, "items", None)
         if callable(items):
-            prefix_with_dot = f"{prefix}."
+            prefix_with_dot = f"{prefix}{cs.SEPARATOR_DOT}"
             return [
                 (qn, method_type)
                 for qn, method_type in items()
@@ -108,13 +108,13 @@ class JavaTypeResolverMixin:
         if type_name in cs.JAVA_WRAPPER_TYPES:
             return f"{cs.JAVA_LANG_PREFIX}{type_name}"
 
-        if type_name.endswith("[]"):
+        if type_name.endswith(cs.JAVA_ARRAY_SUFFIX):
             base_type = type_name[:-2]
             resolved_base = self._resolve_java_type_name(base_type, module_qn)
-            return f"{resolved_base}[]"
+            return f"{resolved_base}{cs.JAVA_ARRAY_SUFFIX}"
 
-        if "<" in type_name and ">" in type_name:
-            base_type = type_name.split("<")[0]
+        if cs.CHAR_ANGLE_OPEN in type_name and cs.CHAR_ANGLE_CLOSE in type_name:
+            base_type = type_name.split(cs.CHAR_ANGLE_OPEN)[0]
             return self._resolve_java_type_name(base_type, module_qn)
 
         if module_qn in self.import_processor.import_mapping:

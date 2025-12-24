@@ -74,7 +74,12 @@ def parse_cpp_base_classes(
     )
 
     for base_child in base_clause_node.children:
-        if base_child.type in [cs.TS_ACCESS_SPECIFIER, cs.TS_VIRTUAL, ",", ":"]:
+        if base_child.type in (
+            cs.TS_ACCESS_SPECIFIER,
+            cs.TS_VIRTUAL,
+            cs.CHAR_COMMA,
+            cs.CHAR_COLON,
+        ):
             continue
 
         if base_child.type in base_type_nodes and base_child.text:
@@ -94,11 +99,11 @@ def parse_cpp_base_classes(
 
 
 def extract_cpp_base_class_name(parent_text: str) -> str:
-    if "<" in parent_text:
-        parent_text = parent_text.split("<")[0]
+    if cs.CHAR_ANGLE_OPEN in parent_text:
+        parent_text = parent_text.split(cs.CHAR_ANGLE_OPEN)[0]
 
-    if "::" in parent_text:
-        parent_text = parent_text.split("::")[-1]
+    if cs.SEPARATOR_DOUBLE_COLON in parent_text:
+        parent_text = parent_text.split(cs.SEPARATOR_DOUBLE_COLON)[-1]
 
     return parent_text
 
@@ -210,13 +215,13 @@ def extract_from_extends_clause(
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
     for grandchild in extends_clause.children:
-        if grandchild.type in cs.JS_TS_PARENT_REF_TYPES and grandchild.text:
-            parent_name = grandchild.text.decode(cs.ENCODING_UTF8)
-            return [
-                resolve_js_ts_parent_class(
-                    parent_name, module_qn, import_processor, resolve_to_qn
-                )
-            ]
+        if grandchild.type in cs.JS_TS_PARENT_REF_TYPES:
+            if parent_name := safe_decode_text(grandchild):
+                return [
+                    resolve_js_ts_parent_class(
+                        parent_name, module_qn, import_processor, resolve_to_qn
+                    )
+                ]
     return []
 
 

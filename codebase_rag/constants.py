@@ -369,6 +369,7 @@ FIELD_PROPERTY = "property"
 FIELD_NAME = "name"
 FIELD_BODY = "body"
 FIELD_CONSTRUCTOR = "constructor"
+FIELD_DECLARATOR = "declarator"
 
 # (H) Image file extensions for chat image handling
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
@@ -585,6 +586,11 @@ TRIPLE_QUOTES = ('"""', "'''")
 COMMENT_CHAR = "#"
 ESCAPE_CHAR = "\\"
 CHAR_SEMICOLON = ";"
+CHAR_COMMA = ","
+CHAR_COLON = ":"
+CHAR_ANGLE_OPEN = "<"
+CHAR_ANGLE_CLOSE = ">"
+CHAR_PAREN_OPEN = "("
 
 DEFAULT_NAME = "Unknown"
 
@@ -1263,6 +1269,7 @@ IMPORT_RELATIONSHIP = "IMPORTS"
 
 # (H) Java type inference constants
 JAVA_LANG_PREFIX = "java.lang."
+JAVA_ARRAY_SUFFIX = "[]"
 JAVA_PRIMITIVE_TYPES = frozenset(
     {
         "int",
@@ -1308,6 +1315,9 @@ TS_FALSE = "false"
 JAVA_KEYWORD_THIS = "this"
 JAVA_KEYWORD_SUPER = "super"
 
+# (H) Java array type suffix
+JAVA_ARRAY_SUFFIX = "[]"
+
 # (H) Java heuristic patterns
 JAVA_GETTER_PATTERN = "get"
 JAVA_NAME_PATTERN = "name"
@@ -1323,6 +1333,9 @@ JAVA_ORDER_PATTERN = "order"
 
 # (H) Java entity type names
 ENTITY_CONSTRUCTOR = "Constructor"
+
+# (H) Java callable entity types for method resolution
+JAVA_CALLABLE_ENTITY_TYPES = frozenset({ENTITY_METHOD, ENTITY_CONSTRUCTOR})
 
 # (H) Java primitive type names
 JAVA_TYPE_STRING = "String"
