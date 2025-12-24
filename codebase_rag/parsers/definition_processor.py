@@ -112,9 +112,7 @@ class DefinitionProcessor(
                 root_node, module_qn, language, queries
             )
             if language == SupportedLanguage.CPP:
-                self._ingest_cpp_module_declarations(
-                    root_node, module_qn, file_path, queries
-                )
+                self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
             self._ingest_all_functions(root_node, module_qn, language, queries)
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
             self._ingest_object_literal_methods(root_node, module_qn, language, queries)

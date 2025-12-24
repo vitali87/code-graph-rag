@@ -51,7 +51,6 @@ class ClassIngestMixin:
         root_node: Node,
         module_qn: str,
         file_path: Path,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         cpp_modules.ingest_cpp_module_declarations(
             root_node,
@@ -60,7 +59,6 @@ class ClassIngestMixin:
             self.repo_path,
             self.project_name,
             self.ingestor,
-            queries,
         )
 
     def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
@@ -132,13 +130,13 @@ class ClassIngestMixin:
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
 
         class_props: PropertyDict = {
-            "qualified_name": class_qn,
-            "name": class_name,
-            "decorators": self._extract_decorators(class_node),
-            "start_line": class_node.start_point[0] + 1,
-            "end_line": class_node.end_point[0] + 1,
-            "docstring": self._get_docstring(class_node),
-            "is_exported": is_exported,
+            cs.KEY_QUALIFIED_NAME: class_qn,
+            cs.KEY_NAME: class_name,
+            cs.KEY_DECORATORS: self._extract_decorators(class_node),
+            cs.KEY_START_LINE: class_node.start_point[0] + 1,
+            cs.KEY_END_LINE: class_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(class_node),
+            cs.KEY_IS_EXPORTED: is_exported,
         }
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
@@ -214,8 +212,10 @@ class ClassIngestMixin:
             if language == cs.SupportedLanguage.JAVA:
                 method_info = java_utils.extract_method_info(method_node)
                 if method_name := method_info.get(cs.KEY_NAME):
-                    parameters = method_info.get("parameters", [])
-                    param_sig = f"({','.join(parameters)})" if parameters else "()"
+                    parameters = method_info.get(cs.KEY_PARAMETERS, [])
+                    param_sig = (
+                        f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
+                    )
                     method_qualified_name = f"{class_qn}.{method_name}{param_sig}"
 
             ingest_method(
@@ -254,7 +254,7 @@ class ClassIngestMixin:
             module_props: PropertyDict = {
                 cs.KEY_QUALIFIED_NAME: inline_module_qn,
                 cs.KEY_NAME: module_name,
-                cs.KEY_PATH: f"inline_module_{module_name}",
+                cs.KEY_PATH: f"{cs.INLINE_MODULE_PATH_PREFIX}{module_name}",
             }
             logger.info(
                 logs.CLASS_FOUND_INLINE_MODULE.format(

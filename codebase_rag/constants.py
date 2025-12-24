@@ -99,6 +99,8 @@ KEY_QUALIFIED_NAME = "qualified_name"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
+KEY_MODULE_TYPE = "module_type"
+KEY_IMPLEMENTS_MODULE = "implements_module"
 
 # (H) File names
 INIT_PY = "__init__.py"
@@ -246,6 +248,16 @@ BYTES_PER_MB = 1024 * 1024
 
 # (H) Property keys
 KEY_NAME = "name"
+KEY_PARAMETERS = "parameters"
+KEY_DECORATORS = "decorators"
+KEY_DOCSTRING = "docstring"
+KEY_IS_EXPORTED = "is_exported"
+
+# (H) Method signature formatting
+EMPTY_PARENS = "()"
+
+# (H) Inline module path prefix
+INLINE_MODULE_PATH_PREFIX = "inline_module_"
 
 # (H) Dependency files
 DEPENDENCY_FILES = frozenset(
@@ -572,6 +584,7 @@ QUOTE_CHARS = frozenset({'"', "'"})
 TRIPLE_QUOTES = ('"""', "'''")
 COMMENT_CHAR = "#"
 ESCAPE_CHAR = "\\"
+CHAR_SEMICOLON = ";"
 
 DEFAULT_NAME = "Unknown"
 
@@ -953,6 +966,31 @@ class CppNodeType(StrEnum):
 
 CPP_MODULE_EXTENSIONS = (".ixx", ".cppm", ".ccm", ".mxx")
 CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})
+
+# (H) C++ module declaration prefixes
+CPP_EXPORT_MODULE_PREFIX = "export module "
+CPP_MODULE_PREFIX = "module "
+CPP_MODULE_PRIVATE_PREFIX = "module ;"
+CPP_IMPL_SUFFIX = "_impl"
+
+# (H) C++ module type values
+CPP_MODULE_TYPE_INTERFACE = "interface"
+CPP_MODULE_TYPE_IMPLEMENTATION = "implementation"
+
+# (H) C++ export prefixes for class detection
+CPP_EXPORT_CLASS_PREFIX = "export class "
+CPP_EXPORT_STRUCT_PREFIX = "export struct "
+CPP_EXPORT_TEMPLATE_PREFIX = "export template"
+CPP_EXPORT_PREFIXES = (
+    CPP_EXPORT_CLASS_PREFIX,
+    CPP_EXPORT_STRUCT_PREFIX,
+    CPP_EXPORT_TEMPLATE_PREFIX,
+)
+
+# (H) C++ keywords for class detection
+CPP_KEYWORD_CLASS = "class"
+CPP_KEYWORD_STRUCT = "struct"
+CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
