@@ -166,62 +166,90 @@ class ImportProcessor:
     def _handle_python_import_from_statement(
         self, import_node: Node, module_qn: str
     ) -> None:
-        module_name_node = import_node.child_by_field_name("module_name")
-        if not module_name_node:
+        module_name = self._extract_python_from_module_name(import_node, module_qn)
+        if not module_name:
             return
 
-        if module_name_node.type == "dotted_name":
-            if decoded_name := safe_decode_text(module_name_node):
-                module_name = decoded_name
-            else:
-                return
-        elif module_name_node.type == "relative_import":
-            module_name = self._resolve_relative_import(module_name_node, module_qn)
-        else:
-            return
-
-        imported_items = []
-        for name_node in import_node.children_by_field_name("name"):
-            if name_node.type == "dotted_name":
-                decoded_name = safe_decode_text(name_node)
-                if not decoded_name:
-                    continue
-                name = decoded_name
-                imported_items.append((name, name))
-            elif name_node.type == "aliased_import":
-                original_name_node = name_node.child_by_field_name("name")
-                alias_node = name_node.child_by_field_name("alias")
-                if original_name_node and alias_node:
-                    original_name = safe_decode_text(original_name_node)
-                    alias = safe_decode_text(alias_node)
-                    if not original_name or not alias:
-                        continue
-                    imported_items.append((alias, original_name))
-
+        imported_items = self._extract_python_imported_items(import_node)
         is_wildcard = any(
             child.type == "wildcard_import" for child in import_node.children
         )
-        if module_name and (imported_items or is_wildcard):
-            if module_name.startswith(self.project_name):
-                base_module = module_name
-            else:
-                top_level_module = module_name.split(cs.SEPARATOR_DOT)[0]
-                if (self.repo_path / top_level_module).is_dir() or (
-                    self.repo_path / f"{top_level_module}.py"
-                ).is_file():
-                    base_module = f"{self.project_name}.{module_name}"
-                else:
-                    base_module = module_name
 
-            if is_wildcard:
-                wildcard_key = f"*{base_module}"
-                self.import_mapping[module_qn][wildcard_key] = base_module
-                logger.debug(f"  Wildcard import: * -> {base_module}")
-            else:
-                for local_name, original_name in imported_items:
-                    full_name = f"{base_module}.{original_name}"
-                    self.import_mapping[module_qn][local_name] = full_name
-                    logger.debug(f"  From import: {local_name} -> {full_name}")
+        if not imported_items and not is_wildcard:
+            return
+
+        base_module = self._resolve_python_base_module(module_name)
+        self._register_python_from_imports(
+            module_qn, base_module, imported_items, is_wildcard
+        )
+
+    def _extract_python_from_module_name(
+        self, import_node: Node, module_qn: str
+    ) -> str | None:
+        module_name_node = import_node.child_by_field_name("module_name")
+        if not module_name_node:
+            return None
+
+        if module_name_node.type == "dotted_name":
+            return safe_decode_text(module_name_node)
+        if module_name_node.type == "relative_import":
+            return self._resolve_relative_import(module_name_node, module_qn)
+        return None
+
+    def _extract_python_imported_items(
+        self, import_node: Node
+    ) -> list[tuple[str, str]]:
+        imported_items: list[tuple[str, str]] = []
+
+        for name_node in import_node.children_by_field_name("name"):
+            if item := self._extract_single_python_import(name_node):
+                imported_items.append(item)
+
+        return imported_items
+
+    def _extract_single_python_import(self, name_node: Node) -> tuple[str, str] | None:
+        if name_node.type == "dotted_name":
+            if name := safe_decode_text(name_node):
+                return (name, name)
+        elif name_node.type == "aliased_import":
+            original_node = name_node.child_by_field_name("name")
+            alias_node = name_node.child_by_field_name("alias")
+            if original_node and alias_node:
+                original = safe_decode_text(original_node)
+                alias = safe_decode_text(alias_node)
+                if original and alias:
+                    return (alias, original)
+        return None
+
+    def _resolve_python_base_module(self, module_name: str) -> str:
+        if module_name.startswith(self.project_name):
+            return module_name
+
+        top_level = module_name.split(cs.SEPARATOR_DOT)[0]
+        is_local_dir = (self.repo_path / top_level).is_dir()
+        is_local_file = (self.repo_path / f"{top_level}.py").is_file()
+
+        if is_local_dir or is_local_file:
+            return f"{self.project_name}.{module_name}"
+        return module_name
+
+    def _register_python_from_imports(
+        self,
+        module_qn: str,
+        base_module: str,
+        imported_items: list[tuple[str, str]],
+        is_wildcard: bool,
+    ) -> None:
+        if is_wildcard:
+            wildcard_key = f"*{base_module}"
+            self.import_mapping[module_qn][wildcard_key] = base_module
+            logger.debug(f"  Wildcard import: * -> {base_module}")
+            return
+
+        for local_name, original_name in imported_items:
+            full_name = f"{base_module}.{original_name}"
+            self.import_mapping[module_qn][local_name] = full_name
+            logger.debug(f"  From import: {local_name} -> {full_name}")
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
