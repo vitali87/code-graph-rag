@@ -94,25 +94,28 @@ class PackageJsonParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
-            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
-                data = json.load(f)
-
-            deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
-            for dep_name, dep_spec in deps.items():
-                dependencies.append(Dependency(dep_name, dep_spec))
-
-            dev_deps = data.get(cs.DEP_KEY_DEV_DEPS_JSON, {})
-            for dep_name, dep_spec in dev_deps.items():
-                dependencies.append(Dependency(dep_name, dep_spec))
-
-            peer_deps = data.get(cs.DEP_KEY_PEER_DEPS, {})
-            for dep_name, dep_spec in peer_deps.items():
-                dependencies.append(Dependency(dep_name, dep_spec))
+            self._load_and_collect_deps(file_path, dependencies)
         except Exception as e:
             logger.error(
                 ls.DEP_PARSE_ERROR_PACKAGE_JSON.format(path=file_path, error=e)
             )
         return dependencies
+
+    def _load_and_collect_deps(
+        self, file_path: Path, dependencies: list[Dependency]
+    ) -> None:
+        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+            data = json.load(f)
+
+        for key in (
+            cs.DEP_KEY_DEPENDENCIES,
+            cs.DEP_KEY_DEV_DEPS_JSON,
+            cs.DEP_KEY_PEER_DEPS,
+        ):
+            dependencies.extend(
+                Dependency(dep_name, dep_spec)
+                for dep_name, dep_spec in data.get(key, {}).items()
+            )
 
 
 class CargoTomlParser(DependencyParser):

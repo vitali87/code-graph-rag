@@ -362,10 +362,14 @@ class CallResolver:
         class_name = rust_parts[-1]
 
         matching_qns = self.function_registry.find_ending_with(class_name)
-        for qn in matching_qns:
-            if self.function_registry.get(qn) == NodeType.CLASS:
-                return qn
-        return class_qn
+        return next(
+            (
+                qn
+                for qn in matching_qns
+                if self.function_registry.get(qn) == NodeType.CLASS
+            ),
+            class_qn,
+        )
 
     def _try_resolve_module_method(
         self, method_name: str, call_name: str, module_qn: str

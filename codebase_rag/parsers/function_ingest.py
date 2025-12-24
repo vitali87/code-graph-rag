@@ -151,9 +151,12 @@ class FunctionIngestMixin:
     ) -> FunctionResolution:
         func_name = self._extract_function_name(func_node)
 
-        if not func_name and language == SupportedLanguage.LUA:
-            if func_node.type == "function_definition":
-                func_name = self._extract_lua_assignment_function_name(func_node)
+        if (
+            not func_name
+            and language == SupportedLanguage.LUA
+            and func_node.type == "function_definition"
+        ):
+            func_name = self._extract_lua_assignment_function_name(func_node)
 
         if not func_name:
             func_name = self._generate_anonymous_function_name(func_node, module_qn)

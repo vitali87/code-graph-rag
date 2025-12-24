@@ -163,37 +163,41 @@ class StdlibExtractor:
 
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
-            module_name = parts[0]
-            entity_name = parts[-1]
-
-            try:
-                import importlib
-                import inspect
-
-                module = importlib.import_module(module_name)
-
-                if hasattr(module, entity_name):
-                    obj = getattr(module, entity_name)
-                    if (
-                        inspect.isclass(obj)
-                        or inspect.isfunction(obj)
-                        or not inspect.ismodule(obj)
-                    ):
-                        module_path = cs.SEPARATOR_DOT.join(parts[:-1])
-                        _cache_stdlib_result("python", full_qualified_name, module_path)
-                        return module_path
-            except (ImportError, AttributeError):
-                pass
-
-            if entity_name[0].isupper():
-                result = cs.SEPARATOR_DOT.join(parts[:-1])
-            else:
-                result = full_qualified_name
-
-            _cache_stdlib_result("python", full_qualified_name, result)
-            return result
-
+            return self._resolve_python_entity_module_path(parts, full_qualified_name)
         return full_qualified_name
+
+    def _resolve_python_entity_module_path(
+        self, parts: list[str], full_qualified_name: str
+    ) -> str:
+        module_name = parts[0]
+        entity_name = parts[-1]
+
+        try:
+            import importlib
+            import inspect
+
+            module = importlib.import_module(module_name)
+
+            if hasattr(module, entity_name):
+                obj = getattr(module, entity_name)
+                if (
+                    inspect.isclass(obj)
+                    or inspect.isfunction(obj)
+                    or not inspect.ismodule(obj)
+                ):
+                    module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+                    _cache_stdlib_result("python", full_qualified_name, module_path)
+                    return module_path
+        except (ImportError, AttributeError):
+            pass
+
+        result = (
+            cs.SEPARATOR_DOT.join(parts[:-1])
+            if entity_name[0].isupper()
+            else full_qualified_name
+        )
+        _cache_stdlib_result("python", full_qualified_name, result)
+        return result
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
         cached_result = _get_cached_stdlib_result("javascript", full_qualified_name)
@@ -202,15 +206,21 @@ class StdlibExtractor:
 
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
-            module_name = parts[0]
-            entity_name = parts[-1]
+            return self._resolve_js_entity_module_path(parts, full_qualified_name)
+        return full_qualified_name
 
-            if _is_tool_available("node"):
-                try:
-                    import os
-                    import subprocess
+    def _resolve_js_entity_module_path(
+        self, parts: list[str], full_qualified_name: str
+    ) -> str:
+        module_name = parts[0]
+        entity_name = parts[-1]
 
-                    node_script = """
+        if _is_tool_available("node"):
+            try:
+                import os
+                import subprocess
+
+                node_script = """
                     const moduleName = process.env.MODULE_NAME;
                     const entityName = process.env.ENTITY_NAME;
 
@@ -229,46 +239,44 @@ class StdlibExtractor:
                     }
                     """
 
-                    env = os.environ.copy()
-                    env["MODULE_NAME"] = module_name
-                    env["ENTITY_NAME"] = entity_name
+                env = os.environ.copy()
+                env["MODULE_NAME"] = module_name
+                env["ENTITY_NAME"] = entity_name
 
-                    subprocess_result = subprocess.run(
-                        ["node", "-e", node_script],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        env=env,
-                    )
+                subprocess_result = subprocess.run(
+                    ["node", "-e", node_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    env=env,
+                )
 
-                    if subprocess_result.returncode == 0:
-                        data = json.loads(subprocess_result.stdout.strip())
-                        if data["hasEntity"] and data["entityType"] in {
-                            "function",
-                            "object",
-                        }:
-                            module_path = cs.SEPARATOR_DOT.join(parts[:-1])
-                            _cache_stdlib_result(
-                                "javascript", full_qualified_name, module_path
-                            )
-                            return module_path
+                if subprocess_result.returncode == 0:
+                    data = json.loads(subprocess_result.stdout.strip())
+                    if data["hasEntity"] and data["entityType"] in {
+                        "function",
+                        "object",
+                    }:
+                        module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+                        _cache_stdlib_result(
+                            "javascript", full_qualified_name, module_path
+                        )
+                        return module_path
 
-                except (
-                    subprocess.TimeoutExpired,
-                    subprocess.CalledProcessError,
-                    json.JSONDecodeError,
-                ):
-                    pass
+            except (
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+                json.JSONDecodeError,
+            ):
+                pass
 
-            if entity_name[0].isupper():
-                result = cs.SEPARATOR_DOT.join(parts[:-1])
-            else:
-                result = full_qualified_name
-
-            _cache_stdlib_result("javascript", full_qualified_name, result)
-            return result
-
-        return full_qualified_name
+        result = (
+            cs.SEPARATOR_DOT.join(parts[:-1])
+            if entity_name[0].isupper()
+            else full_qualified_name
+        )
+        _cache_stdlib_result("javascript", full_qualified_name, result)
+        return result
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
         parts = full_qualified_name.split("/")
