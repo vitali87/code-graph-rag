@@ -44,7 +44,7 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_parameters(
         self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        params_node = scope_node.child_by_field_name("parameters")
+        params_node = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if not params_node:
             return
 
@@ -58,8 +58,8 @@ class JavaVariableAnalyzerMixin:
     def _process_formal_parameter(
         self, param_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        param_name_node = param_node.child_by_field_name("name")
-        param_type_node = param_node.child_by_field_name("type")
+        param_name_node = param_node.child_by_field_name(cs.FIELD_NAME)
+        param_type_node = param_node.child_by_field_name(cs.FIELD_TYPE)
 
         if not param_name_node or not param_type_node:
             return
@@ -83,7 +83,7 @@ class JavaVariableAnalyzerMixin:
                 if decoded_text := safe_decode_text(subchild):
                     param_type = f"{decoded_text}{cs.JAVA_ARRAY_SUFFIX}"
             elif subchild.type == cs.TS_VARIABLE_DECLARATOR:
-                if name_node := subchild.child_by_field_name("name"):
+                if name_node := subchild.child_by_field_name(cs.FIELD_NAME):
                     param_name = safe_decode_text(name_node)
 
         if param_name and param_type:
@@ -110,13 +110,13 @@ class JavaVariableAnalyzerMixin:
     def _process_java_variable_declaration(
         self, decl_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        if not (type_node := decl_node.child_by_field_name("type")):
+        if not (type_node := decl_node.child_by_field_name(cs.FIELD_TYPE)):
             return
 
         if not (declared_type := safe_decode_text(type_node)):
             return
 
-        if not (declarator_node := decl_node.child_by_field_name("declarator")):
+        if not (declarator_node := decl_node.child_by_field_name(cs.FIELD_DECLARATOR)):
             return
 
         if declarator_node.type == cs.TS_VARIABLE_DECLARATOR:
@@ -137,13 +137,13 @@ class JavaVariableAnalyzerMixin:
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
-        if not (name_node := declarator_node.child_by_field_name("name")):
+        if not (name_node := declarator_node.child_by_field_name(cs.FIELD_NAME)):
             return
 
         if not (var_name := safe_decode_text(name_node)):
             return
 
-        if value_node := declarator_node.child_by_field_name("value"):
+        if value_node := declarator_node.child_by_field_name(cs.FIELD_VALUE):
             if inferred_type := self._infer_java_type_from_expression(
                 value_node, module_qn
             ):
@@ -166,17 +166,19 @@ class JavaVariableAnalyzerMixin:
         if not (containing_class := self._find_containing_java_class(scope_node)):
             return
 
-        if not (body_node := containing_class.child_by_field_name("body")):
+        if not (body_node := containing_class.child_by_field_name(cs.FIELD_BODY)):
             return
 
         for child in body_node.children:
             if child.type == cs.TS_FIELD_DECLARATION:
                 field_info = extract_field_info(child)
-                if field_info.get("name") and field_info.get("type"):
-                    field_name = field_info["name"]
-                    field_type = field_info["type"]
+                if field_info.get(cs.FIELD_NAME) and field_info.get(cs.FIELD_TYPE):
+                    field_name = field_info[cs.FIELD_NAME]
+                    field_type = field_info[cs.FIELD_TYPE]
 
-                    this_field_ref = f"{cs.JAVA_KEYWORD_THIS}.{field_name}"
+                    this_field_ref = (
+                        f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}{field_name}"
+                    )
                     resolved_type = self._resolve_java_type_name(
                         str(field_type), module_qn
                     )
@@ -205,8 +207,8 @@ class JavaVariableAnalyzerMixin:
     def _process_java_assignment(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        left_node = assignment_node.child_by_field_name("left")
-        right_node = assignment_node.child_by_field_name("right")
+        left_node = assignment_node.child_by_field_name(cs.FIELD_LEFT)
+        right_node = assignment_node.child_by_field_name(cs.FIELD_RIGHT)
 
         if not left_node or not right_node:
             return
@@ -226,15 +228,15 @@ class JavaVariableAnalyzerMixin:
             case cs.TS_IDENTIFIER:
                 return safe_decode_text(node)
             case cs.TS_FIELD_ACCESS:
-                object_node = node.child_by_field_name("object")
-                field_node = node.child_by_field_name("field")
+                object_node = node.child_by_field_name(cs.FIELD_OBJECT)
+                field_node = node.child_by_field_name(cs.FIELD_FIELD)
 
                 if object_node and field_node:
                     object_name = safe_decode_text(object_node)
                     field_name = safe_decode_text(field_node)
 
                     if object_name and field_name:
-                        return f"{object_name}.{field_name}"
+                        return f"{object_name}{cs.SEPARATOR_DOT}{field_name}"
             case _:
                 pass
 
@@ -257,8 +259,8 @@ class JavaVariableAnalyzerMixin:
     def _process_enhanced_for_statement(
         self, for_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        type_node = for_node.child_by_field_name("type")
-        name_node = for_node.child_by_field_name("name")
+        type_node = for_node.child_by_field_name(cs.FIELD_TYPE)
+        name_node = for_node.child_by_field_name(cs.FIELD_NAME)
 
         if type_node and name_node:
             self._register_for_loop_variable(
@@ -292,7 +294,7 @@ class JavaVariableAnalyzerMixin:
             if child.type != cs.TS_VARIABLE_DECLARATOR:
                 continue
 
-            if not (name_node := child.child_by_field_name("name")):
+            if not (name_node := child.child_by_field_name(cs.FIELD_NAME)):
                 continue
 
             if not (var_name := safe_decode_text(name_node)):
@@ -320,7 +322,7 @@ class JavaVariableAnalyzerMixin:
     ) -> str | None:
         match expr_node.type:
             case cs.TS_OBJECT_CREATION_EXPRESSION:
-                if type_node := expr_node.child_by_field_name("type"):
+                if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
                     return safe_decode_text(type_node)
 
             case cs.TS_METHOD_INVOCATION:
@@ -346,7 +348,7 @@ class JavaVariableAnalyzerMixin:
                 return cs.JAVA_TYPE_BOOLEAN
 
             case cs.TS_ARRAY_CREATION_EXPRESSION:
-                if type_node := expr_node.child_by_field_name("type"):
+                if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
                     if base_type := safe_decode_text(type_node):
                         return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
 
@@ -360,18 +362,22 @@ class JavaVariableAnalyzerMixin:
     ) -> str | None:
         call_info = extract_method_call_info(method_call_node)
 
-        if not (method_name := call_info.get("name")):
+        if not (method_name := call_info.get(cs.FIELD_NAME)):
             return None
 
-        object_ref = call_info.get("object")
-        call_string = f"{object_ref}.{method_name}" if object_ref else str(method_name)
+        object_ref = call_info.get(cs.FIELD_OBJECT)
+        call_string = (
+            f"{object_ref}{cs.SEPARATOR_DOT}{method_name}"
+            if object_ref
+            else str(method_name)
+        )
         return self._resolve_java_method_return_type(call_string, module_qn)
 
     def _infer_java_field_access_type(
         self, field_access_node: Node, module_qn: str
     ) -> str | None:
-        object_node = field_access_node.child_by_field_name("object")
-        field_node = field_access_node.child_by_field_name("field")
+        object_node = field_access_node.child_by_field_name(cs.FIELD_OBJECT)
+        field_node = field_access_node.child_by_field_name(cs.FIELD_FIELD)
 
         if not object_node or not field_node:
             return None
@@ -419,7 +425,7 @@ class JavaVariableAnalyzerMixin:
         root_node, _ = self.ast_cache[file_path]
         variable_types = self.build_variable_type_map(root_node, module_qn)
 
-        this_var = f"{cs.JAVA_KEYWORD_THIS}.{var_name}"
+        this_var = f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}{var_name}"
         return variable_types.get(var_name) or variable_types.get(this_var)
 
     def _lookup_java_field_type(
@@ -433,7 +439,7 @@ class JavaVariableAnalyzerMixin:
         class_qn = (
             resolved_class_type
             if cs.SEPARATOR_DOT in resolved_class_type
-            else f"{module_qn}.{resolved_class_type}"
+            else f"{module_qn}{cs.SEPARATOR_DOT}{resolved_class_type}"
         )
 
         parts = class_qn.split(cs.SEPARATOR_DOT)
@@ -459,13 +465,13 @@ class JavaVariableAnalyzerMixin:
         for child in root_node.children:
             if child.type == cs.TS_CLASS_DECLARATION:
                 class_info = extract_class_info(child)
-                if class_info.get("name") == class_name:
-                    if class_body := child.child_by_field_name("body"):
+                if class_info.get(cs.FIELD_NAME) == class_name:
+                    if class_body := child.child_by_field_name(cs.FIELD_BODY):
                         for field_child in class_body.children:
                             if field_child.type == cs.TS_FIELD_DECLARATION:
                                 field_info = extract_field_info(field_child)
-                                if field_info.get("name") == field_name:
-                                    if field_type := field_info.get("type"):
+                                if field_info.get(cs.FIELD_NAME) == field_name:
+                                    if field_type := field_info.get(cs.FIELD_TYPE):
                                         return self._resolve_java_type_name(
                                             str(field_type), module_qn
                                         )

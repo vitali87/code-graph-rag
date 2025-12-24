@@ -370,6 +370,12 @@ FIELD_NAME = "name"
 FIELD_BODY = "body"
 FIELD_CONSTRUCTOR = "constructor"
 FIELD_DECLARATOR = "declarator"
+FIELD_PARAMETERS = "parameters"
+FIELD_TYPE = "type"
+FIELD_VALUE = "value"
+FIELD_LEFT = "left"
+FIELD_RIGHT = "right"
+FIELD_FIELD = "field"
 
 # (H) Image file extensions for chat image handling
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
