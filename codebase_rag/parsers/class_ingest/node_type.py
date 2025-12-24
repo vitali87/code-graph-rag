@@ -51,30 +51,39 @@ def log_exported_class_type(
     class_node: Node, class_name: str | None, class_qn: str
 ) -> None:
     node_text = safe_decode_with_fallback(class_node) if class_node.text else ""
-    if "export struct " in node_text:
-        logger.info(
-            logs.CLASS_FOUND_EXPORTED_STRUCT.format(name=class_name, qn=class_qn)
-        )
-    elif "export union " in node_text:
-        logger.info(
-            logs.CLASS_FOUND_EXPORTED_UNION.format(name=class_name, qn=class_qn)
-        )
-    elif "export template" in node_text:
-        logger.info(
-            logs.CLASS_FOUND_EXPORTED_TEMPLATE.format(name=class_name, qn=class_qn)
-        )
-    else:
-        logger.info(
-            logs.CLASS_FOUND_EXPORTED_CLASS.format(name=class_name, qn=class_qn)
-        )
+    match _detect_export_type(node_text):
+        case cs.CPP_EXPORT_STRUCT_PREFIX:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_STRUCT.format(name=class_name, qn=class_qn)
+            )
+        case cs.CPP_EXPORT_UNION_PREFIX:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_UNION.format(name=class_name, qn=class_qn)
+            )
+        case cs.CPP_EXPORT_TEMPLATE_PREFIX:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_TEMPLATE.format(name=class_name, qn=class_qn)
+            )
+        case _:
+            logger.info(
+                logs.CLASS_FOUND_EXPORTED_CLASS.format(name=class_name, qn=class_qn)
+            )
+
+
+def _detect_export_type(node_text: str) -> str | None:
+    return next(
+        (prefix for prefix in cs.CPP_EXPORT_PREFIXES if prefix in node_text),
+        None,
+    )
 
 
 def extract_template_class_type(template_node: Node) -> NodeType | None:
     for child in template_node.children:
-        if child.type in cs.CPP_CLASS_TYPES:
-            return NodeType.CLASS
-        elif child.type == cs.TS_ENUM_SPECIFIER:
-            return NodeType.ENUM
-        elif child.type == cs.TS_UNION_SPECIFIER:
-            return NodeType.UNION
+        match child.type:
+            case cs.CppNodeType.CLASS_SPECIFIER | cs.TS_STRUCT_SPECIFIER:
+                return NodeType.CLASS
+            case cs.TS_ENUM_SPECIFIER:
+                return NodeType.ENUM
+            case cs.TS_UNION_SPECIFIER:
+                return NodeType.UNION
     return None

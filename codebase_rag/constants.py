@@ -980,10 +980,12 @@ CPP_MODULE_TYPE_IMPLEMENTATION = "implementation"
 # (H) C++ export prefixes for class detection
 CPP_EXPORT_CLASS_PREFIX = "export class "
 CPP_EXPORT_STRUCT_PREFIX = "export struct "
+CPP_EXPORT_UNION_PREFIX = "export union "
 CPP_EXPORT_TEMPLATE_PREFIX = "export template"
 CPP_EXPORT_PREFIXES = (
     CPP_EXPORT_CLASS_PREFIX,
     CPP_EXPORT_STRUCT_PREFIX,
+    CPP_EXPORT_UNION_PREFIX,
     CPP_EXPORT_TEMPLATE_PREFIX,
 )
 
