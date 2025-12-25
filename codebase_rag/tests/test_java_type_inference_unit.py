@@ -4,8 +4,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
+from codebase_rag.tests.conftest import create_mock_node
 from codebase_rag.types_defs import NodeType
 
 
@@ -521,3 +523,374 @@ class TestJavaTypeInferenceEngineIntegration:
         fqn_map = type_inference_engine._build_fqn_lookup_map()
 
         assert "Helper" in fqn_map or "com.example.Helper" in fqn_map
+
+
+class TestJavaTypeResolverAstMethods:
+    def test_get_superclass_name_with_valid_class(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyClass")
+        superclass_type_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "ParentClass")
+        superclass_node = create_mock_node(
+            "superclass",
+            fields={cs.FIELD_TYPE: superclass_type_node},
+        )
+        class_node = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={
+                cs.FIELD_NAME: name_node,
+                cs.FIELD_SUPERCLASS: superclass_node,
+            },
+        )
+        root_node = create_mock_node("program", children=[class_node])
+
+        file_path = Path("/test/MyClass.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_superclass_name("com.example.MyClass")
+        assert result == "ParentClass"
+
+    def test_get_superclass_name_no_superclass(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyClass")
+        class_node = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: name_node},
+        )
+        root_node = create_mock_node("program", children=[class_node])
+
+        file_path = Path("/test/MyClass.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_superclass_name("com.example.MyClass")
+        assert result is None
+
+    def test_get_superclass_name_file_not_in_cache(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        file_path = Path("/test/MyClass.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(return_value=False)
+
+        result = type_inference_engine._get_superclass_name("com.example.MyClass")
+        assert result is None
+
+    def test_get_superclass_name_module_not_found(
+        self, type_inference_engine: JavaTypeInferenceEngine
+    ) -> None:
+        type_inference_engine.module_qn_to_file_path = {}
+        result = type_inference_engine._get_superclass_name("com.example.MyClass")
+        assert result is None
+
+    def test_get_superclass_name_short_qualified_name(
+        self, type_inference_engine: JavaTypeInferenceEngine
+    ) -> None:
+        result = type_inference_engine._get_superclass_name("MyClass")
+        assert result is None
+
+    def test_find_superclass_using_ast_nested_class(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+    ) -> None:
+        inner_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "InnerClass")
+        inner_superclass_type = create_mock_node(cs.TS_TYPE_IDENTIFIER, "BaseClass")
+        inner_superclass = create_mock_node(
+            "superclass",
+            fields={cs.FIELD_TYPE: inner_superclass_type},
+        )
+        inner_class = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={
+                cs.FIELD_NAME: inner_name,
+                cs.FIELD_SUPERCLASS: inner_superclass,
+            },
+        )
+
+        outer_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "OuterClass")
+        body = create_mock_node("class_body", children=[inner_class])
+        outer_class = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: outer_name},
+            children=[body],
+        )
+        root_node = create_mock_node("program", children=[outer_class])
+
+        result = type_inference_engine._find_superclass_using_ast(
+            root_node, "InnerClass", "com.example"
+        )
+        assert result == "BaseClass"
+
+    def test_find_superclass_using_ast_class_not_found(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "OtherClass")
+        class_node = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: name_node},
+        )
+        root_node = create_mock_node("program", children=[class_node])
+
+        result = type_inference_engine._find_superclass_using_ast(
+            root_node, "TargetClass", "com.example"
+        )
+        assert result is None
+
+    def test_get_implemented_interfaces_single_interface(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyClass")
+        interface_type = create_mock_node(cs.TS_TYPE_IDENTIFIER, "Serializable")
+        interfaces_node = create_mock_node(
+            "super_interfaces",
+            children=[interface_type],
+        )
+        class_node = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={
+                cs.FIELD_NAME: name_node,
+                cs.FIELD_INTERFACES: interfaces_node,
+            },
+        )
+        root_node = create_mock_node("program", children=[class_node])
+
+        file_path = Path("/test/MyClass.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_implemented_interfaces(
+            "com.example.MyClass"
+        )
+        assert result == ["Serializable"]
+
+    def test_get_implemented_interfaces_no_interfaces(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyClass")
+        class_node = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: name_node},
+        )
+        root_node = create_mock_node("program", children=[class_node])
+
+        file_path = Path("/test/MyClass.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_implemented_interfaces(
+            "com.example.MyClass"
+        )
+        assert result == []
+
+    def test_get_implemented_interfaces_short_qualified_name(
+        self, type_inference_engine: JavaTypeInferenceEngine
+    ) -> None:
+        result = type_inference_engine._get_implemented_interfaces("MyClass")
+        assert result == []
+
+    def test_get_current_class_name_found(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyService")
+        class_node = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: name_node},
+        )
+        root_node = create_mock_node("program", children=[class_node])
+
+        file_path = Path("/test/MyService.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_current_class_name("com.example")
+        assert result == "com.example.MyService"
+
+    def test_get_current_class_name_interface(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyInterface")
+        interface_node = create_mock_node(
+            cs.TS_INTERFACE_DECLARATION,
+            fields={cs.FIELD_NAME: name_node},
+        )
+        root_node = create_mock_node("program", children=[interface_node])
+
+        file_path = Path("/test/MyInterface.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_current_class_name("com.example")
+        assert result == "com.example.MyInterface"
+
+    def test_get_current_class_name_enum(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "Status")
+        enum_node = create_mock_node(
+            cs.TS_ENUM_DECLARATION,
+            fields={cs.FIELD_NAME: name_node},
+        )
+        root_node = create_mock_node("program", children=[enum_node])
+
+        file_path = Path("/test/Status.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_current_class_name("com.example")
+        assert result == "com.example.Status"
+
+    def test_get_current_class_name_no_class(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        import_node = create_mock_node("import_declaration")
+        root_node = create_mock_node("program", children=[import_node])
+
+        file_path = Path("/test/package-info.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_current_class_name("com.example")
+        assert result is None
+
+    def test_get_current_class_name_short_module(
+        self, type_inference_engine: JavaTypeInferenceEngine
+    ) -> None:
+        result = type_inference_engine._get_current_class_name("example")
+        assert result is None
+
+    def test_traverse_for_class_declarations_multiple_classes(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+    ) -> None:
+        class1_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "ClassA")
+        class1 = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: class1_name},
+        )
+
+        class2_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "ClassB")
+        class2 = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: class2_name},
+        )
+
+        root_node = create_mock_node("program", children=[class1, class2])
+
+        class_names: list[str] = []
+        type_inference_engine._traverse_for_class_declarations(root_node, class_names)
+        assert "ClassA" in class_names
+        assert "ClassB" in class_names
+
+    def test_traverse_for_class_declarations_mixed_types(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+    ) -> None:
+        class_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyClass")
+        class_node = create_mock_node(
+            cs.TS_CLASS_DECLARATION,
+            fields={cs.FIELD_NAME: class_name},
+        )
+
+        interface_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyInterface")
+        interface_node = create_mock_node(
+            cs.TS_INTERFACE_DECLARATION,
+            fields={cs.FIELD_NAME: interface_name},
+        )
+
+        enum_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyEnum")
+        enum_node = create_mock_node(
+            cs.TS_ENUM_DECLARATION,
+            fields={cs.FIELD_NAME: enum_name},
+        )
+
+        root_node = create_mock_node(
+            "program", children=[class_node, interface_node, enum_node]
+        )
+
+        class_names: list[str] = []
+        type_inference_engine._traverse_for_class_declarations(root_node, class_names)
+        assert len(class_names) == 3
+        assert "MyClass" in class_names
+        assert "MyInterface" in class_names
+        assert "MyEnum" in class_names
+
+    def test_rank_module_candidates_prefers_exact_match(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+    ) -> None:
+        type_inference_engine.module_qn_to_file_path = {
+            "project.src.main.java.com.example.util.Helper": Path("/a/Helper.java"),
+            "project.src.main.java.com.example.Helper": Path("/b/Helper.java"),
+            "project.src.main.java.com.other.Helper": Path("/c/Helper.java"),
+        }
+        type_inference_engine._fqn_to_module_qn = (
+            type_inference_engine._build_fqn_lookup_map()
+        )
+
+        candidates = [
+            "project.src.main.java.com.other.Helper",
+            "project.src.main.java.com.example.Helper",
+            "project.src.main.java.com.example.util.Helper",
+        ]
+
+        result = type_inference_engine._rank_module_candidates(
+            candidates,
+            "com.example.Helper",
+            "project.src.main.java.com.example.service.UserService",
+        )
+
+        assert result[0] == "project.src.main.java.com.example.Helper"
+
+    def test_rank_module_candidates_prefers_closer_package(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+    ) -> None:
+        type_inference_engine.module_qn_to_file_path = {
+            "project.src.main.java.com.example.service.Helper": Path("/a/Helper.java"),
+            "project.src.main.java.com.other.Helper": Path("/b/Helper.java"),
+        }
+        type_inference_engine._fqn_to_module_qn = (
+            type_inference_engine._build_fqn_lookup_map()
+        )
+
+        candidates = [
+            "project.src.main.java.com.other.Helper",
+            "project.src.main.java.com.example.service.Helper",
+        ]
+
+        result = type_inference_engine._rank_module_candidates(
+            candidates,
+            "Helper",
+            "project.src.main.java.com.example.service.UserService",
+        )
+
+        assert result[0] == "project.src.main.java.com.example.service.Helper"
