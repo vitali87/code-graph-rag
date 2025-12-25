@@ -1164,6 +1164,9 @@ TS_LUA_IDENTIFIER = "identifier"
 # (H) Lua method separator
 LUA_METHOD_SEPARATOR = ":"
 
+# (H) Fallback display value
+STR_NONE = "None"
+
 # (H) Tree-sitter JS/TS utility node types
 TS_RETURN_STATEMENT = "return_statement"
 TS_RETURN = "return"
@@ -1522,3 +1525,171 @@ PY_SELF_PREFIX = "self."
 # (H) Type inference defaults
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
+
+# (H) JS/TS ingest node types
+TS_PAIR = "pair"
+TS_OBJECT = "object"
+TS_FUNCTION_EXPRESSION = "function_expression"
+TS_ARROW_FUNCTION = "arrow_function"
+TS_MODULE = "module"
+TS_CLASS_BODY = "class_body"
+TS_STATIC = "static"
+TS_PROPERTY_IDENTIFIER = "property_identifier"
+TS_VARIABLE_DECLARATOR = "variable_declarator"
+
+# (H) JS prototype property keywords
+JS_PROTOTYPE_KEYWORD = "prototype"
+JS_OBJECT_NAME = "Object"
+JS_CREATE_METHOD = "create"
+
+# (H) JS/TS ingest query capture names
+CAPTURE_CHILD_CLASS = "child_class"
+CAPTURE_PARENT_CLASS = "parent_class"
+CAPTURE_CONSTRUCTOR_NAME = "constructor_name"
+CAPTURE_PROTOTYPE_KEYWORD = "prototype_keyword"
+CAPTURE_METHOD_NAME = "method_name"
+CAPTURE_METHOD_FUNCTION = "method_function"
+CAPTURE_MEMBER_EXPR = "member_expr"
+CAPTURE_FUNCTION_EXPR = "function_expr"
+CAPTURE_ARROW_FUNCTION = "arrow_function"
+
+# (H) JS prototype inheritance query
+JS_PROTOTYPE_INHERITANCE_QUERY = """
+(assignment_expression
+  left: (member_expression
+    object: (identifier) @child_class
+    property: (property_identifier) @prototype (#eq? @prototype "prototype"))
+  right: (call_expression
+    function: (member_expression
+      object: (identifier) @object_name (#eq? @object_name "Object")
+      property: (property_identifier) @create_method (#eq? @create_method "create"))
+    arguments: (arguments
+      (member_expression
+        object: (identifier) @parent_class
+        property: (property_identifier) @parent_prototype (#eq? @parent_prototype "prototype")))))
+"""
+
+# (H) JS prototype method assignment query
+JS_PROTOTYPE_METHOD_QUERY = """
+(assignment_expression
+  left: (member_expression
+    object: (member_expression
+      object: (identifier) @constructor_name
+      property: (property_identifier) @prototype_keyword (#eq? @prototype_keyword "prototype"))
+    property: (property_identifier) @method_name)
+  right: (function_expression) @method_function)
+"""
+
+# (H) JS object method query
+JS_OBJECT_METHOD_QUERY = """
+(pair
+  key: (property_identifier) @method_name
+  value: (function_expression) @method_function)
+"""
+
+# (H) JS method definition query
+JS_METHOD_DEF_QUERY = """
+(object
+  (method_definition
+    name: (property_identifier) @method_name) @method_function)
+"""
+
+# (H) JS object arrow function query
+JS_OBJECT_ARROW_QUERY = """
+(object
+  (pair
+    (property_identifier) @method_name
+    (arrow_function) @arrow_function))
+"""
+
+# (H) JS assignment arrow function query
+JS_ASSIGNMENT_ARROW_QUERY = """
+(assignment_expression
+  (member_expression) @member_expr
+  (arrow_function) @arrow_function)
+"""
+
+# (H) JS assignment function expression query
+JS_ASSIGNMENT_FUNCTION_QUERY = """
+(assignment_expression
+  (member_expression) @member_expr
+  (function_expression) @function_expr)
+"""
+
+# (H) JS/TS module system node types
+TS_OBJECT_PATTERN = "object_pattern"
+TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
+TS_PAIR_PATTERN = "pair_pattern"
+TS_FUNCTION_DECLARATION = "function_declaration"
+TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
+
+# (H) Tree-sitter field names for module system
+FIELD_FUNCTION = "function"
+FIELD_KEY = "key"
+
+# (H) JS/TS module system keywords
+JS_REQUIRE_KEYWORD = "require"
+JS_EXPORTS_KEYWORD = "exports"
+JS_MODULE_KEYWORD = "module"
+
+# (H) JS/TS export type descriptions
+JS_EXPORT_TYPE_COMMONJS = "CommonJS Export"
+JS_EXPORT_TYPE_COMMONJS_MODULE = "CommonJS Module Export"
+JS_EXPORT_TYPE_ES6_FUNCTION = "ES6 Export Function"
+JS_EXPORT_TYPE_ES6_FUNCTION_DECL = "ES6 Export Function Declaration"
+
+# (H) JS/TS CommonJS destructure query
+JS_COMMONJS_DESTRUCTURE_QUERY = """
+(lexical_declaration
+  (variable_declarator
+    name: (object_pattern)
+    value: (call_expression
+      function: (identifier) @func (#eq? @func "require")
+    )
+  ) @variable_declarator
+)
+"""
+
+# (H) JS/TS CommonJS exports function query
+JS_COMMONJS_EXPORTS_FUNCTION_QUERY = """
+(assignment_expression
+  left: (member_expression
+    object: (identifier) @exports_obj
+    property: (property_identifier) @export_name)
+  right: [(function_expression) (arrow_function)] @export_function)
+"""
+
+# (H) JS/TS CommonJS module.exports query
+JS_COMMONJS_MODULE_EXPORTS_QUERY = """
+(assignment_expression
+  left: (member_expression
+    object: (member_expression
+      object: (identifier) @module_obj
+      property: (property_identifier) @exports_prop)
+    property: (property_identifier) @export_name)
+  right: [(function_expression) (arrow_function)] @export_function)
+"""
+
+# (H) JS/TS ES6 export const query
+JS_ES6_EXPORT_CONST_QUERY = """
+(export_statement
+  (lexical_declaration
+    (variable_declarator
+      name: (identifier) @export_name
+      value: [(function_expression) (arrow_function)] @export_function)))
+"""
+
+# (H) JS/TS ES6 export function query
+JS_ES6_EXPORT_FUNCTION_QUERY = """
+(export_statement
+  [(function_declaration) (generator_function_declaration)] @export_function)
+"""
+
+# (H) Query capture names for module system
+CAPTURE_FUNC = "func"
+CAPTURE_VARIABLE_DECLARATOR = "variable_declarator"
+CAPTURE_EXPORTS_OBJ = "exports_obj"
+CAPTURE_MODULE_OBJ = "module_obj"
+CAPTURE_EXPORTS_PROP = "exports_prop"
+CAPTURE_EXPORT_NAME = "export_name"
+CAPTURE_EXPORT_FUNCTION = "export_function"

@@ -493,3 +493,45 @@ PY_BODY_CHILD = "    Body child type: {type}"
 PY_FOUND_METHOD = "      Found method: {name}"
 PY_FOUND_INIT_METHOD = "      Found __init__ method!"
 PY_INIT_NOT_FOUND = "  No __init__ method found in class body"
+
+# (H) JS/TS ingest logs
+JS_PROTOTYPE_INHERITANCE = "Prototype inheritance: {child_qn} INHERITS {parent_qn}"
+JS_PROTOTYPE_INHERITANCE_FAILED = "Failed to detect prototype inheritance: {error}"
+JS_PROTOTYPE_METHOD_FOUND = "  Found Prototype Method: {method_name} (qn: {method_qn})"
+JS_PROTOTYPE_METHOD_DEFINES = "Prototype method: {constructor_qn} DEFINES {method_qn}"
+JS_PROTOTYPE_METHODS_FAILED = "Failed to detect prototype methods: {error}"
+JS_OBJECT_METHOD_FOUND = "  Found Object Method: {method_name} (qn: {method_qn})"
+JS_OBJECT_METHODS_PROCESS_FAILED = "Failed to process object literal methods: {error}"
+JS_OBJECT_METHODS_DETECT_FAILED = "Failed to detect object literal methods: {error}"
+JS_OBJECT_ARROW_FOUND = (
+    "  Found Object Arrow Function: {function_name} (qn: {function_qn})"
+)
+JS_ASSIGNMENT_ARROW_FOUND = (
+    "  Found Assignment Arrow Function: {function_name} (qn: {function_qn})"
+)
+JS_ASSIGNMENT_FUNC_EXPR_FOUND = (
+    "  Found Assignment Function Expression: {function_name} (qn: {function_qn})"
+)
+JS_ASSIGNMENT_ARROW_QUERY_FAILED = (
+    "Failed to process assignment arrow functions query: {error}"
+)
+JS_ASSIGNMENT_ARROW_DETECT_FAILED = (
+    "Failed to detect assignment arrow functions: {error}"
+)
+
+# (H) JS/TS module system logs
+JS_COMMONJS_DESTRUCTURE_FAILED = (
+    "Failed to process CommonJS destructuring pattern: {error}"
+)
+JS_MISSING_IMPORT_PATTERNS_FAILED = "Failed to detect missing import patterns: {error}"
+JS_COMMONJS_VAR_DECLARATOR_FAILED = (
+    "Failed to process variable declarator for CommonJS: {error}"
+)
+JS_COMMONJS_IMPORT_FAILED = "Failed to process CommonJS import {imported_name}: {error}"
+JS_MISSING_IMPORT_PATTERN = (
+    "Missing pattern: {module_qn} IMPORTS {imported_name} from {resolved_source_module}"
+)
+JS_COMMONJS_EXPORTS_QUERY_FAILED = "Failed to process CommonJS exports query: {error}"
+JS_COMMONJS_EXPORTS_DETECT_FAILED = "Failed to detect CommonJS exports: {error}"
+JS_ES6_EXPORTS_QUERY_FAILED = "Failed to process ES6 exports query: {error}"
+JS_ES6_EXPORTS_DETECT_FAILED = "Failed to detect ES6 exports: {error}"

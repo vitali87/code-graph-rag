@@ -18,6 +18,7 @@ from .types_defs import (
     LanguageQueries,
     NodeType,
     QualifiedName,
+    ResultRow,
     SimpleNameLookup,
     TrieNode,
 )
@@ -371,33 +372,46 @@ class GraphUpdater:
             logger.info(ls.GENERATING_EMBEDDINGS.format(count=len(results)))
 
             embedded_count = 0
-            for result in results:
-                result: EmbeddingQueryResult
-                node_id = result[cs.KEY_NODE_ID]
-                qualified_name = result[cs.KEY_QUALIFIED_NAME]
-                start_line = result.get(cs.KEY_START_LINE)
-                end_line = result.get(cs.KEY_END_LINE)
-                file_path = result.get(cs.KEY_PATH)
+            for row in results:
+                parsed = self._parse_embedding_result(row)
+                if parsed is None:
+                    continue
 
-                if source_code := self._extract_source_code(
-                    qualified_name, file_path, start_line, end_line
+                node_id = parsed[cs.KEY_NODE_ID]
+                qualified_name = parsed[cs.KEY_QUALIFIED_NAME]
+                start_line = parsed.get(cs.KEY_START_LINE)
+                end_line = parsed.get(cs.KEY_END_LINE)
+                file_path = parsed.get(cs.KEY_PATH)
+
+                if (
+                    start_line is not None
+                    and end_line is not None
+                    and file_path is not None
                 ):
-                    try:
-                        embedding = embed_code(source_code)
-                        store_embedding(node_id, embedding, qualified_name)
-                        embedded_count += 1
+                    if source_code := self._extract_source_code(
+                        qualified_name, file_path, start_line, end_line
+                    ):
+                        try:
+                            embedding = embed_code(source_code)
+                            store_embedding(node_id, embedding, qualified_name)
+                            embedded_count += 1
 
-                        if embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0:
-                            logger.debug(
-                                ls.EMBEDDING_PROGRESS.format(
-                                    done=embedded_count, total=len(results)
+                            if (
+                                embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL
+                                == 0
+                            ):
+                                logger.debug(
+                                    ls.EMBEDDING_PROGRESS.format(
+                                        done=embedded_count, total=len(results)
+                                    )
                                 )
-                            )
 
-                    except Exception as e:
-                        logger.warning(
-                            ls.EMBEDDING_FAILED.format(name=qualified_name, error=e)
-                        )
+                        except Exception as e:
+                            logger.warning(
+                                ls.EMBEDDING_FAILED.format(name=qualified_name, error=e)
+                            )
+                    else:
+                        logger.debug(ls.NO_SOURCE_FOR.format(name=qualified_name))
                 else:
                     logger.debug(ls.NO_SOURCE_FOR.format(name=qualified_name))
 
@@ -435,4 +449,23 @@ class GraphUpdater:
 
         return extract_source_with_fallback(
             file_path_obj, start_line, end_line, qualified_name, ast_extractor
+        )
+
+    def _parse_embedding_result(self, row: ResultRow) -> EmbeddingQueryResult | None:
+        node_id = row.get(cs.KEY_NODE_ID)
+        qualified_name = row.get(cs.KEY_QUALIFIED_NAME)
+
+        if not isinstance(node_id, int) or not isinstance(qualified_name, str):
+            return None
+
+        start_line = row.get(cs.KEY_START_LINE)
+        end_line = row.get(cs.KEY_END_LINE)
+        file_path = row.get(cs.KEY_PATH)
+
+        return EmbeddingQueryResult(
+            node_id=node_id,
+            qualified_name=qualified_name,
+            start_line=start_line if isinstance(start_line, int) else None,
+            end_line=end_line if isinstance(end_line, int) else None,
+            path=file_path if isinstance(file_path, str) else None,
         )

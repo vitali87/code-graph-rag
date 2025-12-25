@@ -1,37 +1,27 @@
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
+
+from ..types_defs import PropertyDict, PropertyValue, ResultRow
 
 
 @runtime_checkable
 class IngestorProtocol(Protocol):
-    """Protocol defining the interface for graph data ingestors."""
-
-    def ensure_node_batch(self, label: str, properties: dict[str, Any]) -> None:
-        """Adds a node to the buffer or processes it immediately."""
-        ...
+    def ensure_node_batch(self, label: str, properties: PropertyDict) -> None: ...
 
     def ensure_relationship_batch(
         self,
-        from_spec: tuple[str, str, Any],
+        from_spec: tuple[str, str, PropertyValue],
         rel_type: str,
-        to_spec: tuple[str, str, Any],
-        properties: dict[str, Any] | None = None,
-    ) -> None:
-        """Adds a relationship to the buffer or processes it immediately."""
-        ...
+        to_spec: tuple[str, str, PropertyValue],
+        properties: PropertyDict | None = None,
+    ) -> None: ...
 
-    def flush_all(self) -> None:
-        """Flushes all buffered data."""
-        ...
+    def flush_all(self) -> None: ...
 
 
 @runtime_checkable
 class QueryProtocol(Protocol):
-    """Protocol defining the interface for graph data querying."""
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]: ...
 
-    def fetch_all(self, query: str, params: dict[str, Any] | None = None) -> list[Any]:
-        """Executes a query and fetches all results."""
-        ...
-
-    def execute_write(self, query: str, params: dict[str, Any] | None = None) -> None:
-        """Executes a write query without returning results."""
-        ...
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None: ...

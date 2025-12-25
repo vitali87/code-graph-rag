@@ -310,6 +310,14 @@ class LanguageQueries(TypedDict):
     parser: "Parser"
 
 
+class FunctionNodeProps(TypedDict, total=False):
+    qualified_name: str
+    name: str | None
+    start_line: int
+    end_line: int
+    docstring: str | None
+
+
 class NodeSchema(NamedTuple):
     label: NodeLabel
     properties: str
