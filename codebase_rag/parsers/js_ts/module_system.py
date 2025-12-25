@@ -75,67 +75,76 @@ class JsTsModuleSystemMixin:
         except Exception as e:
             logger.debug(ls.JS_MISSING_IMPORT_PATTERNS_FAILED.format(error=e))
 
+    def _extract_require_module_name(self, declarator: Node) -> str | None:
+        name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+        if not name_node or name_node.type != cs.TS_OBJECT_PATTERN:
+            return None
+
+        value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
+        if not value_node or value_node.type != cs.TS_CALL_EXPRESSION:
+            return None
+
+        function_node = value_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if not function_node or function_node.type != cs.TS_IDENTIFIER:
+            return None
+
+        if (
+            function_node.text is None
+            or safe_decode_text(function_node) != cs.JS_REQUIRE_KEYWORD
+        ):
+            return None
+
+        arguments_node = value_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        if not arguments_node or not arguments_node.children:
+            return None
+
+        module_string_node = next(
+            (c for c in arguments_node.children if c.type == cs.TS_STRING),
+            None,
+        )
+        if not module_string_node or module_string_node.text is None:
+            return None
+
+        return safe_decode_with_fallback(module_string_node).strip("'\"")
+
+    def _process_destructured_child(
+        self, child: Node, module_name: str, module_qn: str
+    ) -> None:
+        if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
+            if child.text is not None and (name := safe_decode_text(child)):
+                self._process_commonjs_import(name, module_name, module_qn)
+            return
+
+        if child.type != cs.TS_PAIR_PATTERN:
+            return
+
+        key_node = child.child_by_field_name(cs.FIELD_KEY)
+        value_node = child.child_by_field_name(cs.FIELD_VALUE)
+
+        if not (key_node and key_node.type == cs.TS_PROPERTY_IDENTIFIER):
+            return
+        if not (value_node and value_node.type == cs.TS_IDENTIFIER):
+            return
+        if value_node.text is None:
+            return
+
+        if alias_name := safe_decode_text(value_node):
+            self._process_commonjs_import(alias_name, module_name, module_qn)
+
     def _process_variable_declarator_for_commonjs(
         self, declarator: Node, module_qn: str
     ) -> None:
         try:
+            module_name = self._extract_require_module_name(declarator)
+            if not module_name:
+                return
+
             name_node = declarator.child_by_field_name(cs.FIELD_NAME)
-            if not name_node or name_node.type != cs.TS_OBJECT_PATTERN:
+            if not name_node:
                 return
-
-            value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
-            if not value_node or value_node.type != cs.TS_CALL_EXPRESSION:
-                return
-
-            function_node = value_node.child_by_field_name(cs.FIELD_FUNCTION)
-            if not function_node or function_node.type != cs.TS_IDENTIFIER:
-                return
-
-            if (
-                function_node.text is None
-                or safe_decode_text(function_node) != cs.JS_REQUIRE_KEYWORD
-            ):
-                return
-
-            arguments_node = value_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-            if not arguments_node or not arguments_node.children:
-                return
-
-            module_string_node = next(
-                (
-                    child
-                    for child in arguments_node.children
-                    if child.type == cs.TS_STRING
-                ),
-                None,
-            )
-            if not module_string_node or module_string_node.text is None:
-                return
-
-            module_name = safe_decode_with_fallback(module_string_node).strip("'\"")
 
             for child in name_node.children:
-                if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
-                    if child.text is not None:
-                        if destructured_name := safe_decode_text(child):
-                            self._process_commonjs_import(
-                                destructured_name, module_name, module_qn
-                            )
-
-                elif child.type == cs.TS_PAIR_PATTERN:
-                    key_node = child.child_by_field_name(cs.FIELD_KEY)
-                    value_node = child.child_by_field_name(cs.FIELD_VALUE)
-
-                    if (
-                        key_node
-                        and key_node.type == cs.TS_PROPERTY_IDENTIFIER
-                        and value_node
-                        and value_node.type == cs.TS_IDENTIFIER
-                    ) and value_node.text is not None:
-                        if alias_name := safe_decode_text(value_node):
-                            self._process_commonjs_import(
-                                alias_name, module_name, module_qn
-                            )
+                self._process_destructured_child(child, module_name, module_qn)
 
         except Exception as e:
             logger.debug(ls.JS_COMMONJS_VAR_DECLARATOR_FAILED.format(error=e))
@@ -185,6 +194,72 @@ class JsTsModuleSystemMixin:
                 )
             )
 
+    def _ingest_export_function(
+        self,
+        export_function: Node,
+        function_name: str,
+        module_qn: str,
+        export_type: str,
+    ) -> None:
+        ingest_exported_function(
+            export_function,
+            function_name,
+            module_qn,
+            export_type,
+            self.ingestor,
+            self.function_registry,
+            self.simple_name_lookup,
+            self._get_docstring,
+            self._is_export_inside_function,
+        )
+
+    def _process_exports_pattern(
+        self,
+        exports_objs: list[Node],
+        export_names: list[Node],
+        export_functions: list[Node],
+        module_qn: str,
+    ) -> None:
+        for exports_obj, export_name, export_function in zip(
+            exports_objs, export_names, export_functions
+        ):
+            if not (exports_obj.text and export_name.text):
+                continue
+            if safe_decode_text(exports_obj) != cs.JS_EXPORTS_KEYWORD:
+                continue
+            if function_name := safe_decode_text(export_name):
+                self._ingest_export_function(
+                    export_function,
+                    function_name,
+                    module_qn,
+                    cs.JS_EXPORT_TYPE_COMMONJS,
+                )
+
+    def _process_module_exports_pattern(
+        self,
+        module_objs: list[Node],
+        exports_props: list[Node],
+        export_names: list[Node],
+        export_functions: list[Node],
+        module_qn: str,
+    ) -> None:
+        for module_obj, exports_prop, export_name, export_function in zip(
+            module_objs, exports_props, export_names, export_functions
+        ):
+            if not (module_obj.text and exports_prop.text and export_name.text):
+                continue
+            if safe_decode_text(module_obj) != cs.JS_MODULE_KEYWORD:
+                continue
+            if safe_decode_text(exports_prop) != cs.JS_EXPORTS_KEYWORD:
+                continue
+            if function_name := safe_decode_text(export_name):
+                self._ingest_export_function(
+                    export_function,
+                    function_name,
+                    module_qn,
+                    cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
+                )
+
     def _ingest_commonjs_exports(
         self,
         root_node: Node,
@@ -195,81 +270,38 @@ class JsTsModuleSystemMixin:
         if language not in cs.JS_TS_LANGUAGES:
             return
 
-        lang_queries = queries[language]
-        language_obj = lang_queries.get(cs.QUERY_LANGUAGE)
+        language_obj = queries[language].get(cs.QUERY_LANGUAGE)
         if not language_obj:
             return
 
-        try:
-            for query_text in [
-                cs.JS_COMMONJS_EXPORTS_FUNCTION_QUERY,
-                cs.JS_COMMONJS_MODULE_EXPORTS_QUERY,
-            ]:
-                try:
-                    query = Query(language_obj, query_text)
-                    cursor = QueryCursor(query)
-                    captures = cursor.captures(root_node)
+        query_texts = [
+            cs.JS_COMMONJS_EXPORTS_FUNCTION_QUERY,
+            cs.JS_COMMONJS_MODULE_EXPORTS_QUERY,
+        ]
 
-                    exports_objs = captures.get(cs.CAPTURE_EXPORTS_OBJ, [])
-                    module_objs = captures.get(cs.CAPTURE_MODULE_OBJ, [])
-                    exports_props = captures.get(cs.CAPTURE_EXPORTS_PROP, [])
-                    export_names = captures.get(cs.CAPTURE_EXPORT_NAME, [])
-                    export_functions = captures.get(cs.CAPTURE_EXPORT_FUNCTION, [])
+        for query_text in query_texts:
+            try:
+                captures = QueryCursor(Query(language_obj, query_text)).captures(
+                    root_node
+                )
 
-                    for exports_obj, export_name, export_function in zip(
-                        exports_objs, export_names, export_functions
-                    ):
-                        if (
-                            exports_obj.text
-                            and export_name.text
-                            and safe_decode_text(exports_obj) == cs.JS_EXPORTS_KEYWORD
-                        ):
-                            if function_name := safe_decode_text(export_name):
-                                ingest_exported_function(
-                                    export_function,
-                                    function_name,
-                                    module_qn,
-                                    cs.JS_EXPORT_TYPE_COMMONJS,
-                                    self.ingestor,
-                                    self.function_registry,
-                                    self.simple_name_lookup,
-                                    self._get_docstring,
-                                    self._is_export_inside_function,
-                                )
+                self._process_exports_pattern(
+                    captures.get(cs.CAPTURE_EXPORTS_OBJ, []),
+                    captures.get(cs.CAPTURE_EXPORT_NAME, []),
+                    captures.get(cs.CAPTURE_EXPORT_FUNCTION, []),
+                    module_qn,
+                )
 
-                    for (
-                        module_obj,
-                        exports_prop,
-                        export_name,
-                        export_function,
-                    ) in zip(
-                        module_objs, exports_props, export_names, export_functions
-                    ):
-                        if (
-                            module_obj.text
-                            and exports_prop.text
-                            and export_name.text
-                            and safe_decode_text(module_obj) == cs.JS_MODULE_KEYWORD
-                            and safe_decode_text(exports_prop) == cs.JS_EXPORTS_KEYWORD
-                        ):
-                            if function_name := safe_decode_text(export_name):
-                                ingest_exported_function(
-                                    export_function,
-                                    function_name,
-                                    module_qn,
-                                    cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
-                                    self.ingestor,
-                                    self.function_registry,
-                                    self.simple_name_lookup,
-                                    self._get_docstring,
-                                    self._is_export_inside_function,
-                                )
+                self._process_module_exports_pattern(
+                    captures.get(cs.CAPTURE_MODULE_OBJ, []),
+                    captures.get(cs.CAPTURE_EXPORTS_PROP, []),
+                    captures.get(cs.CAPTURE_EXPORT_NAME, []),
+                    captures.get(cs.CAPTURE_EXPORT_FUNCTION, []),
+                    module_qn,
+                )
 
-                except Exception as e:
-                    logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED.format(error=e))
-
-        except Exception as e:
-            logger.debug(ls.JS_COMMONJS_EXPORTS_DETECT_FAILED.format(error=e))
+            except Exception as e:
+                logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED.format(error=e))
 
     def _ingest_es6_exports(
         self,
