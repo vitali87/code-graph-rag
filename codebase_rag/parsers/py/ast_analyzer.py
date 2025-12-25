@@ -373,4 +373,4 @@ class PythonAstAnalyzerMixin:
         return None
 
     def _extract_method_call_from_attr(self, attr_node: Node) -> str | None:
-        return None if not attr_node.text else safe_decode_text(attr_node) or None
+        return safe_decode_text(attr_node) or None if attr_node.text else None
