@@ -77,10 +77,6 @@ def type_inference_engine(
 
 
 class TestJavaTypeResolverWithRealParsing:
-    @pytest.mark.xfail(
-        reason="Bug: _find_superclass_using_ast uses child_by_field_name('type') "
-        "but the superclass node has type_identifier as a child, not a named field"
-    )
     def test_get_superclass_name_with_real_ast(
         self,
         java_parser: "Parser",
@@ -134,10 +130,6 @@ public class Simple {
         result = type_inference_engine._get_superclass_name("com.example.Simple")
         assert result is None
 
-    @pytest.mark.xfail(
-        reason="Bug: _find_superclass_using_ast uses child_by_field_name('type') "
-        "but the superclass node has type_identifier as a child, not a named field"
-    )
     def test_get_superclass_name_generic_extends(
         self,
         java_parser: "Parser",
@@ -358,10 +350,6 @@ enum Type {
         assert "Type" in class_names
         assert len(class_names) == 4
 
-    @pytest.mark.xfail(
-        reason="Bug: _find_superclass_using_ast uses child_by_field_name('type') "
-        "but the superclass node has type_identifier as a child, not a named field"
-    )
     def test_class_with_extends_and_implements(
         self,
         java_parser: "Parser",
@@ -396,10 +384,6 @@ public class Employee extends Person implements Comparable<Employee>, Serializab
         )
         assert "Serializable" in interfaces
 
-    @pytest.mark.xfail(
-        reason="Bug: _find_superclass_using_ast uses child_by_field_name('type') "
-        "but the superclass node has type_identifier as a child, not a named field"
-    )
     def test_nested_class(
         self,
         java_parser: "Parser",

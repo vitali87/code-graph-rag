@@ -153,10 +153,10 @@ class JavaTypeResolverMixin:
             if (
                 name_node := node.child_by_field_name(cs.FIELD_NAME)
             ) and safe_decode_text(name_node) == target_class_name:
-                if (
-                    superclass_node := node.child_by_field_name(cs.FIELD_SUPERCLASS)
-                ) and (type_node := superclass_node.child_by_field_name(cs.FIELD_TYPE)):
-                    if superclass_name := safe_decode_text(type_node):
+                if superclass_node := node.child_by_field_name(cs.FIELD_SUPERCLASS):
+                    if superclass_name := self._extract_type_name_from_node(
+                        superclass_node
+                    ):
                         return self._resolve_java_type_name(superclass_name, module_qn)
 
         for child in node.children:
@@ -165,6 +165,16 @@ class JavaTypeResolverMixin:
             ):
                 return result
 
+        return None
+
+    def _extract_type_name_from_node(self, parent_node: Node) -> str | None:
+        for child in parent_node.children:
+            if child.type == cs.TS_GENERIC_TYPE:
+                for subchild in child.children:
+                    if subchild.type == cs.TS_TYPE_IDENTIFIER:
+                        return safe_decode_text(subchild)
+            elif child.type == cs.TS_TYPE_IDENTIFIER:
+                return safe_decode_text(child)
         return None
 
     def _get_implemented_interfaces(self, class_qn: str) -> list[str]:

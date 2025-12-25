@@ -535,7 +535,7 @@ class TestJavaTypeResolverAstMethods:
         superclass_type_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "ParentClass")
         superclass_node = create_mock_node(
             "superclass",
-            fields={cs.FIELD_TYPE: superclass_type_node},
+            children=[superclass_type_node],
         )
         class_node = create_mock_node(
             cs.TS_CLASS_DECLARATION,
@@ -607,7 +607,7 @@ class TestJavaTypeResolverAstMethods:
         inner_superclass_type = create_mock_node(cs.TS_TYPE_IDENTIFIER, "BaseClass")
         inner_superclass = create_mock_node(
             "superclass",
-            fields={cs.FIELD_TYPE: inner_superclass_type},
+            children=[inner_superclass_type],
         )
         inner_class = create_mock_node(
             cs.TS_CLASS_DECLARATION,
