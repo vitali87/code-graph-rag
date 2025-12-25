@@ -191,93 +191,116 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             return
 
         lang_queries = queries[language]
-
         language_obj = lang_queries.get(cs.QUERY_LANGUAGE)
         if not language_obj:
             return
 
+        lang_config = lang_queries.get(cs.QUERY_CONFIG)
         try:
             for query_text in [cs.JS_OBJECT_METHOD_QUERY, cs.JS_METHOD_DEF_QUERY]:
-                try:
-                    query = Query(language_obj, query_text)
-                    cursor = QueryCursor(query)
-                    captures = cursor.captures(root_node)
-
-                    method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
-                    method_functions = captures.get(cs.CAPTURE_METHOD_FUNCTION, [])
-
-                    for method_name_node, method_func_node in zip(
-                        method_names, method_functions
-                    ):
-                        if method_name_node.text and method_func_node:
-                            method_name = safe_decode_text(method_name_node)
-
-                            if self._is_class_method(
-                                method_func_node
-                            ) and not self._is_inside_method_with_object_literals(
-                                method_func_node
-                            ):
-                                continue
-
-                            lang_config = lang_queries.get(cs.QUERY_CONFIG)
-                            if lang_config and method_name:
-                                method_qn = self._build_object_method_qualified_name(
-                                    method_name_node,
-                                    method_func_node,
-                                    module_qn,
-                                    method_name,
-                                    lang_config,
-                                )
-                                if method_qn is None:
-                                    method_qn = (
-                                        f"{module_qn}{cs.SEPARATOR_DOT}{method_name}"
-                                    )
-                            else:
-                                object_name = self._find_object_name_for_method(
-                                    method_name_node
-                                )
-                                if object_name:
-                                    method_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_name}{cs.SEPARATOR_DOT}{method_name}"
-                                else:
-                                    method_qn = (
-                                        f"{module_qn}{cs.SEPARATOR_DOT}{method_name}"
-                                    )
-
-                            method_props: PropertyDict = {
-                                cs.KEY_QUALIFIED_NAME: method_qn,
-                                cs.KEY_NAME: method_name,
-                                cs.KEY_START_LINE: method_func_node.start_point[0] + 1,
-                                cs.KEY_END_LINE: method_func_node.end_point[0] + 1,
-                                cs.KEY_DOCSTRING: self._get_docstring(method_func_node),
-                            }
-                            logger.info(
-                                lg.JS_OBJECT_METHOD_FOUND.format(
-                                    method_name=method_name, method_qn=method_qn
-                                )
-                            )
-                            self.ingestor.ensure_node_batch(
-                                cs.NodeLabel.FUNCTION, method_props
-                            )
-
-                            self.function_registry[method_qn] = NodeType.FUNCTION
-                            if method_name:
-                                self.simple_name_lookup[method_name].add(method_qn)
-
-                            self.ingestor.ensure_relationship_batch(
-                                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                                cs.RelationshipType.DEFINES,
-                                (
-                                    cs.NodeLabel.FUNCTION,
-                                    cs.KEY_QUALIFIED_NAME,
-                                    method_qn,
-                                ),
-                            )
-
-                except Exception as e:
-                    logger.debug(lg.JS_OBJECT_METHODS_PROCESS_FAILED.format(error=e))
-
+                self._process_object_method_query(
+                    language_obj, query_text, root_node, module_qn, lang_config
+                )
         except Exception as e:
             logger.debug(lg.JS_OBJECT_METHODS_DETECT_FAILED.format(error=e))
+
+    def _process_object_method_query(
+        self,
+        language_obj,
+        query_text: str,
+        root_node: Node,
+        module_qn: str,
+        lang_config,
+    ) -> None:
+        try:
+            query = Query(language_obj, query_text)
+            cursor = QueryCursor(query)
+            captures = cursor.captures(root_node)
+
+            method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
+            method_functions = captures.get(cs.CAPTURE_METHOD_FUNCTION, [])
+
+            for method_name_node, method_func_node in zip(
+                method_names, method_functions
+            ):
+                self._process_single_object_method(
+                    method_name_node, method_func_node, module_qn, lang_config
+                )
+        except Exception as e:
+            logger.debug(lg.JS_OBJECT_METHODS_PROCESS_FAILED.format(error=e))
+
+    def _process_single_object_method(
+        self,
+        method_name_node: Node,
+        method_func_node: Node,
+        module_qn: str,
+        lang_config,
+    ) -> None:
+        if not method_name_node.text or not method_func_node:
+            return
+
+        method_name = safe_decode_text(method_name_node)
+        if not method_name:
+            return
+
+        if self._is_class_method(
+            method_func_node
+        ) and not self._is_inside_method_with_object_literals(method_func_node):
+            return
+
+        method_qn = self._resolve_object_method_qn(
+            method_name_node, method_func_node, module_qn, method_name, lang_config
+        )
+
+        self._register_object_method(
+            method_name, method_qn, method_func_node, module_qn
+        )
+
+    def _resolve_object_method_qn(
+        self,
+        method_name_node: Node,
+        method_func_node: Node,
+        module_qn: str,
+        method_name: str,
+        lang_config,
+    ) -> str:
+        if lang_config:
+            method_qn = self._build_object_method_qualified_name(
+                method_name_node, method_func_node, module_qn, method_name, lang_config
+            )
+            if method_qn is not None:
+                return method_qn
+
+        object_name = self._find_object_name_for_method(method_name_node)
+        if object_name:
+            return f"{module_qn}{cs.SEPARATOR_DOT}{object_name}{cs.SEPARATOR_DOT}{method_name}"
+        return f"{module_qn}{cs.SEPARATOR_DOT}{method_name}"
+
+    def _register_object_method(
+        self, method_name: str, method_qn: str, method_func_node: Node, module_qn: str
+    ) -> None:
+        method_props: PropertyDict = {
+            cs.KEY_QUALIFIED_NAME: method_qn,
+            cs.KEY_NAME: method_name,
+            cs.KEY_START_LINE: method_func_node.start_point[0] + 1,
+            cs.KEY_END_LINE: method_func_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(method_func_node),
+        }
+        logger.info(
+            lg.JS_OBJECT_METHOD_FOUND.format(
+                method_name=method_name, method_qn=method_qn
+            )
+        )
+        self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
+
+        self.function_registry[method_qn] = NodeType.FUNCTION
+        self.simple_name_lookup[method_name].add(method_qn)
+
+        self.ingestor.ensure_relationship_batch(
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            cs.RelationshipType.DEFINES,
+            (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, method_qn),
+        )
 
     def _ingest_assignment_arrow_functions(
         self,
