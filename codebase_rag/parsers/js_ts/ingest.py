@@ -69,42 +69,48 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             return
 
         try:
-            query = Query(language_obj, cs.JS_PROTOTYPE_INHERITANCE_QUERY)
-            cursor = QueryCursor(query)
-            captures = cursor.captures(root_node)
-
-            child_classes = captures.get(cs.CAPTURE_CHILD_CLASS, [])
-            parent_classes = captures.get(cs.CAPTURE_PARENT_CLASS, [])
-
-            if child_classes and parent_classes:
-                for child_node, parent_node in zip(child_classes, parent_classes):
-                    if not child_node.text or not parent_node.text:
-                        continue
-                    child_name = safe_decode_text(child_node)
-                    parent_name = safe_decode_text(parent_node)
-
-                    child_qn = f"{module_qn}{cs.SEPARATOR_DOT}{child_name}"
-                    parent_qn = f"{module_qn}{cs.SEPARATOR_DOT}{parent_name}"
-
-                    if child_qn not in self.class_inheritance:
-                        self.class_inheritance[child_qn] = []
-                    if parent_qn not in self.class_inheritance[child_qn]:
-                        self.class_inheritance[child_qn].append(parent_qn)
-
-                    self.ingestor.ensure_relationship_batch(
-                        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, child_qn),
-                        cs.RelationshipType.INHERITS,
-                        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, parent_qn),
-                    )
-
-                    logger.debug(
-                        lg.JS_PROTOTYPE_INHERITANCE.format(
-                            child_qn=child_qn, parent_qn=parent_qn
-                        )
-                    )
-
+            self._process_prototype_inheritance_captures(
+                language_obj, root_node, module_qn
+            )
         except Exception as e:
             logger.debug(lg.JS_PROTOTYPE_INHERITANCE_FAILED.format(error=e))
+
+    def _process_prototype_inheritance_captures(
+        self, language_obj, root_node, module_qn
+    ):
+        query = Query(language_obj, cs.JS_PROTOTYPE_INHERITANCE_QUERY)
+        cursor = QueryCursor(query)
+        captures = cursor.captures(root_node)
+
+        child_classes = captures.get(cs.CAPTURE_CHILD_CLASS, [])
+        parent_classes = captures.get(cs.CAPTURE_PARENT_CLASS, [])
+
+        if child_classes and parent_classes:
+            for child_node, parent_node in zip(child_classes, parent_classes):
+                if not child_node.text or not parent_node.text:
+                    continue
+                child_name = safe_decode_text(child_node)
+                parent_name = safe_decode_text(parent_node)
+
+                child_qn = f"{module_qn}{cs.SEPARATOR_DOT}{child_name}"
+                parent_qn = f"{module_qn}{cs.SEPARATOR_DOT}{parent_name}"
+
+                if child_qn not in self.class_inheritance:
+                    self.class_inheritance[child_qn] = []
+                if parent_qn not in self.class_inheritance[child_qn]:
+                    self.class_inheritance[child_qn].append(parent_qn)
+
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, child_qn),
+                    cs.RelationshipType.INHERITS,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, parent_qn),
+                )
+
+                logger.debug(
+                    lg.JS_PROTOTYPE_INHERITANCE.format(
+                        child_qn=child_qn, parent_qn=parent_qn
+                    )
+                )
 
     def _ingest_prototype_method_assignments(
         self,
@@ -120,61 +126,59 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             return
 
         try:
-            method_query = Query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
-            method_cursor = QueryCursor(method_query)
-            method_captures = method_cursor.captures(root_node)
-
-            constructor_names = method_captures.get(cs.CAPTURE_CONSTRUCTOR_NAME, [])
-            method_names = method_captures.get(cs.CAPTURE_METHOD_NAME, [])
-            method_functions = method_captures.get(cs.CAPTURE_METHOD_FUNCTION, [])
-
-            for constructor_node, method_node, func_node in zip(
-                constructor_names, method_names, method_functions
-            ):
-                constructor_name = (
-                    safe_decode_text(constructor_node)
-                    if constructor_node.text
-                    else None
-                )
-                method_name = (
-                    safe_decode_text(method_node) if method_node.text else None
-                )
-
-                if constructor_name and method_name:
-                    constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
-                    method_qn = f"{constructor_qn}{cs.SEPARATOR_DOT}{method_name}"
-
-                    method_props: PropertyDict = {
-                        cs.KEY_QUALIFIED_NAME: method_qn,
-                        cs.KEY_NAME: method_name,
-                        cs.KEY_START_LINE: func_node.start_point[0] + 1,
-                        cs.KEY_END_LINE: func_node.end_point[0] + 1,
-                        cs.KEY_DOCSTRING: self._get_docstring(func_node),
-                    }
-                    logger.info(
-                        lg.JS_PROTOTYPE_METHOD_FOUND.format(
-                            method_name=method_name, method_qn=method_qn
-                        )
-                    )
-                    self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
-
-                    self.function_registry[method_qn] = NodeType.FUNCTION
-                    self.simple_name_lookup[method_name].add(method_qn)
-
-                    self.ingestor.ensure_relationship_batch(
-                        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, constructor_qn),
-                        cs.RelationshipType.DEFINES,
-                        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, method_qn),
-                    )
-
-                    logger.debug(
-                        lg.JS_PROTOTYPE_METHOD_DEFINES.format(
-                            constructor_qn=constructor_qn, method_qn=method_qn
-                        )
-                    )
-
+            self._process_prototype_method_captures(language_obj, root_node, module_qn)
         except Exception as e:
             logger.debug(lg.JS_PROTOTYPE_METHODS_FAILED.format(error=e))
+
+    def _process_prototype_method_captures(self, language_obj, root_node, module_qn):
+        method_query = Query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
+        method_cursor = QueryCursor(method_query)
+        method_captures = method_cursor.captures(root_node)
+
+        constructor_names = method_captures.get(cs.CAPTURE_CONSTRUCTOR_NAME, [])
+        method_names = method_captures.get(cs.CAPTURE_METHOD_NAME, [])
+        method_functions = method_captures.get(cs.CAPTURE_METHOD_FUNCTION, [])
+
+        for constructor_node, method_node, func_node in zip(
+            constructor_names, method_names, method_functions
+        ):
+            constructor_name = (
+                safe_decode_text(constructor_node) if constructor_node.text else None
+            )
+            method_name = safe_decode_text(method_node) if method_node.text else None
+
+            if constructor_name and method_name:
+                constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
+                method_qn = f"{constructor_qn}{cs.SEPARATOR_DOT}{method_name}"
+
+                method_props: PropertyDict = {
+                    cs.KEY_QUALIFIED_NAME: method_qn,
+                    cs.KEY_NAME: method_name,
+                    cs.KEY_START_LINE: func_node.start_point[0] + 1,
+                    cs.KEY_END_LINE: func_node.end_point[0] + 1,
+                    cs.KEY_DOCSTRING: self._get_docstring(func_node),
+                }
+                logger.info(
+                    lg.JS_PROTOTYPE_METHOD_FOUND.format(
+                        method_name=method_name, method_qn=method_qn
+                    )
+                )
+                self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
+
+                self.function_registry[method_qn] = NodeType.FUNCTION
+                self.simple_name_lookup[method_name].add(method_qn)
+
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, constructor_qn),
+                    cs.RelationshipType.DEFINES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, method_qn),
+                )
+
+                logger.debug(
+                    lg.JS_PROTOTYPE_METHOD_DEFINES.format(
+                        constructor_qn=constructor_qn, method_qn=method_qn
+                    )
+                )
 
     def _ingest_object_literal_methods(
         self,
