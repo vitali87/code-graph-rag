@@ -314,164 +314,152 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
         try:
             lang_query = queries[language][cs.QUERY_LANGUAGE]
+            lang_config = queries[language].get(cs.QUERY_CONFIG)
 
             for query_text in [
                 cs.JS_OBJECT_ARROW_QUERY,
                 cs.JS_ASSIGNMENT_ARROW_QUERY,
                 cs.JS_ASSIGNMENT_FUNCTION_QUERY,
             ]:
-                try:
-                    query = Query(lang_query, query_text)
-                    cursor = QueryCursor(query)
-                    captures = cursor.captures(root_node)
-
-                    method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
-                    member_exprs = captures.get(cs.CAPTURE_MEMBER_EXPR, [])
-                    arrow_functions = captures.get(cs.CAPTURE_ARROW_FUNCTION, [])
-                    function_exprs = captures.get(cs.CAPTURE_FUNCTION_EXPR, [])
-
-                    for method_name, arrow_function in zip(
-                        method_names, arrow_functions
-                    ):
-                        if method_name.text and arrow_function:
-                            function_name = safe_decode_text(method_name)
-
-                            lang_config = queries[language].get(cs.QUERY_CONFIG)
-                            if lang_config and function_name:
-                                function_qn = self._build_nested_qualified_name(
-                                    arrow_function,
-                                    module_qn,
-                                    function_name,
-                                    lang_config,
-                                    skip_classes=False,
-                                )
-                                if function_qn is None:
-                                    function_qn = (
-                                        f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-                                    )
-                            else:
-                                function_qn = (
-                                    f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-                                )
-
-                            function_props: PropertyDict = {
-                                cs.KEY_QUALIFIED_NAME: function_qn,
-                                cs.KEY_NAME: function_name,
-                                cs.KEY_START_LINE: arrow_function.start_point[0] + 1,
-                                cs.KEY_END_LINE: arrow_function.end_point[0] + 1,
-                                cs.KEY_DOCSTRING: self._get_docstring(arrow_function),
-                            }
-
-                            logger.debug(
-                                lg.JS_OBJECT_ARROW_FOUND.format(
-                                    function_name=function_name, function_qn=function_qn
-                                )
-                            )
-                            self.ingestor.ensure_node_batch(
-                                cs.NodeLabel.FUNCTION, function_props
-                            )
-                            self.function_registry[function_qn] = NodeType.FUNCTION
-                            if function_name:
-                                self.simple_name_lookup[function_name].add(function_qn)
-
-                    for member_expr, arrow_function in zip(
-                        member_exprs, arrow_functions
-                    ):
-                        if member_expr.text and arrow_function:
-                            member_text = safe_decode_with_fallback(member_expr)
-                            if cs.SEPARATOR_DOT in member_text:
-                                function_name = member_text.split(cs.SEPARATOR_DOT)[-1]
-
-                                if lang_config := queries[language].get(
-                                    cs.QUERY_CONFIG
-                                ):
-                                    function_qn = self._build_assignment_arrow_function_qualified_name(
-                                        member_expr,
-                                        arrow_function,
-                                        module_qn,
-                                        function_name,
-                                        lang_config,
-                                    )
-                                    if function_qn is None:
-                                        function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-                                else:
-                                    function_qn = (
-                                        f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-                                    )
-
-                                function_props: PropertyDict = {
-                                    cs.KEY_QUALIFIED_NAME: function_qn,
-                                    cs.KEY_NAME: function_name,
-                                    cs.KEY_START_LINE: arrow_function.start_point[0]
-                                    + 1,
-                                    cs.KEY_END_LINE: arrow_function.end_point[0] + 1,
-                                    cs.KEY_DOCSTRING: self._get_docstring(
-                                        arrow_function
-                                    ),
-                                }
-
-                                logger.debug(
-                                    lg.JS_ASSIGNMENT_ARROW_FOUND.format(
-                                        function_name=function_name,
-                                        function_qn=function_qn,
-                                    )
-                                )
-                                self.ingestor.ensure_node_batch(
-                                    cs.NodeLabel.FUNCTION, function_props
-                                )
-                                self.function_registry[function_qn] = NodeType.FUNCTION
-                                self.simple_name_lookup[function_name].add(function_qn)
-
-                    for member_expr, function_expr in zip(member_exprs, function_exprs):
-                        if member_expr.text and function_expr:
-                            member_text = safe_decode_with_fallback(member_expr)
-                            if cs.SEPARATOR_DOT in member_text:
-                                function_name = member_text.split(cs.SEPARATOR_DOT)[-1]
-
-                                if lang_config := queries[language].get(
-                                    cs.QUERY_CONFIG
-                                ):
-                                    function_qn = self._build_assignment_arrow_function_qualified_name(
-                                        member_expr,
-                                        function_expr,
-                                        module_qn,
-                                        function_name,
-                                        lang_config,
-                                    )
-                                    if function_qn is None:
-                                        function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-                                else:
-                                    function_qn = (
-                                        f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
-                                    )
-
-                                function_props: PropertyDict = {
-                                    cs.KEY_QUALIFIED_NAME: function_qn,
-                                    cs.KEY_NAME: function_name,
-                                    cs.KEY_START_LINE: function_expr.start_point[0] + 1,
-                                    cs.KEY_END_LINE: function_expr.end_point[0] + 1,
-                                    cs.KEY_DOCSTRING: self._get_docstring(
-                                        function_expr
-                                    ),
-                                }
-
-                                logger.debug(
-                                    lg.JS_ASSIGNMENT_FUNC_EXPR_FOUND.format(
-                                        function_name=function_name,
-                                        function_qn=function_qn,
-                                    )
-                                )
-                                self.ingestor.ensure_node_batch(
-                                    cs.NodeLabel.FUNCTION, function_props
-                                )
-                                self.function_registry[function_qn] = NodeType.FUNCTION
-                                self.simple_name_lookup[function_name].add(function_qn)
-
-                except Exception as e:
-                    logger.debug(lg.JS_ASSIGNMENT_ARROW_QUERY_FAILED.format(error=e))
-
+                self._process_arrow_query(
+                    lang_query, query_text, root_node, module_qn, lang_config
+                )
         except Exception as e:
             logger.debug(lg.JS_ASSIGNMENT_ARROW_DETECT_FAILED.format(error=e))
+
+    def _process_arrow_query(
+        self, lang_query, query_text: str, root_node: Node, module_qn: str, lang_config
+    ) -> None:
+        try:
+            query = Query(lang_query, query_text)
+            cursor = QueryCursor(query)
+            captures = cursor.captures(root_node)
+
+            method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
+            member_exprs = captures.get(cs.CAPTURE_MEMBER_EXPR, [])
+            arrow_functions = captures.get(cs.CAPTURE_ARROW_FUNCTION, [])
+            function_exprs = captures.get(cs.CAPTURE_FUNCTION_EXPR, [])
+
+            self._process_direct_arrow_functions(
+                method_names, arrow_functions, module_qn, lang_config
+            )
+            self._process_member_expr_functions(
+                member_exprs,
+                arrow_functions,
+                module_qn,
+                lang_config,
+                lg.JS_ASSIGNMENT_ARROW_FOUND,
+            )
+            self._process_member_expr_functions(
+                member_exprs,
+                function_exprs,
+                module_qn,
+                lang_config,
+                lg.JS_ASSIGNMENT_FUNC_EXPR_FOUND,
+            )
+        except Exception as e:
+            logger.debug(lg.JS_ASSIGNMENT_ARROW_QUERY_FAILED.format(error=e))
+
+    def _process_direct_arrow_functions(
+        self,
+        method_names: list[Node],
+        arrow_functions: list[Node],
+        module_qn: str,
+        lang_config,
+    ) -> None:
+        for method_name, arrow_function in zip(method_names, arrow_functions):
+            if not method_name.text or not arrow_function:
+                continue
+
+            function_name = safe_decode_text(method_name)
+            if not function_name:
+                continue
+
+            function_qn = self._resolve_direct_arrow_qn(
+                arrow_function, module_qn, function_name, lang_config
+            )
+
+            self._register_arrow_function(
+                function_name, function_qn, arrow_function, lg.JS_OBJECT_ARROW_FOUND
+            )
+
+    def _resolve_direct_arrow_qn(
+        self, arrow_function: Node, module_qn: str, function_name: str, lang_config
+    ) -> str:
+        if lang_config:
+            function_qn = self._build_nested_qualified_name(
+                arrow_function,
+                module_qn,
+                function_name,
+                lang_config,
+                skip_classes=False,
+            )
+            if function_qn is not None:
+                return function_qn
+        return f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
+
+    def _process_member_expr_functions(
+        self,
+        member_exprs: list[Node],
+        function_nodes: list[Node],
+        module_qn: str,
+        lang_config,
+        log_message: str,
+    ) -> None:
+        for member_expr, function_node in zip(member_exprs, function_nodes):
+            if not member_expr.text or not function_node:
+                continue
+
+            member_text = safe_decode_with_fallback(member_expr)
+            if cs.SEPARATOR_DOT not in member_text:
+                continue
+
+            function_name = member_text.split(cs.SEPARATOR_DOT)[-1]
+            function_qn = self._resolve_member_expr_qn(
+                member_expr, function_node, module_qn, function_name, lang_config
+            )
+
+            self._register_arrow_function(
+                function_name, function_qn, function_node, log_message
+            )
+
+    def _resolve_member_expr_qn(
+        self,
+        member_expr: Node,
+        function_node: Node,
+        module_qn: str,
+        function_name: str,
+        lang_config,
+    ) -> str:
+        if lang_config:
+            function_qn = self._build_assignment_arrow_function_qualified_name(
+                member_expr, function_node, module_qn, function_name, lang_config
+            )
+            if function_qn is not None:
+                return function_qn
+        return f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
+
+    def _register_arrow_function(
+        self,
+        function_name: str,
+        function_qn: str,
+        function_node: Node,
+        log_message: str,
+    ) -> None:
+        function_props: PropertyDict = {
+            cs.KEY_QUALIFIED_NAME: function_qn,
+            cs.KEY_NAME: function_name,
+            cs.KEY_START_LINE: function_node.start_point[0] + 1,
+            cs.KEY_END_LINE: function_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(function_node),
+        }
+
+        logger.debug(
+            log_message.format(function_name=function_name, function_qn=function_qn)
+        )
+        self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
+        self.function_registry[function_qn] = NodeType.FUNCTION
+        self.simple_name_lookup[function_name].add(function_qn)
 
     def _is_static_method_in_class(self, method_node: Node) -> bool:
         if method_node.type == cs.TS_METHOD_DEFINITION:
