@@ -608,10 +608,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             return None
 
         name_node = node.child_by_field_name(cs.FIELD_NAME)
-        if not name_node or not name_node.text:
-            return None
-
-        return safe_decode_text(name_node)
+        return safe_decode_text(name_node) if name_node and name_node.text else None
 
     def _js_format_qualified_name(
         self, module_qn: str, path_parts: list[str], final_name: str

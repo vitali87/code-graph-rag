@@ -6,9 +6,7 @@ from ..utils import safe_decode_text
 
 def _extract_class_qn(method_qn: str) -> str | None:
     qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-    if len(qn_parts) >= 2:
-        return cs.SEPARATOR_DOT.join(qn_parts[:-1])
-    return None
+    return cs.SEPARATOR_DOT.join(qn_parts[:-1]) if len(qn_parts) >= 2 else None
 
 
 def extract_method_call(member_expr_node: Node) -> str | None:
