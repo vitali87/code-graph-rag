@@ -189,7 +189,7 @@ class PythonVariableAnalyzerMixin:
                 iterable_node, local_var_types, module_qn
             )
 
-        elif iterable_node.type == cs.TS_PY_IDENTIFIER:
+        if iterable_node.type == cs.TS_PY_IDENTIFIER:
             var_text = iterable_node.text
             if var_text is not None:
                 var_name = safe_decode_text(iterable_node)
@@ -210,12 +210,8 @@ class PythonVariableAnalyzerMixin:
                     func_text = func_node.text
                     if func_text is not None:
                         class_name = safe_decode_text(func_node)
-                        if (
-                            class_name
-                            and len(class_name) > 0
-                            and class_name[0].isupper()
-                        ):
-                            return str(class_name)
+                        if class_name and class_name[0].isupper():
+                            return class_name
         return None
 
     def _infer_instance_variable_types(
@@ -284,13 +280,9 @@ class PythonVariableAnalyzerMixin:
     def _find_init_method(self, class_node: Node) -> Node | None:
         logger.debug(lg.PY_SEARCHING_INIT.format(count=len(class_node.children)))
 
-        class_body = None
-        for child in class_node.children:
-            logger.debug(lg.PY_CHILD_TYPE.format(type=child.type))
-            if child.type == cs.TS_PY_BLOCK:
-                class_body = child
-                break
-
+        class_body = next(
+            (c for c in class_node.children if c.type == cs.TS_PY_BLOCK), None
+        )
         if not class_body:
             logger.debug(lg.PY_NO_CLASS_BODY)
             return None
@@ -358,19 +350,21 @@ class PythonVariableAnalyzerMixin:
     def _infer_method_return_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
-        if "all_" in var_name or var_name.endswith("s"):
+        if cs.PY_VAR_PATTERN_ALL in var_name or var_name.endswith(
+            cs.PY_VAR_SUFFIX_PLURAL
+        ):
             return self._analyze_repository_item_type(module_qn)
 
         return None
 
     def _analyze_repository_item_type(self, module_qn: str) -> str | None:
         repo_qn_patterns = [
-            f"{module_qn.split(cs.SEPARATOR_DOT)[0]}.models.base.Repository",
-            "Repository",
+            f"{module_qn.split(cs.SEPARATOR_DOT)[0]}{cs.PY_MODELS_BASE_PATH}{cs.PY_CLASS_REPOSITORY}",
+            cs.PY_CLASS_REPOSITORY,
         ]
 
         for repo_qn in repo_qn_patterns:
-            create_method = f"{repo_qn}.create"
+            create_method = f"{repo_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_CREATE}"
             if create_method in self.function_registry:
                 return cs.TYPE_INFERENCE_BASE_MODEL
 

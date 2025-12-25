@@ -1539,6 +1539,13 @@ PY_METHOD_INIT = "__init__"
 # (H) Python attribute prefixes
 PY_SELF_PREFIX = "self."
 
+# (H) Python type inference patterns
+PY_VAR_PATTERN_ALL = "all_"
+PY_VAR_SUFFIX_PLURAL = "s"
+PY_CLASS_REPOSITORY = "Repository"
+PY_MODELS_BASE_PATH = ".models.base."
+PY_METHOD_CREATE = "create"
+
 # (H) Type inference defaults
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
