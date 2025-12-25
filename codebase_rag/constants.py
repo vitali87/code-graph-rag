@@ -603,6 +603,11 @@ CHAR_COLON = ":"
 CHAR_ANGLE_OPEN = "<"
 CHAR_ANGLE_CLOSE = ">"
 CHAR_PAREN_OPEN = "("
+CHAR_PAREN_CLOSE = ")"
+CHAR_UNDERSCORE = "_"
+
+REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
+REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
 
 DEFAULT_NAME = "Unknown"
 
@@ -1339,6 +1344,15 @@ TS_FIELD_PARAMETERS = "parameters"
 TS_FIELD_DECLARATOR = "declarator"
 TS_FIELD_OBJECT = "object"
 TS_FIELD_ARGUMENTS = "arguments"
+TS_FIELD_FUNCTION = "function"
+TS_FIELD_BODY = "body"
+TS_FIELD_LEFT = "left"
+TS_FIELD_RIGHT = "right"
+
+QUERY_CAPTURE_CLASS = "class"
+QUERY_CAPTURE_FUNCTION = "function"
+QUERY_KEY_CLASSES = "classes"
+QUERY_KEY_FUNCTIONS = "functions"
 
 # (H) Java type inference keywords
 JAVA_KEYWORD_THIS = "this"

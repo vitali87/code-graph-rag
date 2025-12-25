@@ -83,14 +83,9 @@ class PythonAstAnalyzerMixin:
     def _traverse_for_assignments_simple(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        stack: list[Node] = [node]
-
-        while stack:
-            current = stack.pop()
-            if current.type == cs.TS_PY_ASSIGNMENT:
-                self._process_assignment_simple(current, local_var_types, module_qn)
-
-            stack.extend(reversed(current.children))
+        self._traverse_for_assignments(
+            node, local_var_types, module_qn, self._process_assignment_simple
+        )
 
     def _traverse_for_assignments_complex(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
@@ -98,20 +93,29 @@ class PythonAstAnalyzerMixin:
         # (H) DELETE??? Traverse AST for complex assignments (method calls) using existing variable types.
         # (H) NOTE: This is kept for backwards compatibility but _traverse_single_pass
         # (H) should be preferred for better performance.
-        stack: list[Node] = [node]
+        self._traverse_for_assignments(
+            node, local_var_types, module_qn, self._process_assignment_complex
+        )
 
+    def _traverse_for_assignments(
+        self,
+        node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        processor: Callable[[Node, dict[str, str], str], None],
+    ) -> None:
+        stack: list[Node] = [node]
         while stack:
             current = stack.pop()
             if current.type == cs.TS_PY_ASSIGNMENT:
-                self._process_assignment_complex(current, local_var_types, module_qn)
-
+                processor(current, local_var_types, module_qn)
             stack.extend(reversed(current.children))
 
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        left_node = assignment_node.child_by_field_name("left")
-        right_node = assignment_node.child_by_field_name("right")
+        left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
+        right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
 
         if not left_node or not right_node:
             return
@@ -120,16 +124,17 @@ class PythonAstAnalyzerMixin:
         if not var_name:
             return
 
-        inferred_type = self._infer_type_from_expression_simple(right_node, module_qn)
-        if inferred_type:
+        if inferred_type := self._infer_type_from_expression_simple(
+            right_node, module_qn
+        ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE.format(var=var_name, type=inferred_type))
 
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        left_node = assignment_node.child_by_field_name("left")
-        right_node = assignment_node.child_by_field_name("right")
+        left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
+        right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
 
         if not left_node or not right_node:
             return
@@ -141,18 +146,17 @@ class PythonAstAnalyzerMixin:
         if var_name in local_var_types:
             return
 
-        inferred_type = self._infer_type_from_expression_complex(
+        if inferred_type := self._infer_type_from_expression_complex(
             right_node, module_qn, local_var_types
-        )
-        if inferred_type:
+        ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_COMPLEX.format(var=var_name, type=inferred_type))
 
     def _process_assignment_for_type_inference(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        left_node = assignment_node.child_by_field_name("left")
-        right_node = assignment_node.child_by_field_name("right")
+        left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
+        right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
 
         if not left_node or not right_node:
             return
@@ -161,19 +165,14 @@ class PythonAstAnalyzerMixin:
         if not var_name:
             return
 
-        inferred_type = self._infer_type_from_expression(right_node, module_qn)
-        if inferred_type:
+        if inferred_type := self._infer_type_from_expression(right_node, module_qn):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_INFERRED.format(var=var_name, type=inferred_type))
 
     def _extract_assignment_variable_name(self, node: Node) -> str | None:
-        if node.type == cs.TS_PY_IDENTIFIER:
-            text = node.text
-            if text is not None:
-                decoded = safe_decode_text(node)
-                if decoded:
-                    return decoded
-        return None
+        if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
+            return None
+        return safe_decode_text(node) or None
 
     def _find_method_ast_node(self, method_qn: str) -> Node | None:
         qn_parts = method_qn.split(cs.SEPARATOR_DOT)
@@ -184,15 +183,12 @@ class PythonAstAnalyzerMixin:
         method_name = qn_parts[-1]
 
         expected_module = cs.SEPARATOR_DOT.join(qn_parts[:-2])
-        if expected_module in self.module_qn_to_file_path:
-            file_path = self.module_qn_to_file_path[expected_module]
-            if file_path in self.ast_cache:
-                root_node, language = self.ast_cache[file_path]
-                return self._find_method_in_ast(
-                    root_node, class_name, method_name, language
-                )
+        file_path = self.module_qn_to_file_path.get(expected_module)
+        if not file_path or file_path not in self.ast_cache:
+            return None
 
-        return None
+        root_node, language = self.ast_cache[file_path]
+        return self._find_method_in_ast(root_node, class_name, method_name, language)
 
     def _find_method_in_ast(
         self,
@@ -215,50 +211,43 @@ class PythonAstAnalyzerMixin:
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:
         lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
-        class_query = lang_queries["classes"]
+        class_query = lang_queries[cs.QUERY_KEY_CLASSES]
         if not class_query:
             return None
         cursor = QueryCursor(class_query)
         captures = cursor.captures(root_node)
 
-        for class_node in captures.get("class", []):
+        method_query = lang_queries[cs.QUERY_KEY_FUNCTIONS]
+        if not method_query:
+            return None
+
+        for class_node in captures.get(cs.QUERY_CAPTURE_CLASS, []):
             if not isinstance(class_node, Node):
                 continue
 
-            name_node = class_node.child_by_field_name("name")
-            if not name_node:
+            name_node = class_node.child_by_field_name(cs.TS_FIELD_NAME)
+            if not name_node or name_node.text is None:
                 continue
 
-            text = name_node.text
-            if text is None:
+            if safe_decode_text(name_node) != class_name:
                 continue
 
-            found_class_name = safe_decode_text(name_node)
-            if found_class_name != class_name:
-                continue
-
-            body_node = class_node.child_by_field_name("body")
-            method_query = lang_queries["functions"]
-            if not body_node or not method_query:
+            body_node = class_node.child_by_field_name(cs.TS_FIELD_BODY)
+            if not body_node:
                 continue
 
             method_cursor = QueryCursor(method_query)
             method_captures = method_cursor.captures(body_node)
 
-            for method_node in method_captures.get("function", []):
+            for method_node in method_captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
                 if not isinstance(method_node, Node):
                     continue
 
-                method_name_node = method_node.child_by_field_name("name")
-                if not method_name_node:
+                method_name_node = method_node.child_by_field_name(cs.TS_FIELD_NAME)
+                if not method_name_node or method_name_node.text is None:
                     continue
 
-                method_text = method_name_node.text
-                if method_text is None:
-                    continue
-
-                found_method_name = safe_decode_text(method_name_node)
-                if found_method_name == method_name:
+                if safe_decode_text(method_name_node) == method_name:
                     return method_node
 
         return None
@@ -270,16 +259,20 @@ class PythonAstAnalyzerMixin:
         self._find_return_statements(method_node, return_nodes)
 
         for return_node in return_nodes:
-            return_value = None
-            for child in return_node.children:
-                if child.type not in (cs.TS_PY_RETURN, cs.TS_PY_KEYWORD):
-                    return_value = child
-                    break
-
-            if return_value:
-                inferred_type = self._analyze_return_expression(return_value, method_qn)
-                if inferred_type:
-                    return inferred_type
+            return_value = next(
+                (
+                    child
+                    for child in return_node.children
+                    if child.type not in (cs.TS_PY_RETURN, cs.TS_PY_KEYWORD)
+                ),
+                None,
+            )
+            if return_value and (
+                inferred_type := self._analyze_return_expression(
+                    return_value, method_qn
+                )
+            ):
+                return inferred_type
 
         return None
 
@@ -294,88 +287,90 @@ class PythonAstAnalyzerMixin:
             stack.extend(reversed(current.children))
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
-        if expr_node.type == cs.TS_PY_CALL:
-            func_node = expr_node.child_by_field_name("function")
-            if func_node and func_node.type == cs.TS_PY_IDENTIFIER:
-                func_text = func_node.text
-                if func_text is not None:
-                    class_name = safe_decode_text(func_node)
-                    if class_name:
-                        if class_name == cs.PY_KEYWORD_CLS:
-                            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-                            if len(qn_parts) >= 2:
-                                return qn_parts[-2]
-                        elif (
-                            class_name
-                            and len(class_name) > 0
-                            and class_name[0].isupper()
-                        ):
-                            module_qn = cs.SEPARATOR_DOT.join(
-                                method_qn.split(cs.SEPARATOR_DOT)[:-2]
-                            )
-                            resolved_class = self._find_class_in_scope(
-                                class_name, module_qn
-                            )
-                            return resolved_class or class_name
+        match expr_node.type:
+            case cs.TS_PY_CALL:
+                return self._analyze_call_return(expr_node, method_qn)
+            case cs.TS_PY_IDENTIFIER:
+                return self._analyze_identifier_return(expr_node, method_qn)
+            case cs.TS_PY_ATTRIBUTE:
+                return self._analyze_attribute_return(expr_node, method_qn)
+            case _:
+                return None
 
-            elif func_node and func_node.type == cs.TS_PY_ATTRIBUTE:
-                method_call_text = self._extract_method_call_from_attr(func_node)
-                if method_call_text:
-                    module_qn = cs.SEPARATOR_DOT.join(
-                        method_qn.split(cs.SEPARATOR_DOT)[:-2]
+    def _analyze_call_return(self, expr_node: Node, method_qn: str) -> str | None:
+        func_node = expr_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if not func_node:
+            return None
+
+        if (
+            func_node.type == cs.TS_PY_IDENTIFIER
+            and func_node.text is not None
+            and (class_name := safe_decode_text(func_node))
+        ):
+            return self._resolve_call_class_name(class_name, method_qn)
+
+        if func_node.type == cs.TS_PY_ATTRIBUTE:
+            if method_call_text := self._extract_method_call_from_attr(func_node):
+                module_qn = cs.SEPARATOR_DOT.join(
+                    method_qn.split(cs.SEPARATOR_DOT)[:-2]
+                )
+                return self._infer_method_call_return_type(
+                    method_call_text, module_qn, None
+                )
+
+        return None
+
+    def _resolve_call_class_name(self, class_name: str, method_qn: str) -> str | None:
+        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+        if class_name == cs.PY_KEYWORD_CLS and len(qn_parts) >= 2:
+            return qn_parts[-2]
+
+        if class_name[0].isupper():
+            module_qn = cs.SEPARATOR_DOT.join(qn_parts[:-2])
+            resolved_class = self._find_class_in_scope(class_name, module_qn)
+            return resolved_class or class_name
+
+        return None
+
+    def _analyze_identifier_return(self, expr_node: Node, method_qn: str) -> str | None:
+        if expr_node.text is None:
+            return None
+
+        identifier = safe_decode_text(expr_node)
+        if not identifier:
+            return None
+
+        if identifier in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+            return qn_parts[-2] if len(qn_parts) >= 2 else None
+
+        module_qn = cs.SEPARATOR_DOT.join(method_qn.split(cs.SEPARATOR_DOT)[:-2])
+        if method_node := self._find_method_ast_node(method_qn):
+            local_vars = self.build_local_variable_type_map(method_node, module_qn)
+            if identifier in local_vars:
+                logger.debug(
+                    lg.PY_VAR_FROM_CONTEXT.format(
+                        var=identifier, type=local_vars[identifier]
                     )
-                    return self._infer_method_call_return_type(
-                        method_call_text, module_qn, None
-                    )
+                )
+                return local_vars[identifier]
 
-        elif expr_node.type == cs.TS_PY_IDENTIFIER:
-            text = expr_node.text
-            if text is not None:
-                identifier = safe_decode_text(expr_node)
-                if identifier == cs.PY_KEYWORD_SELF or identifier == cs.PY_KEYWORD_CLS:
-                    qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-                    if len(qn_parts) >= 2:
-                        return qn_parts[-2]
-                else:
-                    module_qn = cs.SEPARATOR_DOT.join(
-                        method_qn.split(cs.SEPARATOR_DOT)[:-2]
-                    )
+        logger.debug(lg.PY_VAR_CANNOT_INFER.format(var=identifier))
+        return None
 
-                    method_node = self._find_method_ast_node(method_qn)
-                    if method_node:
-                        local_vars = self.build_local_variable_type_map(
-                            method_node, module_qn
-                        )
-                        if identifier in local_vars:
-                            logger.debug(
-                                lg.PY_VAR_FROM_CONTEXT.format(
-                                    var=identifier, type=local_vars[identifier]
-                                )
-                            )
-                            return local_vars[identifier]
-
-                    logger.debug(lg.PY_VAR_CANNOT_INFER.format(var=identifier))
-                    return None
-
-        elif expr_node.type == cs.TS_PY_ATTRIBUTE:
-            object_node = expr_node.child_by_field_name("object")
-            if object_node and object_node.type == cs.TS_PY_IDENTIFIER:
-                object_text = object_node.text
-                if object_text is not None:
-                    object_name = safe_decode_text(object_node)
-                    if (
-                        object_name == cs.PY_KEYWORD_CLS
-                        or object_name == cs.PY_KEYWORD_SELF
-                    ):
-                        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-                        if len(qn_parts) >= 2:
-                            return qn_parts[-2]
+    def _analyze_attribute_return(self, expr_node: Node, method_qn: str) -> str | None:
+        object_node = expr_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+        if (
+            object_node
+            and object_node.type == cs.TS_PY_IDENTIFIER
+            and object_node.text is not None
+            and (object_name := safe_decode_text(object_node))
+            and object_name in (cs.PY_KEYWORD_CLS, cs.PY_KEYWORD_SELF)
+        ):
+            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+            return qn_parts[-2] if len(qn_parts) >= 2 else None
 
         return None
 
     def _extract_method_call_from_attr(self, attr_node: Node) -> str | None:
-        if attr_node.text:
-            decoded = safe_decode_text(attr_node)
-            if decoded:
-                return decoded
-        return None
+        return None if not attr_node.text else safe_decode_text(attr_node) or None
