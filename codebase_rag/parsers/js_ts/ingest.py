@@ -551,10 +551,10 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_PAIR,
         )
-        path_parts = self._collect_ancestor_path_parts(
+        path_parts = self._js_collect_ancestor_path_parts(
             method_name_node.parent, lang_config, skip_types
         )
-        return self._format_qualified_name(module_qn, path_parts, method_name)
+        return self._js_format_qualified_name(module_qn, path_parts, method_name)
 
     def _build_assignment_arrow_function_qualified_name(
         self,
@@ -569,10 +569,12 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             current = current.parent
 
         skip_types = (cs.TS_EXPRESSION_STATEMENT, cs.TS_STATEMENT_BLOCK)
-        path_parts = self._collect_ancestor_path_parts(current, lang_config, skip_types)
-        return self._format_qualified_name(module_qn, path_parts, function_name)
+        path_parts = self._js_collect_ancestor_path_parts(
+            current, lang_config, skip_types
+        )
+        return self._js_format_qualified_name(module_qn, path_parts, function_name)
 
-    def _collect_ancestor_path_parts(
+    def _js_collect_ancestor_path_parts(
         self,
         start_node: Node | None,
         lang_config: LanguageSpec,
@@ -586,7 +588,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 current = current.parent
                 continue
 
-            if name := self._extract_ancestor_name(current, lang_config):
+            if name := self._js_extract_ancestor_name(current, lang_config):
                 path_parts.append(name)
 
             current = current.parent
@@ -594,7 +596,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         path_parts.reverse()
         return path_parts
 
-    def _extract_ancestor_name(
+    def _js_extract_ancestor_name(
         self, node: Node, lang_config: LanguageSpec
     ) -> str | None:
         naming_types = (
@@ -611,7 +613,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
         return safe_decode_text(name_node)
 
-    def _format_qualified_name(
+    def _js_format_qualified_name(
         self, module_qn: str, path_parts: list[str], final_name: str
     ) -> str:
         if path_parts:
