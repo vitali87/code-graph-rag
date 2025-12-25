@@ -35,6 +35,10 @@ class JsTsModuleSystemMixin:
     import_processor: ImportProcessor
     _get_docstring: Callable[[Node], str | None]
     _is_export_inside_function: Callable[[Node], bool]
+    _processed_imports: set[str]
+
+    def __init__(self) -> None:
+        self._processed_imports = set()
 
     def _ingest_missing_import_patterns(
         self,
@@ -145,7 +149,7 @@ class JsTsModuleSystemMixin:
             )
 
             import_key = f"{module_qn}->{resolved_source_module}"
-            if import_key not in getattr(self, "_processed_imports", set()):
+            if import_key not in self._processed_imports:
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.MODULE,
                     {
@@ -172,8 +176,6 @@ class JsTsModuleSystemMixin:
                     )
                 )
 
-                if not hasattr(self, "_processed_imports"):
-                    self._processed_imports: set[str] = set()
                 self._processed_imports.add(import_key)
 
         except Exception as e:

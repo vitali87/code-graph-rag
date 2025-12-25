@@ -35,6 +35,7 @@ class DefinitionProcessor(
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
     ):
+        super().__init__()
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name

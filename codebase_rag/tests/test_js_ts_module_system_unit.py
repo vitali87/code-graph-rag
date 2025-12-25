@@ -17,6 +17,7 @@ class ConcreteModuleSystemMixin(JsTsModuleSystemMixin):
         function_registry: MagicMock,
         simple_name_lookup: defaultdict[str, set[str]],
     ) -> None:
+        super().__init__()
         self.ingestor = ingestor
         self.import_processor = import_processor
         self.function_registry = function_registry
