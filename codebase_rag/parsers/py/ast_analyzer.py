@@ -8,6 +8,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs as lg
 from ...types_defs import LanguageQueries
+from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -206,9 +207,7 @@ class PythonAstAnalyzerMixin:
                     root_node, class_name, method_name
                 )
             case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
-                return self._js_type_inference_getter().find_method_in_ast(
-                    root_node, class_name, method_name
-                )
+                return find_js_method_in_ast(root_node, class_name, method_name)
             case _:
                 return None
 

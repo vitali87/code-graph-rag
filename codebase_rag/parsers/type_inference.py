@@ -111,7 +111,7 @@ class TypeInferenceEngine:
                 )
             case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 return self.js_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn, language
+                    caller_node, module_qn
                 )
             case cs.SupportedLanguage.JAVA:
                 return self.java_type_inference.build_variable_type_map(

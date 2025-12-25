@@ -189,7 +189,7 @@ class TestBuildLocalVariableTypeMapDispatch:
 
         assert result == expected
         engine.js_type_inference.build_local_variable_type_map.assert_called_once_with(
-            mock_node, "proj.module", cs.SupportedLanguage.JS
+            mock_node, "proj.module"
         )
 
     def test_dispatches_to_ts_engine(
@@ -206,7 +206,7 @@ class TestBuildLocalVariableTypeMapDispatch:
 
         assert result == expected
         engine.js_type_inference.build_local_variable_type_map.assert_called_once_with(
-            mock_node, "proj.module", cs.SupportedLanguage.TS
+            mock_node, "proj.module"
         )
 
     def test_dispatches_to_java_engine(
