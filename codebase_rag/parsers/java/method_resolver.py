@@ -9,7 +9,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import NodeType
-from .utils import extract_method_call_info, safe_decode_text
+from ..utils import safe_decode_text
+from .utils import extract_method_call_info
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -261,9 +262,9 @@ class JavaMethodResolverMixin:
         self, node: Node, class_name: str, method_name: str, module_qn: str
     ) -> str | None:
         if node.type == cs.TS_CLASS_DECLARATION:
-            if (name_node := node.child_by_field_name(cs.KEY_NAME)) and safe_decode_text(
-                name_node
-            ) == class_name:
+            if (
+                name_node := node.child_by_field_name(cs.KEY_NAME)
+            ) and safe_decode_text(name_node) == class_name:
                 if body_node := node.child_by_field_name(cs.FIELD_BODY):
                     return self._search_methods_in_class_body(
                         body_node, method_name, module_qn
@@ -328,8 +329,11 @@ class JavaMethodResolverMixin:
             return None
 
         call_info = extract_method_call_info(call_node)
-        method_name = call_info.get("name")
-        object_ref = call_info.get("object")
+        if not call_info:
+            return None
+
+        method_name = call_info[cs.FIELD_NAME]
+        object_ref = call_info[cs.FIELD_OBJECT]
 
         if not method_name:
             logger.debug(ls.JAVA_NO_METHOD_NAME)

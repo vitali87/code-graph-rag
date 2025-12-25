@@ -5,12 +5,8 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
-from .utils import (
-    extract_class_info,
-    extract_field_info,
-    extract_method_call_info,
-    safe_decode_text,
-)
+from ..utils import safe_decode_text
+from .utils import extract_class_info, extract_field_info, extract_method_call_info
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -361,11 +357,14 @@ class JavaVariableAnalyzerMixin:
         self, method_call_node: Node, module_qn: str
     ) -> str | None:
         call_info = extract_method_call_info(method_call_node)
-
-        if not (method_name := call_info.get(cs.FIELD_NAME)):
+        if not call_info:
             return None
 
-        object_ref = call_info.get(cs.FIELD_OBJECT)
+        method_name = call_info[cs.FIELD_NAME]
+        if not method_name:
+            return None
+
+        object_ref = call_info[cs.FIELD_OBJECT]
         call_string = (
             f"{object_ref}{cs.SEPARATOR_DOT}{method_name}"
             if object_ref

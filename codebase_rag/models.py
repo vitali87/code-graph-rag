@@ -77,3 +77,9 @@ class Dependency:
     name: str
     spec: str
     properties: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class MethodModifiersAndAnnotations:
+    modifiers: list[str] = field(default_factory=list)
+    annotations: list[str] = field(default_factory=list)

@@ -174,6 +174,43 @@ class SemanticSearchResult(TypedDict):
     score: float
 
 
+class JavaClassInfo(TypedDict):
+    name: str | None
+    type: str
+    superclass: str | None
+    interfaces: list[str]
+    modifiers: list[str]
+    type_parameters: list[str]
+
+
+class JavaMethodInfo(TypedDict):
+    name: str | None
+    type: str
+    return_type: str | None
+    parameters: list[str]
+    modifiers: list[str]
+    type_parameters: list[str]
+    annotations: list[str]
+
+
+class JavaFieldInfo(TypedDict):
+    name: str | None
+    type: str | None
+    modifiers: list[str]
+    annotations: list[str]
+
+
+class JavaAnnotationInfo(TypedDict):
+    name: str | None
+    arguments: list[str]
+
+
+class JavaMethodCallInfo(TypedDict):
+    name: str | None
+    object: str | None
+    arguments: int
+
+
 class CancelledResult(NamedTuple):
     cancelled: bool
 

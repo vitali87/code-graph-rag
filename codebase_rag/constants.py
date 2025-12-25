@@ -1323,6 +1323,17 @@ TS_RECORD_DECLARATION = "record_declaration"
 TS_TRUE = "true"
 TS_FALSE = "false"
 
+# (H) Tree-sitter field names for child_by_field_name
+TS_FIELD_NAME = "name"
+TS_FIELD_TYPE = "type"
+TS_FIELD_SUPERCLASS = "superclass"
+TS_FIELD_INTERFACES = "interfaces"
+TS_FIELD_TYPE_PARAMETERS = "type_parameters"
+TS_FIELD_PARAMETERS = "parameters"
+TS_FIELD_DECLARATOR = "declarator"
+TS_FIELD_OBJECT = "object"
+TS_FIELD_ARGUMENTS = "arguments"
+
 # (H) Java type inference keywords
 JAVA_KEYWORD_THIS = "this"
 JAVA_KEYWORD_SUPER = "super"
