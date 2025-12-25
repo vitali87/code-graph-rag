@@ -28,53 +28,66 @@ class LuaTypeInferenceEngine:
         self, caller_node: TreeSitterNodeProtocol, module_qn: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
-
         stack: list[TreeSitterNodeProtocol] = [caller_node]
 
         while stack:
             current = stack.pop()
-
             if current.type == cs.TS_LUA_VARIABLE_DECLARATION:
-                if assignment := next(
-                    (
-                        child
-                        for child in current.children
-                        if child.type == cs.TS_LUA_ASSIGNMENT_STATEMENT
-                    ),
-                    None,
-                ):
-                    var_names = []
-                    var_values = []
-
-                    for child in assignment.children:
-                        if child.type == cs.TS_LUA_VARIABLE_LIST:
-                            for var_node in child.children:
-                                if var_node.type == cs.TS_LUA_IDENTIFIER:
-                                    if decoded_name := safe_decode_text(var_node):
-                                        var_names.append(decoded_name)
-                        elif child.type == cs.TS_LUA_EXPRESSION_LIST:
-                            var_values.extend(
-                                expr_node
-                                for expr_node in child.children
-                                if expr_node.type == cs.TS_LUA_FUNCTION_CALL
-                            )
-                    for i, var_name in enumerate(var_names):
-                        if i < len(var_values):
-                            value_node = var_values[i]
-                            if var_type := self._infer_lua_variable_type_from_value(
-                                value_node, module_qn
-                            ):
-                                local_var_types[var_name] = var_type
-                                logger.debug(
-                                    ls.LUA_VAR_INFERRED.format(
-                                        var_name=var_name, var_type=var_type
-                                    )
-                                )
-
+                self._process_variable_declaration(current, module_qn, local_var_types)
             stack.extend(reversed(current.children))
 
         logger.debug(ls.LUA_VAR_TYPE_MAP_BUILT.format(count=len(local_var_types)))
         return local_var_types
+
+    def _process_variable_declaration(
+        self,
+        decl_node: TreeSitterNodeProtocol,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> None:
+        assignment = next(
+            (c for c in decl_node.children if c.type == cs.TS_LUA_ASSIGNMENT_STATEMENT),
+            None,
+        )
+        if not assignment:
+            return
+
+        var_names = self._extract_var_names(assignment)
+        func_calls = self._extract_function_calls(assignment)
+
+        for i, var_name in enumerate(var_names):
+            if i >= len(func_calls):
+                break
+            if var_type := self._infer_lua_variable_type_from_value(
+                func_calls[i], module_qn
+            ):
+                local_var_types[var_name] = var_type
+                logger.debug(
+                    ls.LUA_VAR_INFERRED.format(var_name=var_name, var_type=var_type)
+                )
+
+    def _extract_var_names(self, assignment: TreeSitterNodeProtocol) -> list[str]:
+        names: list[str] = []
+        for child in assignment.children:
+            if child.type != cs.TS_LUA_VARIABLE_LIST:
+                continue
+            for var_node in child.children:
+                if var_node.type == cs.TS_LUA_IDENTIFIER:
+                    if decoded := safe_decode_text(var_node):
+                        names.append(decoded)
+        return names
+
+    def _extract_function_calls(
+        self, assignment: TreeSitterNodeProtocol
+    ) -> list[TreeSitterNodeProtocol]:
+        calls: list[TreeSitterNodeProtocol] = []
+        for child in assignment.children:
+            if child.type != cs.TS_LUA_EXPRESSION_LIST:
+                continue
+            calls.extend(
+                expr for expr in child.children if expr.type == cs.TS_LUA_FUNCTION_CALL
+            )
+        return calls
 
     def _infer_lua_variable_type_from_value(
         self, value_node: TreeSitterNodeProtocol, module_qn: str
