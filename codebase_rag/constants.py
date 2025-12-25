@@ -1160,6 +1160,9 @@ TS_LUA_EXPRESSION_LIST = "expression_list"
 TS_LUA_FUNCTION_CALL = "function_call"
 TS_LUA_METHOD_INDEX_EXPRESSION = "method_index_expression"
 TS_LUA_IDENTIFIER = "identifier"
+TS_LUA_LOCAL_STATEMENT = "local_statement"
+LUA_STATEMENT_SUFFIX = "statement"
+LUA_DEFAULT_VAR_TYPES = (TS_LUA_IDENTIFIER,)
 
 # (H) Lua method separator
 LUA_METHOD_SEPARATOR = ":"

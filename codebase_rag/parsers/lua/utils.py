@@ -1,20 +1,25 @@
 from tree_sitter import Node
 
+from ... import constants as cs
 from ..utils import contains_node, safe_decode_text
 
 
 def extract_assigned_name(
-    target_node: Node, accepted_var_types: tuple[str, ...] = ("identifier",)
+    target_node: Node, accepted_var_types: tuple[str, ...] = cs.LUA_DEFAULT_VAR_TYPES
 ) -> str | None:
     current = target_node.parent
-    while current and current.type != "assignment_statement":
+    while current and current.type != cs.TS_LUA_ASSIGNMENT_STATEMENT:
         current = current.parent
 
     if not current:
         return None
 
     expression_list = next(
-        (child for child in current.children if child.type == "expression_list"),
+        (
+            child
+            for child in current.children
+            if child.type == cs.TS_LUA_EXPRESSION_LIST
+        ),
         None,
     )
     if not expression_list:
@@ -24,7 +29,7 @@ def extract_assigned_name(
     values.extend(
         expression_list.child(i)
         for i in range(expression_list.child_count)
-        if expression_list.field_name_for_child(i) == "value"
+        if expression_list.field_name_for_child(i) == cs.FIELD_VALUE
     )
     target_index = next(
         (
@@ -38,7 +43,7 @@ def extract_assigned_name(
         return None
 
     variable_list = next(
-        (child for child in current.children if child.type == "variable_list"),
+        (child for child in current.children if child.type == cs.TS_LUA_VARIABLE_LIST),
         None,
     )
     if not variable_list:
@@ -48,7 +53,7 @@ def extract_assigned_name(
     names.extend(
         variable_list.child(i)
         for i in range(variable_list.child_count)
-        if variable_list.field_name_for_child(i) == "name"
+        if variable_list.field_name_for_child(i) == cs.FIELD_NAME
     )
     if target_index < len(names):
         var_child = names[target_index]
@@ -61,8 +66,8 @@ def extract_assigned_name(
 def find_ancestor_statement(node: Node) -> Node | None:
     stmt = node.parent
     while stmt and not (
-        stmt.type.endswith("statement")
-        or stmt.type in {"assignment_statement", "local_statement"}
+        stmt.type.endswith(cs.LUA_STATEMENT_SUFFIX)
+        or stmt.type in {cs.TS_LUA_ASSIGNMENT_STATEMENT, cs.TS_LUA_LOCAL_STATEMENT}
     ):
         stmt = stmt.parent
     return stmt
@@ -74,7 +79,7 @@ def extract_pcall_second_identifier(call_node: Node) -> str | None:
         return None
 
     variable_list = next(
-        (child for child in stmt.children if child.type == "variable_list"),
+        (child for child in stmt.children if child.type == cs.TS_LUA_VARIABLE_LIST),
         None,
     )
     if not variable_list:
@@ -82,9 +87,9 @@ def extract_pcall_second_identifier(call_node: Node) -> str | None:
 
     names = []
     for i in range(variable_list.child_count):
-        if variable_list.field_name_for_child(i) == "name":
+        if variable_list.field_name_for_child(i) == cs.FIELD_NAME:
             name_node = variable_list.child(i)
-            if name_node and name_node.type == "identifier":
+            if name_node and name_node.type == cs.TS_LUA_IDENTIFIER:
                 if decoded := safe_decode_text(name_node):
                     names.append(decoded)
 
