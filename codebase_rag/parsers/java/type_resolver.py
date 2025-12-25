@@ -79,12 +79,12 @@ class JavaTypeResolverMixin:
         return [candidate for _, candidate in ranked]
 
     def _find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
-        finder = getattr(self.function_registry, "find_with_prefix", None)
+        finder = getattr(self.function_registry, cs.METHOD_FIND_WITH_PREFIX, None)
         if callable(finder):
             if matches := list(finder(prefix)):
                 return matches
 
-        items = getattr(self.function_registry, "items", None)
+        items = getattr(self.function_registry, cs.METHOD_ITEMS, None)
         if callable(items):
             prefix_with_dot = f"{prefix}{cs.SEPARATOR_DOT}"
             return [
@@ -122,7 +122,7 @@ class JavaTypeResolverMixin:
             if type_name in import_map:
                 return import_map[type_name]
 
-        same_package_qn = f"{module_qn}.{type_name}"
+        same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
         if same_package_qn in self.function_registry and self.function_registry[
             same_package_qn
         ] in [NodeType.CLASS, NodeType.INTERFACE]:
@@ -150,12 +150,12 @@ class JavaTypeResolverMixin:
         self, node: Node, target_class_name: str, module_qn: str
     ) -> str | None:
         if node.type == cs.TS_CLASS_DECLARATION:
-            if (name_node := node.child_by_field_name("name")) and safe_decode_text(
-                name_node
-            ) == target_class_name:
-                if (superclass_node := node.child_by_field_name("superclass")) and (
-                    type_node := superclass_node.child_by_field_name("type")
-                ):
+            if (
+                name_node := node.child_by_field_name(cs.FIELD_NAME)
+            ) and safe_decode_text(name_node) == target_class_name:
+                if (
+                    superclass_node := node.child_by_field_name(cs.FIELD_SUPERCLASS)
+                ) and (type_node := superclass_node.child_by_field_name(cs.FIELD_TYPE)):
                     if superclass_name := safe_decode_text(type_node):
                         return self._resolve_java_type_name(superclass_name, module_qn)
 
@@ -187,10 +187,10 @@ class JavaTypeResolverMixin:
         self, node: Node, target_class_name: str, module_qn: str
     ) -> list[str]:
         if node.type == cs.TS_CLASS_DECLARATION:
-            if (name_node := node.child_by_field_name("name")) and safe_decode_text(
-                name_node
-            ) == target_class_name:
-                if interfaces_node := node.child_by_field_name("interfaces"):
+            if (
+                name_node := node.child_by_field_name(cs.FIELD_NAME)
+            ) and safe_decode_text(name_node) == target_class_name:
+                if interfaces_node := node.child_by_field_name(cs.FIELD_INTERFACES):
                     interface_list: list[str] = []
                     self._extract_interface_names(
                         interfaces_node, interface_list, module_qn
@@ -232,7 +232,7 @@ class JavaTypeResolverMixin:
         class_names: list[str] = []
         self._traverse_for_class_declarations(root_node, class_names)
 
-        return f"{module_qn}.{class_names[0]}" if class_names else None
+        return f"{module_qn}{cs.SEPARATOR_DOT}{class_names[0]}" if class_names else None
 
     def _traverse_for_class_declarations(
         self, node: Node, class_names: list[str]
@@ -243,7 +243,7 @@ class JavaTypeResolverMixin:
                 | cs.TS_INTERFACE_DECLARATION
                 | cs.TS_ENUM_DECLARATION
             ):
-                if (name_node := node.child_by_field_name("name")) and (
+                if (name_node := node.child_by_field_name(cs.FIELD_NAME)) and (
                     class_name := safe_decode_text(name_node)
                 ):
                     class_names.append(class_name)

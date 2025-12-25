@@ -376,6 +376,12 @@ FIELD_VALUE = "value"
 FIELD_LEFT = "left"
 FIELD_RIGHT = "right"
 FIELD_FIELD = "field"
+FIELD_SUPERCLASS = "superclass"
+FIELD_INTERFACES = "interfaces"
+
+# (H) Method name constants for getattr/hasattr
+METHOD_FIND_WITH_PREFIX = "find_with_prefix"
+METHOD_ITEMS = "items"
 
 # (H) Image file extensions for chat image handling
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
