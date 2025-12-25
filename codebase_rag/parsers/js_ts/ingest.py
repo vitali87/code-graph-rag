@@ -544,10 +544,6 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         method_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
-        path_parts: list[str] = []
-
-        current = method_name_node.parent
-
         skip_types = (
             cs.TS_OBJECT,
             cs.TS_VARIABLE_DECLARATOR,
@@ -555,35 +551,10 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_PAIR,
         )
-
-        while current and current.type not in lang_config.module_node_types:
-            if current.type in skip_types:
-                current = current.parent
-                continue
-
-            if current.type in lang_config.function_node_types:
-                name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node and name_node.text:
-                    if decoded := safe_decode_text(name_node):
-                        path_parts.append(decoded)
-            elif current.type in lang_config.class_node_types:
-                name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node and name_node.text:
-                    if decoded := safe_decode_text(name_node):
-                        path_parts.append(decoded)
-            elif current.type == cs.TS_METHOD_DEFINITION:
-                name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node and name_node.text:
-                    if decoded := safe_decode_text(name_node):
-                        path_parts.append(decoded)
-
-            current = current.parent
-
-        path_parts.reverse()
-
-        if path_parts:
-            return f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(path_parts)}{cs.SEPARATOR_DOT}{method_name}"
-        return f"{module_qn}{cs.SEPARATOR_DOT}{method_name}"
+        path_parts = self._collect_ancestor_path_parts(
+            method_name_node.parent, lang_config, skip_types
+        )
+        return self._format_qualified_name(module_qn, path_parts, method_name)
 
     def _build_assignment_arrow_function_qualified_name(
         self,
@@ -593,39 +564,56 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
-        path_parts: list[str] = []
-
         current = member_expr.parent
         if current and current.type == cs.TS_ASSIGNMENT_EXPRESSION:
             current = current.parent
 
         skip_types = (cs.TS_EXPRESSION_STATEMENT, cs.TS_STATEMENT_BLOCK)
+        path_parts = self._collect_ancestor_path_parts(current, lang_config, skip_types)
+        return self._format_qualified_name(module_qn, path_parts, function_name)
+
+    def _collect_ancestor_path_parts(
+        self,
+        start_node: Node | None,
+        lang_config: LanguageSpec,
+        skip_types: tuple[str, ...],
+    ) -> list[str]:
+        path_parts: list[str] = []
+        current = start_node
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in skip_types:
                 current = current.parent
                 continue
 
-            if current.type in lang_config.function_node_types:
-                name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node and name_node.text:
-                    if decoded := safe_decode_text(name_node):
-                        path_parts.append(decoded)
-            elif current.type in lang_config.class_node_types:
-                name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node and name_node.text:
-                    if decoded := safe_decode_text(name_node):
-                        path_parts.append(decoded)
-            elif current.type == cs.TS_METHOD_DEFINITION:
-                name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node and name_node.text:
-                    if decoded := safe_decode_text(name_node):
-                        path_parts.append(decoded)
+            if name := self._extract_ancestor_name(current, lang_config):
+                path_parts.append(name)
 
             current = current.parent
 
         path_parts.reverse()
+        return path_parts
 
+    def _extract_ancestor_name(
+        self, node: Node, lang_config: LanguageSpec
+    ) -> str | None:
+        naming_types = (
+            *lang_config.function_node_types,
+            *lang_config.class_node_types,
+            cs.TS_METHOD_DEFINITION,
+        )
+        if node.type not in naming_types:
+            return None
+
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if not name_node or not name_node.text:
+            return None
+
+        return safe_decode_text(name_node)
+
+    def _format_qualified_name(
+        self, module_qn: str, path_parts: list[str], final_name: str
+    ) -> str:
         if path_parts:
-            return f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(path_parts)}{cs.SEPARATOR_DOT}{function_name}"
-        return f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
+            return f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(path_parts)}{cs.SEPARATOR_DOT}{final_name}"
+        return f"{module_qn}{cs.SEPARATOR_DOT}{final_name}"
