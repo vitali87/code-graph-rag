@@ -407,7 +407,7 @@ class TestExtractJavaMethodCallInfo:
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("class_declaration")
         result = extract_method_call_info(node)
-        assert result == {}
+        assert result is None
 
 
 class TestIsJavaMainMethod:
