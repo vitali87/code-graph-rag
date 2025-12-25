@@ -1,46 +1,36 @@
 from tree_sitter import Node
 
-from ...constants import (
-    FIELD_BODY,
-    FIELD_CONSTRUCTOR,
-    FIELD_NAME,
-    FIELD_OBJECT,
-    FIELD_PROPERTY,
-    SEPARATOR_DOT,
-    TS_CLASS_DECLARATION,
-    TS_IDENTIFIER,
-    TS_MEMBER_EXPRESSION,
-    TS_METHOD_DEFINITION,
-    TS_NEW_EXPRESSION,
-    TS_RETURN_STATEMENT,
-    TS_THIS,
-)
+from ... import constants as cs
 from ..utils import safe_decode_text
 
 
+def _extract_class_qn(method_qn: str) -> str | None:
+    qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+    if len(qn_parts) >= 2:
+        return cs.SEPARATOR_DOT.join(qn_parts[:-1])
+    return None
+
+
 def extract_method_call(member_expr_node: Node) -> str | None:
-    try:
-        object_node = member_expr_node.child_by_field_name(FIELD_OBJECT)
-        property_node = member_expr_node.child_by_field_name(FIELD_PROPERTY)
+    object_node = member_expr_node.child_by_field_name(cs.FIELD_OBJECT)
+    property_node = member_expr_node.child_by_field_name(cs.FIELD_PROPERTY)
 
-        if object_node and property_node:
-            object_text = object_node.text
-            property_text = property_node.text
+    if object_node and property_node:
+        object_text = object_node.text
+        property_text = property_node.text
 
-            if object_text and property_text:
-                object_name = safe_decode_text(object_node)
-                property_name = safe_decode_text(property_node)
-                return f"{object_name}{SEPARATOR_DOT}{property_name}"
-    except Exception:
-        return None
+        if object_text and property_text:
+            object_name = safe_decode_text(object_node)
+            property_name = safe_decode_text(property_node)
+            return f"{object_name}{cs.SEPARATOR_DOT}{property_name}"
 
     return None
 
 
 def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node | None:
     for child in class_body_node.children:
-        if child.type == TS_METHOD_DEFINITION:
-            name_node = child.child_by_field_name(FIELD_NAME)
+        if child.type == cs.TS_METHOD_DEFINITION:
+            name_node = child.child_by_field_name(cs.FIELD_NAME)
             if name_node and name_node.text:
                 found_name = safe_decode_text(name_node)
                 if found_name == method_name:
@@ -57,12 +47,12 @@ def find_method_in_ast(
     while stack:
         current = stack.pop()
 
-        if current.type == TS_CLASS_DECLARATION:
-            name_node = current.child_by_field_name(FIELD_NAME)
+        if current.type == cs.TS_CLASS_DECLARATION:
+            name_node = current.child_by_field_name(cs.FIELD_NAME)
             if name_node and name_node.text:
                 found_class_name = safe_decode_text(name_node)
                 if found_class_name == class_name:
-                    if body_node := current.child_by_field_name(FIELD_BODY):
+                    if body_node := current.child_by_field_name(cs.FIELD_BODY):
                         return find_method_in_class_body(body_node, method_name)
 
         stack.extend(reversed(current.children))
@@ -76,18 +66,18 @@ def find_return_statements(node: Node, return_nodes: list[Node]) -> None:
     while stack:
         current = stack.pop()
 
-        if current.type == TS_RETURN_STATEMENT:
+        if current.type == cs.TS_RETURN_STATEMENT:
             return_nodes.append(current)
 
         stack.extend(reversed(current.children))
 
 
 def extract_constructor_name(new_expr_node: Node) -> str | None:
-    if new_expr_node.type != TS_NEW_EXPRESSION:
+    if new_expr_node.type != cs.TS_NEW_EXPRESSION:
         return None
 
-    constructor_node = new_expr_node.child_by_field_name(FIELD_CONSTRUCTOR)
-    if constructor_node and constructor_node.type == TS_IDENTIFIER:
+    constructor_node = new_expr_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+    if constructor_node and constructor_node.type == cs.TS_IDENTIFIER:
         constructor_text = constructor_node.text
         if constructor_text:
             return safe_decode_text(constructor_node)
@@ -96,30 +86,30 @@ def extract_constructor_name(new_expr_node: Node) -> str | None:
 
 
 def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
-    if expr_node.type == TS_NEW_EXPRESSION:
-        if class_name := extract_constructor_name(expr_node):
-            qn_parts = method_qn.split(SEPARATOR_DOT)
-            if len(qn_parts) >= 2:
-                return SEPARATOR_DOT.join(qn_parts[:-1])
-            return class_name
+    match expr_node.type:
+        case cs.TS_NEW_EXPRESSION:
+            if class_name := extract_constructor_name(expr_node):
+                return _extract_class_qn(method_qn) or class_name
+            return None
 
-    elif expr_node.type == TS_THIS:
-        qn_parts = method_qn.split(SEPARATOR_DOT)
-        if len(qn_parts) >= 2:
-            return SEPARATOR_DOT.join(qn_parts[:-1])
+        case cs.TS_THIS:
+            return _extract_class_qn(method_qn)
 
-    elif expr_node.type == TS_MEMBER_EXPRESSION:
-        if object_node := expr_node.child_by_field_name(FIELD_OBJECT):
-            if object_node.type == TS_THIS:
-                qn_parts = method_qn.split(SEPARATOR_DOT)
-                if len(qn_parts) >= 2:
-                    return SEPARATOR_DOT.join(qn_parts[:-1])
-            elif object_node.type == TS_IDENTIFIER:
-                object_text = object_node.text
-                if object_text:
-                    object_name = safe_decode_text(object_node)
-                    qn_parts = method_qn.split(SEPARATOR_DOT)
-                    if len(qn_parts) >= 2 and object_name == qn_parts[-2]:
-                        return SEPARATOR_DOT.join(qn_parts[:-1])
+        case cs.TS_MEMBER_EXPRESSION:
+            object_node = expr_node.child_by_field_name(cs.FIELD_OBJECT)
+            if not object_node:
+                return None
 
-    return None
+            match object_node.type:
+                case cs.TS_THIS:
+                    return _extract_class_qn(method_qn)
+                case cs.TS_IDENTIFIER:
+                    if object_node.text:
+                        object_name = safe_decode_text(object_node)
+                        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+                        if len(qn_parts) >= 2 and object_name == qn_parts[-2]:
+                            return cs.SEPARATOR_DOT.join(qn_parts[:-1])
+            return None
+
+        case _:
+            return None
