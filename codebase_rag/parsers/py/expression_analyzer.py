@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import re
-from abc import abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from tree_sitter import Node
@@ -20,7 +19,23 @@ if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
 
 
-class PythonExpressionAnalyzerMixin:
+class _ExpressionAnalyzerDeps(Protocol):
+    def _analyze_self_assignments(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None: ...
+
+    def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
+
+    def _analyze_method_return_statements(
+        self, method_node: Node, method_qn: str
+    ) -> str | None: ...
+
+    def build_local_variable_type_map(
+        self, caller_node: Node, module_qn: str
+    ) -> dict[str, str]: ...
+
+
+class PythonExpressionAnalyzerMixin(_ExpressionAnalyzerDeps):
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
@@ -29,24 +44,6 @@ class PythonExpressionAnalyzerMixin:
 
     _method_return_type_cache: dict[str, str | None]
     _type_inference_in_progress: set[str]
-
-    @abstractmethod
-    def _analyze_self_assignments(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None: ...
-
-    @abstractmethod
-    def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
-    ) -> dict[str, str]: ...
-
-    @abstractmethod
-    def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
-
-    @abstractmethod
-    def _analyze_method_return_statements(
-        self, method_node: Node, method_qn: str
-    ) -> str | None: ...
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:
@@ -243,12 +240,15 @@ class PythonExpressionAnalyzerMixin:
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         try:
-            if (
-                method_qn := self._resolve_method_qualified_name(
-                    method_call, module_qn, local_var_types
-                )
-            ) and (method_node := self._find_method_ast_node(method_qn)):
-                return self._analyze_method_return_statements(method_node, method_qn)
+            method_qn = self._resolve_method_qualified_name(
+                method_call, module_qn, local_var_types
+            )
+            if method_qn:
+                method_node = self._find_method_ast_node(method_qn)
+                if method_node:
+                    return self._analyze_method_return_statements(
+                        method_node, method_qn
+                    )
             return None
         except Exception as e:
             logger.debug(lg.PY_INFER_RETURN_FAILED.format(method=method_call, error=e))
