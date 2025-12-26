@@ -10,7 +10,7 @@ from tree_sitter import Language, Parser, Query
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .language_spec import LANGUAGE_SPECS
+from .language_spec import LANGUAGE_SPECS, LanguageSpec
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
@@ -186,6 +186,93 @@ def _get_locals_pattern(lang_name: cs.SupportedLanguage) -> str | None:
             return None
 
 
+def _build_combined_import_pattern(lang_config: LanguageSpec) -> str:
+    import_patterns = _build_query_pattern(
+        lang_config.import_node_types, cs.CAPTURE_IMPORT
+    )
+    import_from_patterns = _build_query_pattern(
+        lang_config.import_from_node_types, cs.CAPTURE_IMPORT_FROM
+    )
+
+    all_patterns: list[str] = []
+    if import_patterns.strip():
+        all_patterns.append(import_patterns)
+    if import_from_patterns.strip() and import_from_patterns != import_patterns:
+        all_patterns.append(import_from_patterns)
+    return " ".join(all_patterns)
+
+
+def _create_optional_query(language: Language, pattern: str | None) -> Query | None:
+    return Query(language, pattern) if pattern else None
+
+
+def _create_locals_query(
+    language: Language, lang_name: cs.SupportedLanguage
+) -> Query | None:
+    locals_pattern = _get_locals_pattern(lang_name)
+    if not locals_pattern:
+        return None
+    try:
+        return Query(language, locals_pattern)
+    except Exception as e:
+        logger.debug(ls.LOCALS_QUERY_FAILED.format(lang=lang_name, error=e))
+        return None
+
+
+def _create_language_queries(
+    language: Language,
+    parser: Parser,
+    lang_config: LanguageSpec,
+    lang_name: cs.SupportedLanguage,
+) -> LanguageQueries:
+    function_patterns = lang_config.function_query or _build_query_pattern(
+        lang_config.function_node_types, cs.CAPTURE_FUNCTION
+    )
+    class_patterns = lang_config.class_query or _build_query_pattern(
+        lang_config.class_node_types, cs.CAPTURE_CLASS
+    )
+    call_patterns = lang_config.call_query or _build_query_pattern(
+        lang_config.call_node_types, cs.CAPTURE_CALL
+    )
+    combined_import_patterns = _build_combined_import_pattern(lang_config)
+
+    return LanguageQueries(
+        functions=_create_optional_query(language, function_patterns),
+        classes=_create_optional_query(language, class_patterns),
+        calls=_create_optional_query(language, call_patterns),
+        imports=_create_optional_query(language, combined_import_patterns),
+        locals=_create_locals_query(language, lang_name),
+        config=lang_config,
+        language=language,
+        parser=parser,
+    )
+
+
+def _process_language(
+    lang_name: cs.SupportedLanguage,
+    lang_config: LanguageSpec,
+    parsers: dict[cs.SupportedLanguage, Parser],
+    queries: dict[cs.SupportedLanguage, LanguageQueries],
+) -> bool:
+    lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
+    if not lang_lib:
+        logger.debug(ls.LIB_NOT_AVAILABLE.format(lang=lang_name))
+        return False
+
+    try:
+        language = Language(lang_lib())
+        parser = Parser(language)
+        parsers[lang_name] = parser
+        queries[lang_name] = _create_language_queries(
+            language, parser, lang_config, lang_name
+        )
+        logger.success(ls.GRAMMAR_LOADED.format(lang=lang_name))
+        return True
+    except Exception as e:
+        logger.warning(ls.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
+        return False
+
+
 def load_parsers() -> tuple[
     dict[cs.SupportedLanguage, Parser], dict[cs.SupportedLanguage, LanguageQueries]
 ]:
@@ -193,70 +280,10 @@ def load_parsers() -> tuple[
     queries: dict[cs.SupportedLanguage, LanguageQueries] = {}
     available_languages: list[cs.SupportedLanguage] = []
 
-    configs = deepcopy(LANGUAGE_SPECS)
-
-    for lang_key, lang_config in configs.items():
+    for lang_key, lang_config in deepcopy(LANGUAGE_SPECS).items():
         lang_name = cs.SupportedLanguage(lang_key)
-        lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
-        if not lang_lib:
-            logger.debug(ls.LIB_NOT_AVAILABLE.format(lang=lang_name))
-            continue
-
-        try:
-            language = Language(lang_lib())
-            parser = Parser(language)
-            parsers[lang_name] = parser
-
-            function_patterns = lang_config.function_query or _build_query_pattern(
-                lang_config.function_node_types, cs.CAPTURE_FUNCTION
-            )
-            class_patterns = lang_config.class_query or _build_query_pattern(
-                lang_config.class_node_types, cs.CAPTURE_CLASS
-            )
-            call_patterns = lang_config.call_query or _build_query_pattern(
-                lang_config.call_node_types, cs.CAPTURE_CALL
-            )
-
-            import_patterns = _build_query_pattern(
-                lang_config.import_node_types, cs.CAPTURE_IMPORT
-            )
-            import_from_patterns = _build_query_pattern(
-                lang_config.import_from_node_types, cs.CAPTURE_IMPORT_FROM
-            )
-
-            all_import_patterns: list[str] = []
-            if import_patterns.strip():
-                all_import_patterns.append(import_patterns)
-            if import_from_patterns.strip() and import_from_patterns != import_patterns:
-                all_import_patterns.append(import_from_patterns)
-            combined_import_patterns = " ".join(all_import_patterns)
-
-            locals_query: Query | None = None
-            if locals_pattern := _get_locals_pattern(lang_name):
-                try:
-                    locals_query = Query(language, locals_pattern)
-                except Exception as e:
-                    logger.debug(ls.LOCALS_QUERY_FAILED.format(lang=lang_name, error=e))
-
-            queries[lang_name] = LanguageQueries(
-                functions=Query(language, function_patterns)
-                if function_patterns
-                else None,
-                classes=Query(language, class_patterns) if class_patterns else None,
-                calls=Query(language, call_patterns) if call_patterns else None,
-                imports=Query(language, combined_import_patterns)
-                if combined_import_patterns
-                else None,
-                locals=locals_query,
-                config=lang_config,
-                language=language,
-                parser=parser,
-            )
-
+        if _process_language(lang_name, lang_config, parsers, queries):
             available_languages.append(lang_name)
-            logger.success(ls.GRAMMAR_LOADED.format(lang=lang_name))
-        except Exception as e:
-            logger.warning(ls.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
 
     if not available_languages:
         raise RuntimeError(ex.NO_LANGUAGES)
