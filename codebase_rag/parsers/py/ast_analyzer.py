@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -19,8 +19,32 @@ if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
+    class _AstAnalyzerDeps(Protocol):
+        def build_local_variable_type_map(
+            self, caller_node: Node, module_qn: str
+        ) -> dict[str, str]: ...
 
-class PythonAstAnalyzerMixin:
+        def _analyze_comprehension(
+            self, node: Node, local_var_types: dict[str, str], module_qn: str
+        ) -> None: ...
+
+        def _analyze_for_loop(
+            self, node: Node, local_var_types: dict[str, str], module_qn: str
+        ) -> None: ...
+
+        def _infer_instance_variable_types_from_assignments(
+            self,
+            assignments: list[Node],
+            local_var_types: dict[str, str],
+            module_qn: str,
+        ) -> None: ...
+
+    _AstBase: type = _AstAnalyzerDeps
+else:
+    _AstBase = object
+
+
+class PythonAstAnalyzerMixin(_AstBase):
     queries: dict[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
@@ -47,26 +71,6 @@ class PythonAstAnalyzerMixin:
 
     @abstractmethod
     def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None: ...
-
-    @abstractmethod
-    def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
-    ) -> dict[str, str]: ...
-
-    @abstractmethod
-    def _analyze_comprehension(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None: ...
-
-    @abstractmethod
-    def _analyze_for_loop(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None: ...
-
-    @abstractmethod
-    def _infer_instance_variable_types_from_assignments(
-        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
-    ) -> None: ...
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str

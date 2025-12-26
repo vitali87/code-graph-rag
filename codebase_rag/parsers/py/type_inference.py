@@ -26,9 +26,9 @@ if TYPE_CHECKING:
 
 
 class PythonTypeInferenceEngine(
-    PythonVariableAnalyzerMixin,
     PythonExpressionAnalyzerMixin,
     PythonAstAnalyzerMixin,
+    PythonVariableAnalyzerMixin,
 ):
     def __init__(
         self,

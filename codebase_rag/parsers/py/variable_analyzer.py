@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from abc import abstractmethod
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
@@ -10,15 +10,21 @@ from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
 
+if TYPE_CHECKING:
 
-class PythonVariableAnalyzerMixin:
+    class _VariableAnalyzerDeps(Protocol):
+        def _infer_type_from_expression(
+            self, node: ASTNode, module_qn: str
+        ) -> str | None: ...
+
+    _VarBase: type = _VariableAnalyzerDeps
+else:
+    _VarBase = object
+
+
+class PythonVariableAnalyzerMixin(_VarBase):
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
-
-    @abstractmethod
-    def _infer_type_from_expression(
-        self, node: ASTNode, module_qn: str
-    ) -> str | None: ...
 
     def _infer_parameter_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
