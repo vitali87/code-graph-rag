@@ -10,6 +10,12 @@ from codebase_rag.types_defs import ResultValue
 from .. import exceptions as ex
 from .. import logs as ls
 from ..constants import (
+    ERR_SUBSTR_ALREADY_EXISTS,
+    ERR_SUBSTR_CONSTRAINT,
+    KEY_CREATED,
+    KEY_FROM_VAL,
+    KEY_PROPS,
+    KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
 )
@@ -91,8 +97,8 @@ class MemgraphIngestor:
             return self._cursor_to_results(cursor)
         except Exception as e:
             if (
-                "already exists" not in str(e).lower()
-                and "constraint" not in str(e).lower()
+                ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower()
+                and ERR_SUBSTR_CONSTRAINT not in str(e).lower()
             ):
                 logger.error(ls.MG_CYPHER_ERROR.format(error=e))
                 logger.error(ls.MG_CYPHER_QUERY.format(query=query))
@@ -110,7 +116,7 @@ class MemgraphIngestor:
             cursor = self.conn.cursor()
             cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
         except Exception as e:
-            if "already exists" not in str(e).lower():
+            if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                 logger.error(ls.MG_BATCH_ERROR.format(error=e))
                 logger.error(ls.MG_CYPHER_QUERY.format(query=query))
                 if len(params_list) > 10:
@@ -254,7 +260,7 @@ class MemgraphIngestor:
 
         for pattern, params_list in rels_by_pattern.items():
             from_label, from_key, rel_type, to_label, to_key = pattern
-            has_props = any(p["props"] for p in params_list)
+            has_props = any(p[KEY_PROPS] for p in params_list)
             query = build_merge_relationship_query(
                 from_label, from_key, rel_type, to_label, to_key, has_props
             )
@@ -263,7 +269,7 @@ class MemgraphIngestor:
             results = self._execute_batch_with_return(query, params_list)
             batch_successful = 0
             for r in results:
-                created = r.get("created", 0)
+                created = r.get(KEY_CREATED, 0)
                 if isinstance(created, int):
                     batch_successful += created
             total_successful += batch_successful
@@ -277,9 +283,9 @@ class MemgraphIngestor:
                             ls.MG_CALLS_SAMPLE.format(
                                 index=i + 1,
                                 from_label=from_label,
-                                from_val=sample["from_val"],
+                                from_val=sample[KEY_FROM_VAL],
                                 to_label=to_label,
-                                to_val=sample["to_val"],
+                                to_val=sample[KEY_TO_VAL],
                             )
                         )
 

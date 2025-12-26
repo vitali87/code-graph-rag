@@ -161,6 +161,13 @@ KEY_END_LINE = "end_line"
 KEY_PATH = "path"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
+KEY_PROPS = "props"
+KEY_CREATED = "created"
+KEY_FROM_VAL = "from_val"
+KEY_TO_VAL = "to_val"
+
+ERR_SUBSTR_ALREADY_EXISTS = "already exists"
+ERR_SUBSTR_CONSTRAINT = "constraint"
 
 # (H) File names
 INIT_PY = "__init__.py"
