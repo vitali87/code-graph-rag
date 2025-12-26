@@ -1,3 +1,0 @@
-[submodule "grammars/tree-sitter-lua"]
-	path = grammars/tree-sitter-lua
-	url = https://github.com/tree-sitter-grammars/tree-sitter-lua
