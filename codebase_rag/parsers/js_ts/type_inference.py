@@ -1,11 +1,10 @@
 from collections.abc import Callable
 
 from loguru import logger
-from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
-from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
 from . import utils as ut
@@ -17,7 +16,7 @@ class JsTypeInferenceEngine:
         import_processor: ImportProcessor,
         function_registry: FunctionRegistryTrieProtocol,
         project_name: str,
-        find_method_ast_node_func: Callable[[str], Node | None],
+        find_method_ast_node_func: Callable[[str], ASTNode | None],
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -25,11 +24,11 @@ class JsTypeInferenceEngine:
         self._find_method_ast_node = find_method_ast_node_func
 
     def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
+        self, caller_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
 
-        stack: list[Node] = [caller_node]
+        stack: list[ASTNode] = [caller_node]
 
         declarator_count = 0
 
@@ -76,7 +75,7 @@ class JsTypeInferenceEngine:
         return local_var_types
 
     def _infer_js_variable_type_from_value(
-        self, value_node: Node, module_qn: str
+        self, value_node: ASTNode, module_qn: str
     ) -> str | None:
         logger.debug(ls.JS_INFER_VALUE_NODE.format(node_type=value_node.type))
 
@@ -182,9 +181,9 @@ class JsTypeInferenceEngine:
         return None
 
     def _analyze_return_statements(
-        self, method_node: Node, method_qn: str
+        self, method_node: ASTNode, method_qn: str
     ) -> str | None:
-        return_nodes: list[Node] = []
+        return_nodes: list[ASTNode] = []
         ut.find_return_statements(method_node, return_nodes)
 
         for return_node in return_nodes:

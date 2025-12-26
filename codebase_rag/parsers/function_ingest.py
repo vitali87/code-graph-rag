@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
@@ -34,9 +34,12 @@ class FunctionIngestMixin:
     function_registry: Any
     simple_name_lookup: Any
     module_qn_to_file_path: dict[str, Path]
-    _get_docstring: Callable[[Node], str | None]
-    _extract_decorators: Callable[[Node], list[str]]
-    _is_inside_method_with_object_literals: Callable[[Node], bool]
+
+    @abstractmethod
+    def _get_docstring(self, node: Node) -> str | None: ...
+
+    @abstractmethod
+    def _extract_decorators(self, node: Node) -> list[str]: ...
 
     def _ingest_all_functions(
         self,

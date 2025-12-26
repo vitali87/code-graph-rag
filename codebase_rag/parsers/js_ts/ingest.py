@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Node, Query, QueryCursor
+from tree_sitter import Query, QueryCursor
 
 from ... import constants as cs
 from ... import logs as lg
 from ...types_defs import (
+    ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
     PropertyDict,
@@ -35,12 +36,13 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
-    _get_docstring: Callable[[Node], str | None]
-    _build_nested_qualified_name: Callable[..., str | None]
+
+    @abstractmethod
+    def _get_docstring(self, node: ASTNode) -> str | None: ...
 
     def _ingest_prototype_inheritance(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
@@ -58,7 +60,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _ingest_prototype_inheritance_links(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
@@ -115,7 +117,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _ingest_prototype_method_assignments(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
@@ -183,7 +185,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _ingest_object_literal_methods(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
@@ -205,7 +207,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         self,
         language_obj,
         query_text: str,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         lang_config,
     ) -> None:
@@ -228,8 +230,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _process_single_object_method(
         self,
-        method_name_node: Node,
-        method_func_node: Node,
+        method_name_node: ASTNode,
+        method_func_node: ASTNode,
         module_qn: str,
         lang_config,
     ) -> None:
@@ -255,8 +257,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _resolve_object_method_qn(
         self,
-        method_name_node: Node,
-        method_func_node: Node,
+        method_name_node: ASTNode,
+        method_func_node: ASTNode,
         module_qn: str,
         method_name: str,
         lang_config,
@@ -274,7 +276,11 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         return f"{module_qn}{cs.SEPARATOR_DOT}{method_name}"
 
     def _register_object_method(
-        self, method_name: str, method_qn: str, method_func_node: Node, module_qn: str
+        self,
+        method_name: str,
+        method_qn: str,
+        method_func_node: ASTNode,
+        module_qn: str,
     ) -> None:
         method_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: method_qn,
@@ -301,7 +307,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _ingest_assignment_arrow_functions(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
@@ -325,7 +331,12 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             logger.debug(lg.JS_ASSIGNMENT_ARROW_DETECT_FAILED.format(error=e))
 
     def _process_arrow_query(
-        self, lang_query, query_text: str, root_node: Node, module_qn: str, lang_config
+        self,
+        lang_query,
+        query_text: str,
+        root_node: ASTNode,
+        module_qn: str,
+        lang_config,
     ) -> None:
         try:
             query = Query(lang_query, query_text)
@@ -359,8 +370,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _process_direct_arrow_functions(
         self,
-        method_names: list[Node],
-        arrow_functions: list[Node],
+        method_names: list[ASTNode],
+        arrow_functions: list[ASTNode],
         module_qn: str,
         lang_config,
     ) -> None:
@@ -381,7 +392,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             )
 
     def _resolve_direct_arrow_qn(
-        self, arrow_function: Node, module_qn: str, function_name: str, lang_config
+        self, arrow_function: ASTNode, module_qn: str, function_name: str, lang_config
     ) -> str:
         if lang_config:
             function_qn = self._build_nested_qualified_name(
@@ -397,8 +408,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _process_member_expr_functions(
         self,
-        member_exprs: list[Node],
-        function_nodes: list[Node],
+        member_exprs: list[ASTNode],
+        function_nodes: list[ASTNode],
         module_qn: str,
         lang_config,
         log_message: str,
@@ -422,8 +433,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _resolve_member_expr_qn(
         self,
-        member_expr: Node,
-        function_node: Node,
+        member_expr: ASTNode,
+        function_node: ASTNode,
         module_qn: str,
         function_name: str,
         lang_config,
@@ -440,7 +451,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         self,
         function_name: str,
         function_qn: str,
-        function_node: Node,
+        function_node: ASTNode,
         log_message: str,
     ) -> None:
         function_props: PropertyDict = {
@@ -458,7 +469,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         self.function_registry[function_qn] = NodeType.FUNCTION
         self.simple_name_lookup[function_name].add(function_qn)
 
-    def _is_static_method_in_class(self, method_node: Node) -> bool:
+    def _is_static_method_in_class(self, method_node: ASTNode) -> bool:
         if method_node.type == cs.TS_METHOD_DEFINITION:
             parent = method_node.parent
             if parent and parent.type == cs.TS_CLASS_BODY:
@@ -467,7 +478,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                         return True
         return False
 
-    def _is_method_in_class(self, method_node: Node) -> bool:
+    def _is_method_in_class(self, method_node: ASTNode) -> bool:
         current = method_node.parent
         while current:
             if current.type == cs.TS_CLASS_BODY:
@@ -475,7 +486,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             current = current.parent
         return False
 
-    def _is_inside_method_with_object_literals(self, func_node: Node) -> bool:
+    def _is_inside_method_with_object_literals(self, func_node: ASTNode) -> bool:
         current = func_node.parent
         found_object = False
 
@@ -490,7 +501,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
         return False
 
-    def _is_class_method(self, method_node: Node) -> bool:
+    def _is_class_method(self, method_node: ASTNode) -> bool:
         current = method_node.parent
         while current:
             if current.type == cs.TS_CLASS_BODY:
@@ -500,7 +511,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             current = current.parent
         return False
 
-    def _is_export_inside_function(self, export_node: Node) -> bool:
+    def _is_export_inside_function(self, export_node: ASTNode) -> bool:
         current = export_node.parent
         while current:
             if current.type in (
@@ -515,7 +526,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             current = current.parent
         return False
 
-    def _find_object_name_for_method(self, method_name_node: Node) -> str | None:
+    def _find_object_name_for_method(self, method_name_node: ASTNode) -> str | None:
         current = method_name_node.parent
         while current:
             if current.type == cs.TS_VARIABLE_DECLARATOR:
@@ -535,8 +546,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _build_object_method_qualified_name(
         self,
-        method_name_node: Node,
-        method_func_node: Node,
+        method_name_node: ASTNode,
+        method_func_node: ASTNode,
         module_qn: str,
         method_name: str,
         lang_config: LanguageSpec,
@@ -555,8 +566,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _build_assignment_arrow_function_qualified_name(
         self,
-        member_expr: Node,
-        arrow_function: Node,
+        member_expr: ASTNode,
+        arrow_function: ASTNode,
         module_qn: str,
         function_name: str,
         lang_config: LanguageSpec,
@@ -573,7 +584,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
     def _js_collect_ancestor_path_parts(
         self,
-        start_node: Node | None,
+        start_node: ASTNode | None,
         lang_config: LanguageSpec,
         skip_types: tuple[str, ...],
     ) -> list[str]:
@@ -594,7 +605,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         return path_parts
 
     def _js_extract_ancestor_name(
-        self, node: Node, lang_config: LanguageSpec
+        self, node: ASTNode, lang_config: LanguageSpec
     ) -> str | None:
         naming_types = (
             *lang_config.function_node_types,

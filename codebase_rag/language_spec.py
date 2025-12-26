@@ -29,8 +29,8 @@ def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _js_get_name(node: "Node") -> str | None:
-    if node.type in ("function_declaration", "class_declaration", "method_definition"):
-        name_node = node.child_by_field_name("name")
+    if node.type in cs.JS_NAME_NODE_TYPES:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
         return (
             name_node.text.decode(cs.ENCODING_UTF8)
             if name_node and name_node.text
@@ -72,13 +72,13 @@ def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _rust_get_name(node: "Node") -> str | None:
-    if node.type in ("struct_item", "enum_item", "trait_item", "type_item"):
-        name_node = node.child_by_field_name("name")
-        if name_node and name_node.type == "type_identifier" and name_node.text:
+    if node.type in cs.RS_TYPE_NODE_TYPES:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node and name_node.type == cs.TS_TYPE_IDENTIFIER and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
-    elif node.type in ("function_item", "mod_item"):
-        name_node = node.child_by_field_name("name")
-        if name_node and name_node.type == "identifier" and name_node.text:
+    elif node.type in cs.RS_IDENT_NODE_TYPES:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
 
     return _generic_get_name(node)
@@ -96,203 +96,93 @@ def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _cpp_get_name(node: "Node") -> str | None:
-    if node.type in ("class_specifier", "struct_specifier", "enum_specifier"):
-        name_node = node.child_by_field_name("name")
+    if node.type in cs.CPP_NAME_NODE_TYPES:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
-    elif node.type == "function_definition":
-        declarator = node.child_by_field_name("declarator")
-        if declarator and declarator.type == "function_declarator":
-            name_node = declarator.child_by_field_name("declarator")
-            if name_node and name_node.type == "identifier" and name_node.text:
+    elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
+        declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
+            name_node = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+            if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
                 return name_node.text.decode(cs.ENCODING_UTF8)
 
     return _generic_get_name(node)
 
 
 PYTHON_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset({"class_definition", "module", "function_definition"}),
-    function_node_types=frozenset({"function_definition"}),
+    scope_node_types=frozenset(cs.FQN_PY_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_PY_FUNCTION_TYPES),
     get_name=_python_get_name,
     file_to_module_parts=_python_file_to_module,
 )
 
 JS_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "class_declaration",
-            "program",
-            "function_declaration",
-            "function_expression",
-            "arrow_function",
-            "method_definition",
-        }
-    ),
-    function_node_types=frozenset(
-        {
-            "function_declaration",
-            "method_definition",
-            "arrow_function",
-            "function_expression",
-        }
-    ),
+    scope_node_types=frozenset(cs.FQN_JS_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_JS_FUNCTION_TYPES),
     get_name=_js_get_name,
     file_to_module_parts=_js_file_to_module,
 )
 
 TS_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "class_declaration",
-            "interface_declaration",
-            "namespace_definition",
-            "program",
-            "function_declaration",
-            "function_expression",
-            "arrow_function",
-            "method_definition",
-        }
-    ),
-    function_node_types=frozenset(
-        {
-            "function_declaration",
-            "method_definition",
-            "arrow_function",
-            "function_expression",
-            "function_signature",
-        }
-    ),
+    scope_node_types=frozenset(cs.FQN_TS_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_TS_FUNCTION_TYPES),
     get_name=_js_get_name,
     file_to_module_parts=_js_file_to_module,
 )
 
 RUST_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "struct_item",
-            "enum_item",
-            "trait_item",
-            "impl_item",
-            "mod_item",
-            "source_file",
-        }
-    ),
-    function_node_types=frozenset(
-        {
-            "function_item",
-            "function_signature_item",
-            "closure_expression",
-        }
-    ),
+    scope_node_types=frozenset(cs.FQN_RS_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_RS_FUNCTION_TYPES),
     get_name=_rust_get_name,
     file_to_module_parts=_rust_file_to_module,
 )
 
 JAVA_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "program",
-        }
-    ),
-    function_node_types=frozenset({"method_declaration", "constructor_declaration"}),
+    scope_node_types=frozenset(cs.FQN_JAVA_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_JAVA_FUNCTION_TYPES),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 CPP_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "class_specifier",
-            "struct_specifier",
-            "namespace_definition",
-            "translation_unit",
-        }
-    ),
-    function_node_types=frozenset(
-        {
-            "function_definition",
-            "declaration",
-            "field_declaration",
-            "template_declaration",
-            "lambda_expression",
-        }
-    ),
+    scope_node_types=frozenset(cs.FQN_CPP_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_CPP_FUNCTION_TYPES),
     get_name=_cpp_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 LUA_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset({"chunk"}),
-    function_node_types=frozenset({"function_declaration", "function_definition"}),
+    scope_node_types=frozenset(cs.FQN_LUA_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_LUA_FUNCTION_TYPES),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 GO_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset({"type_declaration", "source_file"}),
-    function_node_types=frozenset({"function_declaration", "method_declaration"}),
+    scope_node_types=frozenset(cs.FQN_GO_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_GO_FUNCTION_TYPES),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 SCALA_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "class_definition",
-            "object_definition",
-            "trait_definition",
-            "compilation_unit",
-        }
-    ),
-    function_node_types=frozenset({"function_definition", "function_declaration"}),
+    scope_node_types=frozenset(cs.FQN_SCALA_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_SCALA_FUNCTION_TYPES),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 CSHARP_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "class_declaration",
-            "struct_declaration",
-            "interface_declaration",
-            "compilation_unit",
-        }
-    ),
-    function_node_types=frozenset(
-        {
-            "destructor_declaration",
-            "local_function_statement",
-            "function_pointer_type",
-            "constructor_declaration",
-            "anonymous_method_expression",
-            "lambda_expression",
-            "method_declaration",
-        }
-    ),
+    scope_node_types=frozenset(cs.FQN_CS_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_CS_FUNCTION_TYPES),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
 
 PHP_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(
-        {
-            "class_declaration",
-            "interface_declaration",
-            "trait_declaration",
-            "program",
-        }
-    ),
-    function_node_types=frozenset(
-        {
-            "function_definition",
-            "anonymous_function",
-            "arrow_function",
-            "function_static_declaration",
-        }
-    ),
+    scope_node_types=frozenset(cs.FQN_PHP_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_PHP_FUNCTION_TYPES),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
@@ -315,63 +205,52 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
 LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     cs.SupportedLanguage.PYTHON: LanguageSpec(
         language=cs.SupportedLanguage.PYTHON,
-        file_extensions=(".py",),
-        function_node_types=("function_definition",),
-        class_node_types=("class_definition",),
-        module_node_types=("module",),
-        call_node_types=("call", "with_statement"),
-        import_node_types=("import_statement",),
-        import_from_node_types=("import_from_statement",),
-        package_indicators=("__init__.py",),
+        file_extensions=cs.PY_EXTENSIONS,
+        function_node_types=cs.SPEC_PY_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_PY_CLASS_TYPES,
+        module_node_types=cs.SPEC_PY_MODULE_TYPES,
+        call_node_types=cs.SPEC_PY_CALL_TYPES,
+        import_node_types=cs.SPEC_PY_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_PY_IMPORT_FROM_TYPES,
+        package_indicators=cs.SPEC_PY_PACKAGE_INDICATORS,
     ),
     cs.SupportedLanguage.JS: LanguageSpec(
         language=cs.SupportedLanguage.JS,
-        file_extensions=(".js", ".jsx"),
+        file_extensions=cs.JS_EXTENSIONS,
         function_node_types=cs.JS_TS_FUNCTION_NODES,
         class_node_types=cs.JS_TS_CLASS_NODES,
-        module_node_types=("program",),
-        call_node_types=("call_expression",),
+        module_node_types=cs.SPEC_JS_MODULE_TYPES,
+        call_node_types=cs.SPEC_JS_CALL_TYPES,
         import_node_types=cs.JS_TS_IMPORT_NODES,
         import_from_node_types=cs.JS_TS_IMPORT_NODES,
     ),
     cs.SupportedLanguage.TS: LanguageSpec(
         language=cs.SupportedLanguage.TS,
-        file_extensions=(".ts", ".tsx"),
-        function_node_types=cs.JS_TS_FUNCTION_NODES + ("function_signature",),
+        file_extensions=cs.TS_EXTENSIONS,
+        function_node_types=cs.JS_TS_FUNCTION_NODES + (cs.TS_FUNCTION_SIGNATURE,),
         class_node_types=cs.JS_TS_CLASS_NODES
         + (
-            "abstract_class_declaration",
-            "enum_declaration",
-            "interface_declaration",
-            "type_alias_declaration",
-            "internal_module",
+            cs.TS_ABSTRACT_CLASS_DECLARATION,
+            cs.TS_ENUM_DECLARATION,
+            cs.TS_INTERFACE_DECLARATION,
+            cs.TS_TYPE_ALIAS_DECLARATION,
+            cs.TS_INTERNAL_MODULE,
         ),
-        module_node_types=("program",),
-        call_node_types=("call_expression",),
+        module_node_types=cs.SPEC_JS_MODULE_TYPES,
+        call_node_types=cs.SPEC_JS_CALL_TYPES,
         import_node_types=cs.JS_TS_IMPORT_NODES,
         import_from_node_types=cs.JS_TS_IMPORT_NODES,
     ),
     cs.SupportedLanguage.RUST: LanguageSpec(
         language=cs.SupportedLanguage.RUST,
-        file_extensions=(".rs",),
-        function_node_types=(
-            "function_item",
-            "function_signature_item",
-            "closure_expression",
-        ),
-        class_node_types=(
-            "struct_item",
-            "enum_item",
-            "union_item",
-            "trait_item",
-            "impl_item",
-            "type_item",
-        ),
-        module_node_types=("source_file", "mod_item"),
-        call_node_types=("call_expression", "macro_invocation"),
-        import_node_types=("use_declaration", "extern_crate_declaration"),
-        import_from_node_types=("use_declaration",),
-        package_indicators=("Cargo.toml",),
+        file_extensions=cs.RS_EXTENSIONS,
+        function_node_types=cs.SPEC_RS_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_RS_CLASS_TYPES,
+        module_node_types=cs.SPEC_RS_MODULE_TYPES,
+        call_node_types=cs.SPEC_RS_CALL_TYPES,
+        import_node_types=cs.SPEC_RS_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_RS_IMPORT_FROM_TYPES,
+        package_indicators=cs.SPEC_RS_PACKAGE_INDICATORS,
         function_query="""
         (function_item
             name: (identifier) @name) @function
@@ -410,48 +289,33 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     ),
     cs.SupportedLanguage.GO: LanguageSpec(
         language=cs.SupportedLanguage.GO,
-        file_extensions=(".go",),
-        function_node_types=("function_declaration", "method_declaration"),
-        class_node_types=("type_declaration",),
-        module_node_types=("source_file",),
-        call_node_types=("call_expression",),
-        import_node_types=("import_declaration",),
-        import_from_node_types=("import_declaration",),
+        file_extensions=cs.GO_EXTENSIONS,
+        function_node_types=cs.SPEC_GO_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_GO_CLASS_TYPES,
+        module_node_types=cs.SPEC_GO_MODULE_TYPES,
+        call_node_types=cs.SPEC_GO_CALL_TYPES,
+        import_node_types=cs.SPEC_GO_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_GO_IMPORT_TYPES,
     ),
     cs.SupportedLanguage.SCALA: LanguageSpec(
         language=cs.SupportedLanguage.SCALA,
-        file_extensions=(".scala", ".sc"),
-        function_node_types=("function_definition", "function_declaration"),
-        class_node_types=(
-            "class_definition",
-            "object_definition",
-            "trait_definition",
-        ),
-        module_node_types=("compilation_unit",),
-        call_node_types=(
-            "call_expression",
-            "generic_function",
-            "field_expression",
-            "infix_expression",
-        ),
-        import_node_types=("import_declaration",),
-        import_from_node_types=("import_declaration",),
+        file_extensions=cs.SCALA_EXTENSIONS,
+        function_node_types=cs.SPEC_SCALA_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_SCALA_CLASS_TYPES,
+        module_node_types=cs.SPEC_SCALA_MODULE_TYPES,
+        call_node_types=cs.SPEC_SCALA_CALL_TYPES,
+        import_node_types=cs.SPEC_SCALA_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_SCALA_IMPORT_TYPES,
     ),
     cs.SupportedLanguage.JAVA: LanguageSpec(
         language=cs.SupportedLanguage.JAVA,
-        file_extensions=(".java",),
-        function_node_types=("method_declaration", "constructor_declaration"),
-        class_node_types=(
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "annotation_type_declaration",
-            "record_declaration",
-        ),
-        module_node_types=("program",),
-        call_node_types=("method_invocation",),
-        import_node_types=("import_declaration",),
-        import_from_node_types=("import_declaration",),
+        file_extensions=cs.JAVA_EXTENSIONS,
+        function_node_types=cs.SPEC_JAVA_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_JAVA_CLASS_TYPES,
+        module_node_types=cs.SPEC_JAVA_MODULE_TYPES,
+        call_node_types=cs.SPEC_JAVA_CALL_TYPES,
+        import_node_types=cs.SPEC_JAVA_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_JAVA_IMPORT_TYPES,
         function_query="""
         (method_declaration
             name: (identifier) @name) @function
@@ -479,50 +343,14 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     ),
     cs.SupportedLanguage.CPP: LanguageSpec(
         language=cs.SupportedLanguage.CPP,
-        file_extensions=(
-            ".cpp",
-            ".h",
-            ".hpp",
-            ".cc",
-            ".cxx",
-            ".hxx",
-            ".hh",
-            ".ixx",
-            ".cppm",
-            ".ccm",
-        ),
-        function_node_types=(
-            "function_definition",
-            "declaration",
-            "field_declaration",
-            "template_declaration",
-            "lambda_expression",
-        ),
-        class_node_types=(
-            "class_specifier",
-            "struct_specifier",
-            "union_specifier",
-            "enum_specifier",
-        ),
-        module_node_types=(
-            "translation_unit",
-            "namespace_definition",
-            "linkage_specification",
-            "declaration",
-        ),
-        call_node_types=(
-            "call_expression",
-            "field_expression",
-            "subscript_expression",
-            "new_expression",
-            "delete_expression",
-            "binary_expression",
-            "unary_expression",
-            "update_expression",
-        ),
+        file_extensions=cs.CPP_EXTENSIONS,
+        function_node_types=cs.SPEC_CPP_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_CPP_CLASS_TYPES,
+        module_node_types=cs.SPEC_CPP_MODULE_TYPES,
+        call_node_types=cs.SPEC_CPP_CALL_TYPES,
         import_node_types=cs.CPP_IMPORT_NODES,
         import_from_node_types=cs.CPP_IMPORT_NODES,
-        package_indicators=("CMakeLists.txt", "Makefile", "*.vcxproj", "conanfile.txt"),
+        package_indicators=cs.SPEC_CPP_PACKAGE_INDICATORS,
         function_query="""
     (function_definition) @function
     (template_declaration (function_definition)) @function
@@ -553,58 +381,30 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     ),
     cs.SupportedLanguage.CSHARP: LanguageSpec(
         language=cs.SupportedLanguage.CSHARP,
-        file_extensions=(".cs",),
-        function_node_types=(
-            "destructor_declaration",
-            "local_function_statement",
-            "function_pointer_type",
-            "constructor_declaration",
-            "anonymous_method_expression",
-            "lambda_expression",
-            "method_declaration",
-        ),
-        class_node_types=(
-            "class_declaration",
-            "struct_declaration",
-            "enum_declaration",
-            "interface_declaration",
-        ),
-        module_node_types=("compilation_unit",),
-        call_node_types=("invocation_expression",),
+        file_extensions=cs.CS_EXTENSIONS,
+        function_node_types=cs.SPEC_CS_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_CS_CLASS_TYPES,
+        module_node_types=cs.SPEC_CS_MODULE_TYPES,
+        call_node_types=cs.SPEC_CS_CALL_TYPES,
         import_node_types=cs.IMPORT_NODES_USING,
         import_from_node_types=cs.IMPORT_NODES_USING,
     ),
     cs.SupportedLanguage.PHP: LanguageSpec(
         language=cs.SupportedLanguage.PHP,
-        file_extensions=(".php",),
-        function_node_types=(
-            "function_static_declaration",
-            "anonymous_function",
-            "function_definition",
-            "arrow_function",
-        ),
-        class_node_types=(
-            "trait_declaration",
-            "enum_declaration",
-            "interface_declaration",
-            "class_declaration",
-        ),
-        module_node_types=("program",),
-        call_node_types=(
-            "member_call_expression",
-            "scoped_call_expression",
-            "function_call_expression",
-            "nullsafe_member_call_expression",
-        ),
+        file_extensions=cs.PHP_EXTENSIONS,
+        function_node_types=cs.SPEC_PHP_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_PHP_CLASS_TYPES,
+        module_node_types=cs.SPEC_PHP_MODULE_TYPES,
+        call_node_types=cs.SPEC_PHP_CALL_TYPES,
     ),
     cs.SupportedLanguage.LUA: LanguageSpec(
         language=cs.SupportedLanguage.LUA,
-        file_extensions=(".lua",),
-        function_node_types=("function_declaration", "function_definition"),
-        class_node_types=(),
-        module_node_types=("chunk",),
-        call_node_types=("function_call",),
-        import_node_types=("function_call",),
+        file_extensions=cs.LUA_EXTENSIONS,
+        function_node_types=cs.SPEC_LUA_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_LUA_CLASS_TYPES,
+        module_node_types=cs.SPEC_LUA_MODULE_TYPES,
+        call_node_types=cs.SPEC_LUA_CALL_TYPES,
+        import_node_types=cs.SPEC_LUA_IMPORT_TYPES,
     ),
 }
 

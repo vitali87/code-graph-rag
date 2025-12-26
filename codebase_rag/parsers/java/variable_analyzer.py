@@ -1,10 +1,11 @@
+from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
+from ...types_defs import ASTNode
 from ..utils import safe_decode_text
 from .utils import (
     extract_class_info,
@@ -14,7 +15,6 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from ...types_defs import ASTCacheProtocol
@@ -26,13 +26,24 @@ class JavaVariableAnalyzerMixin:
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
 
-    _resolve_java_type_name: "Callable[[str, str], str]"
-    _resolve_java_method_return_type: "Callable[[str, str], str | None]"
-    _find_containing_java_class: "Callable[[Node], Node | None]"
-    build_variable_type_map: "Callable[[Node, str], dict[str, str]]"
+    @abstractmethod
+    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+
+    @abstractmethod
+    def _resolve_java_method_return_type(
+        self, method_call: str, module_qn: str
+    ) -> str | None: ...
+
+    @abstractmethod
+    def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
+
+    @abstractmethod
+    def build_variable_type_map(
+        self, scope_node: ASTNode, module_qn: str
+    ) -> dict[str, str]: ...
 
     def _collect_all_variable_types(
-        self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         self._analyze_java_parameters(scope_node, local_var_types, module_qn)
         self._analyze_java_local_variables(scope_node, local_var_types, module_qn)
@@ -43,7 +54,7 @@ class JavaVariableAnalyzerMixin:
         self._analyze_java_enhanced_for_loops(scope_node, local_var_types, module_qn)
 
     def _analyze_java_parameters(
-        self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         params_node = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if not params_node:
@@ -57,7 +68,7 @@ class JavaVariableAnalyzerMixin:
                     self._process_spread_parameter(child, local_var_types, module_qn)
 
     def _process_formal_parameter(
-        self, param_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, param_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         param_name_node = param_node.child_by_field_name(cs.FIELD_NAME)
         param_type_node = param_node.child_by_field_name(cs.FIELD_TYPE)
@@ -74,7 +85,7 @@ class JavaVariableAnalyzerMixin:
             logger.debug(ls.JAVA_PARAM.format(name=param_name, type=resolved_type))
 
     def _process_spread_parameter(
-        self, param_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, param_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         param_name = None
         param_type = None
@@ -95,12 +106,12 @@ class JavaVariableAnalyzerMixin:
             )
 
     def _analyze_java_local_variables(
-        self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         self._traverse_for_local_variables(scope_node, local_var_types, module_qn)
 
     def _traverse_for_local_variables(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
+        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         if node.type == cs.TS_LOCAL_VARIABLE_DECLARATION:
             self._process_java_variable_declaration(node, local_var_types, module_qn)
@@ -109,7 +120,7 @@ class JavaVariableAnalyzerMixin:
             self._traverse_for_local_variables(child, local_var_types, module_qn)
 
     def _process_java_variable_declaration(
-        self, decl_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, decl_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         if not (type_node := decl_node.child_by_field_name(cs.FIELD_TYPE)):
             return
@@ -133,7 +144,7 @@ class JavaVariableAnalyzerMixin:
 
     def _process_variable_declarator(
         self,
-        declarator_node: Node,
+        declarator_node: ASTNode,
         declared_type: str,
         local_var_types: dict[str, str],
         module_qn: str,
@@ -162,7 +173,7 @@ class JavaVariableAnalyzerMixin:
         )
 
     def _analyze_java_class_fields(
-        self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         if not (containing_class := self._find_containing_java_class(scope_node)):
             return
@@ -192,12 +203,12 @@ class JavaVariableAnalyzerMixin:
                     )
 
     def _analyze_java_constructor_assignments(
-        self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         self._traverse_for_assignments(scope_node, local_var_types, module_qn)
 
     def _traverse_for_assignments(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
+        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         if node.type == cs.TS_ASSIGNMENT_EXPRESSION:
             self._process_java_assignment(node, local_var_types, module_qn)
@@ -206,7 +217,7 @@ class JavaVariableAnalyzerMixin:
             self._traverse_for_assignments(child, local_var_types, module_qn)
 
     def _process_java_assignment(
-        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, assignment_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         left_node = assignment_node.child_by_field_name(cs.FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.FIELD_RIGHT)
@@ -224,7 +235,7 @@ class JavaVariableAnalyzerMixin:
             local_var_types[var_name] = resolved_type
             logger.debug(ls.JAVA_ASSIGNMENT.format(name=var_name, type=resolved_type))
 
-    def _extract_java_variable_reference(self, node: Node) -> str | None:
+    def _extract_java_variable_reference(self, node: ASTNode) -> str | None:
         match node.type:
             case cs.TS_IDENTIFIER:
                 return safe_decode_text(node)
@@ -244,12 +255,12 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _analyze_java_enhanced_for_loops(
-        self, scope_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         self._traverse_for_enhanced_for_loops(scope_node, local_var_types, module_qn)
 
     def _traverse_for_enhanced_for_loops(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
+        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         if node.type == cs.TS_ENHANCED_FOR_STATEMENT:
             self._process_enhanced_for_statement(node, local_var_types, module_qn)
@@ -258,7 +269,7 @@ class JavaVariableAnalyzerMixin:
             self._traverse_for_enhanced_for_loops(child, local_var_types, module_qn)
 
     def _process_enhanced_for_statement(
-        self, for_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         type_node = for_node.child_by_field_name(cs.FIELD_TYPE)
         name_node = for_node.child_by_field_name(cs.FIELD_NAME)
@@ -274,8 +285,8 @@ class JavaVariableAnalyzerMixin:
 
     def _register_for_loop_variable(
         self,
-        type_node: Node,
-        name_node: Node,
+        type_node: ASTNode,
+        name_node: ASTNode,
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
@@ -289,7 +300,7 @@ class JavaVariableAnalyzerMixin:
             )
 
     def _extract_for_loop_variable_from_children(
-        self, for_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         for child in for_node.children:
             if child.type != cs.TS_VARIABLE_DECLARATOR:
@@ -319,7 +330,7 @@ class JavaVariableAnalyzerMixin:
                         break
 
     def _infer_java_type_from_expression(
-        self, expr_node: Node, module_qn: str
+        self, expr_node: ASTNode, module_qn: str
     ) -> str | None:
         match expr_node.type:
             case cs.TS_OBJECT_CREATION_EXPRESSION:
@@ -359,7 +370,7 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _infer_java_method_return_type(
-        self, method_call_node: Node, module_qn: str
+        self, method_call_node: ASTNode, module_qn: str
     ) -> str | None:
         call_info = extract_method_call_info(method_call_node)
         if not call_info:
@@ -378,7 +389,7 @@ class JavaVariableAnalyzerMixin:
         return self._resolve_java_method_return_type(call_string, module_qn)
 
     def _infer_java_field_access_type(
-        self, field_access_node: Node, module_qn: str
+        self, field_access_node: ASTNode, module_qn: str
     ) -> str | None:
         object_node = field_access_node.child_by_field_name(cs.FIELD_OBJECT)
         field_node = field_access_node.child_by_field_name(cs.FIELD_FIELD)
@@ -461,7 +472,7 @@ class JavaVariableAnalyzerMixin:
         )
 
     def _find_field_type_in_class(
-        self, root_node: Node, class_name: str, field_name: str, module_qn: str
+        self, root_node: ASTNode, class_name: str, field_name: str, module_qn: str
     ) -> str | None:
         for child in root_node.children:
             if child.type == cs.TS_CLASS_DECLARATION:

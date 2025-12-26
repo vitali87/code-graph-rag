@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -26,22 +27,46 @@ class PythonAstAnalyzerMixin:
 
     _js_type_inference_getter: Callable[[], JsTypeInferenceEngine]
 
-    _infer_type_from_expression: Callable[[Node, str], str | None]
-    _infer_type_from_expression_simple: Callable[[Node, str], str | None]
-    _infer_type_from_expression_complex: Callable[
-        [Node, str, dict[str, str]], str | None
-    ]
-    _infer_method_call_return_type: Callable[
-        [str, str, dict[str, str] | None], str | None
-    ]
-    _find_class_in_scope: Callable[[str, str], str | None]
-    build_local_variable_type_map: Callable[[Node, str], dict[str, str]]
+    @abstractmethod
+    def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None: ...
 
-    _analyze_comprehension: Callable[[Node, dict[str, str], str], None]
-    _analyze_for_loop: Callable[[Node, dict[str, str], str], None]
-    _infer_instance_variable_types_from_assignments: Callable[
-        [list[Node], dict[str, str], str], None
-    ]
+    @abstractmethod
+    def _infer_type_from_expression_simple(
+        self, node: Node, module_qn: str
+    ) -> str | None: ...
+
+    @abstractmethod
+    def _infer_type_from_expression_complex(
+        self, node: Node, module_qn: str, local_var_types: dict[str, str]
+    ) -> str | None: ...
+
+    @abstractmethod
+    def _infer_method_call_return_type(
+        self, method_qn: str, module_qn: str, local_var_types: dict[str, str] | None
+    ) -> str | None: ...
+
+    @abstractmethod
+    def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None: ...
+
+    @abstractmethod
+    def build_local_variable_type_map(
+        self, caller_node: Node, module_qn: str
+    ) -> dict[str, str]: ...
+
+    @abstractmethod
+    def _analyze_comprehension(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None: ...
+
+    @abstractmethod
+    def _analyze_for_loop(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None: ...
+
+    @abstractmethod
+    def _infer_instance_variable_types_from_assignments(
+        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
+    ) -> None: ...
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str

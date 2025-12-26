@@ -1,28 +1,20 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from loguru import logger
-from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as lg
-from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 class PythonVariableAnalyzerMixin:
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
 
-    _infer_type_from_expression: Callable[[Node, str], str | None]
-
     def _infer_parameter_types(
-        self, caller_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         params_node = caller_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
         if not params_node:
@@ -32,7 +24,7 @@ class PythonVariableAnalyzerMixin:
             self._process_parameter(param, local_var_types, module_qn)
 
     def _process_parameter(
-        self, param: Node, local_var_types: dict[str, str], module_qn: str
+        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         match param.type:
             case cs.TS_PY_IDENTIFIER:
@@ -43,7 +35,7 @@ class PythonVariableAnalyzerMixin:
                 self._process_typed_default_parameter(param, local_var_types)
 
     def _process_untyped_parameter(
-        self, param: Node, local_var_types: dict[str, str], module_qn: str
+        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         if (
             param.text is None
@@ -61,7 +53,7 @@ class PythonVariableAnalyzerMixin:
         )
 
     def _process_typed_parameter(
-        self, param: Node, local_var_types: dict[str, str]
+        self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
         param_name_node = next(
             (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER), None
@@ -79,7 +71,7 @@ class PythonVariableAnalyzerMixin:
         local_var_types[param_name] = param_type
 
     def _process_typed_default_parameter(
-        self, param: Node, local_var_types: dict[str, str]
+        self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
         param_name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
         param_type_node = param.child_by_field_name(cs.TS_FIELD_TYPE)
@@ -155,19 +147,19 @@ class PythonVariableAnalyzerMixin:
         return 0
 
     def _analyze_comprehension(
-        self, comp_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, comp_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         for child in comp_node.children:
             if child.type == cs.TS_PY_FOR_IN_CLAUSE:
                 self._analyze_for_clause(child, local_var_types, module_qn)
 
     def _analyze_for_loop(
-        self, for_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         self._analyze_for_clause(for_node, local_var_types, module_qn)
 
     def _analyze_for_clause(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
+        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         if (left_node := node.child_by_field_name(cs.TS_FIELD_LEFT)) and (
             right_node := node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -178,8 +170,8 @@ class PythonVariableAnalyzerMixin:
 
     def _infer_loop_var_from_iterable(
         self,
-        left_node: Node,
-        right_node: Node,
+        left_node: ASTNode,
+        right_node: ASTNode,
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
@@ -195,7 +187,7 @@ class PythonVariableAnalyzerMixin:
             )
 
     def _infer_iterable_element_type(
-        self, iterable_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, iterable_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
         if iterable_node.type == cs.TS_PY_LIST:
             return self._infer_list_element_type(iterable_node)
@@ -208,7 +200,7 @@ class PythonVariableAnalyzerMixin:
             return None
         return self._infer_variable_element_type(var_name, local_var_types, module_qn)
 
-    def _infer_list_element_type(self, list_node: Node) -> str | None:
+    def _infer_list_element_type(self, list_node: ASTNode) -> str | None:
         for child in list_node.children:
             if child.type != cs.TS_PY_CALL:
                 continue
@@ -224,13 +216,16 @@ class PythonVariableAnalyzerMixin:
         return None
 
     def _infer_instance_variable_types_from_assignments(
-        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
+        self,
+        assignments: list[ASTNode],
+        local_var_types: dict[str, str],
+        module_qn: str,
     ) -> None:
         for assignment in assignments:
             self._process_self_assignment(assignment, local_var_types, module_qn)
 
     def _process_self_assignment(
-        self, assignment: Node, local_var_types: dict[str, str], module_qn: str
+        self, assignment: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -253,9 +248,9 @@ class PythonVariableAnalyzerMixin:
         )
 
     def _analyze_self_assignments(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
+        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        stack: list[Node] = [node]
+        stack: list[ASTNode] = [node]
 
         while stack:
             current = stack.pop()
@@ -296,7 +291,7 @@ class PythonVariableAnalyzerMixin:
 
         return None
 
-    def _extract_variable_name(self, node: Node) -> str | None:
+    def _extract_variable_name(self, node: ASTNode) -> str | None:
         if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
             return None
         return safe_decode_text(node) or None

@@ -4,10 +4,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from tree_sitter import Node
 
 from ..constants import SEPARATOR_DOT, SupportedLanguage
-from ..types_defs import SimpleNameLookup
+from ..types_defs import ASTNode, SimpleNameLookup
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
@@ -51,7 +50,7 @@ class DefinitionProcessor(
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
-    ) -> tuple[Node, SupportedLanguage] | None:
+    ) -> tuple[ASTNode, SupportedLanguage] | None:
         if isinstance(file_path, str):
             file_path = Path(file_path)
         relative_path = file_path.relative_to(self.repo_path)
@@ -157,7 +156,7 @@ class DefinitionProcessor(
             properties=rel_properties,
         )
 
-    def _get_docstring(self, node: Node) -> str | None:
+    def _get_docstring(self, node: ASTNode) -> str | None:
         body_node = node.child_by_field_name("body")
         if not body_node or not body_node.children:
             return None
@@ -174,7 +173,7 @@ class DefinitionProcessor(
                 return result
         return None
 
-    def _extract_decorators(self, node: Node) -> list[str]:
+    def _extract_decorators(self, node: ASTNode) -> list[str]:
         decorators: list[str] = []
 
         current = node.parent
@@ -189,7 +188,7 @@ class DefinitionProcessor(
 
         return decorators
 
-    def _get_decorator_name(self, decorator_node: Node) -> str | None:
+    def _get_decorator_name(self, decorator_node: ASTNode) -> str | None:
         from .utils import safe_decode_text
 
         for child in decorator_node.children:

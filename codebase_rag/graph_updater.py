@@ -383,38 +383,30 @@ class GraphUpdater:
                 end_line = parsed.get(cs.KEY_END_LINE)
                 file_path = parsed.get(cs.KEY_PATH)
 
-                if (
-                    start_line is not None
-                    and end_line is not None
-                    and file_path is not None
-                ):
-                    if source_code := self._extract_source_code(
-                        qualified_name, file_path, start_line, end_line
-                    ):
-                        try:
-                            embedding = embed_code(source_code)
-                            store_embedding(node_id, embedding, qualified_name)
-                            embedded_count += 1
-
-                            if (
-                                embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL
-                                == 0
-                            ):
-                                logger.debug(
-                                    ls.EMBEDDING_PROGRESS.format(
-                                        done=embedded_count, total=len(results)
-                                    )
-                                )
-
-                        except Exception as e:
-                            logger.warning(
-                                ls.EMBEDDING_FAILED.format(name=qualified_name, error=e)
-                            )
-                    else:
-                        logger.debug(ls.NO_SOURCE_FOR.format(name=qualified_name))
-                else:
+                if start_line is None or end_line is None or file_path is None:
                     logger.debug(ls.NO_SOURCE_FOR.format(name=qualified_name))
 
+                elif source_code := self._extract_source_code(
+                    qualified_name, file_path, start_line, end_line
+                ):
+                    try:
+                        embedding = embed_code(source_code)
+                        store_embedding(node_id, embedding, qualified_name)
+                        embedded_count += 1
+
+                        if embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0:
+                            logger.debug(
+                                ls.EMBEDDING_PROGRESS.format(
+                                    done=embedded_count, total=len(results)
+                                )
+                            )
+
+                    except Exception as e:
+                        logger.warning(
+                            ls.EMBEDDING_FAILED.format(name=qualified_name, error=e)
+                        )
+                else:
+                    logger.debug(ls.NO_SOURCE_FOR.format(name=qualified_name))
             logger.info(ls.EMBEDDINGS_COMPLETE.format(count=embedded_count))
 
         except Exception as e:

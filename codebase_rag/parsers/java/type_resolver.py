@@ -1,10 +1,8 @@
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from tree_sitter import Node
-
 from ... import constants as cs
-from ...types_defs import NodeType
+from ...types_defs import ASTNode, NodeType
 from .utils import (
     find_package_start_index,
     get_class_context_from_qn,
@@ -147,7 +145,7 @@ class JavaTypeResolverMixin:
         )
 
     def _find_superclass_using_ast(
-        self, node: Node, target_class_name: str, module_qn: str
+        self, node: ASTNode, target_class_name: str, module_qn: str
     ) -> str | None:
         if node.type == cs.TS_CLASS_DECLARATION:
             if (
@@ -167,7 +165,7 @@ class JavaTypeResolverMixin:
 
         return None
 
-    def _extract_type_name_from_node(self, parent_node: Node) -> str | None:
+    def _extract_type_name_from_node(self, parent_node: ASTNode) -> str | None:
         for child in parent_node.children:
             if child.type == cs.TS_GENERIC_TYPE:
                 for subchild in child.children:
@@ -194,7 +192,7 @@ class JavaTypeResolverMixin:
         return self._find_interfaces_using_ast(root_node, target_class_name, module_qn)
 
     def _find_interfaces_using_ast(
-        self, node: Node, target_class_name: str, module_qn: str
+        self, node: ASTNode, target_class_name: str, module_qn: str
     ) -> list[str]:
         if node.type == cs.TS_CLASS_DECLARATION:
             if (
@@ -216,7 +214,7 @@ class JavaTypeResolverMixin:
         return []
 
     def _extract_interface_names(
-        self, interfaces_node: Node, interface_list: list[str], module_qn: str
+        self, interfaces_node: ASTNode, interface_list: list[str], module_qn: str
     ) -> None:
         for child in interfaces_node.children:
             if child.type == cs.TS_TYPE_IDENTIFIER:
@@ -241,7 +239,7 @@ class JavaTypeResolverMixin:
         return f"{module_qn}{cs.SEPARATOR_DOT}{class_names[0]}" if class_names else None
 
     def _traverse_for_class_declarations(
-        self, node: Node, class_names: list[str]
+        self, node: ASTNode, class_names: list[str]
     ) -> None:
         match node.type:
             case (

@@ -1,19 +1,18 @@
 from __future__ import annotations
 
+from abc import abstractmethod
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
-from ...types_defs import NodeType
+from ...types_defs import ASTNode, NodeType
 from ..utils import safe_decode_text
 from .utils import extract_method_call_info, get_class_context_from_qn
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
@@ -29,13 +28,27 @@ class JavaMethodResolverMixin:
     class_inheritance: dict[str, list[str]]
     _fqn_to_module_qn: dict[str, list[str]]
 
-    _resolve_java_type_name: Callable[[str, str], str]
-    _rank_module_candidates: Callable[[list[str], str, str | None], list[str]]
-    _find_registry_entries_under: Callable[[str], Iterable[tuple[str, str]]]
-    _get_superclass_name: Callable[[str], str | None]
-    _get_implemented_interfaces: Callable[[str], list[str]]
-    _get_current_class_name: Callable[[str], str | None]
-    _lookup_variable_type: Callable[[str, str], str | None]
+    @abstractmethod
+    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+
+    @abstractmethod
+    def _rank_module_candidates(
+        self, candidates: list[str], class_qn: str, current_module_qn: str | None
+    ) -> list[str]: ...
+
+    @abstractmethod
+    def _find_registry_entries_under(
+        self, prefix: str
+    ) -> Iterable[tuple[str, str]]: ...
+
+    @abstractmethod
+    def _get_superclass_name(self, class_qn: str) -> str | None: ...
+
+    @abstractmethod
+    def _get_implemented_interfaces(self, class_qn: str) -> list[str]: ...
+
+    @abstractmethod
+    def _get_current_class_name(self, module_qn: str) -> str | None: ...
 
     def _resolve_java_object_type(
         self, object_ref: str, local_var_types: dict[str, str], module_qn: str
@@ -252,7 +265,7 @@ class JavaMethodResolverMixin:
         )
 
     def _find_method_return_type_in_ast(
-        self, node: Node, class_name: str, method_name: str, module_qn: str
+        self, node: ASTNode, class_name: str, method_name: str, module_qn: str
     ) -> str | None:
         if node.type == cs.TS_CLASS_DECLARATION:
             if (
@@ -272,7 +285,7 @@ class JavaMethodResolverMixin:
         return None
 
     def _search_methods_in_class_body(
-        self, body_node: Node, method_name: str, module_qn: str
+        self, body_node: ASTNode, method_name: str, module_qn: str
     ) -> str | None:
         for child in body_node.children:
             if child.type == cs.TS_METHOD_DECLARATION:
@@ -316,7 +329,7 @@ class JavaMethodResolverMixin:
         return None
 
     def _do_resolve_java_method_call(
-        self, call_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, call_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> tuple[str, str] | None:
         if call_node.type != cs.TS_METHOD_INVOCATION:
             return None

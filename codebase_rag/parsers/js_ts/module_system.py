@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import textwrap
-from collections.abc import Callable
+from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Node, Query, QueryCursor
+from tree_sitter import Query, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
+from ...types_defs import ASTNode
 from ..utils import (
     ingest_exported_function,
     safe_decode_text,
@@ -34,16 +35,20 @@ class JsTsModuleSystemMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     import_processor: ImportProcessor
-    _get_docstring: Callable[[Node], str | None]
-    _is_export_inside_function: Callable[[Node], bool]
     _processed_imports: set[str]
+
+    @abstractmethod
+    def _get_docstring(self, node: ASTNode) -> str | None: ...
+
+    @abstractmethod
+    def _is_export_inside_function(self, node: ASTNode) -> bool: ...
 
     def __init__(self) -> None:
         self._processed_imports = set()
 
     def _ingest_missing_import_patterns(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
@@ -71,7 +76,7 @@ class JsTsModuleSystemMixin:
         except Exception as e:
             logger.debug(ls.JS_MISSING_IMPORT_PATTERNS_FAILED.format(error=e))
 
-    def _extract_require_module_name(self, declarator: Node) -> str | None:
+    def _extract_require_module_name(self, declarator: ASTNode) -> str | None:
         name_node = declarator.child_by_field_name(cs.FIELD_NAME)
         if not name_node or name_node.type != cs.TS_OBJECT_PATTERN:
             return None
@@ -104,7 +109,7 @@ class JsTsModuleSystemMixin:
         return safe_decode_with_fallback(module_string_node).strip("'\"")
 
     def _process_destructured_child(
-        self, child: Node, module_name: str, module_qn: str
+        self, child: ASTNode, module_name: str, module_qn: str
     ) -> None:
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if child.text is not None and (name := safe_decode_text(child)):
@@ -128,7 +133,7 @@ class JsTsModuleSystemMixin:
             self._process_commonjs_import(alias_name, module_name, module_qn)
 
     def _process_variable_declarator_for_commonjs(
-        self, declarator: Node, module_qn: str
+        self, declarator: ASTNode, module_qn: str
     ) -> None:
         try:
             module_name = self._extract_require_module_name(declarator)
@@ -192,7 +197,7 @@ class JsTsModuleSystemMixin:
 
     def _ingest_export_function(
         self,
-        export_function: Node,
+        export_function: ASTNode,
         function_name: str,
         module_qn: str,
         export_type: str,
@@ -211,9 +216,9 @@ class JsTsModuleSystemMixin:
 
     def _process_exports_pattern(
         self,
-        exports_objs: list[Node],
-        export_names: list[Node],
-        export_functions: list[Node],
+        exports_objs: list[ASTNode],
+        export_names: list[ASTNode],
+        export_functions: list[ASTNode],
         module_qn: str,
     ) -> None:
         for exports_obj, export_name, export_function in zip(
@@ -233,10 +238,10 @@ class JsTsModuleSystemMixin:
 
     def _process_module_exports_pattern(
         self,
-        module_objs: list[Node],
-        exports_props: list[Node],
-        export_names: list[Node],
-        export_functions: list[Node],
+        module_objs: list[ASTNode],
+        exports_props: list[ASTNode],
+        export_names: list[ASTNode],
+        export_functions: list[ASTNode],
         module_qn: str,
     ) -> None:
         for module_obj, exports_prop, export_name, export_function in zip(
@@ -258,7 +263,7 @@ class JsTsModuleSystemMixin:
 
     def _ingest_commonjs_exports(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
@@ -301,7 +306,7 @@ class JsTsModuleSystemMixin:
 
     def _ingest_es6_exports(
         self,
-        root_node: Node,
+        root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],

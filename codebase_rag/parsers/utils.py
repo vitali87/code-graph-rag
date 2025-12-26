@@ -7,6 +7,7 @@ from tree_sitter import Node, QueryCursor
 
 from ..constants import ENCODING_UTF8, SupportedLanguage
 from ..types_defs import (
+    ASTNode,
     LanguageQueries,
     NodeType,
     PropertyDict,
@@ -24,11 +25,11 @@ if TYPE_CHECKING:
 
 class FunctionCapturesResult(NamedTuple):
     lang_config: "LanguageSpec"
-    captures: dict[str, list[Node]]
+    captures: dict[str, list[ASTNode]]
 
 
 def get_function_captures(
-    root_node: Node,
+    root_node: ASTNode,
     language: SupportedLanguage,
     queries: dict[SupportedLanguage, LanguageQueries],
 ) -> FunctionCapturesResult | None:
@@ -49,7 +50,7 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(ENCODING_UTF8)
 
 
-def safe_decode_text(node: Node | TreeSitterNodeProtocol | None) -> str | None:
+def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | None:
     if node is None or node.text is None:
         return None
     text_bytes = node.text
@@ -62,27 +63,27 @@ def get_query_cursor(query: "Query") -> QueryCursor:
     return QueryCursor(query)
 
 
-def safe_decode_with_fallback(node: Node | None, fallback: str = "") -> str:
+def safe_decode_with_fallback(node: ASTNode | None, fallback: str = "") -> str:
     result = safe_decode_text(node)
     return result if result is not None else fallback
 
 
-def contains_node(parent: Node, target: Node) -> bool:
+def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     if parent == target:
         return True
     return any(contains_node(child, target) for child in parent.children)
 
 
 def ingest_method(
-    method_node: Node,
+    method_node: ASTNode,
     container_qn: str,
     container_type: str,
     ingestor: "IngestorProtocol",
     function_registry: "FunctionRegistryTrieProtocol",
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Callable[[Node], str | None],
+    get_docstring_func: Callable[[ASTNode], str | None],
     language: str = "",
-    extract_decorators_func: Callable[[Node], list[str]] | None = None,
+    extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
     method_qualified_name: str | None = None,
 ) -> None:
     if language == "cpp":
@@ -131,15 +132,15 @@ def ingest_method(
 
 
 def ingest_exported_function(
-    function_node: Node,
+    function_node: ASTNode,
     function_name: str,
     module_qn: str,
     export_type: str,
     ingestor: "IngestorProtocol",
     function_registry: "FunctionRegistryTrieProtocol",
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Callable[[Node], str | None],
-    is_export_inside_function_func: Callable[[Node], bool],
+    get_docstring_func: Callable[[ASTNode], str | None],
+    is_export_inside_function_func: Callable[[ASTNode], bool],
 ) -> None:
     if is_export_inside_function_func(function_node):
         return
@@ -160,7 +161,7 @@ def ingest_exported_function(
     simple_name_lookup[function_name].add(function_qn)
 
 
-def is_method_node(func_node: Node, lang_config: "LanguageSpec") -> bool:
+def is_method_node(func_node: ASTNode, lang_config: "LanguageSpec") -> bool:
     current = func_node.parent
     if not isinstance(current, Node):
         return False

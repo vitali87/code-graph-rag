@@ -2,11 +2,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import (
+    ASTNode,
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     SimpleNameLookup,
@@ -22,9 +22,9 @@ if TYPE_CHECKING:
 
 
 class JavaTypeInferenceEngine(
-    JavaVariableAnalyzerMixin,
-    JavaMethodResolverMixin,
     JavaTypeResolverMixin,
+    JavaMethodResolverMixin,
+    JavaVariableAnalyzerMixin,
 ):
     def __init__(
         self,
@@ -77,7 +77,7 @@ class JavaTypeInferenceEngine(
         return fqn_map
 
     def build_variable_type_map(
-        self, scope_node: Node, module_qn: str
+        self, scope_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
 
@@ -91,11 +91,11 @@ class JavaTypeInferenceEngine(
         return local_var_types
 
     def resolve_java_method_call(
-        self, call_node: Node, local_var_types: dict[str, str], module_qn: str
+        self, call_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> tuple[str, str] | None:
         return self._do_resolve_java_method_call(call_node, local_var_types, module_qn)
 
-    def _find_containing_java_class(self, node: Node) -> Node | None:
+    def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None:
         current = node.parent
         while current:
             match current.type:

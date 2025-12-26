@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -14,7 +15,6 @@ from ..utils import safe_decode_text
 from .utils import resolve_class_name
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from ..factory import ASTCacheProtocol
@@ -30,10 +30,15 @@ class PythonExpressionAnalyzerMixin:
     _method_return_type_cache: dict[str, str | None]
     _type_inference_in_progress: set[str]
 
-    _analyze_self_assignments: Callable[[Node, dict[str, str], str], None]
-    _find_method_ast_node: Callable[[str], Node | None]
-    _analyze_method_return_statements: Callable[[Node, str], str | None]
-    build_local_variable_type_map: Callable[[Node, str], dict[str, str]]
+    @abstractmethod
+    def _analyze_self_assignments(
+        self, node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None: ...
+
+    @abstractmethod
+    def build_local_variable_type_map(
+        self, caller_node: Node, module_qn: str
+    ) -> dict[str, str]: ...
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,8 +40,12 @@ class ClassIngestMixin:
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
-    _get_docstring: Callable[[Node], str | None]
-    _extract_decorators: Callable[[Node], list[str]]
+
+    @abstractmethod
+    def _get_docstring(self, node: Node) -> str | None: ...
+
+    @abstractmethod
+    def _extract_decorators(self, node: Node) -> list[str]: ...
 
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"

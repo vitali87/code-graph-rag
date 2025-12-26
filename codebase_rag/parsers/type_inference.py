@@ -1,10 +1,9 @@
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from tree_sitter import Node
-
 from .. import constants as cs
 from ..types_defs import (
+    ASTNode,
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     SimpleNameLookup,
@@ -102,7 +101,7 @@ class TypeInferenceEngine:
         return self._python_type_inference
 
     def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str, language: cs.SupportedLanguage
+        self, caller_node: ASTNode, module_qn: str, language: cs.SupportedLanguage
     ) -> dict[str, str]:
         match language:
             case cs.SupportedLanguage.PYTHON:
@@ -130,6 +129,6 @@ class TypeInferenceEngine:
         )
 
     def _build_java_variable_type_map(
-        self, caller_node: Node, module_qn: str
+        self, caller_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
         return self.java_type_inference.build_variable_type_map(caller_node, module_qn)
