@@ -1751,3 +1751,67 @@ RS_WILDCARD_PREFIX = "*"
 
 # (H) Rust field names
 RS_FIELD_ARGUMENT = "argument"
+
+
+# (H) MCP tool names
+class MCPToolName(StrEnum):
+    INDEX_REPOSITORY = "index_repository"
+    QUERY_CODE_GRAPH = "query_code_graph"
+    GET_CODE_SNIPPET = "get_code_snippet"
+    SURGICAL_REPLACE_CODE = "surgical_replace_code"
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    LIST_DIRECTORY = "list_directory"
+
+
+# (H) MCP environment variables
+class MCPEnvVar(StrEnum):
+    TARGET_REPO_PATH = "TARGET_REPO_PATH"
+    CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
+    PWD = "PWD"
+
+
+# (H) MCP schema types
+class MCPSchemaType(StrEnum):
+    OBJECT = "object"
+    STRING = "string"
+    INTEGER = "integer"
+
+
+# (H) MCP schema fields
+class MCPSchemaField(StrEnum):
+    TYPE = "type"
+    PROPERTIES = "properties"
+    REQUIRED = "required"
+    DESCRIPTION = "description"
+    DEFAULT = "default"
+
+
+# (H) MCP parameter names
+class MCPParamName(StrEnum):
+    NATURAL_LANGUAGE_QUERY = "natural_language_query"
+    QUALIFIED_NAME = "qualified_name"
+    FILE_PATH = "file_path"
+    TARGET_CODE = "target_code"
+    REPLACEMENT_CODE = "replacement_code"
+    OFFSET = "offset"
+    LIMIT = "limit"
+    CONTENT = "content"
+    DIRECTORY_PATH = "directory_path"
+
+
+# (H) MCP server constants
+MCP_SERVER_NAME = "graph-code"
+MCP_CONTENT_TYPE_TEXT = "text"
+MCP_DEFAULT_DIRECTORY = "."
+MCP_JSON_INDENT = 2
+MCP_LOG_LEVEL_INFO = "INFO"
+MCP_LOG_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
+MCP_PAGINATION_HEADER = "# Lines {start}-{end} of {total}\n"
+
+# (H) MCP response messages
+MCP_INDEX_SUCCESS = "Successfully indexed repository at {path}. Knowledge graph has been updated (previous data cleared)."
+MCP_INDEX_ERROR = "Error indexing repository: {error}"
+MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
+MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
+MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"

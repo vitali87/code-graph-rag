@@ -1,13 +1,14 @@
 import itertools
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from loguru import logger
 
+from codebase_rag import constants as cs
+from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
-from codebase_rag.constants import ENCODING_UTF8
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -22,13 +23,19 @@ from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 
+from . import tool_descriptions as td
+from .types_defs import ToolSchema
+
+ResultType = str | dict[str, str | bool | list[str] | None]
+HandlerType = Callable[..., Awaitable[ResultType]]
+
 
 @dataclass
 class ToolMetadata:
     name: str
     description: str
-    input_schema: dict[str, Any]
-    handler: Callable[..., Any]
+    input_schema: dict[str, str | dict[str, str | dict[str, str]] | list[str]]
+    handler: HandlerType
     returns_json: bool
 
 
@@ -63,135 +70,139 @@ class MCPToolsRegistry:
         )
 
         self._tools: dict[str, ToolMetadata] = {
-            "index_repository": ToolMetadata(
-                name="index_repository",
-                description="Parse and ingest the repository into the Memgraph knowledge graph. "
-                "This builds a comprehensive graph of functions, classes, dependencies, and relationships.",
+            cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
+                name=cs.MCPToolName.INDEX_REPOSITORY,
+                description=td.INDEX_REPOSITORY,
                 input_schema={
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
+                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
+                    cs.MCPSchemaField.PROPERTIES: {},
+                    cs.MCPSchemaField.REQUIRED: [],
                 },
                 handler=self.index_repository,
                 returns_json=False,
             ),
-            "query_code_graph": ToolMetadata(
-                name="query_code_graph",
-                description="Query the codebase knowledge graph using natural language. "
-                "Ask questions like 'What functions call UserService.create_user?' or "
-                "'Show me all classes that implement the Repository interface'.",
+            cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
+                name=cs.MCPToolName.QUERY_CODE_GRAPH,
+                description=td.QUERY_CODE_GRAPH,
                 input_schema={
-                    "type": "object",
-                    "properties": {
-                        "natural_language_query": {
-                            "type": "string",
-                            "description": "Your question in plain English about the codebase",
+                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
+                    cs.MCPSchemaField.PROPERTIES: {
+                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_NATURAL_LANGUAGE_QUERY,
                         }
                     },
-                    "required": ["natural_language_query"],
+                    cs.MCPSchemaField.REQUIRED: [
+                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY
+                    ],
                 },
                 handler=self.query_code_graph,
                 returns_json=True,
             ),
-            "get_code_snippet": ToolMetadata(
-                name="get_code_snippet",
-                description="Retrieve source code for a function, class, or method by its qualified name. "
-                "Returns the source code, file path, line numbers, and docstring.",
+            cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
+                name=cs.MCPToolName.GET_CODE_SNIPPET,
+                description=td.GET_CODE_SNIPPET,
                 input_schema={
-                    "type": "object",
-                    "properties": {
-                        "qualified_name": {
-                            "type": "string",
-                            "description": "Fully qualified name (e.g., 'app.services.UserService.create_user')",
+                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
+                    cs.MCPSchemaField.PROPERTIES: {
+                        cs.MCPParamName.QUALIFIED_NAME: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_QUALIFIED_NAME,
                         }
                     },
-                    "required": ["qualified_name"],
+                    cs.MCPSchemaField.REQUIRED: [cs.MCPParamName.QUALIFIED_NAME],
                 },
                 handler=self.get_code_snippet,
                 returns_json=True,
             ),
-            "surgical_replace_code": ToolMetadata(
-                name="surgical_replace_code",
-                description="Surgically replace an exact code block in a file using diff-match-patch. "
-                "Only modifies the exact target block, leaving the rest unchanged.",
+            cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
+                name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
+                description=td.SURGICAL_REPLACE_CODE,
                 input_schema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
+                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
+                    cs.MCPSchemaField.PROPERTIES: {
+                        cs.MCPParamName.FILE_PATH: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_FILE_PATH,
                         },
-                        "target_code": {
-                            "type": "string",
-                            "description": "Exact code block to replace",
+                        cs.MCPParamName.TARGET_CODE: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_TARGET_CODE,
                         },
-                        "replacement_code": {
-                            "type": "string",
-                            "description": "New code to insert",
+                        cs.MCPParamName.REPLACEMENT_CODE: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_REPLACEMENT_CODE,
                         },
                     },
-                    "required": ["file_path", "target_code", "replacement_code"],
+                    cs.MCPSchemaField.REQUIRED: [
+                        cs.MCPParamName.FILE_PATH,
+                        cs.MCPParamName.TARGET_CODE,
+                        cs.MCPParamName.REPLACEMENT_CODE,
+                    ],
                 },
                 handler=self.surgical_replace_code,
                 returns_json=False,
             ),
-            "read_file": ToolMetadata(
-                name="read_file",
-                description="Read the contents of a file from the project. Supports pagination for large files.",
+            cs.MCPToolName.READ_FILE: ToolMetadata(
+                name=cs.MCPToolName.READ_FILE,
+                description=td.READ_FILE,
                 input_schema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
+                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
+                    cs.MCPSchemaField.PROPERTIES: {
+                        cs.MCPParamName.FILE_PATH: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_FILE_PATH,
                         },
-                        "offset": {
-                            "type": "integer",
-                            "description": "Line number to start reading from (0-based, optional)",
+                        cs.MCPParamName.OFFSET: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.INTEGER,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_OFFSET,
                         },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of lines to read (optional)",
+                        cs.MCPParamName.LIMIT: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.INTEGER,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_LIMIT,
                         },
                     },
-                    "required": ["file_path"],
+                    cs.MCPSchemaField.REQUIRED: [cs.MCPParamName.FILE_PATH],
                 },
                 handler=self.read_file,
                 returns_json=False,
             ),
-            "write_file": ToolMetadata(
-                name="write_file",
-                description="Write content to a file, creating it if it doesn't exist.",
+            cs.MCPToolName.WRITE_FILE: ToolMetadata(
+                name=cs.MCPToolName.WRITE_FILE,
+                description=td.WRITE_FILE,
                 input_schema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
+                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
+                    cs.MCPSchemaField.PROPERTIES: {
+                        cs.MCPParamName.FILE_PATH: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_FILE_PATH,
                         },
-                        "content": {
-                            "type": "string",
-                            "description": "Content to write to the file",
+                        cs.MCPParamName.CONTENT: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_CONTENT,
                         },
                     },
-                    "required": ["file_path", "content"],
+                    cs.MCPSchemaField.REQUIRED: [
+                        cs.MCPParamName.FILE_PATH,
+                        cs.MCPParamName.CONTENT,
+                    ],
                 },
                 handler=self.write_file,
                 returns_json=False,
             ),
-            "list_directory": ToolMetadata(
-                name="list_directory",
-                description="List contents of a directory in the project.",
+            cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
+                name=cs.MCPToolName.LIST_DIRECTORY,
+                description=td.LIST_DIRECTORY,
                 input_schema={
-                    "type": "object",
-                    "properties": {
-                        "directory_path": {
-                            "type": "string",
-                            "description": "Relative path to directory from project root (default: '.')",
-                            "default": ".",
+                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
+                    cs.MCPSchemaField.PROPERTIES: {
+                        cs.MCPParamName.DIRECTORY_PATH: {
+                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
+                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_DIRECTORY_PATH,
+                            cs.MCPSchemaField.DEFAULT: cs.MCP_DEFAULT_DIRECTORY,
                         }
                     },
-                    "required": [],
+                    cs.MCPSchemaField.REQUIRED: [],
                 },
                 handler=self.list_directory,
                 returns_json=False,
@@ -199,12 +210,12 @@ class MCPToolsRegistry:
         }
 
     async def index_repository(self) -> str:
-        logger.info(f"[MCP] Indexing repository at: {self.project_root}")
+        logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
 
         try:
-            logger.info("[MCP] Clearing existing database to avoid conflicts...")
+            logger.info(lg.MCP_CLEARING_DB)
             self.ingestor.clean_database()
-            logger.info("[MCP] Database cleared. Starting fresh indexing...")
+            logger.info(lg.MCP_DB_CLEARED)
 
             updater = GraphUpdater(
                 ingestor=self.ingestor,
@@ -214,43 +225,43 @@ class MCPToolsRegistry:
             )
             updater.run()
 
-            return f"Successfully indexed repository at {self.project_root}. Knowledge graph has been updated (previous data cleared)."
+            return cs.MCP_INDEX_SUCCESS.format(path=self.project_root)
         except Exception as e:
-            logger.error(f"[MCP] Error indexing repository: {e}")
-            return f"Error indexing repository: {str(e)}"
+            logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
+            return cs.MCP_INDEX_ERROR.format(error=e)
 
-    async def query_code_graph(self, natural_language_query: str) -> dict[str, Any]:
-        logger.info(f"[MCP] query_code_graph: {natural_language_query}")
+    async def query_code_graph(self, natural_language_query: str) -> ResultType:
+        logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
-            graph_data = await self._query_tool.function(natural_language_query)  # type: ignore[arg-type]
-            result_dict = cast(dict[str, Any], graph_data.model_dump())
+            graph_data = await self._query_tool.function(natural_language_query)
+            result_dict = graph_data.model_dump()
             logger.info(
-                f"[MCP] Query returned {len(result_dict.get('results', []))} results"
+                lg.MCP_QUERY_RESULTS.format(count=len(result_dict.get("results", [])))
             )
-            return result_dict
+            return cast(ResultType, result_dict)
         except Exception as e:
-            logger.error(f"[MCP] Error querying code graph: {e}", exc_info=True)
+            logger.error(lg.MCP_ERROR_QUERY.format(error=e), exc_info=True)
             return {
                 "error": str(e),
                 "query_used": "N/A",
                 "results": [],
-                "summary": f"Error executing query: {str(e)}",
+                "summary": cs.MCP_TOOL_EXEC_ERROR.format(name="query", error=e),
             }
 
-    async def get_code_snippet(self, qualified_name: str) -> dict[str, Any]:
-        logger.info(f"[MCP] get_code_snippet: {qualified_name}")
+    async def get_code_snippet(self, qualified_name: str) -> ResultType:
+        logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
             snippet = await self._code_tool.function(qualified_name=qualified_name)
             result = snippet.model_dump()
             if result is None:
                 return {
-                    "error": "Tool returned None",
+                    "error": te.MCP_TOOL_RETURNED_NONE,
                     "found": False,
-                    "error_message": "Code snippet tool returned an invalid response",
+                    "error_message": te.MCP_INVALID_RESPONSE,
                 }
-            return cast(dict[str, Any], result)
+            return cast(ResultType, result)
         except Exception as e:
-            logger.error(f"[MCP] Error retrieving code snippet: {e}")
+            logger.error(lg.MCP_ERROR_CODE_SNIPPET.format(error=e))
             return {
                 "error": str(e),
                 "found": False,
@@ -260,28 +271,28 @@ class MCPToolsRegistry:
     async def surgical_replace_code(
         self, file_path: str, target_code: str, replacement_code: str
     ) -> str:
-        logger.info(f"[MCP] surgical_replace_code in {file_path}")
+        logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
         try:
-            result = await self._file_editor_tool.function(  # type: ignore[call-arg]
+            result = await self._file_editor_tool.function(
                 file_path=file_path,
                 target_code=target_code,
                 replacement_code=replacement_code,
             )
             return cast(str, result)
         except Exception as e:
-            logger.error(f"[MCP] Error replacing code: {e}")
+            logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
 
     async def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
-        logger.info(f"[MCP] read_file: {file_path} (offset={offset}, limit={limit})")
+        logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         try:
             if offset is not None or limit is not None:
                 full_path = Path(self.project_root) / file_path
                 start = offset if offset is not None else 0
 
-                with open(full_path, encoding=ENCODING_UTF8) as f:
+                with open(full_path, encoding=cs.ENCODING_UTF8) as f:
                     skipped_count = sum(1 for _ in itertools.islice(f, start))
 
                     if limit is not None:
@@ -296,51 +307,55 @@ class MCPToolsRegistry:
                         skipped_count + len(sliced_lines) + remaining_lines_count
                     )
 
-                    header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
+                    header = cs.MCP_PAGINATION_HEADER.format(
+                        start=start + 1,
+                        end=start + len(sliced_lines),
+                        total=total_lines,
+                    )
                     return header + paginated_content
             else:
-                result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
+                result = await self._file_reader_tool.function(file_path=file_path)
                 return cast(str, result)
 
         except Exception as e:
-            logger.error(f"[MCP] Error reading file: {e}")
+            logger.error(lg.MCP_ERROR_READ.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
 
     async def write_file(self, file_path: str, content: str) -> str:
-        logger.info(f"[MCP] write_file: {file_path}")
+        logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
         try:
-            result = await self._file_writer_tool.function(  # type: ignore[call-arg]
+            result = await self._file_writer_tool.function(
                 file_path=file_path, content=content
             )
             if result.success:
-                return f"Successfully wrote file: {file_path}"
+                return cs.MCP_WRITE_SUCCESS.format(path=file_path)
             return te.ERROR_WRAPPER.format(message=result.error_message)
         except Exception as e:
-            logger.error(f"[MCP] Error writing file: {e}")
+            logger.error(lg.MCP_ERROR_WRITE.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
 
-    async def list_directory(self, directory_path: str = ".") -> str:
-        logger.info(f"[MCP] list_directory: {directory_path}")
+    async def list_directory(
+        self, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
+    ) -> str:
+        logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
-            result = self._directory_lister_tool.function(  # type: ignore[call-arg]
-                directory_path=directory_path
-            )
+            result = self._directory_lister_tool.function(directory_path=directory_path)
             return cast(str, result)
         except Exception as e:
-            logger.error(f"[MCP] Error listing directory: {e}")
+            logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
 
-    def get_tool_schemas(self) -> list[dict[str, Any]]:
+    def get_tool_schemas(self) -> list[ToolSchema]:
         return [
-            {
-                "name": metadata.name,
-                "description": metadata.description,
-                "inputSchema": metadata.input_schema,
-            }
+            ToolSchema(
+                name=metadata.name,
+                description=metadata.description,
+                inputSchema=metadata.input_schema,
+            )
             for metadata in self._tools.values()
         ]
 
-    def get_tool_handler(self, name: str) -> tuple[Callable[..., Any], bool] | None:
+    def get_tool_handler(self, name: str) -> tuple[HandlerType, bool] | None:
         metadata = self._tools.get(name)
         if metadata is None:
             return None

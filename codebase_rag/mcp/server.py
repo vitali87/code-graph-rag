@@ -8,6 +8,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from codebase_rag import constants as cs
+from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import create_mcp_tools_registry
@@ -19,39 +21,37 @@ def setup_logging() -> None:
     logger.remove()
     logger.add(
         sys.stderr,
-        level="INFO",
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        level=cs.MCP_LOG_LEVEL_INFO,
+        format=cs.MCP_LOG_FORMAT,
     )
 
 
 def get_project_root() -> Path:
     repo_path: str | None = (
-        os.environ.get("TARGET_REPO_PATH") or settings.TARGET_REPO_PATH
+        os.environ.get(cs.MCPEnvVar.TARGET_REPO_PATH) or settings.TARGET_REPO_PATH
     )
 
     if not repo_path:
-        repo_path = os.environ.get("CLAUDE_PROJECT_ROOT")
+        repo_path = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT)
 
         if not repo_path:
-            repo_path = os.environ.get("PWD")
+            repo_path = os.environ.get(cs.MCPEnvVar.PWD)
 
         if repo_path:
-            logger.info(f"[GraphCode MCP] Using inferred project root: {repo_path}")
+            logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=repo_path))
         else:
             repo_path = str(Path.cwd())
-            logger.info(
-                f"[GraphCode MCP] No project root configured, using current directory: {repo_path}"
-            )
+            logger.info(lg.MCP_SERVER_NO_ROOT.format(path=repo_path))
 
     project_root = Path(repo_path).resolve()
 
     if not project_root.exists():
-        raise ValueError(f"Target repository path does not exist: {project_root}")
+        raise ValueError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
 
     if not project_root.is_dir():
-        raise ValueError(f"Target repository path is not a directory: {project_root}")
+        raise ValueError(te.MCP_PATH_NOT_DIR.format(path=project_root))
 
-    logger.info(f"[GraphCode MCP] Project root resolved to: {project_root}")
+    logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
     return project_root
 
 
@@ -60,12 +60,12 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     try:
         project_root = get_project_root()
-        logger.info(f"[GraphCode MCP] Using project root: {project_root}")
+        logger.info(lg.MCP_SERVER_USING_ROOT.format(path=project_root))
     except ValueError as e:
-        logger.error(f"[GraphCode MCP] Configuration error: {e}")
+        logger.error(lg.MCP_SERVER_CONFIG_ERROR.format(error=e))
         raise
 
-    logger.info("[GraphCode MCP] Initializing services...")
+    logger.info(lg.MCP_SERVER_INIT_SERVICES)
 
     ingestor = MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
@@ -81,9 +81,9 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         cypher_gen=cypher_generator,
     )
 
-    logger.info("[GraphCode MCP] Services initialized successfully")
+    logger.info(lg.MCP_SERVER_INIT_SUCCESS)
 
-    server = Server("graph-code")
+    server = Server(cs.MCP_SERVER_NAME)
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -98,17 +98,18 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-        logger.info(f"[GraphCode MCP] Calling tool: {name}")
+    async def call_tool(name: str, arguments: dict[str, str]) -> list[TextContent]:
+        logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
             handler_info = tools.get_tool_handler(name)
             if not handler_info:
-                error_msg = f"Unknown tool: {name}"
-                logger.error(f"[GraphCode MCP] {error_msg}")
+                error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
+                logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
                 return [
                     TextContent(
-                        type="text", text=te.ERROR_WRAPPER.format(message=error_msg)
+                        type=cs.MCP_CONTENT_TYPE_TEXT,
+                        text=te.ERROR_WRAPPER.format(message=error_msg),
                     )
                 ]
 
@@ -117,18 +118,21 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             result = await handler(**arguments)
 
             if returns_json:
-                result_text = json.dumps(result, indent=2)
+                result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
             else:
                 result_text = str(result)
 
-            return [TextContent(type="text", text=result_text)]
+            return [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
 
         except Exception as e:
-            error_msg = f"Error executing tool '{name}': {e}"
-            logger.error(f"[GraphCode MCP] {error_msg}", exc_info=True)
+            error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
+            logger.error(
+                lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e), exc_info=True
+            )
             return [
                 TextContent(
-                    type="text", text=te.ERROR_WRAPPER.format(message=error_msg)
+                    type=cs.MCP_CONTENT_TYPE_TEXT,
+                    text=te.ERROR_WRAPPER.format(message=error_msg),
                 )
             ]
 
@@ -136,14 +140,16 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
 
 async def main() -> None:
-    logger.info("[GraphCode MCP] Starting MCP server...")
+    logger.info(lg.MCP_SERVER_STARTING)
 
     server, ingestor = create_server()
-    logger.info("[GraphCode MCP] Server created, starting stdio transport...")
+    logger.info(lg.MCP_SERVER_CREATED)
 
     with ingestor:
         logger.info(
-            f"[GraphCode MCP] Connected to Memgraph at {settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
+            lg.MCP_SERVER_CONNECTED.format(
+                host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+            )
         )
         try:
             async with stdio_server() as (read_stream, write_stream):
@@ -151,10 +157,10 @@ async def main() -> None:
                     read_stream, write_stream, server.create_initialization_options()
                 )
         except Exception as e:
-            logger.error(f"[GraphCode MCP] Fatal error: {e}")
+            logger.error(lg.MCP_SERVER_FATAL_ERROR.format(error=e))
             raise
         finally:
-            logger.info("[GraphCode MCP] Shutting down server...")
+            logger.info(lg.MCP_SERVER_SHUTDOWN)
 
 
 if __name__ == "__main__":

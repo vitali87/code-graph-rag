@@ -53,3 +53,9 @@ FILE_WRITER_CREATE = "Error creating file {path}: {error}"
 
 # (H) Export errors
 EXPORT_FAILED = "Failed to export graph: {error}"
+
+# (H) MCP tool errors
+MCP_TOOL_RETURNED_NONE = "Tool returned None"
+MCP_INVALID_RESPONSE = "Code snippet tool returned an invalid response"
+MCP_PATH_NOT_EXISTS = "Target repository path does not exist: {path}"
+MCP_PATH_NOT_DIR = "Target repository path is not a directory: {path}"
