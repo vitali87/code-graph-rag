@@ -478,6 +478,19 @@ INPLACE_FLAG = "--inplace"
 LANG_ATTR_PREFIX = "language_"
 LANG_ATTR_TYPESCRIPT = "language_typescript"
 
+
+class TreeSitterModule(StrEnum):
+    PYTHON = "tree_sitter_python"
+    JS = "tree_sitter_javascript"
+    TS = "tree_sitter_typescript"
+    RUST = "tree_sitter_rust"
+    GO = "tree_sitter_go"
+    SCALA = "tree_sitter_scala"
+    JAVA = "tree_sitter_java"
+    CPP = "tree_sitter_cpp"
+    LUA = "tree_sitter_lua"
+
+
 # (H) Query dict keys
 QUERY_FUNCTIONS = "functions"
 QUERY_CLASSES = "classes"
