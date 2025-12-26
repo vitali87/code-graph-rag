@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
+
+from tree_sitter import Node
+
 from ... import constants as cs
 from ...models import MethodModifiersAndAnnotations
 from ...types_defs import (
@@ -11,6 +16,54 @@ from ...types_defs import (
     JavaMethodInfo,
 )
 from ..utils import safe_decode_text
+
+if TYPE_CHECKING:
+    from ...types_defs import ASTCacheProtocol
+
+
+class ClassContext(NamedTuple):
+    module_qn: str
+    target_class_name: str
+    root_node: Node
+
+
+def get_root_node_from_module_qn(
+    module_qn: str,
+    module_qn_to_file_path: dict[str, Path],
+    ast_cache: ASTCacheProtocol,
+    min_parts: int = 2,
+) -> Node | None:
+    parts = module_qn.split(cs.SEPARATOR_DOT)
+    if len(parts) < min_parts:
+        return None
+
+    file_path = module_qn_to_file_path.get(module_qn)
+    if file_path is None or file_path not in ast_cache:
+        return None
+
+    root_node, _ = ast_cache[file_path]
+    return root_node
+
+
+def get_class_context_from_qn(
+    class_qn: str,
+    module_qn_to_file_path: dict[str, Path],
+    ast_cache: ASTCacheProtocol,
+) -> ClassContext | None:
+    parts = class_qn.split(cs.SEPARATOR_DOT)
+    if len(parts) < 2:
+        return None
+
+    module_qn = cs.SEPARATOR_DOT.join(parts[:-1])
+    target_class_name = parts[-1]
+
+    root_node = get_root_node_from_module_qn(
+        module_qn, module_qn_to_file_path, ast_cache, min_parts=1
+    )
+    if root_node is None:
+        return None
+
+    return ClassContext(module_qn, target_class_name, root_node)
 
 
 def extract_package_name(package_node: ASTNode) -> str | None:

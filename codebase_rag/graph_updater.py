@@ -278,6 +278,38 @@ class GraphUpdater:
 
         self._generate_semantic_embeddings()
 
+    def remove_file_from_state(self, file_path: Path) -> None:
+        logger.debug(ls.REMOVING_STATE.format(path=file_path))
+
+        if file_path in self.ast_cache:
+            del self.ast_cache[file_path]
+            logger.debug(ls.REMOVED_FROM_CACHE)
+
+        relative_path = file_path.relative_to(self.repo_path)
+        path_parts = (
+            relative_path.parent.parts
+            if file_path.name == cs.INIT_PY
+            else relative_path.with_suffix("").parts
+        )
+        module_qn_prefix = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
+
+        qns_to_remove = set()
+
+        for qn in list(self.function_registry.keys()):
+            if qn.startswith(f"{module_qn_prefix}.") or qn == module_qn_prefix:
+                qns_to_remove.add(qn)
+                del self.function_registry[qn]
+
+        if qns_to_remove:
+            logger.debug(ls.REMOVING_QNS.format(count=len(qns_to_remove)))
+
+        for simple_name, qn_set in self.simple_name_lookup.items():
+            original_count = len(qn_set)
+            new_qn_set = qn_set - qns_to_remove
+            if len(new_qn_set) < original_count:
+                self.simple_name_lookup[simple_name] = new_qn_set
+                logger.debug(ls.CLEANED_SIMPLE_NAME.format(name=simple_name))
+
     def _process_files(self) -> None:
         def should_skip_path(path: Path) -> bool:
             return any(

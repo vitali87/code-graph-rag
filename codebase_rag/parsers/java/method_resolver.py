@@ -10,7 +10,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import NodeType
 from ..utils import safe_decode_text
-from .utils import extract_method_call_info
+from .utils import extract_method_call_info, get_class_context_from_qn
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -241,21 +241,14 @@ class JavaMethodResolverMixin:
         if not class_qn or not method_name:
             return None
 
-        parts = class_qn.split(cs.SEPARATOR_DOT)
-        if len(parts) < 2:
+        ctx = get_class_context_from_qn(
+            class_qn, self.module_qn_to_file_path, self.ast_cache
+        )
+        if not ctx:
             return None
-
-        module_qn = cs.SEPARATOR_DOT.join(parts[:-1])
-        target_class_name = parts[-1]
-
-        file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in self.ast_cache:
-            return None
-
-        root_node, _ = self.ast_cache[file_path]
 
         return self._find_method_return_type_in_ast(
-            root_node, target_class_name, method_name, module_qn
+            ctx.root_node, ctx.target_class_name, method_name, ctx.module_qn
         )
 
     def _find_method_return_type_in_ast(

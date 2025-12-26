@@ -1,7 +1,23 @@
-from tree_sitter import Node
+from typing import TYPE_CHECKING
+
+from tree_sitter import Language, Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+
+if TYPE_CHECKING:
+    from ...types_defs import LanguageQueries
+
+
+def get_js_ts_language_obj(
+    language: cs.SupportedLanguage,
+    queries: dict[cs.SupportedLanguage, "LanguageQueries"],
+) -> Language | None:
+    if language not in cs.JS_TS_LANGUAGES:
+        return None
+
+    lang_queries = queries[language]
+    return lang_queries.get(cs.QUERY_LANGUAGE)
 
 
 def _extract_class_qn(method_qn: str) -> str | None:

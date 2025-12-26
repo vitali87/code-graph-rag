@@ -14,6 +14,7 @@ from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
+from .utils import get_function_captures, is_method_node
 
 
 class CallProcessor:
@@ -78,14 +79,11 @@ class CallProcessor:
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        lang_queries = queries[language]
-        lang_config: LanguageSpec = lang_queries["config"]
-
-        query = lang_queries["functions"]
-        if not query:
+        result = get_function_captures(root_node, language, queries)
+        if not result:
             return
-        cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+
+        lang_config, captures = result
         func_nodes = captures.get("function", [])
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
@@ -348,12 +346,4 @@ class CallProcessor:
         return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
-        current = func_node.parent
-        if not isinstance(current, Node):
-            return False
-
-        while current and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.class_node_types:
-                return True
-            current = current.parent
-        return False
+        return is_method_node(func_node, lang_config)

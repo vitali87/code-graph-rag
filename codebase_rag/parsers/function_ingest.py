@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node
 
 from ..constants import SEPARATOR_DOT, SupportedLanguage
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
@@ -14,7 +14,7 @@ from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
-from .utils import safe_decode_text
+from .utils import get_function_captures, is_method_node, safe_decode_text
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -45,15 +45,11 @@ class FunctionIngestMixin:
         language: SupportedLanguage,
         queries: dict[SupportedLanguage, LanguageQueries],
     ) -> None:
-        lang_queries = queries[language]
-        lang_config: LanguageSpec = lang_queries["config"]
-
-        query = lang_queries["functions"]
-        if not query:
+        result = get_function_captures(root_node, language, queries)
+        if not result:
             return
 
-        cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        lang_config, captures = result
         file_path = self.module_qn_to_file_path.get(module_qn)
 
         for func_node in captures.get("function", []):
@@ -385,15 +381,7 @@ class FunctionIngestMixin:
         return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
-        current = func_node.parent
-        if not isinstance(current, Node):
-            return False
-
-        while current and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.class_node_types:
-                return True
-            current = current.parent
-        return False
+        return is_method_node(func_node, lang_config)
 
     def _determine_function_parent(
         self, func_node: Node, module_qn: str, lang_config: LanguageSpec

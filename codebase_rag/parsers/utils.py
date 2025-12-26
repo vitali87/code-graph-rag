@@ -1,12 +1,13 @@
 from collections.abc import Callable
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
-from ..constants import ENCODING_UTF8
+from ..constants import ENCODING_UTF8, SupportedLanguage
 from ..types_defs import (
+    LanguageQueries,
     NodeType,
     PropertyDict,
     SimpleNameLookup,
@@ -16,8 +17,31 @@ from ..types_defs import (
 if TYPE_CHECKING:
     from tree_sitter import Query
 
+    from ..language_spec import LanguageSpec
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
+
+
+class FunctionCapturesResult(NamedTuple):
+    lang_config: "LanguageSpec"
+    captures: dict[str, list[Node]]
+
+
+def get_function_captures(
+    root_node: Node,
+    language: SupportedLanguage,
+    queries: dict[SupportedLanguage, LanguageQueries],
+) -> FunctionCapturesResult | None:
+    lang_queries = queries[language]
+    lang_config = lang_queries["config"]
+
+    query = lang_queries["functions"]
+    if not query:
+        return None
+
+    cursor = QueryCursor(query)
+    captures = cursor.captures(root_node)
+    return FunctionCapturesResult(lang_config, captures)
 
 
 @lru_cache(maxsize=10000)
@@ -134,3 +158,15 @@ def ingest_exported_function(
     ingestor.ensure_node_batch("Function", function_props)
     function_registry[function_qn] = NodeType.FUNCTION
     simple_name_lookup[function_name].add(function_qn)
+
+
+def is_method_node(func_node: Node, lang_config: "LanguageSpec") -> bool:
+    current = func_node.parent
+    if not isinstance(current, Node):
+        return False
+
+    while current and current.type not in lang_config.module_node_types:
+        if current.type in lang_config.class_node_types:
+            return True
+        current = current.parent
+    return False

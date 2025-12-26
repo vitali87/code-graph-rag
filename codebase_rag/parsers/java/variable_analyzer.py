@@ -6,7 +6,12 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ..utils import safe_decode_text
-from .utils import extract_class_info, extract_field_info, extract_method_call_info
+from .utils import (
+    extract_class_info,
+    extract_field_info,
+    extract_method_call_info,
+    get_root_node_from_module_qn,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -413,15 +418,12 @@ class JavaVariableAnalyzerMixin:
             self._lookup_in_progress.discard(cache_key)
 
     def _do_variable_type_lookup(self, var_name: str, module_qn: str) -> str | None:
-        module_parts = module_qn.split(cs.SEPARATOR_DOT)
-        if len(module_parts) < 2:
+        root_node = get_root_node_from_module_qn(
+            module_qn, self.module_qn_to_file_path, self.ast_cache
+        )
+        if not root_node:
             return None
 
-        file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in self.ast_cache:
-            return None
-
-        root_node, _ = self.ast_cache[file_path]
         variable_types = self.build_variable_type_map(root_node, module_qn)
 
         this_var = f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}{var_name}"

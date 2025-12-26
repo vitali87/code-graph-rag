@@ -664,19 +664,10 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
-    from .providers.base import get_provider
+    from .providers.base import get_provider_from_config
 
     try:
-        provider = get_provider(
-            config.provider,
-            api_key=config.api_key,
-            endpoint=config.endpoint,
-            project_id=config.project_id,
-            region=config.region,
-            provider_type=config.provider_type,
-            thinking_budget=config.thinking_budget,
-            service_account_file=config.service_account_file,
-        )
+        provider = get_provider_from_config(config)
         provider.validate_config()
     except Exception as e:
         raise ValueError(ex.CONFIG.format(role=role.value.title(), error=e)) from e

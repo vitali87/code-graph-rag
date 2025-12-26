@@ -13,7 +13,7 @@ from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvide
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
-from ..config import settings
+from ..config import ModelConfig, settings
 
 
 class ModelProvider(ABC):
@@ -173,6 +173,19 @@ def get_provider(
 
     provider_class = PROVIDER_REGISTRY[provider_key]
     return provider_class(**config)
+
+
+def get_provider_from_config(config: ModelConfig) -> ModelProvider:
+    return get_provider(
+        config.provider,
+        api_key=config.api_key,
+        endpoint=config.endpoint,
+        project_id=config.project_id,
+        region=config.region,
+        provider_type=config.provider_type,
+        thinking_budget=config.thinking_budget,
+        service_account_file=config.service_account_file,
+    )
 
 
 def register_provider(name: str, provider_class: type[ModelProvider]) -> None:

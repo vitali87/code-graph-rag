@@ -14,22 +14,14 @@ from ..prompts import (
     LOCAL_CYPHER_SYSTEM_PROMPT,
     build_rag_orchestrator_prompt,
 )
-from ..providers.base import get_provider
+from ..providers.base import get_provider_from_config
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
 
 def _create_provider_model(config: ModelConfig) -> Model:
-    provider = get_provider(
-        config.provider,
-        api_key=config.api_key,
-        endpoint=config.endpoint,
-        project_id=config.project_id,
-        region=config.region,
-        provider_type=config.provider_type,
-        thinking_budget=config.thinking_budget,
-    )
+    provider = get_provider_from_config(config)
     return provider.create_model(config.model_id)
 
 

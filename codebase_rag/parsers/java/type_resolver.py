@@ -5,7 +5,12 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import NodeType
-from .utils import find_package_start_index, safe_decode_text
+from .utils import (
+    find_package_start_index,
+    get_class_context_from_qn,
+    get_root_node_from_module_qn,
+    safe_decode_text,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -131,20 +136,15 @@ class JavaTypeResolverMixin:
         return type_name
 
     def _get_superclass_name(self, class_qn: str) -> str | None:
-        parts = class_qn.split(cs.SEPARATOR_DOT)
-        if len(parts) < 2:
+        ctx = get_class_context_from_qn(
+            class_qn, self.module_qn_to_file_path, self.ast_cache
+        )
+        if not ctx:
             return None
 
-        module_qn = cs.SEPARATOR_DOT.join(parts[:-1])
-        target_class_name = parts[-1]
-
-        file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in self.ast_cache:
-            return None
-
-        root_node, _ = self.ast_cache[file_path]
-
-        return self._find_superclass_using_ast(root_node, target_class_name, module_qn)
+        return self._find_superclass_using_ast(
+            ctx.root_node, ctx.target_class_name, ctx.module_qn
+        )
 
     def _find_superclass_using_ast(
         self, node: Node, target_class_name: str, module_qn: str
@@ -229,15 +229,11 @@ class JavaTypeResolverMixin:
                 self._extract_interface_names(child, interface_list, module_qn)
 
     def _get_current_class_name(self, module_qn: str) -> str | None:
-        module_parts = module_qn.split(cs.SEPARATOR_DOT)
-        if len(module_parts) < 2:
+        root_node = get_root_node_from_module_qn(
+            module_qn, self.module_qn_to_file_path, self.ast_cache
+        )
+        if not root_node:
             return None
-
-        file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in self.ast_cache:
-            return None
-
-        root_node, _ = self.ast_cache[file_path]
 
         class_names: list[str] = []
         self._traverse_for_class_declarations(root_node, class_names)

@@ -15,6 +15,7 @@ from ..utils import (
     safe_decode_text,
     safe_decode_with_fallback,
 )
+from .utils import get_js_ts_language_obj
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -47,12 +48,7 @@ class JsTsModuleSystemMixin:
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        if language not in cs.JS_TS_LANGUAGES:
-            return
-
-        lang_queries = queries[language]
-
-        language_obj = lang_queries.get(cs.QUERY_LANGUAGE)
+        language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
             return
 
