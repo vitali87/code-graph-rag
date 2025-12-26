@@ -18,8 +18,8 @@ class JavaHandler(BaseLanguageHandler):
         method_node: ASTNode,
     ) -> str:
         if (method_info := java_utils.extract_method_info(method_node)) and method_info[
-            "parameters"
+            cs.FIELD_PARAMETERS
         ]:
-            param_sig = ", ".join(method_info["parameters"])
+            param_sig = cs.SEPARATOR_COMMA_SPACE.join(method_info[cs.FIELD_PARAMETERS])
             return f"{class_qn}{cs.SEPARATOR_DOT}{method_name}({param_sig})"
         return f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"

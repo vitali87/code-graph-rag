@@ -94,11 +94,10 @@ class JsTsHandler(BaseLanguageHandler):
                 elif name := self.extract_function_name(current):
                     path_parts.append(name)
             elif current.type in lang_config.class_node_types:
-                if self.is_inside_method_with_object_literals(func_node):
-                    if name := self._extract_node_name(current):
-                        path_parts.append(name)
-                else:
+                if not self.is_inside_method_with_object_literals(func_node):
                     return None
+                if name := self._extract_node_name(current):
+                    path_parts.append(name)
             elif current.type == cs.TS_METHOD_DEFINITION:
                 if name := self._extract_node_name(current):
                     path_parts.append(name)
