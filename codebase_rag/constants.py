@@ -437,6 +437,7 @@ FIELD_LEFT = "left"
 FIELD_RIGHT = "right"
 FIELD_FIELD = "field"
 FIELD_SUPERCLASS = "superclass"
+FIELD_SUPERCLASSES = "superclasses"
 FIELD_INTERFACES = "interfaces"
 
 # (H) Method name constants for getattr/hasattr
@@ -1376,6 +1377,10 @@ TS_METHOD_DEFINITION = "method_definition"
 TS_ERROR = "ERROR"
 TS_EXPRESSION_STATEMENT = "expression_statement"
 TS_STATEMENT_BLOCK = "statement_block"
+TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_ATTRIBUTE = "attribute"
+
+FIELD_OPERATOR = "operator"
 
 # (H) Derived node type tuples for class ingestion
 CPP_CLASS_TYPES = (CppNodeType.CLASS_SPECIFIER, TS_STRUCT_SPECIFIER)

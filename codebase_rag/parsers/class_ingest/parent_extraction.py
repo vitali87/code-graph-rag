@@ -124,7 +124,7 @@ def extract_java_superclass(
     module_qn: str,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
-    superclass_node = class_node.child_by_field_name("superclass")
+    superclass_node = class_node.child_by_field_name(cs.FIELD_SUPERCLASS)
     if not superclass_node:
         return []
 
@@ -150,7 +150,7 @@ def extract_python_superclasses(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
-    superclasses_node = class_node.child_by_field_name("superclasses")
+    superclasses_node = class_node.child_by_field_name(cs.FIELD_SUPERCLASSES)
     if not superclasses_node:
         return []
 
@@ -304,7 +304,7 @@ def extract_implemented_interfaces(
 ) -> list[str]:
     implemented_interfaces: list[str] = []
 
-    interfaces_node = class_node.child_by_field_name("interfaces")
+    interfaces_node = class_node.child_by_field_name(cs.FIELD_INTERFACES)
     if interfaces_node:
         extract_java_interface_names(
             interfaces_node, implemented_interfaces, module_qn, resolve_to_qn
