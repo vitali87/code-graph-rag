@@ -13,6 +13,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
@@ -22,9 +23,7 @@ from codebase_rag.tools.directory_lister import (
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
-
-from . import tool_descriptions as td
-from .types_defs import ToolSchema
+from codebase_rag.types_defs import MCPToolSchema
 
 ResultType = str | dict[str, str | bool | list[str] | None]
 HandlerType = Callable[..., Awaitable[ResultType]]
@@ -72,7 +71,7 @@ class MCPToolsRegistry:
         self._tools: dict[str, ToolMetadata] = {
             cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
                 name=cs.MCPToolName.INDEX_REPOSITORY,
-                description=td.INDEX_REPOSITORY,
+                description=td.MCP_INDEX_REPOSITORY,
                 input_schema={
                     cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
                     cs.MCPSchemaField.PROPERTIES: {},
@@ -83,13 +82,13 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
-                description=td.QUERY_CODE_GRAPH,
+                description=td.MCP_QUERY_CODE_GRAPH,
                 input_schema={
                     cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
                     cs.MCPSchemaField.PROPERTIES: {
                         cs.MCPParamName.NATURAL_LANGUAGE_QUERY: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_NATURAL_LANGUAGE_QUERY,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
                         }
                     },
                     cs.MCPSchemaField.REQUIRED: [
@@ -101,13 +100,13 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
                 name=cs.MCPToolName.GET_CODE_SNIPPET,
-                description=td.GET_CODE_SNIPPET,
+                description=td.MCP_GET_CODE_SNIPPET,
                 input_schema={
                     cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
                     cs.MCPSchemaField.PROPERTIES: {
                         cs.MCPParamName.QUALIFIED_NAME: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_QUALIFIED_NAME,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_QUALIFIED_NAME,
                         }
                     },
                     cs.MCPSchemaField.REQUIRED: [cs.MCPParamName.QUALIFIED_NAME],
@@ -117,21 +116,21 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
                 name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
-                description=td.SURGICAL_REPLACE_CODE,
+                description=td.MCP_SURGICAL_REPLACE_CODE,
                 input_schema={
                     cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
                     cs.MCPSchemaField.PROPERTIES: {
                         cs.MCPParamName.FILE_PATH: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_FILE_PATH,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_FILE_PATH,
                         },
                         cs.MCPParamName.TARGET_CODE: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_TARGET_CODE,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_TARGET_CODE,
                         },
                         cs.MCPParamName.REPLACEMENT_CODE: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_REPLACEMENT_CODE,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_REPLACEMENT_CODE,
                         },
                     },
                     cs.MCPSchemaField.REQUIRED: [
@@ -145,21 +144,21 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.READ_FILE: ToolMetadata(
                 name=cs.MCPToolName.READ_FILE,
-                description=td.READ_FILE,
+                description=td.MCP_READ_FILE,
                 input_schema={
                     cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
                     cs.MCPSchemaField.PROPERTIES: {
                         cs.MCPParamName.FILE_PATH: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_FILE_PATH,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_FILE_PATH,
                         },
                         cs.MCPParamName.OFFSET: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.INTEGER,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_OFFSET,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_OFFSET,
                         },
                         cs.MCPParamName.LIMIT: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.INTEGER,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_LIMIT,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_LIMIT,
                         },
                     },
                     cs.MCPSchemaField.REQUIRED: [cs.MCPParamName.FILE_PATH],
@@ -169,17 +168,17 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.WRITE_FILE: ToolMetadata(
                 name=cs.MCPToolName.WRITE_FILE,
-                description=td.WRITE_FILE,
+                description=td.MCP_WRITE_FILE,
                 input_schema={
                     cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
                     cs.MCPSchemaField.PROPERTIES: {
                         cs.MCPParamName.FILE_PATH: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_FILE_PATH,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_FILE_PATH,
                         },
                         cs.MCPParamName.CONTENT: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_CONTENT,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_CONTENT,
                         },
                     },
                     cs.MCPSchemaField.REQUIRED: [
@@ -192,13 +191,13 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
                 name=cs.MCPToolName.LIST_DIRECTORY,
-                description=td.LIST_DIRECTORY,
+                description=td.MCP_LIST_DIRECTORY,
                 input_schema={
                     cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
                     cs.MCPSchemaField.PROPERTIES: {
                         cs.MCPParamName.DIRECTORY_PATH: {
                             cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.PARAM_DIRECTORY_PATH,
+                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_DIRECTORY_PATH,
                             cs.MCPSchemaField.DEFAULT: cs.MCP_DEFAULT_DIRECTORY,
                         }
                     },
@@ -345,9 +344,9 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
 
-    def get_tool_schemas(self) -> list[ToolSchema]:
+    def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [
-            ToolSchema(
+            MCPToolSchema(
                 name=metadata.name,
                 description=metadata.description,
                 inputSchema=metadata.input_schema,

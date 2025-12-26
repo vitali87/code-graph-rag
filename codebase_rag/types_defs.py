@@ -318,6 +318,12 @@ class FunctionNodeProps(TypedDict, total=False):
     docstring: str | None
 
 
+class MCPToolSchema(TypedDict):
+    name: str
+    description: str
+    inputSchema: dict[str, str | dict[str, str | dict[str, str]] | list[str]]
+
+
 class NodeSchema(NamedTuple):
     label: NodeLabel
     properties: str
