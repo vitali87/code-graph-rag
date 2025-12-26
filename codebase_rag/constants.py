@@ -1546,6 +1546,11 @@ PY_CLASS_REPOSITORY = "Repository"
 PY_MODELS_BASE_PATH = ".models.base."
 PY_METHOD_CREATE = "create"
 
+# (H) Type inference scoring
+PY_SCORE_EXACT_MATCH = 100
+PY_SCORE_SUFFIX_MATCH = 90
+PY_SCORE_CONTAINS_BASE = 80
+
 # (H) Type inference defaults
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
@@ -1717,3 +1722,31 @@ CAPTURE_MODULE_OBJ = "module_obj"
 CAPTURE_EXPORTS_PROP = "exports_prop"
 CAPTURE_EXPORT_NAME = "export_name"
 CAPTURE_EXPORT_FUNCTION = "export_function"
+
+# (H) Tree-sitter Rust node types
+TS_RS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
+TS_RS_USE_AS_CLAUSE = "use_as_clause"
+TS_RS_USE_WILDCARD = "use_wildcard"
+TS_RS_USE_LIST = "use_list"
+TS_RS_SCOPED_USE_LIST = "scoped_use_list"
+TS_RS_SOURCE_FILE = "source_file"
+TS_RS_MOD_ITEM = "mod_item"
+TS_RS_CRATE = "crate"
+TS_RS_KEYWORD_AS = "as"
+
+# (H) Rust identifier tuples
+RS_IDENTIFIER_TYPES = (TS_IDENTIFIER, TS_TYPE_IDENTIFIER)
+RS_SCOPED_TYPES = (TS_SCOPED_IDENTIFIER, TS_RS_SCOPED_TYPE_IDENTIFIER)
+RS_PATH_KEYWORDS = (TS_RS_CRATE, KEYWORD_SUPER, KEYWORD_SELF)
+
+# (H) Delimiter tokens for Rust use lists
+RS_USE_LIST_DELIMITERS = frozenset({"{", "}", ","})
+
+# (H) Rust encoding
+RS_ENCODING_UTF8 = "utf8"
+
+# (H) Rust wildcard prefix
+RS_WILDCARD_PREFIX = "*"
+
+# (H) Rust field names
+RS_FIELD_ARGUMENT = "argument"
