@@ -108,6 +108,8 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.2",
+    "coverage>=7.13.0",
     "pyinstaller>=6.14.1",
     "pylint>=4.0.4",
     "radon>=6.0.1",
