@@ -2,7 +2,6 @@ import itertools
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 from loguru import logger
 
@@ -23,18 +22,23 @@ from codebase_rag.tools.directory_lister import (
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
-from codebase_rag.types_defs import MCPToolSchema
+from codebase_rag.types_defs import (
+    CodeSnippetResultDict,
+    MCPInputSchemaDict,
+    MCPToolSchema,
+    QueryResultDict,
+)
 
-ResultType = str | dict[str, str | bool | list[str] | None]
-HandlerType = Callable[..., Awaitable[ResultType]]
+MCPResultType = str | QueryResultDict | CodeSnippetResultDict
+MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
 
 
 @dataclass
 class ToolMetadata:
     name: str
     description: str
-    input_schema: dict[str, str | dict[str, str | dict[str, str]] | list[str]]
-    handler: HandlerType
+    input_schema: MCPInputSchemaDict
+    handler: MCPHandlerType
     returns_json: bool
 
 
@@ -229,43 +233,41 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)
 
-    async def query_code_graph(self, natural_language_query: str) -> ResultType:
+    async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
             graph_data = await self._query_tool.function(natural_language_query)
-            result_dict = graph_data.model_dump()
+            result_dict: QueryResultDict = graph_data.model_dump()
             logger.info(
-                lg.MCP_QUERY_RESULTS.format(count=len(result_dict.get("results", [])))
+                lg.MCP_QUERY_RESULTS.format(
+                    count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))
+                )
             )
-            return cast(ResultType, result_dict)
+            return result_dict
         except Exception as e:
             logger.error(lg.MCP_ERROR_QUERY.format(error=e), exc_info=True)
-            return {
-                "error": str(e),
-                "query_used": "N/A",
-                "results": [],
-                "summary": cs.MCP_TOOL_EXEC_ERROR.format(name="query", error=e),
-            }
+            return QueryResultDict(
+                error=str(e),
+                query_used=cs.QUERY_NOT_AVAILABLE,
+                results=[],
+                summary=cs.MCP_TOOL_EXEC_ERROR.format(
+                    name=cs.MCPToolName.QUERY_CODE_GRAPH, error=e
+                ),
+            )
 
-    async def get_code_snippet(self, qualified_name: str) -> ResultType:
+    async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
             snippet = await self._code_tool.function(qualified_name=qualified_name)
-            result = snippet.model_dump()
-            if result is None:
-                return {
-                    "error": te.MCP_TOOL_RETURNED_NONE,
-                    "found": False,
-                    "error_message": te.MCP_INVALID_RESPONSE,
-                }
-            return cast(ResultType, result)
+            result: CodeSnippetResultDict = snippet.model_dump()
+            return result
         except Exception as e:
             logger.error(lg.MCP_ERROR_CODE_SNIPPET.format(error=e))
-            return {
-                "error": str(e),
-                "found": False,
-                "error_message": str(e),
-            }
+            return CodeSnippetResultDict(
+                error=str(e),
+                found=False,
+                error_message=str(e),
+            )
 
     async def surgical_replace_code(
         self, file_path: str, target_code: str, replacement_code: str
@@ -277,7 +279,7 @@ class MCPToolsRegistry:
                 target_code=target_code,
                 replacement_code=replacement_code,
             )
-            return cast(str, result)
+            return str(result)
         except Exception as e:
             logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
@@ -314,7 +316,7 @@ class MCPToolsRegistry:
                     return header + paginated_content
             else:
                 result = await self._file_reader_tool.function(file_path=file_path)
-                return cast(str, result)
+                return str(result)
 
         except Exception as e:
             logger.error(lg.MCP_ERROR_READ.format(error=e))
@@ -339,7 +341,7 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
             result = self._directory_lister_tool.function(directory_path=directory_path)
-            return cast(str, result)
+            return str(result)
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
@@ -354,7 +356,7 @@ class MCPToolsRegistry:
             for metadata in self._tools.values()
         ]
 
-    def get_tool_handler(self, name: str) -> tuple[HandlerType, bool] | None:
+    def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
         if metadata is None:
             return None

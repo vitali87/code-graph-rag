@@ -15,6 +15,7 @@ from codebase_rag.config import settings
 from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.types_defs import MCPToolArguments
 
 
 def setup_logging() -> None:
@@ -85,6 +86,14 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     server = Server(cs.MCP_SERVER_NAME)
 
+    def _create_error_content(message: str) -> list[TextContent]:
+        return [
+            TextContent(
+                type=cs.MCP_CONTENT_TYPE_TEXT,
+                text=te.ERROR_WRAPPER.format(message=message),
+            )
+        ]
+
     @server.list_tools()
     async def list_tools() -> list[Tool]:
         schemas = tools.get_tool_schemas()
@@ -98,7 +107,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, str]) -> list[TextContent]:
+    async def call_tool(name: str, arguments: MCPToolArguments) -> list[TextContent]:
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
@@ -106,12 +115,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             if not handler_info:
                 error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
                 logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
-                return [
-                    TextContent(
-                        type=cs.MCP_CONTENT_TYPE_TEXT,
-                        text=te.ERROR_WRAPPER.format(message=error_msg),
-                    )
-                ]
+                return _create_error_content(error_msg)
 
             handler, returns_json = handler_info
 
@@ -129,12 +133,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             logger.error(
                 lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e), exc_info=True
             )
-            return [
-                TextContent(
-                    type=cs.MCP_CONTENT_TYPE_TEXT,
-                    text=te.ERROR_WRAPPER.format(message=error_msg),
-                )
-            ]
+            return _create_error_content(error_msg)
 
     return server, ingestor
 

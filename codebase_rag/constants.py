@@ -657,6 +657,7 @@ SHELL_RETURN_CODE_ERROR = -1
 
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
+DICT_KEY_RESULTS = "results"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
@@ -1815,3 +1816,13 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+
+# (H) MCP dict keys and values
+MCP_KEY_RESULTS = "results"
+MCP_KEY_ERROR = "error"
+MCP_KEY_FOUND = "found"
+MCP_KEY_ERROR_MESSAGE = "error_message"
+MCP_KEY_QUERY_USED = "query_used"
+MCP_KEY_SUMMARY = "summary"
+MCP_NOT_AVAILABLE = "N/A"
+MCP_TOOL_NAME_QUERY = "query"

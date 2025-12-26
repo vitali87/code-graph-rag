@@ -318,10 +318,50 @@ class FunctionNodeProps(TypedDict, total=False):
     docstring: str | None
 
 
+MCPToolArguments = dict[str, str | int | None]
+
+
+class MCPInputSchemaProperty(TypedDict, total=False):
+    type: str
+    description: str
+    default: str
+
+
+MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
+
+
+class MCPInputSchema(TypedDict):
+    type: str
+    properties: MCPInputSchemaProperties
+    required: list[str]
+
+
+MCPInputSchemaDict = dict[str, str | MCPInputSchemaProperties | list[str]]
+
+
 class MCPToolSchema(TypedDict):
     name: str
     description: str
-    inputSchema: dict[str, str | dict[str, str | dict[str, str]] | list[str]]
+    inputSchema: MCPInputSchemaDict
+
+
+class QueryResultDict(TypedDict, total=False):
+    query_used: str
+    results: list[ResultRow]
+    summary: str
+    error: str
+
+
+class CodeSnippetResultDict(TypedDict, total=False):
+    qualified_name: str
+    source_code: str
+    file_path: str
+    line_start: int
+    line_end: int
+    docstring: str | None
+    found: bool
+    error_message: str | None
+    error: str
 
 
 class NodeSchema(NamedTuple):
