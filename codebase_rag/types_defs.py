@@ -339,7 +339,7 @@ class MCPInputSchema(TypedDict):
 MCPInputSchemaDict = dict[str, str | MCPInputSchemaProperties | list[str]]
 
 
-class MCPToolSchema(TypedDict):
+class MCPToolSchema(NamedTuple):
     name: str
     description: str
     inputSchema: MCPInputSchemaDict

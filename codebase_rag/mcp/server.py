@@ -33,10 +33,9 @@ def get_project_root() -> Path:
     )
 
     if not repo_path:
-        repo_path = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT)
-
-        if not repo_path:
-            repo_path = os.environ.get(cs.MCPEnvVar.PWD)
+        repo_path = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT) or os.environ.get(
+            cs.MCPEnvVar.PWD
+        )
 
         if repo_path:
             logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=repo_path))
@@ -99,9 +98,9 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         schemas = tools.get_tool_schemas()
         return [
             Tool(
-                name=schema["name"],
-                description=schema["description"],
-                inputSchema=schema["inputSchema"],
+                name=schema.name,
+                description=schema.description,
+                inputSchema=schema.inputSchema,
             )
             for schema in schemas
         ]

@@ -351,9 +351,7 @@ class MCPToolsRegistry:
 
     def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
-        if metadata is None:
-            return None
-        return (metadata.handler, metadata.returns_json)
+        return None if metadata is None else (metadata.handler, metadata.returns_json)
 
 
 def create_mcp_tools_registry(
