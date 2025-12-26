@@ -66,20 +66,23 @@ def analyze_graph(graph_file: str) -> None:
     logger.info(logs.GRAPH_ANALYZING.format(path=graph_file))
 
     try:
-        graph = load_graph(graph_file)
-        summary = graph.summary()
-
-        log_summary(summary)
-        log_node_and_relationship_types(summary)
-
-        log_example_nodes(graph, NodeLabel.FUNCTION)
-        log_example_nodes(graph, NodeLabel.CLASS)
-
-        logger.success(logs.GRAPH_ANALYSIS_COMPLETE)
-
+        _perform_graph_analysis(graph_file)
     except Exception as e:
         logger.error(logs.GRAPH_ANALYSIS_ERROR.format(error=e))
         sys.exit(1)
+
+
+def _perform_graph_analysis(graph_file: str) -> None:
+    graph = load_graph(graph_file)
+    summary = graph.summary()
+
+    log_summary(summary)
+    log_node_and_relationship_types(summary)
+
+    log_example_nodes(graph, NodeLabel.FUNCTION)
+    log_example_nodes(graph, NodeLabel.CLASS)
+
+    logger.success(logs.GRAPH_ANALYSIS_COMPLETE)
 
 
 def main(
