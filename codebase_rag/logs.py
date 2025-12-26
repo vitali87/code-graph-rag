@@ -24,6 +24,20 @@ REMOVED_FROM_CACHE = "  - Removed from ast_cache"
 REMOVING_QNS = "  - Removing {count} QNs from function_registry"
 CLEANED_SIMPLE_NAME = "  - Cleaned simple_name '{name}'"
 
+# (H) Function ingest logs
+FUNC_FOUND = "  Found Function: {name} (qn: {qn})"
+FUNC_EXPECTED_NODE = "Expected Node but got {actual_type}: {value}"
+METHOD_FOUND = "    Found Method: {name} (qn: {qn})"
+EXPORT_FOUND = "  Found {export_type}: {name} (qn: {qn})"
+
+# (H) Definition processor logs
+DEF_PARSING_AST = "Parsing and Caching AST for {language}: {path}"
+DEF_UNSUPPORTED_LANGUAGE = "Unsupported language '{language}' for {path}"
+DEF_NO_PARSER = "No parser available for {language}"
+DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
+DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
+DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"
+
 # (H) Semantic/embedding logs
 SEMANTIC_NOT_AVAILABLE = (
     "Semantic search dependencies not available, skipping embedding generation"
@@ -383,6 +397,10 @@ IMP_CPP_MODULE_IMPL = "C++20 module implementation: {name}"
 IMP_CPP_MODULE_IFACE = "C++20 module interface: {name}"
 IMP_CPP_PARTITION = "C++20 module partition import: {partition} -> {full}"
 IMP_GENERIC = "Generic import parsing for {language}: {node_type}"
+
+# (H) Structure processor logs
+STRUCT_IDENTIFIED_PACKAGE = "  Identified Package: {package_qn}"
+STRUCT_IDENTIFIED_FOLDER = "  Identified Folder: '{relative_root}'"
 
 # (H) Class ingest logs
 CLASS_CPP_MODULE_INTERFACE = "  Found C++ Module Interface: {qn}"

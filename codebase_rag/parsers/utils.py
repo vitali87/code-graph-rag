@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from functools import lru_cache
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node, Query, QueryCursor
 
-from ..constants import ENCODING_UTF8, SupportedLanguage
+from .. import constants as cs
+from .. import logs
 from ..types_defs import (
     ASTNode,
     LanguageQueries,
@@ -16,28 +19,25 @@ from ..types_defs import (
 )
 
 if TYPE_CHECKING:
-    from tree_sitter import Query
-
     from ..language_spec import LanguageSpec
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
 
 
 class FunctionCapturesResult(NamedTuple):
-    lang_config: "LanguageSpec"
+    lang_config: LanguageSpec
     captures: dict[str, list[ASTNode]]
 
 
 def get_function_captures(
     root_node: ASTNode,
-    language: SupportedLanguage,
-    queries: dict[SupportedLanguage, LanguageQueries],
+    language: cs.SupportedLanguage,
+    queries: dict[cs.SupportedLanguage, LanguageQueries],
 ) -> FunctionCapturesResult | None:
     lang_queries = queries[language]
-    lang_config = lang_queries["config"]
+    lang_config = lang_queries[cs.QUERY_CONFIG]
 
-    query = lang_queries["functions"]
-    if not query:
+    if not (query := lang_queries[cs.QUERY_FUNCTIONS]):
         return None
 
     cursor = QueryCursor(query)
@@ -47,87 +47,78 @@ def get_function_captures(
 
 @lru_cache(maxsize=10000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
-    return text_bytes.decode(ENCODING_UTF8)
+    return text_bytes.decode(cs.ENCODING_UTF8)
 
 
 def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | None:
-    if node is None or node.text is None:
+    if node is None or (text_bytes := node.text) is None:
         return None
-    text_bytes = node.text
     if isinstance(text_bytes, bytes):
         return _cached_decode_bytes(text_bytes)
     return str(text_bytes)
 
 
-def get_query_cursor(query: "Query") -> QueryCursor:
+def get_query_cursor(query: Query) -> QueryCursor:
     return QueryCursor(query)
 
 
 def safe_decode_with_fallback(node: ASTNode | None, fallback: str = "") -> str:
-    result = safe_decode_text(node)
-    return result if result is not None else fallback
+    return result if (result := safe_decode_text(node)) is not None else fallback
 
 
 def contains_node(parent: ASTNode, target: ASTNode) -> bool:
-    if parent == target:
-        return True
-    return any(contains_node(child, target) for child in parent.children)
+    return parent == target or any(
+        contains_node(child, target) for child in parent.children
+    )
 
 
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
-    container_type: str,
-    ingestor: "IngestorProtocol",
-    function_registry: "FunctionRegistryTrieProtocol",
+    container_type: cs.NodeLabel,
+    ingestor: IngestorProtocol,
+    function_registry: FunctionRegistryTrieProtocol,
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
-    language: str = "",
+    language: cs.SupportedLanguage | None = None,
     extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
     method_qualified_name: str | None = None,
 ) -> None:
-    if language == "cpp":
+    if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 
         method_name = cpp_utils.extract_function_name(method_node)
         if not method_name:
             return
+    elif not (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)):
+        return
+    elif (text := method_name_node.text) is None:
+        return
     else:
-        method_name_node = method_node.child_by_field_name("name")
-        if not method_name_node:
-            return
-        text = method_name_node.text
-        if text is None:
-            return
-        method_name = text.decode("utf8")
+        method_name = text.decode(cs.ENCODING_UTF8)
 
-    if method_qualified_name is not None:
-        method_qn = method_qualified_name
-    else:
-        method_qn = f"{container_qn}.{method_name}"
+    method_qn = method_qualified_name or f"{container_qn}.{method_name}"
 
-    decorators = []
-    if extract_decorators_func:
-        decorators = extract_decorators_func(method_node)
+    decorators = extract_decorators_func(method_node) if extract_decorators_func else []
 
     method_props: PropertyDict = {
-        "qualified_name": method_qn,
-        "name": method_name,
-        "decorators": decorators,
-        "start_line": method_node.start_point[0] + 1,
-        "end_line": method_node.end_point[0] + 1,
-        "docstring": get_docstring_func(method_node),
+        cs.KEY_QUALIFIED_NAME: method_qn,
+        cs.KEY_NAME: method_name,
+        cs.KEY_DECORATORS: decorators,
+        cs.KEY_START_LINE: method_node.start_point[0] + 1,
+        cs.KEY_END_LINE: method_node.end_point[0] + 1,
+        cs.KEY_DOCSTRING: get_docstring_func(method_node),
     }
 
-    logger.info(f"    Found Method: {method_name} (qn: {method_qn})")
-    ingestor.ensure_node_batch("Method", method_props)
+    logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
+    ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     function_registry[method_qn] = NodeType.METHOD
     simple_name_lookup[method_name].add(method_qn)
 
     ingestor.ensure_relationship_batch(
-        (container_type, "qualified_name", container_qn),
-        "DEFINES_METHOD",
-        ("Method", "qualified_name", method_qn),
+        (container_type, cs.KEY_QUALIFIED_NAME, container_qn),
+        cs.RelationshipType.DEFINES_METHOD,
+        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
     )
 
 
@@ -136,8 +127,8 @@ def ingest_exported_function(
     function_name: str,
     module_qn: str,
     export_type: str,
-    ingestor: "IngestorProtocol",
-    function_registry: "FunctionRegistryTrieProtocol",
+    ingestor: IngestorProtocol,
+    function_registry: FunctionRegistryTrieProtocol,
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
     is_export_inside_function_func: Callable[[ASTNode], bool],
@@ -148,20 +139,24 @@ def ingest_exported_function(
     function_qn = f"{module_qn}.{function_name}"
 
     function_props = {
-        "qualified_name": function_qn,
-        "name": function_name,
-        "start_line": function_node.start_point[0] + 1,
-        "end_line": function_node.end_point[0] + 1,
-        "docstring": get_docstring_func(function_node),
+        cs.KEY_QUALIFIED_NAME: function_qn,
+        cs.KEY_NAME: function_name,
+        cs.KEY_START_LINE: function_node.start_point[0] + 1,
+        cs.KEY_END_LINE: function_node.end_point[0] + 1,
+        cs.KEY_DOCSTRING: get_docstring_func(function_node),
     }
 
-    logger.info(f"  Found {export_type}: {function_name} (qn: {function_qn})")
-    ingestor.ensure_node_batch("Function", function_props)
+    logger.info(
+        logs.EXPORT_FOUND.format(
+            export_type=export_type, name=function_name, qn=function_qn
+        )
+    )
+    ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
     function_registry[function_qn] = NodeType.FUNCTION
     simple_name_lookup[function_name].add(function_qn)
 
 
-def is_method_node(func_node: ASTNode, lang_config: "LanguageSpec") -> bool:
+def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
     current = func_node.parent
     if not isinstance(current, Node):
         return False

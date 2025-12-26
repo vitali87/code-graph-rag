@@ -1,3 +1,4 @@
+from importlib.util import find_spec
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -725,3 +726,323 @@ class TestAddDependency:
         last_dep = depends_on[-1]
         props = last_dep.kwargs.get("properties", {})
         assert "version_spec" not in props or props.get("version_spec") == ""
+
+
+@pytest.mark.skipif(not PY_AVAILABLE, reason="tree-sitter-python not available")
+class TestProcessFile:
+    def test_process_file_creates_module_node(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        py_file = temp_repo / "example.py"
+        py_file.write_text("def hello(): pass")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        result = definition_processor.factory.definition_processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        assert result is not None
+        root_node, language = result
+        assert language == SupportedLanguage.PYTHON
+
+        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+
+        assert len(module_nodes) >= 1
+        module_props = module_nodes[-1][0][1]
+        assert module_props["name"] == "example.py"
+        assert module_props["path"] == "example.py"
+        assert "qualified_name" in module_props
+
+    def test_process_file_init_py_uses_parent_qn(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        pkg_dir = temp_repo / "mypackage"
+        pkg_dir.mkdir()
+        init_file = pkg_dir / "__init__.py"
+        init_file.write_text("# package init")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        result = definition_processor.factory.definition_processor.process_file(
+            init_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        assert result is not None
+
+        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+
+        assert len(module_nodes) >= 1
+        module_props = module_nodes[-1][0][1]
+        qn = module_props["qualified_name"]
+        assert "__init__" not in qn
+        assert "mypackage" in qn
+
+    def test_process_file_nested_init_py(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        nested_dir = temp_repo / "pkg" / "subpkg"
+        nested_dir.mkdir(parents=True)
+        init_file = nested_dir / "__init__.py"
+        init_file.write_text("# nested package")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        result = definition_processor.factory.definition_processor.process_file(
+            init_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        assert result is not None
+
+        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+
+        assert len(module_nodes) >= 1
+        module_props = module_nodes[-1][0][1]
+        qn = module_props["qualified_name"]
+        assert "pkg" in qn
+        assert "subpkg" in qn
+        assert "__init__" not in qn
+
+    def test_process_file_unsupported_language_returns_none(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        txt_file = temp_repo / "readme.txt"
+        txt_file.write_text("Just a text file")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        result = definition_processor.factory.definition_processor.process_file(
+            txt_file,
+            SupportedLanguage.PYTHON,
+            {},
+            {},
+        )
+
+        assert result is None
+
+    def test_process_file_creates_contains_module_relationship_to_project(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        py_file = temp_repo / "root_module.py"
+        py_file.write_text("x = 1")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        definition_processor.factory.definition_processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        rel_calls = (
+            definition_processor.ingestor.ensure_relationship_batch.call_args_list
+        )
+        contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
+
+        assert len(contains_module) >= 1
+        rel = contains_module[-1]
+        from_tuple = rel[0][0]
+        to_tuple = rel[0][2]
+        assert from_tuple[0] == "Project"
+        assert to_tuple[0] == "Module"
+
+    def test_process_file_creates_contains_module_relationship_to_package(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        pkg_dir = temp_repo / "mypackage"
+        pkg_dir.mkdir()
+        py_file = pkg_dir / "module.py"
+        py_file.write_text("y = 2")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        structural_elements = {Path("mypackage"): "test_project.mypackage"}
+
+        definition_processor.factory.definition_processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            structural_elements,
+        )
+
+        rel_calls = (
+            definition_processor.ingestor.ensure_relationship_batch.call_args_list
+        )
+        contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
+
+        assert len(contains_module) >= 1
+        rel = contains_module[-1]
+        from_tuple = rel[0][0]
+        assert from_tuple[0] == "Package"
+        assert from_tuple[2] == "test_project.mypackage"
+
+    def test_process_file_creates_contains_module_relationship_to_folder(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        folder_dir = temp_repo / "scripts"
+        folder_dir.mkdir()
+        py_file = folder_dir / "util.py"
+        py_file.write_text("z = 3")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        definition_processor.factory.definition_processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        rel_calls = (
+            definition_processor.ingestor.ensure_relationship_batch.call_args_list
+        )
+        contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
+
+        assert len(contains_module) >= 1
+        rel = contains_module[-1]
+        from_tuple = rel[0][0]
+        assert from_tuple[0] == "Folder"
+        assert from_tuple[2] == "scripts"
+
+    def test_process_file_registers_module_qn_to_file_path(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        py_file = temp_repo / "tracked.py"
+        py_file.write_text("a = 1")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        processor = definition_processor.factory.definition_processor
+        processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        assert len(processor.module_qn_to_file_path) >= 1
+        found = False
+        for qn, path in processor.module_qn_to_file_path.items():
+            if path == py_file:
+                found = True
+                assert "tracked" in qn
+                break
+        assert found
+
+    def test_process_file_calls_ingest_methods(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        py_file = temp_repo / "with_class.py"
+        py_file.write_text("""
+class MyClass:
+    def method(self):
+        pass
+
+def standalone():
+    pass
+""")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        result = definition_processor.factory.definition_processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        assert result is not None
+
+        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_types = {c[0][0] for c in node_calls}
+
+        assert "Module" in node_types
+        assert "Class" in node_types or "Function" in node_types
+
+    def test_process_file_with_syntax_error_still_processes(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        py_file = temp_repo / "bad_syntax.py"
+        py_file.write_text("def broken( x = 1")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        result = definition_processor.factory.definition_processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        assert result is not None
+
+    def test_process_file_empty_file(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        py_file = temp_repo / "empty.py"
+        py_file.write_text("")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        result = definition_processor.factory.definition_processor.process_file(
+            py_file,
+            SupportedLanguage.PYTHON,
+            definition_processor.queries,
+            {},
+        )
+
+        assert result is not None
+
+        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+        assert len(module_nodes) >= 1
+
+
+RUST_AVAILABLE = find_spec("tree_sitter_rust") is not None
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="tree-sitter-rust not available")
+class TestProcessFileRust:
+    def test_process_file_mod_rs_uses_parent_qn(
+        self, temp_repo: Path, definition_processor: GraphUpdater
+    ) -> None:
+        rust_dir = temp_repo / "src" / "utils"
+        rust_dir.mkdir(parents=True)
+        mod_file = rust_dir / "mod.rs"
+        mod_file.write_text("pub fn helper() {}")
+
+        from codebase_rag.constants import SupportedLanguage
+
+        if SupportedLanguage.RUST not in definition_processor.queries:
+            pytest.skip("Rust parser not available")
+
+        result = definition_processor.factory.definition_processor.process_file(
+            mod_file,
+            SupportedLanguage.RUST,
+            definition_processor.queries,
+            {},
+        )
+
+        assert result is not None
+
+        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+
+        assert len(module_nodes) >= 1
+        module_props = module_nodes[-1][0][1]
+        qn = module_props["qualified_name"]
+        assert "mod" not in qn or "mod.rs" not in qn
+        assert "utils" in qn

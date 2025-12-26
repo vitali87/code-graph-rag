@@ -1,11 +1,21 @@
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 from loguru import logger
 
 from .. import constants as cs
+from .. import logs as ls
+from ..types_defs import FunctionRegistryTrieProtocol
+
+
+class StdlibCacheStats(TypedDict):
+    cache_entries: int
+    cache_languages: list[str]
+    total_cached_results: int
+    external_tools_checked: dict[str, bool]
+
 
 _STDLIB_CACHE: dict[str, dict[str, str]] = {}
 _CACHE_TTL = cs.IMPORT_CACHE_TTL
@@ -32,9 +42,7 @@ def _is_tool_available(tool_name: str) -> bool:
         subprocess.CalledProcessError,
     ):
         _EXTERNAL_TOOLS[tool_name] = False
-        logger.debug(
-            f"External tool '{tool_name}' not available for stdlib introspection"
-        )
+        logger.debug(ls.IMP_TOOL_NOT_AVAILABLE.format(tool=tool_name))
         return False
 
 
@@ -63,35 +71,35 @@ def _cache_stdlib_result(language: str, full_qualified_name: str, result: str) -
 
 def load_persistent_cache() -> None:
     try:
-        cache_file = Path.home() / ".cache" / "codebase_rag" / "stdlib_cache.json"
+        cache_file = Path.home() / cs.IMPORT_CACHE_DIR / cs.IMPORT_CACHE_FILE
         if cache_file.exists():
             with cache_file.open() as f:
                 data = json.load(f)
-                _STDLIB_CACHE.update(data.get("cache", {}))
-                _CACHE_TIMESTAMPS.update(data.get("timestamps", {}))
-            logger.debug(f"Loaded stdlib cache from {cache_file}")
+                _STDLIB_CACHE.update(data.get(cs.IMPORT_CACHE_KEY, {}))
+                _CACHE_TIMESTAMPS.update(data.get(cs.IMPORT_TIMESTAMPS_KEY, {}))
+            logger.debug(ls.IMP_CACHE_LOADED.format(path=cache_file))
     except (json.JSONDecodeError, OSError) as e:
-        logger.debug(f"Could not load stdlib cache: {e}")
+        logger.debug(ls.IMP_CACHE_LOAD_ERROR.format(error=e))
 
 
 def save_persistent_cache() -> None:
     try:
-        cache_dir = Path.home() / ".cache" / "codebase_rag"
+        cache_dir = Path.home() / cs.IMPORT_CACHE_DIR
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / "stdlib_cache.json"
+        cache_file = cache_dir / cs.IMPORT_CACHE_FILE
 
         with cache_file.open("w") as f:
             json.dump(
                 {
-                    "cache": _STDLIB_CACHE,
-                    "timestamps": _CACHE_TIMESTAMPS,
+                    cs.IMPORT_CACHE_KEY: _STDLIB_CACHE,
+                    cs.IMPORT_TIMESTAMPS_KEY: _CACHE_TIMESTAMPS,
                 },
                 f,
                 indent=2,
             )
-        logger.debug(f"Saved stdlib cache to {cache_file}")
+        logger.debug(ls.IMP_CACHE_SAVED.format(path=cache_file))
     except OSError as e:
-        logger.debug(f"Could not save stdlib cache: {e}")
+        logger.debug(ls.IMP_CACHE_SAVE_ERROR.format(error=e))
 
 
 def flush_stdlib_cache() -> None:
@@ -102,29 +110,29 @@ def clear_stdlib_cache() -> None:
     _STDLIB_CACHE.clear()
     _CACHE_TIMESTAMPS.clear()
     try:
-        cache_file = Path.home() / ".cache" / "codebase_rag" / "stdlib_cache.json"
+        cache_file = Path.home() / cs.IMPORT_CACHE_DIR / cs.IMPORT_CACHE_FILE
         if cache_file.exists():
             cache_file.unlink()
-            logger.debug("Cleared stdlib cache from disk")
+            logger.debug(ls.IMP_CACHE_CLEARED)
     except OSError as e:
-        logger.debug(f"Could not clear stdlib cache from disk: {e}")
+        logger.debug(ls.IMP_CACHE_CLEAR_ERROR.format(error=e))
 
 
-def get_stdlib_cache_stats() -> dict[str, Any]:
-    return {
-        "cache_entries": len(_STDLIB_CACHE),
-        "cache_languages": list(_STDLIB_CACHE.keys()),
-        "total_cached_results": sum(
+def get_stdlib_cache_stats() -> StdlibCacheStats:
+    return StdlibCacheStats(
+        cache_entries=len(_STDLIB_CACHE),
+        cache_languages=list(_STDLIB_CACHE.keys()),
+        total_cached_results=sum(
             len(lang_cache) for lang_cache in _STDLIB_CACHE.values()
         ),
-        "external_tools_checked": _EXTERNAL_TOOLS.copy(),
-    }
+        external_tools_checked=_EXTERNAL_TOOLS.copy(),
+    )
 
 
 class StdlibExtractor:
     def __init__(
         self,
-        function_registry: dict[str, str] | None = None,
+        function_registry: FunctionRegistryTrieProtocol | None = None,
     ) -> None:
         self.function_registry = function_registry
 
@@ -159,7 +167,9 @@ class StdlibExtractor:
                 return self._extract_generic_stdlib_path(full_qualified_name)
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
-        cached_result = _get_cached_stdlib_result("python", full_qualified_name)
+        cached_result = _get_cached_stdlib_result(
+            cs.SupportedLanguage.PYTHON, full_qualified_name
+        )
         if cached_result is not None:
             return cached_result
 
@@ -188,7 +198,9 @@ class StdlibExtractor:
                     or not inspect.ismodule(obj)
                 ):
                     module_path = cs.SEPARATOR_DOT.join(parts[:-1])
-                    _cache_stdlib_result("python", full_qualified_name, module_path)
+                    _cache_stdlib_result(
+                        cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
+                    )
                     return module_path
         except (ImportError, AttributeError):
             pass
@@ -198,11 +210,13 @@ class StdlibExtractor:
             if entity_name[0].isupper()
             else full_qualified_name
         )
-        _cache_stdlib_result("python", full_qualified_name, result)
+        _cache_stdlib_result(cs.SupportedLanguage.PYTHON, full_qualified_name, result)
         return result
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
-        cached_result = _get_cached_stdlib_result("javascript", full_qualified_name)
+        cached_result = _get_cached_stdlib_result(
+            cs.SupportedLanguage.JS, full_qualified_name
+        )
         if cached_result is not None:
             return cached_result
 
@@ -256,13 +270,15 @@ class StdlibExtractor:
 
                 if subprocess_result.returncode == 0:
                     data = json.loads(subprocess_result.stdout.strip())
-                    if data["hasEntity"] and data["entityType"] in {
-                        "function",
-                        "object",
+                    if data[cs.JSON_KEY_HAS_ENTITY] and data[
+                        cs.JSON_KEY_ENTITY_TYPE
+                    ] in {
+                        cs.TS_FIELD_FUNCTION,
+                        cs.TS_FIELD_OBJECT,
                     }:
                         module_path = cs.SEPARATOR_DOT.join(parts[:-1])
                         _cache_stdlib_result(
-                            "javascript", full_qualified_name, module_path
+                            cs.SupportedLanguage.JS, full_qualified_name, module_path
                         )
                         return module_path
 
@@ -278,17 +294,17 @@ class StdlibExtractor:
             if entity_name[0].isupper()
             else full_qualified_name
         )
-        _cache_stdlib_result("javascript", full_qualified_name, result)
+        _cache_stdlib_result(cs.SupportedLanguage.JS, full_qualified_name, result)
         return result
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
-        parts = full_qualified_name.split("/")
+        parts = full_qualified_name.split(cs.SEPARATOR_SLASH)
         if len(parts) >= 2:
             try:
                 import os
                 import subprocess
 
-                package_path = "/".join(parts[:-1])
+                package_path = cs.SEPARATOR_SLASH.join(parts[:-1])
                 entity_name = parts[-1]
 
                 resolve_result = subprocess.run(
@@ -395,7 +411,7 @@ func main() {
 
                     if proc.returncode == 0:
                         data = json.loads(stdout.strip())
-                        if data["hasEntity"]:
+                        if data[cs.JSON_KEY_HAS_ENTITY]:
                             return package_path
 
             except (
@@ -408,29 +424,29 @@ func main() {
 
             entity_name = parts[-1]
             if entity_name[0].isupper():
-                return "/".join(parts[:-1])
+                return cs.SEPARATOR_SLASH.join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_rust_stdlib_path(self, full_qualified_name: str) -> str:
-        parts = full_qualified_name.split("::")
+        parts = full_qualified_name.split(cs.SEPARATOR_DOUBLE_COLON)
         if len(parts) >= 2:
             entity_name = parts[-1]
 
             if (
                 entity_name[0].isupper()
                 or entity_name.isupper()
-                or ("_" not in entity_name and entity_name.islower())
+                or (cs.CHAR_UNDERSCORE not in entity_name and entity_name.islower())
             ):
-                return "::".join(parts[:-1])
+                return cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1])
 
         return full_qualified_name
 
     def _extract_cpp_stdlib_path(self, full_qualified_name: str) -> str:
-        parts = full_qualified_name.split("::")
+        parts = full_qualified_name.split(cs.SEPARATOR_DOUBLE_COLON)
         if len(parts) >= 2:
             namespace = parts[0]
-            if namespace == "std":
+            if namespace == cs.CPP_STD_NAMESPACE:
                 entity_name = parts[-1]
 
                 try:
@@ -485,11 +501,11 @@ int main() {{
                 entity_name = parts[-1]
                 if (
                     entity_name[0].isupper()
-                    or entity_name.startswith("is_")
-                    or entity_name.startswith("has_")
+                    or entity_name.startswith(cs.CPP_PREFIX_IS)
+                    or entity_name.startswith(cs.CPP_PREFIX_HAS)
                     or entity_name in cs.CPP_STDLIB_ENTITIES
                 ):
-                    return "::".join(parts[:-1])
+                    return cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1])
 
         return full_qualified_name
 
@@ -590,11 +606,11 @@ public class StdlibCheck {
 
                         if run_result.returncode == 0:
                             data = json.loads(run_result.stdout.strip())
-                            if data.get("hasEntity"):
+                            if data.get(cs.JSON_KEY_HAS_ENTITY):
                                 return cs.SEPARATOR_DOT.join(parts[:-1])
 
                 finally:
-                    for ext in [".java", ".class"]:
+                    for ext in (cs.EXT_JAVA, cs.EXT_CLASS):
                         temp_file = os.path.splitext(java_file)[0] + ext
                         try:
                             os.unlink(temp_file)
@@ -612,10 +628,10 @@ public class StdlibCheck {
             entity_name = parts[-1]
             if (
                 entity_name[0].isupper()
-                or entity_name.endswith("Exception")
-                or entity_name.endswith("Error")
-                or entity_name.endswith("Interface")
-                or entity_name.endswith("Builder")
+                or entity_name.endswith(cs.JAVA_SUFFIX_EXCEPTION)
+                or entity_name.endswith(cs.JAVA_SUFFIX_ERROR)
+                or entity_name.endswith(cs.JAVA_SUFFIX_INTERFACE)
+                or entity_name.endswith(cs.JAVA_SUFFIX_BUILDER)
                 or entity_name in cs.JAVA_STDLIB_CLASSES
             ):
                 return cs.SEPARATOR_DOT.join(parts[:-1])

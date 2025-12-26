@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ..constants import SEPARATOR_DOT, SupportedLanguage
-from ..types_defs import ASTNode, SimpleNameLookup
+from .. import constants as cs
+from .. import logs as ls
+from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
@@ -33,7 +34,7 @@ class DefinitionProcessor(
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        function_registry: Any,
+        function_registry: FunctionRegistryTrieProtocol,
         simple_name_lookup: SimpleNameLookup,
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
@@ -47,77 +48,83 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
-        self._handler = get_handler(SupportedLanguage.PYTHON)
+        self._handler = get_handler(cs.SupportedLanguage.PYTHON)
 
     def process_file(
         self,
         file_path: Path,
-        language: SupportedLanguage,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
-    ) -> tuple[ASTNode, SupportedLanguage] | None:
+    ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
         if isinstance(file_path, str):
             file_path = Path(file_path)
         relative_path = file_path.relative_to(self.repo_path)
         relative_path_str = str(relative_path)
-        logger.info(f"Parsing and Caching AST for {language}: {relative_path_str}")
+        logger.info(
+            ls.DEF_PARSING_AST.format(language=language, path=relative_path_str)
+        )
 
         try:
             if language not in queries:
-                logger.warning(f"Unsupported language '{language}' for {file_path}")
+                logger.warning(
+                    ls.DEF_UNSUPPORTED_LANGUAGE.format(
+                        language=language, path=file_path
+                    )
+                )
                 return None
 
             self._handler = get_handler(language)
             source_bytes = file_path.read_bytes()
             lang_queries = queries[language]
-            parser = lang_queries.get("parser")
+            parser = lang_queries.get(cs.KEY_PARSER)
             if not parser:
-                logger.warning(f"No parser available for {language}")
+                logger.warning(ls.DEF_NO_PARSER.format(language=language))
                 return None
 
             tree = parser.parse(source_bytes)
             root_node = tree.root_node
 
-            module_qn = SEPARATOR_DOT.join(
+            module_qn = cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
-            if file_path.name in ["__init__.py", "mod.rs"]:
-                module_qn = SEPARATOR_DOT.join(
+            if file_path.name in (cs.INIT_PY, cs.MOD_RS):
+                module_qn = cs.SEPARATOR_DOT.join(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
             self.module_qn_to_file_path[module_qn] = file_path
 
             self.ingestor.ensure_node_batch(
-                "Module",
+                cs.NodeLabel.MODULE,
                 {
-                    "qualified_name": module_qn,
-                    "name": file_path.name,
-                    "path": relative_path_str,
+                    cs.KEY_QUALIFIED_NAME: module_qn,
+                    cs.KEY_NAME: file_path.name,
+                    cs.KEY_PATH: relative_path_str,
                 },
             )
 
             parent_rel_path = relative_path.parent
             parent_container_qn = structural_elements.get(parent_rel_path)
             parent_label, parent_key, parent_val = (
-                ("Package", "qualified_name", parent_container_qn)
+                (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
                 if parent_container_qn
                 else (
-                    ("Folder", "path", str(parent_rel_path))
+                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, str(parent_rel_path))
                     if parent_rel_path != Path(".")
-                    else ("Project", "name", self.project_name)
+                    else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
                 )
             )
             self.ingestor.ensure_relationship_batch(
                 (parent_label, parent_key, parent_val),
-                "CONTAINS_MODULE",
-                ("Module", "qualified_name", module_qn),
+                cs.RelationshipType.CONTAINS_MODULE,
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             )
 
             self.import_processor.parse_imports(root_node, module_qn, language, queries)
             self._ingest_missing_import_patterns(
                 root_node, module_qn, language, queries
             )
-            if language == SupportedLanguage.CPP:
+            if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
             self._ingest_all_functions(root_node, module_qn, language, queries)
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
@@ -132,11 +139,11 @@ class DefinitionProcessor(
             return (root_node, language)
 
         except Exception as e:
-            logger.error(f"Failed to parse or ingest {file_path}: {e}")
+            logger.error(ls.DEF_PARSE_FAILED.format(path=file_path, error=e))
             return None
 
     def process_dependencies(self, filepath: Path) -> None:
-        logger.info(f"  Parsing dependency file: {filepath}")
+        logger.info(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
 
         dependencies = parse_dependencies(filepath)
         for dep in dependencies:
@@ -145,37 +152,39 @@ class DefinitionProcessor(
     def _add_dependency(
         self, dep_name: str, dep_spec: str, properties: dict[str, str] | None = None
     ) -> None:
-        if not dep_name or dep_name.lower() in {"python", "php"}:
+        if not dep_name or dep_name.lower() in cs.EXCLUDED_DEPENDENCY_NAMES:
             return
 
-        logger.info(f"    Found dependency: {dep_name} (spec: {dep_spec})")
-        self.ingestor.ensure_node_batch("ExternalPackage", {"name": dep_name})
+        logger.info(ls.DEF_FOUND_DEPENDENCY.format(name=dep_name, spec=dep_spec))
+        self.ingestor.ensure_node_batch(
+            cs.NodeLabel.EXTERNAL_PACKAGE, {cs.KEY_NAME: dep_name}
+        )
 
-        rel_properties = {"version_spec": dep_spec} if dep_spec else {}
+        rel_properties = {cs.KEY_VERSION_SPEC: dep_spec} if dep_spec else {}
         if properties:
             rel_properties |= properties
 
         self.ingestor.ensure_relationship_batch(
-            ("Project", "name", self.project_name),
-            "DEPENDS_ON_EXTERNAL",
-            ("ExternalPackage", "name", dep_name),
+            (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name),
+            cs.RelationshipType.DEPENDS_ON_EXTERNAL,
+            (cs.NodeLabel.EXTERNAL_PACKAGE, cs.KEY_NAME, dep_name),
             properties=rel_properties,
         )
 
     def _get_docstring(self, node: ASTNode) -> str | None:
-        body_node = node.child_by_field_name("body")
+        body_node = node.child_by_field_name(cs.FIELD_BODY)
         if not body_node or not body_node.children:
             return None
         first_statement = body_node.children[0]
         if (
-            first_statement.type == "expression_statement"
-            and first_statement.children[0].type == "string"
+            first_statement.type == cs.TS_PY_EXPRESSION_STATEMENT
+            and first_statement.children[0].type == cs.TS_PY_STRING
         ):
             text = first_statement.children[0].text
             if text is not None:
                 result: str = safe_decode_with_fallback(
                     first_statement.children[0]
-                ).strip("'\" \n")
+                ).strip(cs.DOCSTRING_STRIP_CHARS)
                 return result
         return None
 
@@ -184,9 +193,9 @@ class DefinitionProcessor(
 
         current = node.parent
         while current:
-            if current.type == "decorated_definition":
+            if current.type == cs.TS_PY_DECORATED_DEFINITION:
                 for child in current.children:
-                    if child.type == "decorator":
+                    if child.type == cs.TS_PY_DECORATOR:
                         if decorator_name := self._get_decorator_name(child):
                             decorators.append(decorator_name)
                 break
@@ -198,12 +207,12 @@ class DefinitionProcessor(
         from .utils import safe_decode_text
 
         for child in decorator_node.children:
-            if child.type == "identifier":
+            if child.type == cs.TS_PY_IDENTIFIER:
                 return safe_decode_text(child)
-            if child.type == "attribute":
+            if child.type == cs.TS_PY_ATTRIBUTE:
                 return safe_decode_text(child)
-            if child.type == "call":
-                if func_node := child.child_by_field_name("function"):
-                    if func_node.type in ["identifier", "attribute"]:
+            if child.type == cs.TS_PY_CALL:
+                if func_node := child.child_by_field_name(cs.FIELD_FUNCTION):
+                    if func_node.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
                         return safe_decode_text(func_node)
         return None

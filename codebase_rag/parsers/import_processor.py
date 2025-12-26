@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from tree_sitter import Node
@@ -7,10 +6,12 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import LanguageSpec
-from ..types_defs import LanguageQueries
+from ..services import IngestorProtocol
+from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .stdlib_extractor import (
+    StdlibCacheStats,
     StdlibExtractor,
     clear_stdlib_cache,
     flush_stdlib_cache,
@@ -26,8 +27,8 @@ class ImportProcessor:
         self,
         repo_path: Path,
         project_name: str,
-        ingestor: Any | None = None,
-        function_registry: Any | None = None,
+        ingestor: IngestorProtocol | None = None,
+        function_registry: FunctionRegistryTrieProtocol | None = None,
     ) -> None:
         self.repo_path = repo_path
         self.project_name = project_name
@@ -53,7 +54,7 @@ class ImportProcessor:
         clear_stdlib_cache()
 
     @staticmethod
-    def get_stdlib_cache_stats() -> dict[str, Any]:
+    def get_stdlib_cache_stats() -> StdlibCacheStats:
         return get_stdlib_cache_stats()
 
     def parse_imports(

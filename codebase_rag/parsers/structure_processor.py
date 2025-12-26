@@ -2,9 +2,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..constants import IGNORE_PATTERNS, SEPARATOR_DOT, SupportedLanguage
+from .. import constants as cs
+from .. import logs
 from ..services import IngestorProtocol
-from ..types_defs import LanguageQueries
+from ..types_defs import LanguageQueries, NodeIdentifier
 
 
 class StructureProcessor:
@@ -13,22 +14,31 @@ class StructureProcessor:
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
         self.queries = queries
         self.structural_elements: dict[Path, str | None] = {}
-        self.ignore_dirs = IGNORE_PATTERNS
+        self.ignore_dirs = cs.IGNORE_PATTERNS
+
+    def _get_parent_identifier(
+        self, parent_rel_path: Path, parent_container_qn: str | None
+    ) -> NodeIdentifier:
+        if parent_rel_path == Path(cs.PATH_CURRENT_DIR):
+            return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
+        if parent_container_qn:
+            return (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
+        return (cs.NodeLabel.FOLDER, cs.KEY_PATH, str(parent_rel_path))
 
     def identify_structure(self) -> None:
-        def should_skip_dir(path: Path) -> bool:
-            return any(part in self.ignore_dirs for part in path.parts)
-
         directories = {self.repo_path}
-        for path in self.repo_path.rglob("*"):
-            if path.is_dir() and not should_skip_dir(path.relative_to(self.repo_path)):
+        for path in self.repo_path.rglob(cs.GLOB_ALL):
+            if path.is_dir() and not any(
+                part in self.ignore_dirs
+                for part in path.relative_to(self.repo_path).parts
+            ):
                 directories.add(path)
 
         for root in sorted(directories):
@@ -38,10 +48,10 @@ class StructureProcessor:
             parent_container_qn = self.structural_elements.get(parent_rel_path)
 
             is_package = False
-            package_indicators = set()
+            package_indicators: set[str] = set()
 
-            for lang_name, lang_queries in self.queries.items():
-                lang_config = lang_queries["config"]
+            for lang_queries in self.queries.values():
+                lang_config = lang_queries[cs.QUERY_CONFIG]
                 package_indicators.update(lang_config.package_indicators)
 
             for indicator in package_indicators:
@@ -50,52 +60,45 @@ class StructureProcessor:
                     break
 
             if is_package:
-                package_qn = SEPARATOR_DOT.join(
+                package_qn = cs.SEPARATOR_DOT.join(
                     [self.project_name] + list(relative_root.parts)
                 )
                 self.structural_elements[relative_root] = package_qn
-                logger.info(f"  Identified Package: {package_qn}")
+                logger.info(
+                    logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn)
+                )
                 self.ingestor.ensure_node_batch(
-                    "Package",
+                    cs.NodeLabel.PACKAGE,
                     {
-                        "qualified_name": package_qn,
-                        "name": root.name,
-                        "path": str(relative_root),
+                        cs.KEY_QUALIFIED_NAME: package_qn,
+                        cs.KEY_NAME: root.name,
+                        cs.KEY_PATH: str(relative_root),
                     },
                 )
-                parent_label, parent_key, parent_val = (
-                    ("Project", "name", self.project_name)
-                    if parent_rel_path == Path(".")
-                    else (
-                        ("Package", "qualified_name", parent_container_qn)
-                        if parent_container_qn
-                        else ("Folder", "path", str(parent_rel_path))
-                    )
+                parent_identifier = self._get_parent_identifier(
+                    parent_rel_path, parent_container_qn
                 )
                 self.ingestor.ensure_relationship_batch(
-                    (parent_label, parent_key, parent_val),
-                    "CONTAINS_PACKAGE",
-                    ("Package", "qualified_name", package_qn),
+                    parent_identifier,
+                    cs.RelationshipType.CONTAINS_PACKAGE,
+                    (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
                 )
             elif root != self.repo_path:
                 self.structural_elements[relative_root] = None
-                logger.info(f"  Identified Folder: '{relative_root}'")
-                self.ingestor.ensure_node_batch(
-                    "Folder", {"path": str(relative_root), "name": root.name}
+                logger.info(
+                    logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root)
                 )
-                parent_label, parent_key, parent_val = (
-                    ("Project", "name", self.project_name)
-                    if parent_rel_path == Path(".")
-                    else (
-                        ("Package", "qualified_name", parent_container_qn)
-                        if parent_container_qn
-                        else ("Folder", "path", str(parent_rel_path))
-                    )
+                self.ingestor.ensure_node_batch(
+                    cs.NodeLabel.FOLDER,
+                    {cs.KEY_PATH: str(relative_root), cs.KEY_NAME: root.name},
+                )
+                parent_identifier = self._get_parent_identifier(
+                    parent_rel_path, parent_container_qn
                 )
                 self.ingestor.ensure_relationship_batch(
-                    (parent_label, parent_key, parent_val),
-                    "CONTAINS_FOLDER",
-                    ("Folder", "path", str(relative_root)),
+                    parent_identifier,
+                    cs.RelationshipType.CONTAINS_FOLDER,
+                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, str(relative_root)),
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
@@ -103,27 +106,21 @@ class StructureProcessor:
         relative_root = file_path.parent.relative_to(self.repo_path)
 
         parent_container_qn = self.structural_elements.get(relative_root)
-        parent_label, parent_key, parent_val = (
-            ("Package", "qualified_name", parent_container_qn)
-            if parent_container_qn
-            else (
-                ("Folder", "path", str(relative_root))
-                if relative_root != Path(".")
-                else ("Project", "name", self.project_name)
-            )
+        parent_identifier = self._get_parent_identifier(
+            relative_root, parent_container_qn
         )
 
         self.ingestor.ensure_node_batch(
-            "File",
+            cs.NodeLabel.FILE,
             {
-                "path": relative_filepath,
-                "name": file_name,
-                "extension": file_path.suffix,
+                cs.KEY_PATH: relative_filepath,
+                cs.KEY_NAME: file_name,
+                cs.KEY_EXTENSION: file_path.suffix,
             },
         )
 
         self.ingestor.ensure_relationship_batch(
-            (parent_label, parent_key, parent_val),
-            "CONTAINS_FILE",
-            ("File", "path", relative_filepath),
+            parent_identifier,
+            cs.RelationshipType.CONTAINS_FILE,
+            (cs.NodeLabel.FILE, cs.KEY_PATH, relative_filepath),
         )

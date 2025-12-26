@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from loguru import logger
 from tree_sitter import Node
 
-from ..constants import SEPARATOR_DOT, SupportedLanguage
+from .. import constants as cs
+from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import ASTNode, NodeType
 from ..utils.fqn_resolver import resolve_fqn_from_ast
@@ -47,8 +48,8 @@ class FunctionIngestMixin:
         self,
         root_node: Node,
         module_qn: str,
-        language: SupportedLanguage,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         result = get_function_captures(root_node, language, queries)
         if not result:
@@ -57,9 +58,13 @@ class FunctionIngestMixin:
         lang_config, captures = result
         file_path = self.module_qn_to_file_path.get(module_qn)
 
-        for func_node in captures.get("function", []):
+        for func_node in captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(func_node, Node):
-                logger.warning(f"Expected Node but got {type(func_node)}: {func_node}")
+                logger.warning(
+                    ls.FUNC_EXPECTED_NODE.format(
+                        actual_type=type(func_node), value=func_node
+                    )
+                )
                 continue
             if self._is_method(func_node, lang_config):
                 continue
@@ -78,7 +83,7 @@ class FunctionIngestMixin:
         self,
         func_node: Node,
         module_qn: str,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
         file_path: Path | None,
     ) -> FunctionResolution | None:
@@ -93,7 +98,7 @@ class FunctionIngestMixin:
     def _try_unified_fqn_resolution(
         self,
         func_node: Node,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
         file_path: Path | None,
     ) -> FunctionResolution | None:
         fqn_config = LANGUAGE_FQN_SPECS.get(language)
@@ -106,10 +111,10 @@ class FunctionIngestMixin:
         if not func_qn:
             return None
 
-        func_name = func_qn.split(SEPARATOR_DOT)[-1]
+        func_name = func_qn.split(cs.SEPARATOR_DOT)[-1]
         is_exported = (
             cpp_utils.is_exported(func_node)
-            if language == SupportedLanguage.CPP
+            if language == cs.SupportedLanguage.CPP
             else False
         )
         return FunctionResolution(func_qn, func_name, is_exported)
@@ -118,10 +123,10 @@ class FunctionIngestMixin:
         self,
         func_node: Node,
         module_qn: str,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> FunctionResolution | None:
-        if language == SupportedLanguage.CPP:
+        if language == cs.SupportedLanguage.CPP:
             return self._resolve_cpp_function(func_node, module_qn)
         return self._resolve_generic_function(
             func_node, module_qn, language, lang_config
@@ -132,10 +137,8 @@ class FunctionIngestMixin:
     ) -> FunctionResolution | None:
         func_name = cpp_utils.extract_function_name(func_node)
         if not func_name:
-            if func_node.type == "lambda_expression":
-                func_name = (
-                    f"lambda_{func_node.start_point[0]}_{func_node.start_point[1]}"
-                )
+            if func_node.type == cs.TS_CPP_LAMBDA_EXPRESSION:
+                func_name = f"{cs.PREFIX_LAMBDA}{func_node.start_point[0]}_{func_node.start_point[1]}"
             else:
                 return None
 
@@ -147,15 +150,15 @@ class FunctionIngestMixin:
         self,
         func_node: Node,
         module_qn: str,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> FunctionResolution:
         func_name = self._extract_function_name(func_node)
 
         if (
             not func_name
-            and language == SupportedLanguage.LUA
-            and func_node.type == "function_definition"
+            and language == cs.SupportedLanguage.LUA
+            and func_node.type == cs.TS_LUA_FUNCTION_DEFINITION
         ):
             func_name = self._extract_lua_assignment_function_name(func_node)
 
@@ -172,10 +175,10 @@ class FunctionIngestMixin:
         func_node: Node,
         module_qn: str,
         func_name: str,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> str:
-        if language == SupportedLanguage.RUST:
+        if language == cs.SupportedLanguage.RUST:
             return self._build_rust_function_qualified_name(
                 func_node, module_qn, func_name
             )
@@ -190,14 +193,14 @@ class FunctionIngestMixin:
         func_node: Node,
         resolution: FunctionResolution,
         module_qn: str,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
         func_props = self._build_function_props(func_node, resolution)
         logger.info(
-            f"  Found Function: {resolution.name} (qn: {resolution.qualified_name})"
+            ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
-        self.ingestor.ensure_node_batch("Function", func_props)
+        self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
         if resolution.name:
@@ -211,13 +214,13 @@ class FunctionIngestMixin:
         self, func_node: Node, resolution: FunctionResolution
     ) -> dict[str, Any]:
         return {
-            "qualified_name": resolution.qualified_name,
-            "name": resolution.name,
-            "decorators": self._extract_decorators(func_node),
-            "start_line": func_node.start_point[0] + 1,
-            "end_line": func_node.end_point[0] + 1,
-            "docstring": self._get_docstring(func_node),
-            "is_exported": resolution.is_exported,
+            cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
+            cs.KEY_NAME: resolution.name,
+            cs.KEY_DECORATORS: self._extract_decorators(func_node),
+            cs.KEY_START_LINE: func_node.start_point[0] + 1,
+            cs.KEY_END_LINE: func_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(func_node),
+            cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
 
     def _create_function_relationships(
@@ -225,36 +228,40 @@ class FunctionIngestMixin:
         func_node: Node,
         resolution: FunctionResolution,
         module_qn: str,
-        language: SupportedLanguage,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
         parent_type, parent_qn = self._determine_function_parent(
             func_node, module_qn, lang_config
         )
         self.ingestor.ensure_relationship_batch(
-            (parent_type, "qualified_name", parent_qn),
-            "DEFINES",
-            ("Function", "qualified_name", resolution.qualified_name),
+            (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
+            cs.RelationshipType.DEFINES,
+            (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, resolution.qualified_name),
         )
 
-        if resolution.is_exported and language == SupportedLanguage.CPP:
+        if resolution.is_exported and language == cs.SupportedLanguage.CPP:
             self.ingestor.ensure_relationship_batch(
-                ("Module", "qualified_name", module_qn),
-                "EXPORTS",
-                ("Function", "qualified_name", resolution.qualified_name),
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                cs.RelationshipType.EXPORTS,
+                (
+                    cs.NodeLabel.FUNCTION,
+                    cs.KEY_QUALIFIED_NAME,
+                    resolution.qualified_name,
+                ),
             )
 
     def _extract_function_name(self, func_node: Node) -> str | None:
-        name_node = func_node.child_by_field_name("name")
+        name_node = func_node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
             return safe_decode_text(name_node)
 
-        if func_node.type == "arrow_function":
+        if func_node.type == cs.TS_ARROW_FUNCTION:
             current = func_node.parent
             while current:
-                if current.type == "variable_declarator":
+                if current.type == cs.TS_VARIABLE_DECLARATOR:
                     for child in current.children:
-                        if child.type == "identifier" and child.text:
+                        if child.type == cs.TS_IDENTIFIER and child.text:
                             return safe_decode_text(child)
                 current = current.parent
 
@@ -262,28 +269,33 @@ class FunctionIngestMixin:
 
     def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
         parent = func_node.parent
-        if parent and parent.type == "parenthesized_expression":
+        if parent and parent.type == cs.TS_PARENTHESIZED_EXPRESSION:
             grandparent = parent.parent
             if (
                 grandparent
-                and grandparent.type == "call_expression"
-                and grandparent.child_by_field_name("function") == parent
+                and grandparent.type == cs.TS_CALL_EXPRESSION
+                and grandparent.child_by_field_name(cs.FIELD_FUNCTION) == parent
             ):
-                func_type = "arrow" if func_node.type == "arrow_function" else "func"
-                return f"iife_{func_type}_{func_node.start_point[0]}_{func_node.start_point[1]}"
+                func_type = (
+                    cs.PREFIX_ARROW
+                    if func_node.type == cs.TS_ARROW_FUNCTION
+                    else cs.PREFIX_FUNC
+                )
+                return f"{cs.PREFIX_IIFE}{func_type}_{func_node.start_point[0]}_{func_node.start_point[1]}"
 
         if (
             parent
-            and parent.type == "call_expression"
-            and parent.child_by_field_name("function") == func_node
+            and parent.type == cs.TS_CALL_EXPRESSION
+            and parent.child_by_field_name(cs.FIELD_FUNCTION) == func_node
         ):
-            return f"iife_direct_{func_node.start_point[0]}_{func_node.start_point[1]}"
+            return f"{cs.PREFIX_IIFE_DIRECT}{func_node.start_point[0]}_{func_node.start_point[1]}"
 
-        return f"anonymous_{func_node.start_point[0]}_{func_node.start_point[1]}"
+        return f"{cs.PREFIX_ANONYMOUS}{func_node.start_point[0]}_{func_node.start_point[1]}"
 
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
         return lua_utils.extract_assigned_name(
-            func_node, accepted_var_types=("dot_index_expression", "identifier")
+            func_node,
+            accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
         )
 
     def _build_nested_qualified_name(
@@ -297,8 +309,9 @@ class FunctionIngestMixin:
         current = func_node.parent
         if not isinstance(current, Node):
             logger.warning(
-                f"Unexpected parent type for node {func_node}: {type(current)}. "
-                f"Skipping."
+                ls.CALL_UNEXPECTED_PARENT.format(
+                    node=func_node, parent_type=type(current)
+                )
             )
             return None
 
@@ -345,7 +358,7 @@ class FunctionIngestMixin:
         if current.type in lang_config.class_node_types:
             return self._handle_class_ancestor(func_node, current, skip_classes)
 
-        if current.type == "method_definition":
+        if current.type == cs.TS_METHOD_DEFINITION:
             return self._extract_node_name(current)
 
         return None
@@ -365,7 +378,7 @@ class FunctionIngestMixin:
         return False
 
     def _extract_node_name(self, node: Node) -> str | None:
-        name_node = node.child_by_field_name("name")
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text is not None:
             return safe_decode_text(name_node)
         return None
@@ -374,7 +387,7 @@ class FunctionIngestMixin:
         self, module_qn: str, path_parts: list[str], func_name: str
     ) -> str:
         if path_parts:
-            return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{func_name}"
+            return f"{module_qn}.{cs.SEPARATOR_DOT.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"
 
     def _build_rust_function_qualified_name(
@@ -382,7 +395,7 @@ class FunctionIngestMixin:
     ) -> str:
         path_parts = rs_utils.build_module_path(func_node)
         if path_parts:
-            return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{func_name}"
+            return f"{module_qn}.{cs.SEPARATOR_DOT.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
@@ -393,11 +406,11 @@ class FunctionIngestMixin:
     ) -> tuple[str, str]:
         current = func_node.parent
         if not isinstance(current, Node):
-            return "Module", module_qn
+            return cs.NodeLabel.MODULE, module_qn
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                if name_node := current.child_by_field_name("name"):
+                if name_node := current.child_by_field_name(cs.FIELD_NAME):
                     parent_text = name_node.text
                     if parent_text is None:
                         continue
@@ -405,9 +418,9 @@ class FunctionIngestMixin:
                         if parent_func_qn := self._build_nested_qualified_name(
                             current, module_qn, parent_func_name, lang_config
                         ):
-                            return "Function", parent_func_qn
+                            return cs.NodeLabel.FUNCTION, parent_func_qn
                 break
 
             current = current.parent
 
-        return "Module", module_qn
+        return cs.NodeLabel.MODULE, module_qn

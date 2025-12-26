@@ -54,6 +54,8 @@ type SimpleName = str
 type QualifiedName = str
 type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]
 
+NodeIdentifier = tuple[NodeLabel | str, str, str | None]
+
 
 type ASTNode = Node
 
