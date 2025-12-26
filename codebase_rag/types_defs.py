@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import Callable, ItemsView, KeysView
+from collections.abc import Awaitable, Callable, ItemsView, KeysView
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -362,6 +362,10 @@ class CodeSnippetResultDict(TypedDict, total=False):
     found: bool
     error_message: str | None
     error: str
+
+
+MCPResultType = str | QueryResultDict | CodeSnippetResultDict
+MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
 
 
 class NodeSchema(NamedTuple):

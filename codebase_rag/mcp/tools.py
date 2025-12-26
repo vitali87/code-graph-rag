@@ -1,6 +1,4 @@
 import itertools
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
@@ -9,6 +7,7 @@ from codebase_rag import constants as cs
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
@@ -24,22 +23,10 @@ from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.types_defs import (
     CodeSnippetResultDict,
-    MCPInputSchemaDict,
+    MCPHandlerType,
     MCPToolSchema,
     QueryResultDict,
 )
-
-MCPResultType = str | QueryResultDict | CodeSnippetResultDict
-MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
-
-
-@dataclass
-class ToolMetadata:
-    name: str
-    description: str
-    input_schema: MCPInputSchemaDict
-    handler: MCPHandlerType
-    returns_json: bool
 
 
 class MCPToolsRegistry:
