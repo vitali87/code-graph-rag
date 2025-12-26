@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 # (H) Provider validation errors
 GOOGLE_GLA_NO_KEY = (
     "Gemini GLA provider requires api_key. "
