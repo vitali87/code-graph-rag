@@ -43,7 +43,7 @@ test = [
 ]
 dev = [
     "ruff>=0.5.5",
-    "ty>=0.0.1a32",
+    "ty>=0.0.7",
     "pre-commit>=4.2.0",
     "types-protobuf>=5.0.0",
 ]

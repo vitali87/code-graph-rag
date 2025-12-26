@@ -1125,7 +1125,7 @@ requires-dist = [
     { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a32" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.7" },
     { name = "typer", specifier = ">=0.12.5" },
     { name = "types-protobuf", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "watchdog", specifier = ">=6.0.0" },
