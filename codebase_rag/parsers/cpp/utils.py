@@ -6,7 +6,8 @@ from ..utils import safe_decode_text, safe_decode_with_fallback
 
 def convert_operator_symbol_to_name(symbol: str) -> str:
     return cs.CPP_OPERATOR_SYMBOL_MAP.get(
-        symbol, f"{cs.OPERATOR_PREFIX}_{symbol.replace(' ', '_')}"
+        symbol,
+        f"{cs.OPERATOR_PREFIX}{cs.CHAR_UNDERSCORE}{symbol.replace(cs.CHAR_SPACE, cs.CHAR_UNDERSCORE)}",
     )
 
 
@@ -92,10 +93,14 @@ def is_exported(node: Node) -> bool:
 
 
 def extract_exported_class_name(class_node: Node) -> str | None:
-    for child in class_node.children:
-        if child.type == cs.CppNodeType.IDENTIFIER and child.text:
-            return safe_decode_text(child)
-    return None
+    return next(
+        (
+            safe_decode_text(child)
+            for child in class_node.children
+            if child.type == cs.CppNodeType.IDENTIFIER and child.text
+        ),
+        None,
+    )
 
 
 def extract_operator_name(operator_node: Node) -> str:

@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
 class JavaTypeInferenceEngine(
     JavaTypeResolverMixin,
-    JavaMethodResolverMixin,
     JavaVariableAnalyzerMixin,
+    JavaMethodResolverMixin,
 ):
     def __init__(
         self,
