@@ -71,6 +71,7 @@ EXT_GO = ".go"
 EXT_SCALA = ".scala"
 EXT_SC = ".sc"
 EXT_JAVA = ".java"
+EXT_CLASS = ".class"
 EXT_CPP = ".cpp"
 EXT_H = ".h"
 EXT_HPP = ".hpp"
@@ -159,12 +160,14 @@ KEY_QUALIFIED_NAME = "qualified_name"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
+KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
 KEY_PROPS = "props"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+KEY_VERSION_SPEC = "version_spec"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
@@ -265,6 +268,15 @@ ARG_COMMAND = "command"
 
 # (H) Qualified name separators
 SEPARATOR_DOT = "."
+SEPARATOR_SLASH = "/"
+
+# (H) Path navigation
+PATH_CURRENT_DIR = "."
+PATH_PARENT_DIR = ".."
+PATH_RELATIVE_PREFIX = "./"
+PATH_PARENT_PREFIX = "../"
+CPP_IMPORT_PARTITION_PREFIX = "import :"
+CPP_PARTITION_PREFIX = "partition_"
 
 # (H) Trie internal keys
 TRIE_TYPE_KEY = "__type__"
@@ -310,6 +322,8 @@ class RelationshipType(StrEnum):
 
 NODE_PROJECT = NodeLabel.PROJECT
 
+EXCLUDED_DEPENDENCY_NAMES = frozenset({"python", "php"})
+
 # (H) Byte size constants
 BYTES_PER_MB = 1024 * 1024
 
@@ -322,6 +336,7 @@ KEY_IS_EXPORTED = "is_exported"
 
 # (H) Method signature formatting
 EMPTY_PARENS = "()"
+DOCSTRING_STRIP_CHARS = "'\" \n"
 
 # (H) Inline module path prefix
 INLINE_MODULE_PATH_PREFIX = "inline_module_"
@@ -434,6 +449,9 @@ NAME_FIELDS = ("identifier", "name", "id")
 FIELD_OBJECT = "object"
 FIELD_PROPERTY = "property"
 FIELD_NAME = "name"
+FIELD_ALIAS = "alias"
+FIELD_MODULE_NAME = "module_name"
+FIELD_ARGUMENTS = "arguments"
 FIELD_BODY = "body"
 FIELD_CONSTRUCTOR = "constructor"
 FIELD_DECLARATOR = "declarator"
@@ -711,6 +729,7 @@ CHAR_PAREN_CLOSE = ")"
 CHAR_UNDERSCORE = "_"
 CHAR_SPACE = " "
 SEPARATOR_COMMA_SPACE = ", "
+PUNCTUATION_TYPES = (CHAR_PAREN_OPEN, CHAR_PAREN_CLOSE, CHAR_COMMA)
 
 REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
 REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
@@ -1276,6 +1295,7 @@ TS_SYSTEM_LIB_STRING = "system_lib_string"
 TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
 TS_TYPE_DESCRIPTOR = "type_descriptor"
 TS_TYPE_IDENTIFIER = "type_identifier"
+LUA_STRING_TYPES = (TS_STRING, TS_STRING_LITERAL)
 
 # (H) Tree-sitter Lua node types
 TS_DOT_INDEX_EXPRESSION = "dot_index_expression"
@@ -1436,6 +1456,23 @@ ENTITY_CLASS = "Class"
 ENTITY_FUNCTION = "Function"
 ENTITY_METHOD = "Method"
 
+# (H) Anonymous function name prefixes
+PREFIX_LAMBDA = "lambda_"
+PREFIX_ANONYMOUS = "anonymous_"
+PREFIX_IIFE = "iife_"
+PREFIX_IIFE_DIRECT = "iife_direct_"
+PREFIX_ARROW = "arrow"
+PREFIX_FUNC = "func"
+
+# (H) C++ stdlib namespace and type inference prefixes
+CPP_STD_NAMESPACE = "std"
+CPP_PREFIX_IS = "is_"
+CPP_PREFIX_HAS = "has_"
+
+# (H) JSON keys for stdlib introspection subprocess responses
+JSON_KEY_HAS_ENTITY = "hasEntity"
+JSON_KEY_ENTITY_TYPE = "entityType"
+
 # (H) C++ stdlib entity names for heuristic detection
 CPP_STDLIB_ENTITIES = frozenset(
     {
@@ -1484,6 +1521,7 @@ JAVA_STDLIB_CLASSES = frozenset(
 # (H) Import processor misc
 IMPORT_DEFAULT_SUFFIX = ".default"
 IMPORT_STD_PREFIX = "std."
+CPP_STD_PREFIX = "std"
 IMPORT_MODULE_LABEL = "Module"
 IMPORT_QUALIFIED_NAME = "qualified_name"
 IMPORT_RELATIONSHIP = "IMPORTS"
@@ -1491,6 +1529,10 @@ IMPORT_RELATIONSHIP = "IMPORTS"
 # (H) Java type inference constants
 JAVA_LANG_PREFIX = "java.lang."
 JAVA_ARRAY_SUFFIX = "[]"
+JAVA_SUFFIX_EXCEPTION = "Exception"
+JAVA_SUFFIX_ERROR = "Error"
+JAVA_SUFFIX_INTERFACE = "Interface"
+JAVA_SUFFIX_BUILDER = "Builder"
 JAVA_PRIMITIVE_TYPES = frozenset(
     {
         "int",
@@ -1733,6 +1775,10 @@ TS_PY_MODULE = "module"
 TS_PY_IMPORT_STATEMENT = "import_statement"
 TS_PY_IMPORT_FROM_STATEMENT = "import_from_statement"
 TS_PY_WITH_STATEMENT = "with_statement"
+TS_PY_EXPRESSION_STATEMENT = "expression_statement"
+TS_PY_STRING = "string"
+TS_PY_DECORATED_DEFINITION = "decorated_definition"
+TS_PY_DECORATOR = "decorator"
 
 # (H) Python keyword identifiers
 PY_KEYWORD_SELF = "self"
