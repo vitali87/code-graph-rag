@@ -27,6 +27,7 @@ class Color(StrEnum):
     CYAN = "cyan"
     RED = "red"
     MAGENTA = "magenta"
+    BLUE = "blue"
 
 
 class KeyBinding(StrEnum):
@@ -1108,6 +1109,12 @@ LANG_TABLE_COL_FUNCTION_TYPES = "Function Types"
 LANG_TABLE_COL_CLASS_TYPES = "Class Types"
 LANG_TABLE_COL_CALL_TYPES = "Call Types"
 LANG_TABLE_PLACEHOLDER = "—"
+
+LANG_MSG_AVAILABLE_NODES = "Available nodes for mapping:"
+LANG_ELLIPSIS = "..."
+LANG_GIT_SUFFIX = ".git"
+LANG_GITMODULES_FILE = ".gitmodules"
+LANG_CALL_KEYWORD_EXCLUDE = "call"
 
 # (H) Git submodule regex
 LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\\n]+)"

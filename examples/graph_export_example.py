@@ -9,6 +9,7 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from codebase_rag import cli_help as ch
 from codebase_rag import logs
 from codebase_rag.constants import (
     DEFAULT_NAME,
@@ -86,9 +87,7 @@ def _perform_graph_analysis(graph_file: str) -> None:
 
 
 def main(
-    graph_file: Annotated[
-        Path, typer.Argument(help="Path to the exported_graph.json file.")
-    ],
+    graph_file: Annotated[Path, typer.Argument(help=ch.HELP_EXPORTED_GRAPH_FILE)],
 ) -> None:
     if not graph_file.exists():
         logger.error(logs.GRAPH_FILE_NOT_FOUND.format(path=graph_file))

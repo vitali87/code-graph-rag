@@ -15,6 +15,7 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 
+from .. import cli_help as ch
 from .. import constants as cs
 from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 
@@ -142,7 +143,7 @@ def _parse_tree_sitter_json(
     raw_extensions = grammar_info.get("file-types", [])
     extensions = [ext if ext.startswith(".") else f".{ext}" for ext in raw_extensions]
 
-    name = language_name if language_name else detected_name
+    name = language_name or detected_name
 
     click.echo(cs.LANG_MSG_AUTO_DETECTED_LANG.format(name=detected_name))
     click.echo(cs.LANG_MSG_USING_LANG_NAME.format(name=name))
@@ -164,17 +165,11 @@ def _extract_semantic_categories(node_types_json: list[dict]) -> dict[str, list[
     categories: dict[str, list[str]] = {}
 
     for node in node_types_json:
-        if isinstance(node, dict) and "type" in node:
-            node_type = node["type"]
-
-            if "subtypes" in node:
-                subtypes = [
-                    subtype["type"] for subtype in node["subtypes"] if "type" in subtype
-                ]
-                if node_type in categories:
-                    categories[node_type].extend(subtypes)
-                else:
-                    categories[node_type] = subtypes
+        if isinstance(node, dict) and "type" in node and "subtypes" in node:
+            subtypes = [
+                subtype["type"] for subtype in node["subtypes"] if "type" in subtype
+            ]
+            categories.setdefault(node["type"], []).extend(subtypes)
 
     for category, values in categories.items():
         categories[category] = list(set(values))
@@ -196,11 +191,11 @@ def _categorize_node_types(
 
             if (
                 any(kw in subtype_lower for kw in cs.LANG_FUNCTION_KEYWORDS)
-                and "call" not in subtype_lower
+                and cs.LANG_CALL_KEYWORD_EXCLUDE not in subtype_lower
             ):
                 functions.append(subtype)
-            elif any(kw in subtype_lower for kw in cs.LANG_CLASS_KEYWORDS) and not any(
-                kw in subtype_lower for kw in cs.LANG_EXCLUSION_KEYWORDS
+            elif any(kw in subtype_lower for kw in cs.LANG_CLASS_KEYWORDS) and all(
+                kw not in subtype_lower for kw in cs.LANG_EXCLUSION_KEYWORDS
             ):
                 classes.append(subtype)
             elif any(kw in subtype_lower for kw in cs.LANG_CALL_KEYWORDS):
@@ -252,7 +247,7 @@ def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
         click.echo(f"🌳 {cs.LANG_MSG_SEMANTIC_CATEGORIES}")
 
         for category, subtypes in semantic_categories.items():
-            preview = f"{subtypes[:5]}{'...' if len(subtypes) > 5 else ''}"
+            preview = f"{subtypes[:5]}{cs.LANG_ELLIPSIS if len(subtypes) > 5 else ''}"
             click.echo(
                 cs.LANG_MSG_CATEGORY_FORMAT.format(
                     category=category, subtypes=preview, count=len(subtypes)
@@ -276,7 +271,7 @@ def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
 
 
 def _prompt_for_node_categories() -> NodeCategories:
-    click.echo("Available nodes for mapping:")
+    click.echo(cs.LANG_MSG_AVAILABLE_NODES)
     click.echo(cs.LANG_MSG_FUNCTIONS.format(nodes=list(cs.LANG_DEFAULT_FUNCTION_NODES)))
     click.echo(cs.LANG_MSG_CLASSES.format(nodes=list(cs.LANG_DEFAULT_CLASS_NODES)))
 
@@ -313,10 +308,7 @@ def _find_node_types_path(grammar_path: str, language_name: str) -> str | None:
         ),
     ]
 
-    for path in possible_paths:
-        if os.path.exists(path):
-            return path
-    return None
+    return next((path for path in possible_paths if os.path.exists(path)), None)
 
 
 def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
@@ -330,33 +322,36 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
     ),"""
 
     try:
-        config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text()
-        closing_brace_pos = config_content.rfind("}")
-
-        if closing_brace_pos == -1:
-            raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
-
-        new_content = (
-            config_content[:closing_brace_pos]
-            + config_entry
-            + "\n"
-            + config_content[closing_brace_pos:]
-        )
-
-        with open(cs.LANG_CONFIG_FILE, "w") as f:
-            f.write(new_content)
-
-        click.echo(f"✅ {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
-        click.echo(f"📝 {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}")
-        _show_review_hints()
-        return True
-
+        return _write_language_config(config_entry, language_name)
     except Exception as e:
         logger.error(cs.LANG_ERR_UPDATE_CONFIG.format(error=e))
         click.echo(f"❌ {cs.LANG_ERR_UPDATE_CONFIG.format(error=e)}")
         click.echo(click.style(cs.LANG_FALLBACK_MANUAL_ADD, bold=True))
         click.echo(click.style(config_entry, fg=cs.Color.GREEN))
         return False
+
+
+def _write_language_config(config_entry: str, language_name: str) -> bool:
+    config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text()
+    closing_brace_pos = config_content.rfind("}")
+
+    if closing_brace_pos == -1:
+        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+
+    new_content = (
+        config_content[:closing_brace_pos]
+        + config_entry
+        + "\n"
+        + config_content[closing_brace_pos:]
+    )
+
+    with open(cs.LANG_CONFIG_FILE, "w") as f:
+        f.write(new_content)
+
+    click.echo(f"✅ {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
+    click.echo(f"📝 {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}")
+    _show_review_hints()
+    return True
 
 
 def _show_review_hints() -> None:
@@ -376,16 +371,16 @@ def _show_review_hints() -> None:
     click.echo(f"💡 {cs.LANG_MSG_LIST_HINT}")
 
 
-@click.group(help="CLI for managing language grammars")
+@click.group(help=ch.CMD_LANGUAGE_GROUP)
 def cli() -> None:
     pass
 
 
-@cli.command(help="Add a new language grammar to the project.")
+@cli.command(help=ch.CMD_LANGUAGE_ADD)
 @click.argument("language_name", required=False)
 @click.option(
     "--grammar-url",
-    help="URL to the tree-sitter grammar repository. If not provided, will use https://github.com/tree-sitter/tree-sitter-<language_name>",
+    help=ch.HELP_GRAMMAR_URL,
 )
 def add_grammar(
     language_name: str | None = None, grammar_url: str | None = None
@@ -412,7 +407,7 @@ def add_grammar(
     if not os.path.exists(cs.LANG_GRAMMARS_DIR):
         os.makedirs(cs.LANG_GRAMMARS_DIR)
 
-    grammar_dir_name = os.path.basename(grammar_url).removesuffix(".git")
+    grammar_dir_name = os.path.basename(grammar_url).removesuffix(cs.LANG_GIT_SUFFIX)
     grammar_path = os.path.join(cs.LANG_GRAMMARS_DIR, grammar_dir_name)
 
     result = _add_git_submodule(grammar_url, grammar_path)
@@ -420,11 +415,10 @@ def add_grammar(
         return
 
     tree_sitter_json_path = os.path.join(grammar_path, cs.LANG_TREE_SITTER_JSON)
-    lang_info = _parse_tree_sitter_json(
-        tree_sitter_json_path, grammar_dir_name, language_name
-    )
 
-    if lang_info:
+    if lang_info := _parse_tree_sitter_json(
+        tree_sitter_json_path, grammar_dir_name, language_name
+    ):
         language_name = lang_info.name
         file_extension = lang_info.extensions
     else:
@@ -434,11 +428,9 @@ def add_grammar(
         file_extension = info.extensions
 
     assert language_name is not None
-    node_types_path = _find_node_types_path(grammar_path, language_name)
 
-    if node_types_path:
-        categories = _parse_node_types_file(node_types_path)
-        if categories:
+    if node_types_path := _find_node_types_path(grammar_path, language_name):
+        if categories := _parse_node_types_file(node_types_path):
             functions = categories.functions
             classes = categories.classes
             modules = categories.modules
@@ -468,7 +460,7 @@ def add_grammar(
     _update_config_file(language_name, new_language_spec)
 
 
-@cli.command(help="List all currently configured languages.")
+@cli.command(help=ch.CMD_LANGUAGE_LIST)
 def list_languages() -> None:
     console = Console()
 
@@ -480,7 +472,7 @@ def list_languages() -> None:
     table.add_column(cs.LANG_TABLE_COL_LANGUAGE, style=cs.Color.CYAN, width=12)
     table.add_column(cs.LANG_TABLE_COL_EXTENSIONS, style=cs.Color.GREEN, width=20)
     table.add_column(cs.LANG_TABLE_COL_FUNCTION_TYPES, style=cs.Color.YELLOW, width=30)
-    table.add_column(cs.LANG_TABLE_COL_CLASS_TYPES, style="blue", width=35)
+    table.add_column(cs.LANG_TABLE_COL_CLASS_TYPES, style=cs.Color.BLUE, width=35)
     table.add_column(cs.LANG_TABLE_COL_CALL_TYPES, style=cs.Color.RED, width=30)
 
     for lang_name, config in LANGUAGE_SPECS.items():
@@ -506,11 +498,9 @@ def list_languages() -> None:
     console.print(table)
 
 
-@cli.command(help="Remove a language from the project.")
+@cli.command(help=ch.CMD_LANGUAGE_REMOVE)
 @click.argument("language_name")
-@click.option(
-    "--keep-submodule", is_flag=True, help="Keep the git submodule (default: remove it)"
-)
+@click.option("--keep-submodule", is_flag=True, help=ch.HELP_KEEP_SUBMODULE)
 def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     if language_name not in LANGUAGE_SPECS:
         available_langs = ", ".join(LANGUAGE_SPECS.keys())
@@ -579,7 +569,7 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     click.echo(f"🎉 {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
 
 
-@cli.command(help="Clean up orphaned git modules that weren't properly removed.")
+@cli.command(help=ch.CMD_LANGUAGE_CLEANUP)
 def cleanup_orphaned_modules() -> None:
     modules_dir = f".git/modules/{cs.LANG_GRAMMARS_DIR}"
     if not os.path.exists(modules_dir):
@@ -588,7 +578,7 @@ def cleanup_orphaned_modules() -> None:
 
     gitmodules_submodules: set[str] = set()
     try:
-        with open(".gitmodules") as f:
+        with open(cs.LANG_GITMODULES_FILE) as f:
             content = f.read()
             paths = re.findall(cs.LANG_GITMODULES_REGEX, content)
             gitmodules_submodules = set(paths)

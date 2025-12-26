@@ -4,6 +4,7 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from . import cli_help as ch
 from . import constants as cs
 from .config import settings
 from .graph_updater import GraphUpdater
@@ -22,56 +23,53 @@ from .tools.language import cli as language_cli
 
 app = typer.Typer(
     name="graph-code",
-    help="An accurate Retrieval-Augmented Generation (RAG) system that analyzes "
-    "multi-language codebases using Tree-sitter, builds comprehensive knowledge "
-    "graphs, and enables natural language querying of codebase structure and "
-    "relationships.",
+    help=ch.APP_DESCRIPTION,
     no_args_is_help=True,
     add_completion=False,
 )
 
 
-@app.command(help="Start interactive chat session with your codebase")
+@app.command(help=ch.CMD_START)
 def start(
     repo_path: str | None = typer.Option(
-        None, "--repo-path", help="Path to the target repository for code retrieval"
+        None, "--repo-path", help=ch.HELP_REPO_PATH_RETRIEVAL
     ),
     update_graph: bool = typer.Option(
         False,
         "--update-graph",
-        help="Update the knowledge graph by parsing the repository",
+        help=ch.HELP_UPDATE_GRAPH,
     ),
     clean: bool = typer.Option(
         False,
         "--clean",
-        help="Clean the database before updating (use when adding first repo)",
+        help=ch.HELP_CLEAN_DB,
     ),
     output: str | None = typer.Option(
         None,
         "-o",
         "--output",
-        help="Export graph to JSON file after updating (requires --update-graph)",
+        help=ch.HELP_OUTPUT_GRAPH,
     ),
     orchestrator: str | None = typer.Option(
         None,
         "--orchestrator",
-        help="Specify orchestrator as provider:model (e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)",
+        help=ch.HELP_ORCHESTRATOR,
     ),
     cypher: str | None = typer.Option(
         None,
         "--cypher",
-        help="Specify cypher model as provider:model (e.g., ollama:codellama, google:gemini-2.5-flash)",
+        help=ch.HELP_CYPHER_MODEL,
     ),
     no_confirm: bool = typer.Option(
         False,
         "--no-confirm",
-        help="Disable confirmation prompts for edit operations (YOLO mode)",
+        help=ch.HELP_NO_CONFIRM,
     ),
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
         min=1,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
+        help=ch.HELP_BATCH_SIZE,
     ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
@@ -127,21 +125,21 @@ def start(
         )
 
 
-@app.command(help="Index codebase to protobuf files for offline use")
+@app.command(help=ch.CMD_INDEX)
 def index(
     repo_path: str | None = typer.Option(
-        None, "--repo-path", help="Path to the target repository to index."
+        None, "--repo-path", help=ch.HELP_REPO_PATH_INDEX
     ),
     output_proto_dir: str = typer.Option(
         ...,
         "-o",
         "--output-proto-dir",
-        help="Required. Path to the output directory for the protobuf index file(s).",
+        help=ch.HELP_OUTPUT_PROTO_DIR,
     ),
     split_index: bool = typer.Option(
         False,
         "--split-index",
-        help="Write index to separate nodes.bin and relationships.bin files.",
+        help=ch.HELP_SPLIT_INDEX,
     ),
 ) -> None:
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
@@ -172,19 +170,17 @@ def index(
         raise typer.Exit(1) from e
 
 
-@app.command(help="Export knowledge graph from Memgraph to JSON file")
+@app.command(help=ch.CMD_EXPORT)
 def export(
-    output: str = typer.Option(
-        ..., "-o", "--output", help="Output file path for the exported graph"
-    ),
+    output: str = typer.Option(..., "-o", "--output", help=ch.HELP_OUTPUT_PATH),
     format_json: bool = typer.Option(
-        True, "--json/--no-json", help="Export in JSON format"
+        True, "--json/--no-json", help=ch.HELP_FORMAT_JSON
     ),
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
         min=1,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
+        help=ch.HELP_BATCH_SIZE,
     ),
 ) -> None:
     if not format_json:
@@ -209,40 +205,40 @@ def export(
         raise typer.Exit(1) from e
 
 
-@app.command(help="AI-guided codebase optimization session")
+@app.command(help=ch.CMD_OPTIMIZE)
 def optimize(
     language: str = typer.Argument(
         ...,
-        help="Programming language to optimize for (e.g., python, java, javascript, cpp)",
+        help=ch.HELP_LANGUAGE_ARG,
     ),
     repo_path: str | None = typer.Option(
-        None, "--repo-path", help="Path to the repository to optimize"
+        None, "--repo-path", help=ch.HELP_REPO_PATH_OPTIMIZE
     ),
     reference_document: str | None = typer.Option(
         None,
         "--reference-document",
-        help="Path to reference document/book for optimization guidance",
+        help=ch.HELP_REFERENCE_DOC,
     ),
     orchestrator: str | None = typer.Option(
         None,
         "--orchestrator",
-        help="Specify orchestrator as provider:model (e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)",
+        help=ch.HELP_ORCHESTRATOR,
     ),
     cypher: str | None = typer.Option(
         None,
         "--cypher",
-        help="Specify cypher model as provider:model (e.g., ollama:codellama, google:gemini-2.5-flash)",
+        help=ch.HELP_CYPHER_MODEL,
     ),
     no_confirm: bool = typer.Option(
         False,
         "--no-confirm",
-        help="Disable confirmation prompts for edit operations (YOLO mode)",
+        help=ch.HELP_NO_CONFIRM,
     ),
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
         min=1,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
+        help=ch.HELP_BATCH_SIZE,
     ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
@@ -270,7 +266,7 @@ def optimize(
         )
 
 
-@app.command(name="mcp-server", help="Start the MCP server for Claude Code integration")
+@app.command(name="mcp-server", help=ch.CMD_MCP_SERVER)
 def mcp_server() -> None:
     try:
         from codebase_rag.mcp import main as mcp_main
@@ -289,11 +285,9 @@ def mcp_server() -> None:
         )
 
 
-@app.command(
-    name="graph-loader", help="Load and display summary of exported graph JSON"
-)
+@app.command(name="graph-loader", help=ch.CMD_GRAPH_LOADER)
 def graph_loader_command(
-    graph_file: str = typer.Argument(..., help="Path to the exported graph JSON file"),
+    graph_file: str = typer.Argument(..., help=ch.HELP_GRAPH_FILE),
 ) -> None:
     from .graph_loader import load_graph
 
@@ -325,7 +319,7 @@ def graph_loader_command(
 
 @app.command(
     name="language",
-    help="Manage language grammars (add, remove, list)",
+    help=ch.CMD_LANGUAGE,
     context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
 )
 def language_command(ctx: typer.Context) -> None:

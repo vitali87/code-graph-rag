@@ -8,6 +8,7 @@ from loguru import logger
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from codebase_rag import cli_help as ch
 from codebase_rag import logs
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
@@ -157,13 +158,17 @@ def _validate_positive_int(value: int | None) -> int | None:
 
 
 def main(
-    repo_path: Annotated[str, typer.Argument(help="Path to the repository to watch.")],
-    host: Annotated[str, typer.Option(help="Memgraph host")] = settings.MEMGRAPH_HOST,
-    port: Annotated[int, typer.Option(help="Memgraph port")] = settings.MEMGRAPH_PORT,
+    repo_path: Annotated[str, typer.Argument(help=ch.HELP_REPO_PATH_WATCH)],
+    host: Annotated[
+        str, typer.Option(help=ch.HELP_MEMGRAPH_HOST)
+    ] = settings.MEMGRAPH_HOST,
+    port: Annotated[
+        int, typer.Option(help=ch.HELP_MEMGRAPH_PORT)
+    ] = settings.MEMGRAPH_PORT,
     batch_size: Annotated[
         int | None,
         typer.Option(
-            help="Number of buffered nodes/relationships before flushing to Memgraph",
+            help=ch.HELP_BATCH_SIZE,
             callback=_validate_positive_int,
         ),
     ] = None,
