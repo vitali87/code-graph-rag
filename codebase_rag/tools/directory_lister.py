@@ -26,8 +26,7 @@ class DirectoryLister:
 
             if contents := os.listdir(target_path):
                 return "\n".join(contents)
-            else:
-                return te.DIRECTORY_EMPTY.format(path=directory_path)
+            return te.DIRECTORY_EMPTY.format(path=directory_path)
 
         except Exception as e:
             logger.error(ls.DIR_LIST_ERROR.format(path=directory_path, error=e))

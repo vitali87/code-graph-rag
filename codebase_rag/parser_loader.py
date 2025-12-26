@@ -36,6 +36,7 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
                 logger.debug(ls.BUILDING_BINDINGS.format(lang=lang_name))
                 result = subprocess.run(
                     [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
+                    check=False,
                     cwd=str(submodule_path),
                     capture_output=True,
                     text=True,

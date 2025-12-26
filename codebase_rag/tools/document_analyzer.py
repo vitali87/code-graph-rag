@@ -96,25 +96,23 @@ class DocumentAnalyzer:
 
             if hasattr(response, "text") and response.text:
                 return str(response.text)
-            elif hasattr(response, "candidates") and response.candidates:
+            if hasattr(response, "candidates") and response.candidates:
                 for candidate in response.candidates:
                     if hasattr(candidate, "content") and candidate.content:
                         parts = candidate.content.parts
                         if parts and hasattr(parts[0], "text"):
                             return str(parts[0].text)
                 return cs.MSG_DOC_NO_CANDIDATES
-            else:
-                logger.warning(ls.DOC_NO_TEXT.format(response=response))
-                return cs.MSG_DOC_NO_CONTENT
+            logger.warning(ls.DOC_NO_TEXT.format(response=response))
+            return cs.MSG_DOC_NO_CONTENT
 
         except ValueError as e:
             if "does not start with" in str(e):
                 err_msg = te.DOC_ACCESS_OUTSIDE_ROOT.format(path=file_path)
                 logger.error(err_msg)
                 return err_msg
-            else:
-                logger.error(ls.DOC_ANALYZER_API_ERR.format(error=e))
-                return te.DOC_API_VALIDATION.format(error=e)
+            logger.error(ls.DOC_ANALYZER_API_ERR.format(error=e))
+            return te.DOC_API_VALIDATION.format(error=e)
         except ClientError as e:
             logger.error(ls.DOC_API_ERROR.format(path=file_path, error=e))
             if "Unable to process input image" in str(e):

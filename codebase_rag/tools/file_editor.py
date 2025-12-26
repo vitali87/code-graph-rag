@@ -79,7 +79,7 @@ class FileEditor:
                         f"{parent_class}.{func_name}" if parent_class else func_name
                     )
 
-                    if func_name == function_name or qualified_name == function_name:
+                    if function_name in (func_name, qualified_name):
                         matching_functions.append(
                             {
                                 "node": node,
@@ -105,54 +105,53 @@ class FileEditor:
 
         if not matching_functions:
             return None
-        elif len(matching_functions) == 1:
+        if len(matching_functions) == 1:
             node_text = matching_functions[0]["node"].text
             if node_text is None:
                 return None
             return str(node_text.decode(cs.ENCODING_UTF8))
-        else:
-            if line_number is not None:
-                for func in matching_functions:
-                    if func["line_number"] == line_number:
-                        node_text = func["node"].text
-                        if node_text is None:
-                            return None
-                        return str(node_text.decode(cs.ENCODING_UTF8))
-                logger.warning(
-                    ls.EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
-                        name=function_name, line=line_number
-                    )
-                )
-                return None
-
-            if cs.SEPARATOR_DOT in function_name:
-                for func in matching_functions:
-                    if func["qualified_name"] == function_name:
-                        node_text = func["node"].text
-                        if node_text is None:
-                            return None
-                        return str(node_text.decode(cs.ENCODING_UTF8))
-                logger.warning(ls.EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
-                return None
-
-            function_details = []
+        if line_number is not None:
             for func in matching_functions:
-                details = f"'{func['qualified_name']}' at line {func['line_number']}"
-                function_details.append(details)
-
+                if func["line_number"] == line_number:
+                    node_text = func["node"].text
+                    if node_text is None:
+                        return None
+                    return str(node_text.decode(cs.ENCODING_UTF8))
             logger.warning(
-                ls.EDITOR_AMBIGUOUS.format(
-                    name=function_name,
-                    path=file_path,
-                    count=len(matching_functions),
-                    details=", ".join(function_details),
+                ls.EDITOR_FUNC_NOT_FOUND_AT_LINE.format(
+                    name=function_name, line=line_number
                 )
             )
+            return None
 
-            node_text = matching_functions[0]["node"].text
-            if node_text is None:
-                return None
-            return str(node_text.decode(cs.ENCODING_UTF8))
+        if cs.SEPARATOR_DOT in function_name:
+            for func in matching_functions:
+                if func["qualified_name"] == function_name:
+                    node_text = func["node"].text
+                    if node_text is None:
+                        return None
+                    return str(node_text.decode(cs.ENCODING_UTF8))
+            logger.warning(ls.EDITOR_FUNC_NOT_FOUND_QN.format(name=function_name))
+            return None
+
+        function_details = []
+        for func in matching_functions:
+            details = f"'{func['qualified_name']}' at line {func['line_number']}"
+            function_details.append(details)
+
+        logger.warning(
+            ls.EDITOR_AMBIGUOUS.format(
+                name=function_name,
+                path=file_path,
+                count=len(matching_functions),
+                details=", ".join(function_details),
+            )
+        )
+
+        node_text = matching_functions[0]["node"].text
+        if node_text is None:
+            return None
+        return str(node_text.decode(cs.ENCODING_UTF8))
 
     def replace_function_source_code(
         self,
@@ -333,8 +332,7 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
         )
         if success:
             return cs.MSG_SURGICAL_SUCCESS.format(path=file_path)
-        else:
-            return cs.MSG_SURGICAL_FAILED.format(path=file_path)
+        return cs.MSG_SURGICAL_FAILED.format(path=file_path)
 
     return Tool(
         function=replace_code_surgically,

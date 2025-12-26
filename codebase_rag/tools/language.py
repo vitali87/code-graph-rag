@@ -250,8 +250,8 @@ def add_grammar(
                             else:
                                 categories[node_type] = subtypes
 
-                for category in categories:
-                    categories[category] = list(set(categories[category]))
+                for category, values in categories.items():
+                    categories[category] = list(set(values))
 
                 return categories
 

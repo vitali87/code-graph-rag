@@ -10,6 +10,7 @@ def test_help_command_works() -> None:
 
     result = subprocess.run(
         [sys.executable, "-m", "codebase_rag.cli", "--help"],
+        check=False,
         cwd=repo_root,
         capture_output=True,
         text=True,

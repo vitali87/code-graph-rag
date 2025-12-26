@@ -106,12 +106,11 @@ class JsTypeInferenceEngine:
                             )
                         )
                         return inferred_type
-                    else:
-                        logger.debug(
-                            ls.JS_RETURN_TYPE_INFER_FAILED.format(
-                                method_call=method_call_text
-                            )
+                    logger.debug(
+                        ls.JS_RETURN_TYPE_INFER_FAILED.format(
+                            method_call=method_call_text
                         )
+                    )
 
             elif func_node and func_node.type == cs.TS_IDENTIFIER:
                 func_name = func_node.text

@@ -345,8 +345,7 @@ class CallProcessor:
         path_parts.reverse()
         if path_parts:
             return f"{module_qn}.{'.'.join(path_parts)}.{func_name}"
-        else:
-            return f"{module_qn}.{func_name}"
+        return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         current = func_node.parent

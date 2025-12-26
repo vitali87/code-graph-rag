@@ -399,8 +399,7 @@ class MCPToolsRegistry:
             )
             if result.success:
                 return f"Successfully wrote file: {file_path}"
-            else:
-                return te.ERROR_WRAPPER.format(message=result.error_message)
+            return te.ERROR_WRAPPER.format(message=result.error_message)
         except Exception as e:
             logger.error(f"[MCP] Error writing file: {e}")
             return te.ERROR_WRAPPER.format(message=e)

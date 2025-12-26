@@ -75,7 +75,7 @@ def extract_macro_name(macro_node: Node) -> str | None:
                 continue
             if macro_name_node.type == "identifier":
                 return safe_decode_text(macro_name_node)
-            elif macro_name_node.type == "scoped_identifier":
+            if macro_name_node.type == "scoped_identifier":
                 for child in macro_name_node.children:
                     if child.type == "identifier":
                         if name := safe_decode_text(child):
@@ -93,7 +93,7 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
     def extract_path_from_node(node: Node) -> str:
         if node.type in ["identifier", "type_identifier"]:
             return safe_decode_text(node) or ""
-        elif node.type in ("scoped_identifier", "scoped_type_identifier"):
+        if node.type in ("scoped_identifier", "scoped_type_identifier"):
             parts = []
 
             def collect_path_parts(n: Node) -> None:
@@ -112,7 +112,7 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
 
             collect_path_parts(node)
             return "::".join(parts)
-        elif node.type in ("crate", "super", "self"):
+        if node.type in ("crate", "super", "self"):
             return safe_decode_text(node) or ""
         return ""
 
@@ -215,11 +215,11 @@ def get_rust_visibility(node: Node) -> str:
             if text := safe_decode_text(child):
                 if "pub(crate)" in text:
                     return "crate"
-                elif "pub(super)" in text:
+                if "pub(super)" in text:
                     return "super"
-                elif "pub(in" in text:
+                if "pub(in" in text:
                     return "module"
-                elif "pub" in text:
+                if "pub" in text:
                     return "public"
 
     return "private"

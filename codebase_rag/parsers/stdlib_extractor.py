@@ -21,7 +21,9 @@ def _is_tool_available(tool_name: str) -> bool:
     import subprocess
 
     try:
-        subprocess.run([tool_name, "--version"], capture_output=True, timeout=2)
+        subprocess.run(
+            [tool_name, "--version"], check=False, capture_output=True, timeout=2
+        )
         _EXTERNAL_TOOLS[tool_name] = True
         return True
     except (
@@ -245,6 +247,7 @@ class StdlibExtractor:
 
                 subprocess_result = subprocess.run(
                     ["node", "-e", node_script],
+                    check=False,
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -290,6 +293,7 @@ class StdlibExtractor:
 
                 resolve_result = subprocess.run(
                     ["go", "list", "-f", "{{.Dir}}", package_path],
+                    check=False,
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -461,6 +465,7 @@ int main() {{
 
                         subprocess.run(
                             ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
+                            check=False,
                             input=cpp_template_program,
                             capture_output=True,
                             text=True,
@@ -560,6 +565,7 @@ public class StdlibCheck {
                 try:
                     compile_result = subprocess.run(
                         ["javac", java_file],
+                        check=False,
                         capture_output=True,
                         text=True,
                         timeout=10,
@@ -576,6 +582,7 @@ public class StdlibCheck {
                                 package_name,
                                 entity_name,
                             ],
+                            check=False,
                             capture_output=True,
                             text=True,
                             timeout=10,
@@ -666,6 +673,7 @@ end
 
                 result = subprocess.run(
                     ["lua", "-e", lua_script],
+                    check=False,
                     capture_output=True,
                     text=True,
                     timeout=5,

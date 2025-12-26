@@ -498,7 +498,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         while current:
             if current.type == cs.TS_CLASS_BODY:
                 return True
-            elif current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
+            if current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
                 return False
             current = current.parent
         return False
@@ -513,7 +513,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 cs.TS_METHOD_DEFINITION,
             ):
                 return True
-            elif current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
+            if current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
                 return False
             current = current.parent
         return False

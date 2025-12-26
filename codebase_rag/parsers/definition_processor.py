@@ -195,9 +195,9 @@ class DefinitionProcessor(
         for child in decorator_node.children:
             if child.type == "identifier":
                 return safe_decode_text(child)
-            elif child.type == "attribute":
+            if child.type == "attribute":
                 return safe_decode_text(child)
-            elif child.type == "call":
+            if child.type == "call":
                 if func_node := child.child_by_field_name("function"):
                     if func_node.type in ["identifier", "attribute"]:
                         return safe_decode_text(func_node)

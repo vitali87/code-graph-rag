@@ -43,10 +43,9 @@ class ProtobufFileIngestor:
     def _get_node_id(self, label: cs.NodeLabel, properties: PropertyDict) -> str:
         if label in PATH_BASED_LABELS:
             return str(properties.get(cs.KEY_PATH, ""))
-        elif label in NAME_BASED_LABELS:
+        if label in NAME_BASED_LABELS:
             return str(properties.get(cs.KEY_NAME, ""))
-        else:
-            return str(properties.get(cs.KEY_QUALIFIED_NAME, ""))
+        return str(properties.get(cs.KEY_QUALIFIED_NAME, ""))
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         node_label = cs.NodeLabel(label)
