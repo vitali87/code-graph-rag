@@ -15,6 +15,7 @@ from codebase_rag.constants import (
     CYPHER_DELETE_MODULE,
     IGNORE_PATTERNS,
     IGNORE_SUFFIXES,
+    KEY_PATH,
     REALTIME_LOGGER_FORMAT,
     WATCHER_SLEEP_INTERVAL,
     EventType,
@@ -74,7 +75,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         )
 
         # (H) Step 1
-        ingestor.execute_write(CYPHER_DELETE_MODULE, {"path": relative_path_str})
+        ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
         logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
         # (H) Step 2
@@ -141,7 +142,9 @@ def start_watcher(
         observer.join()
 
 
-def _validate_positive_int(value: int) -> int:
+def _validate_positive_int(value: int | None) -> int | None:
+    if value is None:
+        return None
     if value < 1:
         raise typer.BadParameter(f"{value!r} is not a valid positive integer")
     return value
@@ -155,7 +158,7 @@ def main(
         int | None,
         typer.Option(
             help="Number of buffered nodes/relationships before flushing to Memgraph",
-            callback=lambda v: _validate_positive_int(v) if v else None,
+            callback=_validate_positive_int,
         ),
     ] = None,
 ) -> None:
