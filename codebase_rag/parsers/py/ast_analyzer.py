@@ -80,23 +80,6 @@ class PythonAstAnalyzerMixin:
             assignments, local_var_types, module_qn
         )
 
-    def _traverse_for_assignments_simple(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        self._traverse_for_assignments(
-            node, local_var_types, module_qn, self._process_assignment_simple
-        )
-
-    def _traverse_for_assignments_complex(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        # (H) DELETE??? Traverse AST for complex assignments (method calls) using existing variable types.
-        # (H) NOTE: This is kept for backwards compatibility but _traverse_single_pass
-        # (H) should be preferred for better performance.
-        self._traverse_for_assignments(
-            node, local_var_types, module_qn, self._process_assignment_complex
-        )
-
     def _traverse_for_assignments(
         self,
         node: Node,
@@ -151,23 +134,6 @@ class PythonAstAnalyzerMixin:
         ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_COMPLEX.format(var=var_name, type=inferred_type))
-
-    def _process_assignment_for_type_inference(
-        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
-        right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
-
-        if not left_node or not right_node:
-            return
-
-        var_name = self._extract_assignment_variable_name(left_node)
-        if not var_name:
-            return
-
-        if inferred_type := self._infer_type_from_expression(right_node, module_qn):
-            local_var_types[var_name] = inferred_type
-            logger.debug(lg.PY_TYPE_INFERRED.format(var=var_name, type=inferred_type))
 
     def _extract_assignment_variable_name(self, node: Node) -> str | None:
         if node.type != cs.TS_PY_IDENTIFIER or node.text is None:

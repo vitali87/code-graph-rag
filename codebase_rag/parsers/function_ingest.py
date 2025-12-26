@@ -243,15 +243,6 @@ class FunctionIngestMixin:
                 ("Function", "qualified_name", resolution.qualified_name),
             )
 
-    def _ingest_top_level_functions(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: SupportedLanguage,
-        queries: dict[SupportedLanguage, LanguageQueries],
-    ) -> None:
-        self._ingest_all_functions(root_node, module_qn, language, queries)
-
     def _extract_function_name(self, func_node: Node) -> str | None:
         name_node = func_node.child_by_field_name("name")
         if name_node and name_node.text:
@@ -384,14 +375,6 @@ class FunctionIngestMixin:
         if path_parts:
             return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"
-
-    def _build_rust_method_qualified_name(
-        self, method_node: Node, module_qn: str, method_name: str
-    ) -> str:
-        path_parts = rs_utils.build_module_path(method_node, include_impl_targets=True)
-        if path_parts:
-            return f"{module_qn}.{SEPARATOR_DOT.join(path_parts)}.{method_name}"
-        return f"{module_qn}.{method_name}"
 
     def _build_rust_function_qualified_name(
         self, func_node: Node, module_qn: str, func_name: str

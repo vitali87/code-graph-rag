@@ -153,45 +153,6 @@ class FileEditor:
             return None
         return str(node_text.decode(cs.ENCODING_UTF8))
 
-    def replace_function_source_code(
-        self,
-        file_path: str,
-        function_name: str,
-        new_code: str,
-        line_number: int | None = None,
-    ) -> bool:
-        original_code = self.get_function_source_code(
-            file_path, function_name, line_number
-        )
-        if not original_code:
-            logger.error(
-                ls.EDITOR_FUNC_NOT_IN_FILE.format(name=function_name, path=file_path)
-            )
-            return False
-
-        with open(file_path, encoding=cs.ENCODING_UTF8) as f:
-            original_content = f.read()
-
-        patches = self.dmp.patch_make(original_code, new_code)
-
-        new_content, results = self.dmp.patch_apply(patches, original_content)
-
-        if not all(results):
-            logger.warning(ls.EDITOR_PATCHES_NOT_CLEAN.format(name=function_name))
-            return False
-
-        if original_content == new_content:
-            logger.warning(ls.EDITOR_NO_CHANGES)
-            return False
-
-        with open(file_path, "w", encoding=cs.ENCODING_UTF8) as f:
-            f.write(new_content)
-
-        logger.success(
-            ls.EDITOR_REPLACE_SUCCESS.format(name=function_name, path=file_path)
-        )
-        return True
-
     def get_diff(
         self,
         file_path: str,

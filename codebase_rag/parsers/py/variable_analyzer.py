@@ -108,30 +108,6 @@ class PythonVariableAnalyzerMixin:
         )
         return best_match
 
-    def _infer_loop_variable_types(
-        self, caller_node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        self._find_comprehensions(caller_node, local_var_types, module_qn)
-        self._find_for_loops(caller_node, local_var_types, module_qn)
-
-    def _find_comprehensions(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if node.type == cs.TS_PY_LIST_COMPREHENSION:
-            self._analyze_comprehension(node, local_var_types, module_qn)
-
-        for child in node.children:
-            self._find_comprehensions(child, local_var_types, module_qn)
-
-    def _find_for_loops(
-        self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if node.type == cs.TS_PY_FOR_STATEMENT:
-            self._analyze_for_loop(node, local_var_types, module_qn)
-
-        for child in node.children:
-            self._find_for_loops(child, local_var_types, module_qn)
-
     def _analyze_comprehension(
         self, comp_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
@@ -213,12 +189,6 @@ class PythonVariableAnalyzerMixin:
                         if class_name and class_name[0].isupper():
                             return class_name
         return None
-
-    def _infer_instance_variable_types(
-        self, caller_node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        self._analyze_self_assignments(caller_node, local_var_types, module_qn)
-        self._analyze_class_init_assignments(caller_node, local_var_types, module_qn)
 
     def _infer_instance_variable_types_from_assignments(
         self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str

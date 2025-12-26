@@ -29,61 +29,6 @@ def extract_impl_target(impl_node: Node) -> str | None:
     return None
 
 
-def extract_trait_name(impl_node: Node) -> str | None:
-    if impl_node.type != "impl_item":
-        return None
-
-    for i in range(impl_node.child_count):
-        if impl_node.field_name_for_child(i) == "trait":
-            trait_node = impl_node.child(i)
-            if trait_node is None:
-                continue
-            if trait_node.type == "generic_type":
-                for child in trait_node.children:
-                    if child.type == "type_identifier":
-                        return safe_decode_text(child)
-            elif trait_node.type == "type_identifier":
-                return safe_decode_text(trait_node)
-            elif trait_node.type == "scoped_type_identifier":
-                for child in trait_node.children:
-                    if child.type == "type_identifier":
-                        if name := safe_decode_text(child):
-                            return name
-
-    return None
-
-
-def is_async_function(func_node: Node) -> bool:
-    if func_node.type != "function_item":
-        return False
-
-    return any(
-        child.type == "async"
-        or (child.type == "identifier" and safe_decode_text(child) == "async")
-        for child in func_node.children
-    )
-
-
-def extract_macro_name(macro_node: Node) -> str | None:
-    if macro_node.type != "macro_invocation":
-        return None
-
-    for i in range(macro_node.child_count):
-        if macro_node.field_name_for_child(i) == "macro":
-            macro_name_node = macro_node.child(i)
-            if macro_name_node is None:
-                continue
-            if macro_name_node.type == "identifier":
-                return safe_decode_text(macro_name_node)
-            if macro_name_node.type == "scoped_identifier":
-                for child in macro_name_node.children:
-                    if child.type == "identifier":
-                        if name := safe_decode_text(child):
-                            return name
-
-    return None
-
-
 def extract_use_imports(use_node: Node) -> dict[str, str]:
     if use_node.type != "use_declaration":
         return {}
@@ -202,27 +147,6 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
         process_use_tree(argument_node)
 
     return imports
-
-
-def extract_use_path(use_node: Node) -> list[str]:
-    import_dict = extract_use_imports(use_node)
-    return list(import_dict.keys())
-
-
-def get_rust_visibility(node: Node) -> str:
-    for child in node.children:
-        if child.type == "visibility_modifier":
-            if text := safe_decode_text(child):
-                if "pub(crate)" in text:
-                    return "crate"
-                if "pub(super)" in text:
-                    return "super"
-                if "pub(in" in text:
-                    return "module"
-                if "pub" in text:
-                    return "public"
-
-    return "private"
 
 
 def build_module_path(
