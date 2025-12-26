@@ -80,7 +80,7 @@ def create_query_tool(
                 summary=QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
             )
         except Exception as e:
-            logger.error(ls.TOOL_QUERY_ERROR.format(error=e), exc_info=True)
+            logger.exception(ls.TOOL_QUERY_ERROR.format(error=e))
             return QueryGraphData(
                 query_used=cypher_query,
                 results=[],

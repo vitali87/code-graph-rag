@@ -232,7 +232,7 @@ class MCPToolsRegistry:
             )
             return result_dict
         except Exception as e:
-            logger.error(lg.MCP_ERROR_QUERY.format(error=e), exc_info=True)
+            logger.exception(lg.MCP_ERROR_QUERY.format(error=e))
             return QueryResultDict(
                 error=str(e),
                 query_used=cs.QUERY_NOT_AVAILABLE,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -10,7 +10,13 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
-from ..types_defs import ASTNode, NodeType
+from ..types_defs import (
+    ASTNode,
+    FunctionRegistryTrieProtocol,
+    NodeType,
+    PropertyDict,
+    SimpleNameLookup,
+)
 from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
@@ -33,8 +39,8 @@ class FunctionIngestMixin:
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
-    function_registry: Any
-    simple_name_lookup: Any
+    function_registry: FunctionRegistryTrieProtocol
+    simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     _handler: LanguageHandler
 
@@ -212,7 +218,7 @@ class FunctionIngestMixin:
 
     def _build_function_props(
         self, func_node: Node, resolution: FunctionResolution
-    ) -> dict[str, Any]:
+    ) -> PropertyDict:
         return {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,

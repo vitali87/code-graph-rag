@@ -70,7 +70,7 @@ class CodeRetriever:
                 docstring=res.get("docstring"),
             )
         except Exception as e:
-            logger.error(ls.CODE_RETRIEVER_ERROR.format(error=e), exc_info=True)
+            logger.exception(ls.CODE_RETRIEVER_ERROR.format(error=e))
             return CodeSnippet(
                 qualified_name=qualified_name,
                 source_code="",

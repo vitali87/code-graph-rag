@@ -70,7 +70,7 @@ class MemgraphIngestor:
         self, exc_type: type | None, exc_val: Exception | None, exc_tb: object
     ) -> None:
         if exc_type:
-            logger.error(ls.MG_EXCEPTION.format(error=exc_val), exc_info=True)
+            logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
         self.flush_all()
         if self.conn:
             self.conn.close()

@@ -129,9 +129,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
-            logger.error(
-                lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e), exc_info=True
-            )
+            logger.exception(lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
             return _create_error_content(error_msg)
 
     return server, ingestor

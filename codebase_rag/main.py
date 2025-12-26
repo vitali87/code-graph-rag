@@ -572,7 +572,7 @@ async def _run_interactive_loop(
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error(ls.UNEXPECTED.format(error=e), exc_info=True)
+            logger.exception(ls.UNEXPECTED.format(error=e))
             app_context.console.print(cs.UI_ERR_UNEXPECTED.format(error=e))
 
 
@@ -659,7 +659,7 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
     except Exception as e:
         app_context.console.print(cs.UI_ERR_EXPORT_FAILED.format(error=e))
-        logger.error(ls.EXPORT_ERROR.format(error=e), exc_info=True)
+        logger.exception(ls.EXPORT_ERROR.format(error=e))
         return False
 
 

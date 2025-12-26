@@ -6,6 +6,7 @@ from loguru import logger
 
 from . import cli_help as ch
 from . import constants as cs
+from . import logs as ls
 from .config import settings
 from .graph_updater import GraphUpdater
 from .main import (
@@ -166,7 +167,7 @@ def index(
         app_context.console.print(
             style(cs.CLI_ERR_INDEXING.format(error=e), cs.Color.RED)
         )
-        logger.error("Indexing failed", exc_info=True)
+        logger.exception(ls.INDEXING_FAILED)
         raise typer.Exit(1) from e
 
 
@@ -201,7 +202,7 @@ def export(
         app_context.console.print(
             style(cs.CLI_ERR_EXPORT_FAILED.format(error=e), cs.Color.RED)
         )
-        logger.error(f"Export error: {e}", exc_info=True)
+        logger.exception(ls.EXPORT_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
 

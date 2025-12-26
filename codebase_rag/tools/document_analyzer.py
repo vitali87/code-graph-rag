@@ -105,7 +105,7 @@ class DocumentAnalyzer:
                 return te.DOC_IMAGE_PROCESS
             return te.DOC_API_ERROR.format(error=error)
 
-        logger.error(ls.DOC_FAILED.format(path=file_path, error=error), exc_info=True)
+        logger.exception(ls.DOC_FAILED.format(path=file_path, error=error))
         return te.DOC_ANALYSIS_FAILED.format(error=error)
 
     def analyze(self, file_path: str, question: str) -> str:
@@ -155,7 +155,7 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
             )
             return result
         except Exception as e:
-            logger.error(ls.DOC_EXCEPTION.format(error=e), exc_info=True)
+            logger.exception(ls.DOC_EXCEPTION.format(error=e))
             if str(e).startswith("Error:") or str(e).startswith("API error:"):
                 return str(e)
             return te.DOC_DURING_ANALYSIS.format(error=e)
