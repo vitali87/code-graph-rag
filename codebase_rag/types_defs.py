@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, ItemsView, KeysView
+from collections.abc import Awaitable, Callable, ItemsView, KeysView, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -44,6 +44,11 @@ class RelBatchRow(TypedDict):
 
 
 BatchParams = NodeBatchRow | RelBatchRow | PropertyDict
+
+
+class BatchWrapper(TypedDict):
+    batch: Sequence[BatchParams]
+
 
 type SimpleName = str
 type QualifiedName = str

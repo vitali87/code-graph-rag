@@ -24,6 +24,7 @@ from ..cypher_queries import (
 )
 from ..types_defs import (
     BatchParams,
+    BatchWrapper,
     GraphData,
     GraphMetadata,
     NodeBatchRow,
@@ -107,7 +108,7 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = self.conn.cursor()
-            cursor.execute(wrap_with_unwind(query), {"batch": params_list})
+            cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
         except Exception as e:
             if "already exists" not in str(e).lower():
                 logger.error(ls.MG_BATCH_ERROR.format(error=e))
@@ -133,7 +134,7 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = self.conn.cursor()
-            cursor.execute(wrap_with_unwind(query), {"batch": params_list})
+            cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
             return self._cursor_to_results(cursor)
         except Exception as e:
             logger.error(ls.MG_BATCH_ERROR.format(error=e))
