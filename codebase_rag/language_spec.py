@@ -623,11 +623,3 @@ def get_language_for_extension(file_extension: str) -> cs.SupportedLanguage | No
     if spec and isinstance(spec.language, cs.SupportedLanguage):
         return spec.language
     return None
-
-
-def get_language_spec_by_name(language_name: str) -> LanguageSpec | None:
-    try:
-        lang_key = cs.SupportedLanguage(language_name.lower())
-        return LANGUAGE_SPECS.get(lang_key)
-    except ValueError:
-        return None

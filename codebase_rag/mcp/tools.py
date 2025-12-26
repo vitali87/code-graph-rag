@@ -452,14 +452,6 @@ class MCPToolsRegistry:
             return None
         return (metadata.handler, metadata.returns_json)
 
-    def list_tool_names(self) -> list[str]:
-        """Get a list of all registered tool names.
-
-        Returns:
-            List of tool names
-        """
-        return list(self._tools.keys())
-
 
 def create_mcp_tools_registry(
     project_root: str,

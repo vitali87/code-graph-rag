@@ -214,63 +214,6 @@ class PythonVariableAnalyzerMixin:
                             )
                         )
 
-    def _analyze_class_init_assignments(
-        self, caller_node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        class_node = self._find_containing_class(caller_node)
-        if not class_node:
-            logger.debug(lg.PY_NO_CONTAINING_CLASS)
-            return
-
-        init_method = self._find_init_method(class_node)
-        if not init_method:
-            logger.debug(lg.PY_NO_INIT_METHOD)
-            return
-
-        logger.debug(lg.PY_FOUND_INIT)
-        self._analyze_self_assignments(init_method, local_var_types, module_qn)
-
-    def _find_containing_class(self, method_node: Node) -> Node | None:
-        current = method_node.parent
-        level = 1
-        while current:
-            logger.debug(
-                lg.PY_SEARCHING_LEVEL.format(level=level, node_type=current.type)
-            )
-            if current.type == cs.TS_PY_CLASS_DEFINITION:
-                logger.debug(lg.PY_FOUND_CLASS_AT_LEVEL.format(level=level))
-                return current
-            current = current.parent
-            level += 1
-            if level > 10:
-                break
-        logger.debug(lg.PY_NO_CLASS_IN_HIERARCHY)
-        return None
-
-    def _find_init_method(self, class_node: Node) -> Node | None:
-        logger.debug(lg.PY_SEARCHING_INIT.format(count=len(class_node.children)))
-
-        class_body = next(
-            (c for c in class_node.children if c.type == cs.TS_PY_BLOCK), None
-        )
-        if not class_body:
-            logger.debug(lg.PY_NO_CLASS_BODY)
-            return None
-
-        logger.debug(lg.PY_SEARCHING_BODY.format(count=len(class_body.children)))
-        for child in class_body.children:
-            logger.debug(lg.PY_BODY_CHILD.format(type=child.type))
-            if child.type == cs.TS_PY_FUNCTION_DEFINITION:
-                name_node = child.child_by_field_name("name")
-                if name_node and name_node.text:
-                    method_name = safe_decode_text(name_node)
-                    logger.debug(lg.PY_FOUND_METHOD.format(name=method_name))
-                    if method_name == cs.PY_METHOD_INIT:
-                        logger.debug(lg.PY_FOUND_INIT_METHOD)
-                        return child
-        logger.debug(lg.PY_INIT_NOT_FOUND)
-        return None
-
     def _analyze_self_assignments(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
