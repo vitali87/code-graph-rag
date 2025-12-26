@@ -40,6 +40,16 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
 
+    @abstractmethod
+    def _build_nested_qualified_name(
+        self,
+        func_node: ASTNode,
+        module_qn: str,
+        func_name: str,
+        lang_config: LanguageSpec,
+        skip_classes: bool = False,
+    ) -> str | None: ...
+
     def _ingest_prototype_inheritance(
         self,
         root_node: ASTNode,
@@ -511,8 +521,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             current = current.parent
         return False
 
-    def _is_export_inside_function(self, export_node: ASTNode) -> bool:
-        current = export_node.parent
+    def _is_export_inside_function(self, node: ASTNode) -> bool:
+        current = node.parent
         while current:
             if current.type in (
                 cs.TS_FUNCTION_DECLARATION,

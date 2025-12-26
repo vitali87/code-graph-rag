@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from abc import abstractmethod
+
 from loguru import logger
 
 from ... import constants as cs
@@ -12,6 +14,11 @@ from ..utils import safe_decode_text
 class PythonVariableAnalyzerMixin:
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
+
+    @abstractmethod
+    def _infer_type_from_expression(
+        self, node: ASTNode, module_qn: str
+    ) -> str | None: ...
 
     def _infer_parameter_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str

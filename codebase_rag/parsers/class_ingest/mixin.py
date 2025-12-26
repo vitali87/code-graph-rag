@@ -9,7 +9,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs
-from ...types_defs import PropertyDict
+from ...types_defs import ASTNode, PropertyDict
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
@@ -42,10 +42,10 @@ class ClassIngestMixin:
     class_inheritance: dict[str, list[str]]
 
     @abstractmethod
-    def _get_docstring(self, node: Node) -> str | None: ...
+    def _get_docstring(self, node: ASTNode) -> str | None: ...
 
     @abstractmethod
-    def _extract_decorators(self, node: Node) -> list[str]: ...
+    def _extract_decorators(self, node: ASTNode) -> list[str]: ...
 
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"

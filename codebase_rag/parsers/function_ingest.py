@@ -9,7 +9,7 @@ from tree_sitter import Node
 
 from ..constants import SEPARATOR_DOT, SupportedLanguage
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
-from ..types_defs import NodeType
+from ..types_defs import ASTNode, NodeType
 from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
@@ -36,10 +36,13 @@ class FunctionIngestMixin:
     module_qn_to_file_path: dict[str, Path]
 
     @abstractmethod
-    def _get_docstring(self, node: Node) -> str | None: ...
+    def _get_docstring(self, node: ASTNode) -> str | None: ...
 
     @abstractmethod
-    def _extract_decorators(self, node: Node) -> list[str]: ...
+    def _extract_decorators(self, node: ASTNode) -> list[str]: ...
+
+    @abstractmethod
+    def _is_inside_method_with_object_literals(self, func_node: ASTNode) -> bool: ...
 
     def _ingest_all_functions(
         self,

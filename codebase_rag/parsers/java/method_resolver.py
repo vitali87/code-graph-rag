@@ -50,6 +50,9 @@ class JavaMethodResolverMixin:
     @abstractmethod
     def _get_current_class_name(self, module_qn: str) -> str | None: ...
 
+    @abstractmethod
+    def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None: ...
+
     def _resolve_java_object_type(
         self, object_ref: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:

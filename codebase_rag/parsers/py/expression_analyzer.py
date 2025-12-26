@@ -40,6 +40,14 @@ class PythonExpressionAnalyzerMixin:
         self, caller_node: Node, module_qn: str
     ) -> dict[str, str]: ...
 
+    @abstractmethod
+    def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
+
+    @abstractmethod
+    def _analyze_method_return_statements(
+        self, method_node: Node, method_qn: str
+    ) -> str | None: ...
+
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:
             func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)

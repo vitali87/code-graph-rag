@@ -50,19 +50,7 @@ type QualifiedName = str
 type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]
 
 
-class ASTNodeProtocol(Protocol):
-    @property
-    def type(self) -> str: ...
-    @property
-    def children(self) -> list["ASTNodeProtocol"]: ...
-    @property
-    def parent(self) -> "ASTNodeProtocol | None": ...
-    @property
-    def text(self) -> bytes: ...
-    def child_by_field_name(self, name: str) -> "ASTNodeProtocol | None": ...
-
-
-type ASTNode = Node | ASTNodeProtocol
+type ASTNode = Node
 
 
 class NodeType(StrEnum):
