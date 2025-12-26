@@ -16,7 +16,6 @@ from codebase_rag.services.llm import CypherGenerator
 
 
 def setup_logging() -> None:
-    """Configure logging to stderr for MCP stdio transport."""
     logger.remove()
     logger.add(
         sys.stderr,
@@ -26,21 +25,6 @@ def setup_logging() -> None:
 
 
 def get_project_root() -> Path:
-    """Get the project root from environment, settings, or parent process working directory.
-
-    Priority order:
-    1. TARGET_REPO_PATH environment variable (explicit configuration)
-    2. TARGET_REPO_PATH from settings
-    3. CLAUDE_PROJECT_ROOT environment variable (set by Claude Code)
-    4. PWD environment variable (inherited from parent process/shell)
-    5. Current working directory (fallback)
-
-    Returns:
-        Path to the target repository
-
-    Raises:
-        ValueError: If the resolved path is invalid
-    """
     repo_path: str | None = (
         os.environ.get("TARGET_REPO_PATH") or settings.TARGET_REPO_PATH
     )
@@ -72,11 +56,6 @@ def get_project_root() -> Path:
 
 
 def create_server() -> tuple[Server, MemgraphIngestor]:
-    """Create and configure the MCP server.
-
-    Returns:
-        Tuple of (configured MCP server instance, MemgraphIngestor instance)
-    """
     setup_logging()
 
     try:
@@ -108,11 +87,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        """List all available MCP tools.
-
-        Tool schemas are dynamically generated from the MCPToolsRegistry,
-        ensuring consistency between tool definitions and handlers.
-        """
         schemas = tools.get_tool_schemas()
         return [
             Tool(
@@ -125,11 +99,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-        """Handle tool execution requests.
-
-        Tool handlers are dynamically resolved from the MCPToolsRegistry,
-        ensuring consistency with tool definitions.
-        """
         logger.info(f"[GraphCode MCP] Calling tool: {name}")
 
         try:
@@ -167,7 +136,6 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
 
 async def main() -> None:
-    """Main entry point for the MCP server."""
     logger.info("[GraphCode MCP] Starting MCP server...")
 
     server, ingestor = create_server()
