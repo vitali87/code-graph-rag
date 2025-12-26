@@ -41,9 +41,6 @@ class FunctionIngestMixin:
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
 
-    @abstractmethod
-    def _is_inside_method_with_object_literals(self, func_node: ASTNode) -> bool: ...
-
     def _ingest_all_functions(
         self,
         root_node: Node,
@@ -361,7 +358,8 @@ class FunctionIngestMixin:
     ) -> str | None | Literal[False]:
         if skip_classes:
             return None
-        if self._is_inside_method_with_object_literals(func_node):
+        check_fn = getattr(self, "_is_inside_method_with_object_literals", None)
+        if check_fn is not None and check_fn(func_node):
             return self._extract_node_name(class_node)
         return False
 
