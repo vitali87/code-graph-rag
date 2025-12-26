@@ -1517,6 +1517,7 @@ DELIMITER_TOKENS = frozenset({"(", ")", ","})
 # (H) Python tree-sitter node types for type inference
 TS_PY_IDENTIFIER = "identifier"
 TS_PY_TYPED_PARAMETER = "typed_parameter"
+TS_PY_TYPED_DEFAULT_PARAMETER = "typed_default_parameter"
 TS_PY_ATTRIBUTE = "attribute"
 TS_PY_CALL = "call"
 TS_PY_LIST = "list"

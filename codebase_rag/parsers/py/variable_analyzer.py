@@ -39,17 +39,21 @@ class PythonVariableAnalyzerMixin:
                 self._process_untyped_parameter(param, local_var_types, module_qn)
             case cs.TS_PY_TYPED_PARAMETER:
                 self._process_typed_parameter(param, local_var_types)
+            case cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+                self._process_typed_default_parameter(param, local_var_types)
 
     def _process_untyped_parameter(
         self, param: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        if param.text is None:
-            return
-        param_name = safe_decode_text(param)
-        if param_name is None:
-            return
-        inferred_type = self._infer_type_from_parameter_name(param_name, module_qn)
-        if not inferred_type:
+        if (
+            param.text is None
+            or (param_name := safe_decode_text(param)) is None
+            or not (
+                inferred_type := self._infer_type_from_parameter_name(
+                    param_name, module_qn
+                )
+            )
+        ):
             return
         local_var_types[param_name] = inferred_type
         logger.debug(
@@ -59,6 +63,24 @@ class PythonVariableAnalyzerMixin:
     def _process_typed_parameter(
         self, param: Node, local_var_types: dict[str, str]
     ) -> None:
+        param_name_node = next(
+            (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER), None
+        )
+        param_type_node = param.child_by_field_name(cs.TS_FIELD_TYPE)
+        if not (
+            param_name_node
+            and param_type_node
+            and param_name_node.text
+            and param_type_node.text
+            and (param_name := safe_decode_text(param_name_node))
+            and (param_type := safe_decode_text(param_type_node))
+        ):
+            return
+        local_var_types[param_name] = param_type
+
+    def _process_typed_default_parameter(
+        self, param: Node, local_var_types: dict[str, str]
+    ) -> None:
         param_name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
         param_type_node = param.child_by_field_name(cs.TS_FIELD_TYPE)
         if not (
@@ -66,12 +88,11 @@ class PythonVariableAnalyzerMixin:
             and param_type_node
             and param_name_node.text
             and param_type_node.text
+            and (param_name := safe_decode_text(param_name_node))
+            and (param_type := safe_decode_text(param_type_node))
         ):
             return
-        param_name = safe_decode_text(param_name_node)
-        param_type = safe_decode_text(param_type_node)
-        if param_name is not None and param_type is not None:
-            local_var_types[param_name] = param_type
+        local_var_types[param_name] = param_type
 
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
@@ -148,9 +169,9 @@ class PythonVariableAnalyzerMixin:
     def _analyze_for_clause(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        left_node = node.child_by_field_name(cs.TS_FIELD_LEFT)
-        right_node = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-        if left_node and right_node:
+        if (left_node := node.child_by_field_name(cs.TS_FIELD_LEFT)) and (
+            right_node := node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        ):
             self._infer_loop_var_from_iterable(
                 left_node, right_node, local_var_types, module_qn
             )
@@ -162,14 +183,12 @@ class PythonVariableAnalyzerMixin:
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
-        loop_var = self._extract_variable_name(left_node)
-        if not loop_var:
+        if not (loop_var := self._extract_variable_name(left_node)):
             return
 
-        element_type = self._infer_iterable_element_type(
+        if element_type := self._infer_iterable_element_type(
             right_node, local_var_types, module_qn
-        )
-        if element_type:
+        ):
             local_var_types[loop_var] = element_type
             logger.debug(
                 lg.PY_LOOP_VAR_INFERRED.format(var=loop_var, type=element_type)
@@ -194,12 +213,13 @@ class PythonVariableAnalyzerMixin:
             if child.type != cs.TS_PY_CALL:
                 continue
             func_node = child.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if not func_node or func_node.type != cs.TS_PY_IDENTIFIER:
-                continue
-            if func_node.text is None:
-                continue
-            class_name = safe_decode_text(func_node)
-            if class_name and class_name[0].isupper():
+            if (
+                func_node
+                and func_node.type == cs.TS_PY_IDENTIFIER
+                and func_node.text
+                and (class_name := safe_decode_text(func_node))
+                and class_name[0].isupper()
+            ):
                 return class_name
         return None
 
@@ -214,18 +234,18 @@ class PythonVariableAnalyzerMixin:
     ) -> None:
         left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
-        if not (left_node and right_node):
-            return
-        if left_node.type != cs.TS_PY_ATTRIBUTE:
-            return
-        left_text = left_node.text
-        if not left_text:
-            return
-        attr_name = left_text.decode(cs.ENCODING_UTF8)
-        if not attr_name.startswith(cs.PY_SELF_PREFIX):
-            return
-        assigned_type = self._infer_type_from_expression(right_node, module_qn)
-        if not assigned_type:
+        if not (
+            left_node
+            and right_node
+            and left_node.type == cs.TS_PY_ATTRIBUTE
+            and (left_text := left_node.text)
+            and (attr_name := left_text.decode(cs.ENCODING_UTF8)).startswith(
+                cs.PY_SELF_PREFIX
+            )
+            and (
+                assigned_type := self._infer_type_from_expression(right_node, module_qn)
+            )
+        ):
             return
         local_var_types[attr_name] = assigned_type
         logger.debug(
