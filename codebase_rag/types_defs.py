@@ -336,13 +336,10 @@ class MCPInputSchema(TypedDict):
     required: list[str]
 
 
-MCPInputSchemaDict = dict[str, str | MCPInputSchemaProperties | list[str]]
-
-
 class MCPToolSchema(NamedTuple):
     name: str
     description: str
-    inputSchema: MCPInputSchemaDict
+    inputSchema: MCPInputSchema
 
 
 class QueryResultDict(TypedDict, total=False):

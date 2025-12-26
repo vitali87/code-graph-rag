@@ -100,7 +100,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             Tool(
                 name=schema.name,
                 description=schema.description,
-                inputSchema=schema.inputSchema,
+                inputSchema={**schema.inputSchema},
             )
             for schema in schemas
         ]

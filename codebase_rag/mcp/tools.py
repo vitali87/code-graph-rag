@@ -24,6 +24,8 @@ from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.types_defs import (
     CodeSnippetResultDict,
     MCPHandlerType,
+    MCPInputSchema,
+    MCPInputSchemaProperty,
     MCPToolSchema,
     QueryResultDict,
 )
@@ -63,137 +65,135 @@ class MCPToolsRegistry:
             cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
                 name=cs.MCPToolName.INDEX_REPOSITORY,
                 description=td.MCP_INDEX_REPOSITORY,
-                input_schema={
-                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
-                    cs.MCPSchemaField.PROPERTIES: {},
-                    cs.MCPSchemaField.REQUIRED: [],
-                },
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={},
+                    required=[],
+                ),
                 handler=self.index_repository,
                 returns_json=False,
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_QUERY_CODE_GRAPH,
-                input_schema={
-                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
-                    cs.MCPSchemaField.PROPERTIES: {
-                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
-                        }
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
+                        )
                     },
-                    cs.MCPSchemaField.REQUIRED: [
-                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY
-                    ],
-                },
+                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
+                ),
                 handler=self.query_code_graph,
                 returns_json=True,
             ),
             cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
                 name=cs.MCPToolName.GET_CODE_SNIPPET,
                 description=td.MCP_GET_CODE_SNIPPET,
-                input_schema={
-                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
-                    cs.MCPSchemaField.PROPERTIES: {
-                        cs.MCPParamName.QUALIFIED_NAME: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_QUALIFIED_NAME,
-                        }
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_QUALIFIED_NAME,
+                        )
                     },
-                    cs.MCPSchemaField.REQUIRED: [cs.MCPParamName.QUALIFIED_NAME],
-                },
+                    required=[cs.MCPParamName.QUALIFIED_NAME],
+                ),
                 handler=self.get_code_snippet,
                 returns_json=True,
             ),
             cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
                 name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
                 description=td.MCP_SURGICAL_REPLACE_CODE,
-                input_schema={
-                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
-                    cs.MCPSchemaField.PROPERTIES: {
-                        cs.MCPParamName.FILE_PATH: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_FILE_PATH,
-                        },
-                        cs.MCPParamName.TARGET_CODE: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_TARGET_CODE,
-                        },
-                        cs.MCPParamName.REPLACEMENT_CODE: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_REPLACEMENT_CODE,
-                        },
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_FILE_PATH,
+                        ),
+                        cs.MCPParamName.TARGET_CODE: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_TARGET_CODE,
+                        ),
+                        cs.MCPParamName.REPLACEMENT_CODE: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_REPLACEMENT_CODE,
+                        ),
                     },
-                    cs.MCPSchemaField.REQUIRED: [
+                    required=[
                         cs.MCPParamName.FILE_PATH,
                         cs.MCPParamName.TARGET_CODE,
                         cs.MCPParamName.REPLACEMENT_CODE,
                     ],
-                },
+                ),
                 handler=self.surgical_replace_code,
                 returns_json=False,
             ),
             cs.MCPToolName.READ_FILE: ToolMetadata(
                 name=cs.MCPToolName.READ_FILE,
                 description=td.MCP_READ_FILE,
-                input_schema={
-                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
-                    cs.MCPSchemaField.PROPERTIES: {
-                        cs.MCPParamName.FILE_PATH: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_FILE_PATH,
-                        },
-                        cs.MCPParamName.OFFSET: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.INTEGER,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_OFFSET,
-                        },
-                        cs.MCPParamName.LIMIT: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.INTEGER,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_LIMIT,
-                        },
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_FILE_PATH,
+                        ),
+                        cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_OFFSET,
+                        ),
+                        cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_LIMIT,
+                        ),
                     },
-                    cs.MCPSchemaField.REQUIRED: [cs.MCPParamName.FILE_PATH],
-                },
+                    required=[cs.MCPParamName.FILE_PATH],
+                ),
                 handler=self.read_file,
                 returns_json=False,
             ),
             cs.MCPToolName.WRITE_FILE: ToolMetadata(
                 name=cs.MCPToolName.WRITE_FILE,
                 description=td.MCP_WRITE_FILE,
-                input_schema={
-                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
-                    cs.MCPSchemaField.PROPERTIES: {
-                        cs.MCPParamName.FILE_PATH: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_FILE_PATH,
-                        },
-                        cs.MCPParamName.CONTENT: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_CONTENT,
-                        },
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_FILE_PATH,
+                        ),
+                        cs.MCPParamName.CONTENT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_CONTENT,
+                        ),
                     },
-                    cs.MCPSchemaField.REQUIRED: [
+                    required=[
                         cs.MCPParamName.FILE_PATH,
                         cs.MCPParamName.CONTENT,
                     ],
-                },
+                ),
                 handler=self.write_file,
                 returns_json=False,
             ),
             cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
                 name=cs.MCPToolName.LIST_DIRECTORY,
                 description=td.MCP_LIST_DIRECTORY,
-                input_schema={
-                    cs.MCPSchemaField.TYPE: cs.MCPSchemaType.OBJECT,
-                    cs.MCPSchemaField.PROPERTIES: {
-                        cs.MCPParamName.DIRECTORY_PATH: {
-                            cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING,
-                            cs.MCPSchemaField.DESCRIPTION: td.MCP_PARAM_DIRECTORY_PATH,
-                            cs.MCPSchemaField.DEFAULT: cs.MCP_DEFAULT_DIRECTORY,
-                        }
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.DIRECTORY_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_DIRECTORY_PATH,
+                            default=cs.MCP_DEFAULT_DIRECTORY,
+                        )
                     },
-                    cs.MCPSchemaField.REQUIRED: [],
-                },
+                    required=[],
+                ),
                 handler=self.list_directory,
                 returns_json=False,
             ),

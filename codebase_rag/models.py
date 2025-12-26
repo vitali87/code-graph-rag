@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from rich.console import Console
 
 from .constants import SupportedLanguage
-from .types_defs import MCPHandlerType, MCPInputSchemaDict, PropertyValue
+from .types_defs import MCPHandlerType, MCPInputSchema, PropertyValue
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -89,6 +89,6 @@ class MethodModifiersAndAnnotations:
 class ToolMetadata:
     name: str
     description: str
-    input_schema: MCPInputSchemaDict
+    input_schema: MCPInputSchema
     handler: MCPHandlerType
     returns_json: bool
