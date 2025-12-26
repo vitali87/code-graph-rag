@@ -9,16 +9,14 @@ from ..utils import safe_decode_text
 def _collect_path_parts(node: Node, parts: list[str]) -> None:
     match node.type:
         case cs.TS_IDENTIFIER | cs.TS_TYPE_IDENTIFIER:
-            part = safe_decode_text(node)
-            if part:
+            if part := safe_decode_text(node):
                 parts.append(part)
         case cs.TS_SCOPED_IDENTIFIER | cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
             for child in node.children:
                 if child.type != cs.SEPARATOR_DOUBLE_COLON:
                     _collect_path_parts(child, parts)
         case cs.TS_RS_CRATE | cs.KEYWORD_SUPER | cs.KEYWORD_SELF:
-            part = safe_decode_text(node)
-            if part:
+            if part := safe_decode_text(node):
                 parts.append(part)
 
 
@@ -39,8 +37,7 @@ def _extract_path_from_node(node: Node) -> str:
 def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> None:
     match node.type:
         case cs.TS_IDENTIFIER | cs.TS_TYPE_IDENTIFIER:
-            name = safe_decode_text(node)
-            if name:
+            if name := safe_decode_text(node):
                 full_path = (
                     f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{name}"
                     if base_path
@@ -49,12 +46,11 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
                 imports[name] = full_path
 
         case cs.TS_SCOPED_IDENTIFIER | cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
-            full_path = _extract_path_from_node(node)
-            if full_path:
-                parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
-                if parts:
-                    imported_name = parts[-1]
-                    imports[imported_name] = full_path
+            if (full_path := _extract_path_from_node(node)) and (
+                parts := full_path.split(cs.SEPARATOR_DOUBLE_COLON)
+            ):
+                imported_name = parts[-1]
+                imports[imported_name] = full_path
 
         case cs.TS_RS_USE_AS_CLAUSE:
             _process_use_as_clause(node, base_path, imports)
@@ -71,7 +67,7 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
             _process_scoped_use_list(node, base_path, imports)
 
         case cs.KEYWORD_SELF:
-            imports[cs.KEYWORD_SELF] = base_path if base_path else cs.KEYWORD_SELF
+            imports[cs.KEYWORD_SELF] = base_path or cs.KEYWORD_SELF
 
         case _:
             for child in node.children:
@@ -87,7 +83,7 @@ def _process_use_as_clause(node: Node, base_path: str, imports: dict[str, str]) 
         path_node, alias_node = children
 
         if path_node.type == cs.KEYWORD_SELF:
-            original_path = base_path if base_path else cs.KEYWORD_SELF
+            original_path = base_path or cs.KEYWORD_SELF
         else:
             original_path = _extract_path_from_node(path_node)
             if base_path and original_path:
@@ -102,13 +98,14 @@ def _process_use_as_clause(node: Node, base_path: str, imports: dict[str, str]) 
 
 
 def _process_use_wildcard(node: Node, base_path: str, imports: dict[str, str]) -> None:
-    wildcard_base = ""
-    for child in node.children:
-        if child.type != cs.RS_WILDCARD_PREFIX:
-            wildcard_base = _extract_path_from_node(child)
-            break
-
-    if wildcard_base:
+    if wildcard_base := next(
+        (
+            _extract_path_from_node(child)
+            for child in node.children
+            if child.type != cs.RS_WILDCARD_PREFIX
+        ),
+        "",
+    ):
         wildcard_key = f"{cs.RS_WILDCARD_PREFIX}{wildcard_base}"
         imports[wildcard_key] = wildcard_base
     elif base_path:
