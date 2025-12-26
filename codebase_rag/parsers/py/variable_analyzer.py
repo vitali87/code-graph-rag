@@ -34,10 +34,11 @@ class PythonVariableAnalyzerMixin:
     def _process_parameter(
         self, param: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        if param.type == cs.TS_PY_IDENTIFIER:
-            self._process_untyped_parameter(param, local_var_types, module_qn)
-        elif param.type == cs.TS_PY_TYPED_PARAMETER:
-            self._process_typed_parameter(param, local_var_types)
+        match param.type:
+            case cs.TS_PY_IDENTIFIER:
+                self._process_untyped_parameter(param, local_var_types, module_qn)
+            case cs.TS_PY_TYPED_PARAMETER:
+                self._process_typed_parameter(param, local_var_types)
 
     def _process_untyped_parameter(
         self, param: Node, local_var_types: dict[str, str], module_qn: str
@@ -60,9 +61,12 @@ class PythonVariableAnalyzerMixin:
     ) -> None:
         param_name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
         param_type_node = param.child_by_field_name(cs.TS_FIELD_TYPE)
-        if not (param_name_node and param_type_node):
-            return
-        if not (param_name_node.text and param_type_node.text):
+        if not (
+            param_name_node
+            and param_type_node
+            and param_name_node.text
+            and param_type_node.text
+        ):
             return
         param_name = safe_decode_text(param_name_node)
         param_type = safe_decode_text(param_type_node)
@@ -177,12 +181,11 @@ class PythonVariableAnalyzerMixin:
         if iterable_node.type == cs.TS_PY_LIST:
             return self._infer_list_element_type(iterable_node)
 
-        if iterable_node.type != cs.TS_PY_IDENTIFIER:
-            return None
-        if iterable_node.text is None:
-            return None
-        var_name = safe_decode_text(iterable_node)
-        if var_name is None:
+        if (
+            iterable_node.type != cs.TS_PY_IDENTIFIER
+            or iterable_node.text is None
+            or (var_name := safe_decode_text(iterable_node)) is None
+        ):
             return None
         return self._infer_variable_element_type(var_name, local_var_types, module_qn)
 
@@ -243,11 +246,12 @@ class PythonVariableAnalyzerMixin:
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
-        if var_name in local_var_types:
-            var_type = local_var_types[var_name]
-            if var_type and var_type != cs.TYPE_INFERENCE_LIST:
-                return var_type
-
+        if (
+            var_name in local_var_types
+            and (var_type := local_var_types[var_name])
+            and var_type != cs.TYPE_INFERENCE_LIST
+        ):
+            return var_type
         return self._infer_method_return_element_type(var_name, module_qn)
 
     def _infer_method_return_element_type(
@@ -273,8 +277,6 @@ class PythonVariableAnalyzerMixin:
         return None
 
     def _extract_variable_name(self, node: Node) -> str | None:
-        if node.type != cs.TS_PY_IDENTIFIER:
-            return None
-        if node.text is None:
+        if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
             return None
         return safe_decode_text(node) or None
