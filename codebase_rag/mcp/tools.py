@@ -246,7 +246,13 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
             snippet = await self._code_tool.function(qualified_name=qualified_name)
-            result: CodeSnippetResultDict = snippet.model_dump()
+            result: CodeSnippetResultDict | None = snippet.model_dump()
+            if result is None:
+                return CodeSnippetResultDict(
+                    error=te.MCP_TOOL_RETURNED_NONE,
+                    found=False,
+                    error_message=te.MCP_INVALID_RESPONSE,
+                )
             return result
         except Exception as e:
             logger.error(lg.MCP_ERROR_CODE_SNIPPET.format(error=e))
