@@ -562,6 +562,7 @@ REALTIME_LOGGER_FORMAT = (
 )
 
 WATCHER_SLEEP_INTERVAL = 1
+LOG_LEVEL_INFO = "INFO"
 
 
 class Architecture(StrEnum):

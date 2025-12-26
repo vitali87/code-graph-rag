@@ -9,6 +9,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from codebase_rag import logs
+from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.constants import (
     CYPHER_DELETE_CALLS,
@@ -16,6 +17,7 @@ from codebase_rag.constants import (
     IGNORE_PATTERNS,
     IGNORE_SUFFIXES,
     KEY_PATH,
+    LOG_LEVEL_INFO,
     REALTIME_LOGGER_FORMAT,
     WATCHER_SLEEP_INTERVAL,
     EventType,
@@ -121,32 +123,36 @@ def start_watcher(
         port=port,
         batch_size=effective_batch_size,
     ) as ingestor:
-        updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
+        _run_watcher_loop(ingestor, repo_path_obj, parsers, queries)
 
-        # (H) Initial full scan builds the complete context for real-time updates
-        logger.info(logs.INITIAL_SCAN)
-        updater.run()
-        logger.success(logs.INITIAL_SCAN_DONE)
 
-        event_handler = CodeChangeEventHandler(updater)
-        observer = Observer()
-        observer.schedule(event_handler, str(repo_path_obj), recursive=True)
-        observer.start()
-        logger.info(logs.WATCHING.format(path=repo_path_obj))
+def _run_watcher_loop(ingestor, repo_path_obj, parsers, queries):
+    updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
-        try:
-            while True:
-                time.sleep(WATCHER_SLEEP_INTERVAL)
-        except KeyboardInterrupt:
-            observer.stop()
-        observer.join()
+    # (H) Initial full scan builds the complete context for real-time updates
+    logger.info(logs.INITIAL_SCAN)
+    updater.run()
+    logger.success(logs.INITIAL_SCAN_DONE)
+
+    event_handler = CodeChangeEventHandler(updater)
+    observer = Observer()
+    observer.schedule(event_handler, str(repo_path_obj), recursive=True)
+    observer.start()
+    logger.info(logs.WATCHING.format(path=repo_path_obj))
+
+    try:
+        while True:
+            time.sleep(WATCHER_SLEEP_INTERVAL)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
 
 
 def _validate_positive_int(value: int | None) -> int | None:
     if value is None:
         return None
     if value < 1:
-        raise typer.BadParameter(f"{value!r} is not a valid positive integer")
+        raise typer.BadParameter(te.INVALID_POSITIVE_INT.format(value=value))
     return value
 
 
@@ -163,7 +169,7 @@ def main(
     ] = None,
 ) -> None:
     logger.remove()
-    logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level="INFO")
+    logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level=LOG_LEVEL_INFO)
     logger.info(logs.LOGGER_CONFIGURED)
     start_watcher(repo_path, host, port, batch_size)
 
