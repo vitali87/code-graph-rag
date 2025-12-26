@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from build_binary import _build_package_args, _get_treesitter_packages
-from codebase_rag.types_defs import PyInstallerPackage
+from codebase_rag.constants import PyInstallerPackage
 
 
 class TestGetTreesitterPackages:
@@ -88,30 +88,27 @@ class TestGetTreesitterPackages:
 
 class TestBuildPackageArgs:
     def test_collect_all_only(self) -> None:
-        pkg: PyInstallerPackage = {"name": "rich", "collect_all": True}
+        pkg = PyInstallerPackage(name="rich", collect_all=True)
         args = _build_package_args(pkg)
         assert args == ["--collect-all", "rich"]
 
     def test_collect_data_only(self) -> None:
-        pkg: PyInstallerPackage = {"name": "mypackage", "collect_data": True}
+        pkg = PyInstallerPackage(name="mypackage", collect_data=True)
         args = _build_package_args(pkg)
         assert args == ["--collect-data", "mypackage"]
 
     def test_hidden_import_only(self) -> None:
-        pkg: PyInstallerPackage = {
-            "name": "mypackage",
-            "hidden_import": "secret_module",
-        }
+        pkg = PyInstallerPackage(name="mypackage", hidden_import="secret_module")
         args = _build_package_args(pkg)
         assert args == ["--hidden-import", "secret_module"]
 
     def test_all_options_combined(self) -> None:
-        pkg: PyInstallerPackage = {
-            "name": "pydantic_ai",
-            "collect_all": True,
-            "collect_data": True,
-            "hidden_import": "pydantic_ai_slim",
-        }
+        pkg = PyInstallerPackage(
+            name="pydantic_ai",
+            collect_all=True,
+            collect_data=True,
+            hidden_import="pydantic_ai_slim",
+        )
         args = _build_package_args(pkg)
         assert args == [
             "--collect-all",
@@ -123,6 +120,6 @@ class TestBuildPackageArgs:
         ]
 
     def test_no_options_returns_empty_list(self) -> None:
-        pkg: PyInstallerPackage = {"name": "mypackage"}
+        pkg = PyInstallerPackage(name="mypackage")
         args = _build_package_args(pkg)
         assert args == []
