@@ -716,6 +716,7 @@ REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
 REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
 
 DEFAULT_NAME = "Unknown"
+TEXT_UNKNOWN = "unknown"
 
 MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
@@ -803,6 +804,7 @@ DOC_PROMPT_PREFIX = (
 MOD_RS = "mod.rs"
 SEPARATOR_DOUBLE_COLON = "::"
 SEPARATOR_COLON = ":"
+SEPARATOR_PROTOTYPE = ".prototype."
 BUILTIN_PREFIX = "builtin"
 IIFE_FUNC_PREFIX = "iife_func_"
 IIFE_ARROW_PREFIX = "iife_arrow_"
@@ -873,6 +875,18 @@ JS_BUILTIN_PATTERNS: frozenset[str] = frozenset(
         "Date.parse",
     }
 )
+
+JS_METHOD_BIND = "bind"
+JS_METHOD_CALL = "call"
+JS_METHOD_APPLY = "apply"
+JS_SUFFIX_BIND = ".bind"
+JS_SUFFIX_CALL = ".call"
+JS_SUFFIX_APPLY = ".apply"
+JS_FUNCTION_PROTOTYPE_SUFFIXES: dict[str, str] = {
+    JS_SUFFIX_BIND: JS_METHOD_BIND,
+    JS_SUFFIX_CALL: JS_METHOD_CALL,
+    JS_SUFFIX_APPLY: JS_METHOD_APPLY,
+}
 
 # (H) C++ operator mappings
 CPP_OPERATORS: dict[str, str] = {

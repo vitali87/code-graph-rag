@@ -277,7 +277,7 @@ class CallResolver:
         if var_type in cs.JS_BUILTIN_TYPES:
             return (
                 cs.NodeLabel.FUNCTION,
-                f"{cs.BUILTIN_PREFIX}.{var_type}.prototype.{method_name}",
+                f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{var_type}{cs.SEPARATOR_PROTOTYPE}{method_name}",
             )
         return None
 
@@ -483,16 +483,16 @@ class CallResolver:
         if call_name in cs.JS_BUILTIN_PATTERNS:
             return (cs.NodeLabel.FUNCTION, f"{cs.BUILTIN_PREFIX}.{call_name}")
 
-        for suffix in (".bind", ".call", ".apply"):
+        for suffix, method in cs.JS_FUNCTION_PROTOTYPE_SUFFIXES.items():
             if call_name.endswith(suffix):
-                method = suffix[1:]
                 return (
                     cs.NodeLabel.FUNCTION,
-                    f"{cs.BUILTIN_PREFIX}.Function.prototype.{method}",
+                    f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}Function{cs.SEPARATOR_PROTOTYPE}{method}",
                 )
 
-        if ".prototype." in call_name and (
-            call_name.endswith(".call") or call_name.endswith(".apply")
+        if cs.SEPARATOR_PROTOTYPE in call_name and (
+            call_name.endswith(cs.JS_SUFFIX_CALL)
+            or call_name.endswith(cs.JS_SUFFIX_APPLY)
         ):
             base_call = call_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
             return (cs.NodeLabel.FUNCTION, base_call)
@@ -522,11 +522,13 @@ class CallResolver:
         return None
 
     def _is_method_chain(self, call_name: str) -> bool:
-        if "(" in call_name and ")" in call_name:
-            parts = call_name.split(cs.SEPARATOR_DOT)
-            method_calls = sum("(" in part and ")" in part for part in parts)
-            return method_calls >= 1 and len(parts) >= 2
-        return False
+        if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
+            return False
+        parts = call_name.split(cs.SEPARATOR_DOT)
+        method_calls = sum(
+            cs.CHAR_PAREN_OPEN in part and cs.CHAR_PAREN_CLOSE in part for part in parts
+        )
+        return method_calls >= 1 and len(parts) >= 2
 
     def _resolve_chained_call(
         self,
@@ -690,7 +692,9 @@ class CallResolver:
 
         if result:
             call_text = (
-                call_node.text.decode(cs.ENCODING_UTF8) if call_node.text else "unknown"
+                call_node.text.decode(cs.ENCODING_UTF8)
+                if call_node.text
+                else cs.TEXT_UNKNOWN
             )
             logger.debug(
                 ls.CALL_JAVA_RESOLVED.format(call_text=call_text, method_qn=result[1])
