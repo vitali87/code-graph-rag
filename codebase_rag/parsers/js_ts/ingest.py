@@ -229,9 +229,21 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
             method_functions = captures.get(cs.CAPTURE_METHOD_FUNCTION, [])
 
-            for method_name_node, method_func_node in zip(
-                method_names, method_functions
-            ):
+            func_by_parent_pos: dict[tuple, ASTNode] = {
+                (func.parent.start_point, func.parent.end_point): func
+                for func in method_functions
+                if func.parent
+            }
+            for method_name_node in method_names:
+                if not method_name_node.parent:
+                    continue
+                pair_pos = (
+                    method_name_node.parent.start_point,
+                    method_name_node.parent.end_point,
+                )
+                method_func_node = func_by_parent_pos.get(pair_pos)
+                if not method_func_node:
+                    continue
                 self._process_single_object_method(
                     method_name_node, method_func_node, module_qn, lang_config
                 )
@@ -394,7 +406,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 continue
 
             function_qn = self._resolve_direct_arrow_qn(
-                arrow_function, module_qn, function_name, lang_config
+                method_name, arrow_function, module_qn, function_name, lang_config
             )
 
             self._register_arrow_function(
@@ -402,19 +414,39 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             )
 
     def _resolve_direct_arrow_qn(
-        self, arrow_function: ASTNode, module_qn: str, function_name: str, lang_config
+        self,
+        method_name_node: ASTNode,
+        _arrow_function: ASTNode,
+        module_qn: str,
+        function_name: str,
+        lang_config,
     ) -> str:
         if lang_config:
-            function_qn = self._build_nested_qualified_name(
-                arrow_function,
-                module_qn,
-                function_name,
-                lang_config,
-                skip_classes=False,
+            function_qn = self._build_object_arrow_qualified_name(
+                method_name_node, module_qn, function_name, lang_config
             )
             if function_qn is not None:
                 return function_qn
         return f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
+
+    def _build_object_arrow_qualified_name(
+        self,
+        method_name_node: ASTNode,
+        module_qn: str,
+        function_name: str,
+        lang_config: LanguageSpec,
+    ) -> str | None:
+        skip_types = (
+            cs.TS_OBJECT,
+            cs.TS_VARIABLE_DECLARATOR,
+            cs.TS_LEXICAL_DECLARATION,
+            cs.TS_ASSIGNMENT_EXPRESSION,
+            cs.TS_PAIR,
+        )
+        path_parts = self._js_collect_ancestor_path_parts(
+            method_name_node.parent, lang_config, skip_types
+        )
+        return self._js_format_qualified_name(module_qn, path_parts, function_name)
 
     def _process_member_expr_functions(
         self,
@@ -557,7 +589,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _build_object_method_qualified_name(
         self,
         method_name_node: ASTNode,
-        method_func_node: ASTNode,
+        _method_func_node: ASTNode,
         module_qn: str,
         method_name: str,
         lang_config: LanguageSpec,
@@ -577,7 +609,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _build_assignment_arrow_function_qualified_name(
         self,
         member_expr: ASTNode,
-        arrow_function: ASTNode,
+        _arrow_function: ASTNode,
         module_qn: str,
         function_name: str,
         lang_config: LanguageSpec,
