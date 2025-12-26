@@ -110,6 +110,72 @@ def extract_import_path(import_node: ASTNode) -> dict[str, str]:
     return imports
 
 
+def _extract_superclass(class_node: ASTNode) -> str | None:
+    superclass_node = class_node.child_by_field_name(cs.TS_FIELD_SUPERCLASS)
+    if not superclass_node:
+        return None
+
+    match superclass_node.type:
+        case cs.TS_TYPE_IDENTIFIER:
+            return safe_decode_text(superclass_node)
+        case cs.TS_GENERIC_TYPE:
+            for child in superclass_node.children:
+                if child.type == cs.TS_TYPE_IDENTIFIER:
+                    return safe_decode_text(child)
+    return None
+
+
+def _extract_interface_name(type_child: ASTNode) -> str | None:
+    match type_child.type:
+        case cs.TS_TYPE_IDENTIFIER:
+            return safe_decode_text(type_child)
+        case cs.TS_GENERIC_TYPE:
+            for sub_child in type_child.children:
+                if sub_child.type == cs.TS_TYPE_IDENTIFIER:
+                    return safe_decode_text(sub_child)
+    return None
+
+
+def _extract_interfaces(class_node: ASTNode) -> list[str]:
+    interfaces_node = class_node.child_by_field_name(cs.TS_FIELD_INTERFACES)
+    if not interfaces_node:
+        return []
+
+    interfaces: list[str] = []
+    for child in interfaces_node.children:
+        if child.type == cs.TS_TYPE_LIST:
+            for type_child in child.children:
+                if interface_name := _extract_interface_name(type_child):
+                    interfaces.append(interface_name)
+    return interfaces
+
+
+def _extract_type_parameters(class_node: ASTNode) -> list[str]:
+    type_params_node = class_node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    if not type_params_node:
+        return []
+
+    type_parameters: list[str] = []
+    for child in type_params_node.children:
+        if child.type == cs.TS_TYPE_PARAMETER:
+            if param_name := safe_decode_text(
+                child.child_by_field_name(cs.TS_FIELD_NAME)
+            ):
+                type_parameters.append(param_name)
+    return type_parameters
+
+
+def _extract_class_modifiers(class_node: ASTNode) -> list[str]:
+    modifiers: list[str] = []
+    for child in class_node.children:
+        if child.type == cs.TS_MODIFIERS:
+            for modifier_child in child.children:
+                if modifier_child.type in cs.JAVA_CLASS_MODIFIERS:
+                    if modifier := safe_decode_text(modifier_child):
+                        modifiers.append(modifier)
+    return modifiers
+
+
 def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
     if class_node.type not in cs.JAVA_CLASS_NODE_TYPES:
         return JavaClassInfo(
@@ -121,63 +187,17 @@ def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
             type_parameters=[],
         )
 
-    interfaces: list[str] = []
-    modifiers: list[str] = []
-    type_parameters: list[str] = []
-
     name: str | None = None
     if name_node := class_node.child_by_field_name(cs.TS_FIELD_NAME):
         name = safe_decode_text(name_node)
 
-    superclass: str | None = None
-    if superclass_node := class_node.child_by_field_name(cs.TS_FIELD_SUPERCLASS):
-        match superclass_node.type:
-            case cs.TS_TYPE_IDENTIFIER:
-                superclass = safe_decode_text(superclass_node)
-            case cs.TS_GENERIC_TYPE:
-                for child in superclass_node.children:
-                    if child.type == cs.TS_TYPE_IDENTIFIER:
-                        superclass = safe_decode_text(child)
-                        break
-
-    if interfaces_node := class_node.child_by_field_name(cs.TS_FIELD_INTERFACES):
-        for child in interfaces_node.children:
-            if child.type == cs.TS_TYPE_LIST:
-                for type_child in child.children:
-                    interface_name = None
-                    match type_child.type:
-                        case cs.TS_TYPE_IDENTIFIER:
-                            interface_name = safe_decode_text(type_child)
-                        case cs.TS_GENERIC_TYPE:
-                            for sub_child in type_child.children:
-                                if sub_child.type == cs.TS_TYPE_IDENTIFIER:
-                                    interface_name = safe_decode_text(sub_child)
-                                    break
-                    if interface_name:
-                        interfaces.append(interface_name)
-
-    if type_params_node := class_node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS):
-        for child in type_params_node.children:
-            if child.type == cs.TS_TYPE_PARAMETER:
-                if param_name := safe_decode_text(
-                    child.child_by_field_name(cs.TS_FIELD_NAME)
-                ):
-                    type_parameters.append(param_name)
-
-    for child in class_node.children:
-        if child.type == cs.TS_MODIFIERS:
-            for modifier_child in child.children:
-                if modifier_child.type in cs.JAVA_CLASS_MODIFIERS:
-                    if modifier := safe_decode_text(modifier_child):
-                        modifiers.append(modifier)
-
     return JavaClassInfo(
         name=name,
         type=class_node.type.replace(cs.JAVA_DECLARATION_SUFFIX, ""),
-        superclass=superclass,
-        interfaces=interfaces,
-        modifiers=modifiers,
-        type_parameters=type_parameters,
+        superclass=_extract_superclass(class_node),
+        interfaces=_extract_interfaces(class_node),
+        modifiers=_extract_class_modifiers(class_node),
+        type_parameters=_extract_type_parameters(class_node),
     )
 
 
@@ -338,18 +358,7 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
     return JavaMethodCallInfo(name=name, object=obj, arguments=arguments)
 
 
-def is_main_method(method_node: ASTNode) -> bool:
-    if method_node.type != cs.TS_METHOD_DECLARATION:
-        return False
-
-    name_node = method_node.child_by_field_name(cs.TS_FIELD_NAME)
-    if not name_node or safe_decode_text(name_node) != cs.JAVA_MAIN_METHOD_NAME:
-        return False
-
-    type_node = method_node.child_by_field_name(cs.TS_FIELD_TYPE)
-    if not type_node or type_node.type != cs.TS_VOID_TYPE:
-        return False
-
+def _has_main_method_modifiers(method_node: ASTNode) -> bool:
     has_public = False
     has_static = False
 
@@ -362,9 +371,36 @@ def is_main_method(method_node: ASTNode) -> bool:
                     case cs.JAVA_MODIFIER_STATIC:
                         has_static = True
 
-    if not (has_public and has_static):
+    return has_public and has_static
+
+
+def _is_valid_main_formal_param(param_node: ASTNode) -> bool:
+    type_node = param_node.child_by_field_name(cs.TS_FIELD_TYPE)
+    if not type_node:
         return False
 
+    type_text = safe_decode_text(type_node)
+    if not type_text:
+        return False
+
+    return (
+        cs.JAVA_MAIN_PARAM_ARRAY in type_text
+        or cs.JAVA_MAIN_PARAM_VARARGS in type_text
+        or type_text.endswith(cs.JAVA_MAIN_PARAM_ARRAY)
+        or type_text.endswith(cs.JAVA_MAIN_PARAM_VARARGS)
+    )
+
+
+def _is_valid_main_spread_param(spread_node: ASTNode) -> bool:
+    for subchild in spread_node.children:
+        if subchild.type == cs.TS_TYPE_IDENTIFIER:
+            type_text = safe_decode_text(subchild)
+            if type_text == cs.JAVA_MAIN_PARAM_TYPE:
+                return True
+    return False
+
+
+def _has_valid_main_parameter(method_node: ASTNode) -> bool:
     parameters_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
     if not parameters_node:
         return False
@@ -376,26 +412,32 @@ def is_main_method(method_node: ASTNode) -> bool:
         match child.type:
             case cs.TS_FORMAL_PARAMETER:
                 param_count += 1
-                if type_node := child.child_by_field_name(cs.TS_FIELD_TYPE):
-                    type_text = safe_decode_text(type_node)
-                    if type_text and (
-                        cs.JAVA_MAIN_PARAM_ARRAY in type_text
-                        or cs.JAVA_MAIN_PARAM_VARARGS in type_text
-                        or type_text.endswith(cs.JAVA_MAIN_PARAM_ARRAY)
-                        or type_text.endswith(cs.JAVA_MAIN_PARAM_VARARGS)
-                    ):
-                        valid_param = True
-
+                if _is_valid_main_formal_param(child):
+                    valid_param = True
             case cs.TS_SPREAD_PARAMETER:
                 param_count += 1
-                for subchild in child.children:
-                    if subchild.type == cs.TS_TYPE_IDENTIFIER:
-                        type_text = safe_decode_text(subchild)
-                        if type_text == cs.JAVA_MAIN_PARAM_TYPE:
-                            valid_param = True
-                            break
+                if _is_valid_main_spread_param(child):
+                    valid_param = True
 
     return param_count == 1 and valid_param
+
+
+def is_main_method(method_node: ASTNode) -> bool:
+    if method_node.type != cs.TS_METHOD_DECLARATION:
+        return False
+
+    name_node = method_node.child_by_field_name(cs.TS_FIELD_NAME)
+    if not name_node or safe_decode_text(name_node) != cs.JAVA_MAIN_METHOD_NAME:
+        return False
+
+    type_node = method_node.child_by_field_name(cs.TS_FIELD_TYPE)
+    if not type_node or type_node.type != cs.TS_VOID_TYPE:
+        return False
+
+    if not _has_main_method_modifiers(method_node):
+        return False
+
+    return _has_valid_main_parameter(method_node)
 
 
 def get_java_visibility(node: ASTNode) -> str:

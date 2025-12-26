@@ -45,33 +45,79 @@ class DocumentAnalyzer:
 
         logger.info(ls.DOC_ANALYZER_INIT.format(root=self.project_root))
 
+    def _resolve_absolute_path(self, file_path: str) -> Path | str:
+        source_path = Path(file_path)
+        if not source_path.is_file():
+            return te.DOC_FILE_NOT_FOUND.format(path=file_path)
+
+        tmp_dir = self.project_root / cs.TMP_DIR
+        tmp_dir.mkdir(exist_ok=True)
+
+        tmp_file = tmp_dir / f"{uuid.uuid4()}-{source_path.name}"
+        shutil.copy2(source_path, tmp_file)
+        logger.info(ls.DOC_COPIED.format(path=tmp_file))
+        return tmp_file
+
+    def _resolve_relative_path(self, file_path: str) -> Path | str:
+        full_path = (self.project_root / file_path).resolve()
+        try:
+            full_path.relative_to(self.project_root.resolve())
+        except ValueError:
+            return te.DOC_SECURITY_RISK.format(path=file_path)
+
+        if not str(full_path).startswith(str(self.project_root.resolve())):
+            return te.DOC_SECURITY_RISK.format(path=file_path)
+
+        return full_path
+
+    def _resolve_file_path(self, file_path: str) -> Path | str:
+        if Path(file_path).is_absolute():
+            return self._resolve_absolute_path(file_path)
+        return self._resolve_relative_path(file_path)
+
+    def _extract_response_text(self, response: types.GenerateContentResponse) -> str:
+        if hasattr(response, "text") and response.text:
+            return str(response.text)
+
+        if hasattr(response, "candidates") and response.candidates:
+            for candidate in response.candidates:
+                if hasattr(candidate, "content") and candidate.content:
+                    parts = candidate.content.parts
+                    if parts and hasattr(parts[0], "text"):
+                        return str(parts[0].text)
+            return cs.MSG_DOC_NO_CANDIDATES
+
+        logger.warning(ls.DOC_NO_TEXT.format(response=response))
+        return cs.MSG_DOC_NO_CONTENT
+
+    def _handle_analyze_error(self, error: Exception, file_path: str) -> str:
+        if isinstance(error, ValueError):
+            if "does not start with" in str(error):
+                err_msg = te.DOC_ACCESS_OUTSIDE_ROOT.format(path=file_path)
+                logger.error(err_msg)
+                return err_msg
+            logger.error(ls.DOC_ANALYZER_API_ERR.format(error=error))
+            return te.DOC_API_VALIDATION.format(error=error)
+
+        if isinstance(error, ClientError):
+            logger.error(ls.DOC_API_ERROR.format(path=file_path, error=error))
+            if "Unable to process input image" in str(error):
+                return te.DOC_IMAGE_PROCESS
+            return te.DOC_API_ERROR.format(error=error)
+
+        logger.error(ls.DOC_FAILED.format(path=file_path, error=error), exc_info=True)
+        return te.DOC_ANALYSIS_FAILED.format(error=error)
+
     def analyze(self, file_path: str, question: str) -> str:
         logger.info(ls.TOOL_DOC_ANALYZE.format(path=file_path, question=question))
         if isinstance(self.client, _NotSupportedClient):
             return te.DOCUMENT_UNSUPPORTED
 
         try:
-            if Path(file_path).is_absolute():
-                source_path = Path(file_path)
-                if not source_path.is_file():
-                    return te.DOC_FILE_NOT_FOUND.format(path=file_path)
-
-                tmp_dir = self.project_root / cs.TMP_DIR
-                tmp_dir.mkdir(exist_ok=True)
-
-                tmp_file = tmp_dir / f"{uuid.uuid4()}-{source_path.name}"
-                shutil.copy2(source_path, tmp_file)
-                full_path = tmp_file
-                logger.info(ls.DOC_COPIED.format(path=full_path))
-            else:
-                full_path = (self.project_root / file_path).resolve()
-                try:
-                    full_path.relative_to(self.project_root.resolve())
-                except ValueError:
-                    return te.DOC_SECURITY_RISK.format(path=file_path)
-
-                if not str(full_path).startswith(str(self.project_root.resolve())):
-                    return te.DOC_SECURITY_RISK.format(path=file_path)
+            resolved = self._resolve_file_path(file_path)
+            if isinstance(resolved, str):
+                return resolved
+            full_path = resolved
 
             if not full_path.is_file():
                 return te.DOC_FILE_NOT_FOUND.format(path=file_path)
@@ -93,34 +139,10 @@ class DocumentAnalyzer:
             )
 
             logger.success(ls.DOC_SUCCESS.format(path=file_path))
+            return self._extract_response_text(response)
 
-            if hasattr(response, "text") and response.text:
-                return str(response.text)
-            if hasattr(response, "candidates") and response.candidates:
-                for candidate in response.candidates:
-                    if hasattr(candidate, "content") and candidate.content:
-                        parts = candidate.content.parts
-                        if parts and hasattr(parts[0], "text"):
-                            return str(parts[0].text)
-                return cs.MSG_DOC_NO_CANDIDATES
-            logger.warning(ls.DOC_NO_TEXT.format(response=response))
-            return cs.MSG_DOC_NO_CONTENT
-
-        except ValueError as e:
-            if "does not start with" in str(e):
-                err_msg = te.DOC_ACCESS_OUTSIDE_ROOT.format(path=file_path)
-                logger.error(err_msg)
-                return err_msg
-            logger.error(ls.DOC_ANALYZER_API_ERR.format(error=e))
-            return te.DOC_API_VALIDATION.format(error=e)
-        except ClientError as e:
-            logger.error(ls.DOC_API_ERROR.format(path=file_path, error=e))
-            if "Unable to process input image" in str(e):
-                return te.DOC_IMAGE_PROCESS
-            return te.DOC_API_ERROR.format(error=e)
         except Exception as e:
-            logger.error(ls.DOC_FAILED.format(path=file_path, error=e), exc_info=True)
-            return te.DOC_ANALYSIS_FAILED.format(error=e)
+            return self._handle_analyze_error(e, file_path)
 
 
 def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
