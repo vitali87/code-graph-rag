@@ -1,8 +1,12 @@
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import NamedTuple
 
-if TYPE_CHECKING:
-    from .types_defs import PyInstallerPackage
+
+class PyInstallerPackage(NamedTuple):
+    name: str
+    collect_all: bool = False
+    collect_data: bool = False
+    hidden_import: str | None = None
 
 
 class ModelRole(StrEnum):
@@ -576,18 +580,40 @@ PYPROJECT_PATH = "pyproject.toml"
 TREESITTER_EXTRA_KEY = "treesitter-full"
 TREESITTER_PKG_PREFIX = "tree-sitter-"
 
+# (H) PyInstaller CLI constants
+PYINSTALLER_CMD = "pyinstaller"
+PYINSTALLER_ARG_NAME = "--name"
+PYINSTALLER_ARG_ONEFILE = "--onefile"
+PYINSTALLER_ARG_NOCONFIRM = "--noconfirm"
+PYINSTALLER_ARG_CLEAN = "--clean"
+PYINSTALLER_ARG_COLLECT_ALL = "--collect-all"
+PYINSTALLER_ARG_COLLECT_DATA = "--collect-data"
+PYINSTALLER_ARG_HIDDEN_IMPORT = "--hidden-import"
+PYINSTALLER_ENTRY_POINT = "main.py"
+
+# (H) TOML parsing constants
+TOML_KEY_PROJECT = "project"
+TOML_KEY_OPTIONAL_DEPS = "optional-dependencies"
+
+# (H) Version string parsing
+VERSION_SPLIT_GTE = ">="
+VERSION_SPLIT_EQ = "=="
+VERSION_SPLIT_LT = "<"
+CHAR_HYPHEN = "-"
+CHAR_UNDERSCORE = "_"
+
 PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
-    {
-        "name": "pydantic_ai",
-        "collect_all": True,
-        "collect_data": True,
-        "hidden_import": "pydantic_ai_slim",
-    },
-    {"name": "rich", "collect_all": True},
-    {"name": "typer", "collect_all": True},
-    {"name": "loguru", "collect_all": True},
-    {"name": "toml", "collect_all": True},
-    {"name": "protobuf", "collect_all": True},
+    PyInstallerPackage(
+        name="pydantic_ai",
+        collect_all=True,
+        collect_data=True,
+        hidden_import="pydantic_ai_slim",
+    ),
+    PyInstallerPackage(name="rich", collect_all=True),
+    PyInstallerPackage(name="typer", collect_all=True),
+    PyInstallerPackage(name="loguru", collect_all=True),
+    PyInstallerPackage(name="toml", collect_all=True),
+    PyInstallerPackage(name="protobuf", collect_all=True),
 ]
 
 ALLOWED_COMMENT_MARKERS = frozenset(
