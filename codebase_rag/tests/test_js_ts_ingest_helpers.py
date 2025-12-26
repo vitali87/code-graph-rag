@@ -166,10 +166,10 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_class_method(method_node)
+        handler = JsTsHandler()
+        result = handler.is_class_method(method_node)
         assert result is True
 
     def test_standalone_function_returns_false(self, js_parser: Parser) -> None:
@@ -177,10 +177,10 @@ class MyClass {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_class_method(func_node)
+        handler = JsTsHandler()
+        result = handler.is_class_method(func_node)
         assert result is False
 
 
@@ -191,10 +191,10 @@ class TestIsExportInsideFunction:
         tree = js_parser.parse(code)
         export_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_export_inside_function(export_node)
+        handler = JsTsHandler()
+        result = handler.is_export_inside_function(export_node)
         assert result is False
 
     def test_export_inside_function_returns_true(self, js_parser: Parser) -> None:
@@ -209,10 +209,10 @@ function outer() {
         assert body is not None
         expr_stmt = body.children[1]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_export_inside_function(expr_stmt)
+        handler = JsTsHandler()
+        result = handler.is_export_inside_function(expr_stmt)
         assert result is True
 
 
@@ -291,10 +291,10 @@ class MyClass {
         pair = obj.children[1]
         nested_func = pair.children[0]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_inside_method_with_object_literals(nested_func)
+        handler = JsTsHandler()
+        result = handler.is_inside_method_with_object_literals(nested_func)
         assert result is True
 
     def test_standalone_object_returns_false(self, js_parser: Parser) -> None:
@@ -312,10 +312,10 @@ const obj = {
         assert obj is not None
         pair = obj.children[1]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_inside_method_with_object_literals(pair)
+        handler = JsTsHandler()
+        result = handler.is_inside_method_with_object_literals(pair)
         assert result is False
 
 

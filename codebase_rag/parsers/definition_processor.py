@@ -10,12 +10,14 @@ from ..types_defs import ASTNode, SimpleNameLookup
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
+from .handlers import get_handler
 from .js_ts.ingest import JsTsIngestMixin
 from .utils import safe_decode_with_fallback
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
+    from .handlers import LanguageHandler
     from .import_processor import ImportProcessor
 
 
@@ -24,6 +26,8 @@ class DefinitionProcessor(
     ClassIngestMixin,
     JsTsIngestMixin,
 ):
+    _handler: LanguageHandler
+
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -43,6 +47,7 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
+        self._handler = get_handler(SupportedLanguage.PYTHON)
 
     def process_file(
         self,
@@ -62,6 +67,7 @@ class DefinitionProcessor(
                 logger.warning(f"Unsupported language '{language}' for {file_path}")
                 return None
 
+            self._handler = get_handler(language)
             source_bytes = file_path.read_bytes()
             lang_queries = queries[language]
             parser = lang_queries.get("parser")

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...services import IngestorProtocol
     from ...types_defs import LanguageQueries
+    from ..handlers import LanguageHandler
     from ..import_processor import ImportProcessor
 
 
@@ -36,6 +37,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    _handler: LanguageHandler
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -264,9 +266,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         if not method_name:
             return
 
-        if self._is_class_method(
+        if self._handler.is_class_method(
             method_func_node
-        ) and not self._is_inside_method_with_object_literals(method_func_node):
+        ) and not self._handler.is_inside_method_with_object_literals(method_func_node):
             return
 
         method_qn = self._resolve_object_method_qn(
@@ -528,45 +530,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             current = current.parent
         return False
 
-    def _is_inside_method_with_object_literals(self, func_node: ASTNode) -> bool:
-        current = func_node.parent
-        found_object = False
-
-        while current:
-            if current.type == cs.TS_OBJECT:
-                found_object = True
-            elif current.type == cs.TS_METHOD_DEFINITION and found_object:
-                return True
-            elif current.type == cs.TS_CLASS_BODY:
-                break
-            current = current.parent
-
-        return False
-
-    def _is_class_method(self, method_node: ASTNode) -> bool:
-        current = method_node.parent
-        while current:
-            if current.type == cs.TS_CLASS_BODY:
-                return True
-            if current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
-                return False
-            current = current.parent
-        return False
-
     def _is_export_inside_function(self, node: ASTNode) -> bool:
-        current = node.parent
-        while current:
-            if current.type in (
-                cs.TS_FUNCTION_DECLARATION,
-                cs.TS_FUNCTION_EXPRESSION,
-                cs.TS_ARROW_FUNCTION,
-                cs.TS_METHOD_DEFINITION,
-            ):
-                return True
-            if current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
-                return False
-            current = current.parent
-        return False
+        return self._handler.is_export_inside_function(node)
 
     def _find_object_name_for_method(self, method_name_node: ASTNode) -> str | None:
         current = method_name_node.parent

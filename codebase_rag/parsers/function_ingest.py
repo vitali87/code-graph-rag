@@ -19,6 +19,7 @@ from .utils import get_function_captures, is_method_node, safe_decode_text
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
+    from .handlers import LanguageHandler
 
 
 class FunctionResolution(NamedTuple):
@@ -34,6 +35,7 @@ class FunctionIngestMixin:
     function_registry: Any
     simple_name_lookup: Any
     module_qn_to_file_path: dict[str, Path]
+    _handler: LanguageHandler
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -358,8 +360,7 @@ class FunctionIngestMixin:
     ) -> str | None | Literal[False]:
         if skip_classes:
             return None
-        check_fn = getattr(self, "_is_inside_method_with_object_literals", None)
-        if check_fn is not None and check_fn(func_node):
+        if self._handler.is_inside_method_with_object_literals(func_node):
             return self._extract_node_name(class_node)
         return False
 
