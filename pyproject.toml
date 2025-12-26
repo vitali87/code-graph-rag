@@ -72,7 +72,7 @@ target-version = "py312"
 exclude = ["codec/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "PL"]
+select = ["E", "F", "W", "I", "UP", "PL", "T201"]
 ignore = [
     "E501",     # line too long
     "PLR2004",  # magic value comparison (too noisy)
@@ -84,6 +84,9 @@ ignore = [
     "PLW2901",  # loop variable overwritten (intentional for .strip())
     "PLW0603",  # global statement (singleton pattern)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"
