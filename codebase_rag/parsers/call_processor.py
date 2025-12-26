@@ -109,6 +109,57 @@ class CallProcessor:
                     queries,
                 )
 
+    def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
+        class_name = self._get_node_name(class_node, "type")
+        if class_name:
+            return class_name
+        return next(
+            (
+                child.text.decode(cs.ENCODING_UTF8)
+                for child in class_node.children
+                if child.type == "type_identifier" and child.is_named and child.text
+            ),
+            None,
+        )
+
+    def _get_class_name_for_node(
+        self, class_node: Node, language: cs.SupportedLanguage
+    ) -> str | None:
+        if language == cs.SupportedLanguage.RUST and class_node.type == "impl_item":
+            return self._get_rust_impl_class_name(class_node)
+        return self._get_node_name(class_node)
+
+    def _process_methods_in_class(
+        self,
+        body_node: Node,
+        class_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
+    ) -> None:
+        method_query = queries[language]["functions"]
+        if not method_query:
+            return
+        method_cursor = QueryCursor(method_query)
+        method_captures = method_cursor.captures(body_node)
+        method_nodes = method_captures.get("function", [])
+        for method_node in method_nodes:
+            if not isinstance(method_node, Node):
+                continue
+            method_name = self._get_node_name(method_node)
+            if not method_name:
+                continue
+            method_qn = f"{class_qn}.{method_name}"
+            self._ingest_function_calls(
+                method_node,
+                method_qn,
+                cs.NodeLabel.METHOD,
+                module_qn,
+                language,
+                queries,
+                class_qn,
+            )
+
     def _process_calls_in_classes(
         self,
         root_node: Node,
@@ -116,11 +167,9 @@ class CallProcessor:
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        lang_queries = queries[language]
-        query = lang_queries["classes"]
+        query = queries[language]["classes"]
         if not query:
             return
-
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
         class_nodes = captures.get("class", [])
@@ -128,49 +177,13 @@ class CallProcessor:
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
                 continue
-
-            if language == cs.SupportedLanguage.RUST and class_node.type == "impl_item":
-                class_name = self._get_node_name(class_node, "type")
-                if not class_name:
-                    for child in class_node.children:
-                        if (
-                            child.type == "type_identifier"
-                            and child.is_named
-                            and child.text
-                        ):
-                            class_name = child.text.decode(cs.ENCODING_UTF8)
-                            break
-            else:
-                class_name = self._get_node_name(class_node)
+            class_name = self._get_class_name_for_node(class_node, language)
             if not class_name:
                 continue
             class_qn = f"{module_qn}.{class_name}"
-            body_node = class_node.child_by_field_name("body")
-            if not body_node:
-                continue
-
-            method_query = lang_queries["functions"]
-            if not method_query:
-                continue
-            method_cursor = QueryCursor(method_query)
-            method_captures = method_cursor.captures(body_node)
-            method_nodes = method_captures.get("function", [])
-            for method_node in method_nodes:
-                if not isinstance(method_node, Node):
-                    continue
-                method_name = self._get_node_name(method_node)
-                if not method_name:
-                    continue
-                method_qn = f"{class_qn}.{method_name}"
-
-                self._ingest_function_calls(
-                    method_node,
-                    method_qn,
-                    cs.NodeLabel.METHOD,
-                    module_qn,
-                    language,
-                    queries,
-                    class_qn,
+            if body_node := class_node.child_by_field_name("body"):
+                self._process_methods_in_class(
+                    body_node, class_qn, module_qn, language, queries
                 )
 
     def _process_module_level_calls(
