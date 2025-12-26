@@ -236,12 +236,11 @@ class PythonVariableAnalyzerMixin:
     ) -> None:
         left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
-        if not left_node or not right_node:
-            return
-        left_text = left_node.text
         if not (
-            left_node.type == cs.TS_PY_ATTRIBUTE
-            and left_text
+            left_node
+            and right_node
+            and left_node.type == cs.TS_PY_ATTRIBUTE
+            and (left_text := left_node.text)
             and (attr_name := left_text.decode(cs.ENCODING_UTF8)).startswith(
                 cs.PY_SELF_PREFIX
             )

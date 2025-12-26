@@ -542,13 +542,12 @@ class CallResolver:
 
         object_expr = call_name[: match.start()]
 
-        object_type = (
-            self.type_inference.python_type_inference._infer_expression_return_type(
+        if (
+            object_type
+            := self.type_inference.python_type_inference._infer_expression_return_type(
                 object_expr, module_qn, local_var_types
             )
-        )
-
-        if object_type:
+        ):
             full_object_type = object_type
             if cs.SEPARATOR_DOT not in object_type:
                 if resolved_class := self._resolve_class_name(object_type, module_qn):
