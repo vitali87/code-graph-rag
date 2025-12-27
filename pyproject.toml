@@ -41,12 +41,6 @@ test = [
     "pytest-xdist>=3.8.0",
     "testcontainers>=4.9.0",
 ]
-dev = [
-    "ruff>=0.5.5",
-    "ty>=0.0.7",
-    "pre-commit>=4.2.0",
-    "types-protobuf>=5.0.0",
-]
 
 treesitter-full = [
     "tree-sitter-python>=0.23.6",
@@ -113,10 +107,14 @@ markers = [
 dev = [
     "bandit>=1.9.2",
     "coverage>=7.13.0",
+    "pre-commit>=4.2.0",
     "pyinstaller>=6.14.1",
     "pylint>=4.0.4",
     "radon>=6.0.1",
+    "ruff>=0.5.5",
     "semgrep>=1.79.0",
+    "ty>=0.0.7",
+    "types-protobuf>=5.0.0",
     "types-toml>=0.10.8.20240310",
     "vulture>=2.14",
 ]

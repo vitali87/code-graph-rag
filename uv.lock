@@ -1049,12 +1049,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "pre-commit" },
-    { name = "ruff" },
-    { name = "ty" },
-    { name = "types-protobuf" },
-]
 semantic = [
     { name = "qdrant-client" },
     { name = "torch" },
@@ -1082,10 +1076,14 @@ treesitter-full = [
 dev = [
     { name = "bandit" },
     { name = "coverage" },
+    { name = "pre-commit" },
     { name = "pyinstaller" },
     { name = "pylint" },
     { name = "radon" },
+    { name = "ruff" },
     { name = "semgrep" },
+    { name = "ty" },
+    { name = "types-protobuf" },
     { name = "types-toml" },
     { name = "vulture" },
 ]
@@ -1097,7 +1095,6 @@ requires-dist = [
     { name = "diff-match-patch", specifier = ">=20241021" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mcp", specifier = ">=1.21.1" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
     { name = "protobuf", specifier = ">=5.27.0" },
     { name = "pydantic-ai", specifier = ">=1.27.0" },
@@ -1109,7 +1106,6 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
     { name = "rich", specifier = ">=13.7.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.5" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
@@ -1125,21 +1121,23 @@ requires-dist = [
     { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.7" },
     { name = "typer", specifier = ">=0.12.5" },
-    { name = "types-protobuf", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "watchdog", specifier = ">=6.0.0" },
 ]
-provides-extras = ["test", "dev", "treesitter-full", "semantic"]
+provides-extras = ["test", "treesitter-full", "semantic"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "bandit", specifier = ">=1.9.2" },
     { name = "coverage", specifier = ">=7.13.0" },
+    { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "pyinstaller", specifier = ">=6.14.1" },
     { name = "pylint", specifier = ">=4.0.4" },
     { name = "radon", specifier = ">=6.0.1" },
+    { name = "ruff", specifier = ">=0.5.5" },
     { name = "semgrep", specifier = ">=1.79.0" },
+    { name = "ty", specifier = ">=0.0.7" },
+    { name = "types-protobuf", specifier = ">=5.0.0" },
     { name = "types-toml", specifier = ">=0.10.8.20240310" },
     { name = "vulture", specifier = ">=2.14" },
 ]

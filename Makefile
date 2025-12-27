@@ -23,7 +23,7 @@ python: ## Install project dependencies for Python only
 	uv sync
 
 dev: ## Setup development environment (install deps + pre-commit hooks)
-	uv sync --extra treesitter-full --extra dev --extra test --extra semantic
+	uv sync --extra treesitter-full --extra test --extra semantic --group dev
 	uv run pre-commit install
 	uv run pre-commit install --hook-type commit-msg
 	@echo "✅ Development environment ready!"
