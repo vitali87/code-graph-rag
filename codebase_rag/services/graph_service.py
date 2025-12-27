@@ -21,9 +21,11 @@ class MemgraphIngestor:
         self._port = port
         self._username = username
         self._password = password
-        if self._password is not None and self._username is None:
+        # Validate authentication: both username and password must be provided together
+        if (self._username is None) != (self._password is None):
             raise ValueError(
-                "A password was provided for Memgraph, but no username. Both are required for authentication."
+                "Both username and password are required for authentication. "
+                "Either provide both or neither."
             )
         if batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
@@ -51,11 +53,11 @@ class MemgraphIngestor:
             "port": self._port,
         }
 
-        # Only add authentication parameters if username is provided
+        # Only add authentication parameters if both username and password are provided
         # This allows connection to Memgraph instances without authentication
-        if self._username:
+        if self._username is not None:
             connect_params["username"] = self._username
-            connect_params["password"] = self._password if self._password else ""
+            connect_params["password"] = self._password
 
         self.conn = mgclient.connect(**connect_params)
         self.conn.autocommit = True
