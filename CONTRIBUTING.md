@@ -59,12 +59,12 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 - **Heavy Pydantic Usage**: Use Pydantic models extensively for data validation, serialization, and configuration
 - **Package Management**: Use `uv` for all dependency management and virtual environments
 - **Code Quality**: Use `ruff` for linting and formatting - run `ruff check` and `ruff format` before submitting
-- **Type Safety**: Use type hints everywhere and run `mypy` for type checking
+- **Type Safety**: Use type hints everywhere and run `uv run ty check` for type checking
 
 ### Development Tools
 - **uv**: Package manager and dependency resolver
 - **ruff**: Code linting and formatting (replaces flake8, black, isort)
-- **mypy**: Static type checking
+- **ty**: Static type checking (from Astral)
 - **pytest**: Testing framework
 - **ripgrep** (`rg`): Required for shell command text searching (install via `brew install ripgrep` on macOS or `apt install ripgrep` on Linux)
 
