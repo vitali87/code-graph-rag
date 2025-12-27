@@ -1,98 +1,119 @@
-import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Annotated
 
+import typer
 from loguru import logger
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from codebase_rag.config import IGNORE_PATTERNS, IGNORE_SUFFIXES, settings
+from codebase_rag import cli_help as ch
+from codebase_rag import logs
+from codebase_rag import tool_errors as te
+from codebase_rag.config import settings
+from codebase_rag.constants import (
+    CYPHER_DELETE_CALLS,
+    CYPHER_DELETE_MODULE,
+    IGNORE_PATTERNS,
+    IGNORE_SUFFIXES,
+    KEY_PATH,
+    LOG_LEVEL_INFO,
+    REALTIME_LOGGER_FORMAT,
+    WATCHER_SLEEP_INTERVAL,
+    EventType,
+    SupportedLanguage,
+)
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.language_config import get_language_config
+from codebase_rag.language_spec import get_language_spec
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
 class CodeChangeEventHandler(FileSystemEventHandler):
-    """Handles file system events and updates the graph accordingly."""
-
     def __init__(self, updater: GraphUpdater):
         self.updater = updater
-        # (H) Using centralized ignore patterns from config
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
-        logger.info("File watcher is now active.")
+        logger.info(logs.WATCHER_ACTIVE)
 
     def _is_relevant(self, path_str: str) -> bool:
-        """Check if the file path is relevant for processing."""
         path = Path(path_str)
         if any(path.name.endswith(suffix) for suffix in self.ignore_suffixes):
             return False
-        return not any(part in self.ignore_patterns for part in path.parts)
+        return all(part not in self.ignore_patterns for part in path.parts)
 
-    def dispatch(self, event: Any) -> None:
-        """A single dispatch method to handle all file system events."""
-        if event.is_directory or not self._is_relevant(event.src_path):
+    def dispatch(self, event: FileSystemEvent) -> None:
+        # (H) ┌─────────────────────────────────────────────────────────────────────┐
+        # (H) │                      Real-Time Graph Update Steps                   │
+        # (H) ├─────────────────────────────────────────────────────────────────────┤
+        # (H) │ Step 1: Delete all old data from the graph for this file           │
+        # (H) │         Provides a clean slate for the updated information         │
+        # (H) │ Step 2: Clear the specific in-memory state for the file            │
+        # (H) │         Prevents stale in-memory representations                   │
+        # (H) │ Step 3: Re-parse the file if it was modified or created            │
+        # (H) │         Rebuilds in-memory state (AST, function registry)          │
+        # (H) │ Step 4: Re-process all function calls across the entire codebase   │
+        # (H) │         Fixes "island" problem - changes reflect in all relations  │
+        # (H) │ Step 5: Flush all collected changes to the database                │
+        # (H) └─────────────────────────────────────────────────────────────────────┘
+        src_path = event.src_path
+        if isinstance(src_path, bytes):
+            src_path = src_path.decode()
+
+        if event.is_directory or not self._is_relevant(src_path):
             return
 
         ingestor = self.updater.ingestor
         if not isinstance(ingestor, QueryProtocol):
-            logger.warning(
-                "Ingestor does not support querying, skipping real-time update."
-            )
+            logger.warning(logs.WATCHER_SKIP_NO_QUERY)
             return
 
-        path = Path(event.src_path)
+        path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
         logger.warning(
-            f"Change detected: {event.event_type} on {path}. Updating graph."
+            logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
 
-        # (H) --- Step 1: Delete all old data from the graph for this file ---
-        # (H) This provides a clean slate for the updated information.
-        delete_query = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
-        ingestor.execute_write(delete_query, {"path": relative_path_str})
-        logger.debug(f"Ran deletion query for path: {relative_path_str}")
+        # (H) Step 1
+        ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
+        logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
-        # (H) --- Step 2: Clear the specific in-memory state for the file ---
-        # (H) Crucial for preventing stale in-memory representations.
+        # (H) Step 2
         self.updater.remove_file_from_state(path)
 
-        # (H) --- Step 3: Re-parse the file if it was modified or created ---
-        # (H) This rebuilds the in-memory state (AST, function registry) for the single file.
-        if event.event_type in ["modified", "created"]:
-            lang_config = get_language_config(path.suffix)
-            if lang_config and lang_config.name in self.updater.parsers:
-                result = self.updater.factory.definition_processor.process_file(
+        # (H) Step 3
+        if event.event_type in (EventType.MODIFIED, EventType.CREATED):
+            lang_config = get_language_spec(path.suffix)
+            if (
+                lang_config
+                and isinstance(lang_config.language, SupportedLanguage)
+                and lang_config.language in self.updater.parsers
+            ):
+                if result := self.updater.factory.definition_processor.process_file(
                     path,
-                    lang_config.name,
+                    lang_config.language,
                     self.updater.queries,
                     self.updater.factory.structure_processor.structural_elements,
-                )
-                if result:
+                ):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
 
-        # (H) --- Step 4: Re-process all function calls across the entire codebase ---
-        # (H) This is the key to fixing the "island" problem. It ensures that changes
-        # (H) in one file are correctly reflected in relationships from all other files.
-        logger.info("Recalculating all function call relationships for consistency...")
-        ingestor.execute_write("MATCH ()-[r:CALLS]->() DELETE r")
+        # (H) Step 4
+        logger.info(logs.RECALC_CALLS)
+        ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 
-        # (H) --- Step 5: Flush all collected changes to the database ---
+        # (H) Step 5
         self.updater.ingestor.flush_all()
-        logger.success(f"Graph updated successfully for change in: {path.name}")
+        logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
 
 def start_watcher(
     repo_path: str, host: str, port: int, batch_size: int | None = None
 ) -> None:
-    """Initializes the graph updater and starts the file system watcher."""
     repo_path_obj = Path(repo_path).resolve()
     parsers, queries = load_parsers()
 
@@ -103,64 +124,60 @@ def start_watcher(
         port=port,
         batch_size=effective_batch_size,
     ) as ingestor:
-        updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
+        _run_watcher_loop(ingestor, repo_path_obj, parsers, queries)
 
-        # (H) --- Perform an initial full scan to build the complete context ---
-        # (H) This is essential for the real-time updates to have a valid baseline.
-        logger.info("Performing initial full codebase scan...")
-        updater.run()
-        logger.success("Initial scan complete. Starting real-time watcher.")
 
-        event_handler = CodeChangeEventHandler(updater)
-        observer = Observer()
-        observer.schedule(event_handler, str(repo_path_obj), recursive=True)
-        observer.start()
-        logger.info(f"Watching for changes in: {repo_path_obj}")
+def _run_watcher_loop(ingestor, repo_path_obj, parsers, queries):
+    updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            observer.stop()
-        observer.join()
+    # (H) Initial full scan builds the complete context for real-time updates
+    logger.info(logs.INITIAL_SCAN)
+    updater.run()
+    logger.success(logs.INITIAL_SCAN_DONE)
+
+    event_handler = CodeChangeEventHandler(updater)
+    observer = Observer()
+    observer.schedule(event_handler, str(repo_path_obj), recursive=True)
+    observer.start()
+    logger.info(logs.WATCHING.format(path=repo_path_obj))
+
+    try:
+        while True:
+            time.sleep(WATCHER_SLEEP_INTERVAL)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
+
+
+def _validate_positive_int(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if value < 1:
+        raise typer.BadParameter(te.INVALID_POSITIVE_INT.format(value=value))
+    return value
+
+
+def main(
+    repo_path: Annotated[str, typer.Argument(help=ch.HELP_REPO_PATH_WATCH)],
+    host: Annotated[
+        str, typer.Option(help=ch.HELP_MEMGRAPH_HOST)
+    ] = settings.MEMGRAPH_HOST,
+    port: Annotated[
+        int, typer.Option(help=ch.HELP_MEMGRAPH_PORT)
+    ] = settings.MEMGRAPH_PORT,
+    batch_size: Annotated[
+        int | None,
+        typer.Option(
+            help=ch.HELP_BATCH_SIZE,
+            callback=_validate_positive_int,
+        ),
+    ] = None,
+) -> None:
+    logger.remove()
+    logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level=LOG_LEVEL_INFO)
+    logger.info(logs.LOGGER_CONFIGURED)
+    start_watcher(repo_path, host, port, batch_size)
 
 
 if __name__ == "__main__":
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        level="INFO",
-    )
-    logger.info("Logger configured for Real-Time Updater.")
-
-    parser = argparse.ArgumentParser(
-        description="Real-time graph updater for codebases."
-    )
-    parser.add_argument("repo_path", help="Path to the repository to watch.")
-    parser.add_argument("--host", default="localhost", help="Memgraph host")
-    parser.add_argument("--port", type=int, default=7687, help="Memgraph port")
-
-    def positive_int(value: str) -> int:
-        """Argparse type that enforces positive integers."""
-        try:
-            ivalue = int(value)
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(
-                f"{value!r} is not a valid integer"
-            ) from exc
-        if ivalue < 1:
-            raise argparse.ArgumentTypeError(
-                f"{value!r} is not a valid positive integer"
-            )
-        return ivalue
-
-    parser.add_argument(
-        "--batch-size",
-        type=positive_int,
-        default=None,
-        help="Number of buffered nodes/relationships before flushing to Memgraph",
-    )
-    args = parser.parse_args()
-
-    start_watcher(args.repo_path, args.host, args.port, args.batch_size)
+    typer.run(main)

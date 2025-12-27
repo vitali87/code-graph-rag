@@ -1,10 +1,13 @@
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
 
-from tree_sitter import Node
-
+from ..constants import SupportedLanguage
 from ..services import IngestorProtocol
+from ..types_defs import (
+    ASTCacheProtocol,
+    FunctionRegistryTrieProtocol,
+    LanguageQueries,
+    SimpleNameLookup,
+)
 from .call_processor import CallProcessor
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
@@ -12,32 +15,20 @@ from .structure_processor import StructureProcessor
 from .type_inference import TypeInferenceEngine
 
 
-class ASTCacheProtocol(Protocol):
-    """Protocol for AST cache implementations."""
-
-    def __setitem__(self, key: Path, value: tuple[Node, str]) -> None: ...
-    def __getitem__(self, key: Path) -> tuple[Node, str]: ...
-    def __delitem__(self, key: Path) -> None: ...
-    def __contains__(self, key: Path) -> bool: ...
-    def items(self) -> Any: ...
-
-
 class ProcessorFactory:
-    """Factory for creating processor instances with proper dependency injection."""
-
     def __init__(
         self,
         ingestor: IngestorProtocol,
-        repo_path_getter: Callable[[], Path] | Path,
-        project_name_getter: Callable[[], str] | str,
-        queries: dict[str, Any],
-        function_registry: Any,
-        simple_name_lookup: dict[str, set[str]],
+        repo_path: Path,
+        project_name: str,
+        queries: dict[SupportedLanguage, LanguageQueries],
+        function_registry: FunctionRegistryTrieProtocol,
+        simple_name_lookup: SimpleNameLookup,
         ast_cache: ASTCacheProtocol,
     ) -> None:
         self.ingestor = ingestor
-        self._repo_path_getter = repo_path_getter
-        self._project_name_getter = project_name_getter
+        self.repo_path = repo_path
+        self.project_name = project_name
         self.queries = queries
         self.function_registry = function_registry
         self.simple_name_lookup = simple_name_lookup
@@ -52,30 +43,11 @@ class ProcessorFactory:
         self._call_processor: CallProcessor | None = None
 
     @property
-    def repo_path(self) -> Path:
-        """Get the current repo path dynamically."""
-        if callable(self._repo_path_getter):
-            return self._repo_path_getter()
-        return (
-            Path(self._repo_path_getter)
-            if isinstance(self._repo_path_getter, str)
-            else self._repo_path_getter
-        )
-
-    @property
-    def project_name(self) -> str:
-        """Get the current project name dynamically."""
-        if callable(self._project_name_getter):
-            return self._project_name_getter()
-        return str(self._project_name_getter)
-
-    @property
     def import_processor(self) -> ImportProcessor:
-        """Get or create the import processor."""
         if self._import_processor is None:
             self._import_processor = ImportProcessor(
-                repo_path_getter=lambda: self.repo_path,
-                project_name_getter=lambda: self.project_name,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
                 ingestor=self.ingestor,
                 function_registry=self.function_registry,
             )
@@ -83,7 +55,6 @@ class ProcessorFactory:
 
     @property
     def structure_processor(self) -> StructureProcessor:
-        """Get or create the structure processor."""
         if self._structure_processor is None:
             self._structure_processor = StructureProcessor(
                 ingestor=self.ingestor,
@@ -95,7 +66,6 @@ class ProcessorFactory:
 
     @property
     def definition_processor(self) -> DefinitionProcessor:
-        """Get or create the definition processor."""
         if self._definition_processor is None:
             self._definition_processor = DefinitionProcessor(
                 ingestor=self.ingestor,
@@ -110,7 +80,6 @@ class ProcessorFactory:
 
     @property
     def type_inference(self) -> TypeInferenceEngine:
-        """Get or create the type inference engine."""
         if self._type_inference is None:
             self._type_inference = TypeInferenceEngine(
                 import_processor=self.import_processor,
@@ -127,7 +96,6 @@ class ProcessorFactory:
 
     @property
     def call_processor(self) -> CallProcessor:
-        """Get or create the call processor."""
         if self._call_processor is None:
             self._call_processor = CallProcessor(
                 ingestor=self.ingestor,

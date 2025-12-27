@@ -5,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -243,7 +244,7 @@ def test_basic_return_type_inference(
         if len(c[0]) >= 3 and c[0][1] == "CALLS"
     ]
 
-    method_calls = [call for call in actual_calls if call[0][2][0] == "Method"]
+    method_calls = [call for call in actual_calls if call[0][2][0] == NodeType.METHOD]
 
     found_method_calls = set()
     for call in method_calls:
@@ -295,7 +296,7 @@ def test_fluent_interface_return_types(
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == "Method"
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
     ]
 
     found_method_calls = set()
@@ -343,7 +344,7 @@ def test_nested_return_type_inference(
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == "Method"
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
     ]
 
     found_method_calls = set()
@@ -395,7 +396,7 @@ def test_service_method_return_types(
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == "Method"
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
     ]
 
     found_method_calls = set()
@@ -443,7 +444,7 @@ def test_loop_variable_return_types(
     actual_calls = [
         c
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == "Method"
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
     ]
 
     found_method_calls = set()

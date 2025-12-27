@@ -1,0 +1,768 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+from tree_sitter import Language, Parser
+
+from codebase_rag import constants as cs
+from codebase_rag.language_spec import LANGUAGE_SPECS
+from codebase_rag.parsers.handlers.base import BaseLanguageHandler
+from codebase_rag.parsers.handlers.cpp import CppHandler
+from codebase_rag.parsers.handlers.java import JavaHandler
+from codebase_rag.parsers.handlers.js_ts import JsTsHandler
+from codebase_rag.parsers.handlers.lua import LuaHandler
+from codebase_rag.parsers.handlers.rust import RustHandler
+from codebase_rag.tests.conftest import create_mock_node
+
+if TYPE_CHECKING:
+    from codebase_rag.types_defs import ASTNode
+
+try:
+    import tree_sitter_javascript as tsjs
+
+    JS_AVAILABLE = True
+except ImportError:
+    JS_AVAILABLE = False
+
+try:
+    import tree_sitter_python as tspython
+
+    PYTHON_AVAILABLE = True
+except ImportError:
+    PYTHON_AVAILABLE = False
+
+try:
+    import tree_sitter_cpp as tscpp
+
+    CPP_AVAILABLE = True
+except ImportError:
+    CPP_AVAILABLE = False
+
+try:
+    import tree_sitter_rust as tsrust
+
+    RUST_AVAILABLE = True
+except ImportError:
+    RUST_AVAILABLE = False
+
+try:
+    import tree_sitter_java as tsjava
+
+    JAVA_AVAILABLE = True
+except ImportError:
+    JAVA_AVAILABLE = False
+
+try:
+    import tree_sitter_lua as tslua
+
+    LUA_AVAILABLE = True
+except ImportError:
+    LUA_AVAILABLE = False
+
+
+@pytest.fixture
+def js_parser() -> Parser | None:
+    if not JS_AVAILABLE:
+        return None
+    language = Language(tsjs.language())
+    return Parser(language)
+
+
+@pytest.fixture
+def python_parser() -> Parser | None:
+    if not PYTHON_AVAILABLE:
+        return None
+    language = Language(tspython.language())
+    return Parser(language)
+
+
+@pytest.fixture
+def cpp_parser() -> Parser | None:
+    if not CPP_AVAILABLE:
+        return None
+    language = Language(tscpp.language())
+    return Parser(language)
+
+
+@pytest.fixture
+def rust_parser() -> Parser | None:
+    if not RUST_AVAILABLE:
+        return None
+    language = Language(tsrust.language())
+    return Parser(language)
+
+
+@pytest.fixture
+def java_parser() -> Parser | None:
+    if not JAVA_AVAILABLE:
+        return None
+    language = Language(tsjava.language())
+    return Parser(language)
+
+
+@pytest.fixture
+def lua_parser() -> Parser | None:
+    if not LUA_AVAILABLE:
+        return None
+    language = Language(tslua.language())
+    return Parser(language)
+
+
+class TestBaseLanguageHandler:
+    def test_is_inside_method_with_object_literals_returns_false(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
+        assert handler.is_inside_method_with_object_literals(node) is False
+
+    def test_is_class_method_returns_false(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_METHOD_DEFINITION)
+        assert handler.is_class_method(node) is False
+
+    def test_is_export_inside_function_returns_false(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_EXPORT_STATEMENT)
+        assert handler.is_export_inside_function(node) is False
+
+    def test_extract_function_name_with_name_field(self) -> None:
+        handler = BaseLanguageHandler()
+        name_node = create_mock_node(cs.TS_IDENTIFIER, text="myFunction")
+        node = create_mock_node(
+            cs.TS_FUNCTION_DECLARATION,
+            fields={cs.TS_FIELD_NAME: name_node},
+        )
+        assert handler.extract_function_name(node) == "myFunction"
+
+    def test_extract_function_name_without_name_returns_none(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
+        assert handler.extract_function_name(node) is None
+
+    def test_build_function_qualified_name_simple(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
+        result = handler.build_function_qualified_name(
+            node=node,
+            module_qn="project.module",
+            func_name="myFunc",
+            lang_config=None,
+            file_path=None,
+            repo_path=Path("/repo"),
+            project_name="project",
+        )
+        assert result == "project.module.myFunc"
+
+    def test_is_function_exported_returns_false(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
+        assert handler.is_function_exported(node) is False
+
+    def test_should_process_as_impl_block_returns_false(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_IMPL_ITEM)
+        assert handler.should_process_as_impl_block(node) is False
+
+    def test_extract_impl_target_returns_none(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_IMPL_ITEM)
+        assert handler.extract_impl_target(node) is None
+
+    def test_build_method_qualified_name_simple(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_METHOD_DEFINITION)
+        result = handler.build_method_qualified_name(
+            class_qn="project.module.MyClass",
+            method_name="myMethod",
+            method_node=node,
+        )
+        assert result == "project.module.MyClass.myMethod"
+
+    def test_extract_base_class_name_with_text(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_IDENTIFIER, text="BaseClass")
+        assert handler.extract_base_class_name(node) == "BaseClass"
+
+    def test_extract_base_class_name_without_text_returns_none(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_IDENTIFIER, text="")
+        assert handler.extract_base_class_name(node) is None
+
+    @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="Python parser not available")
+    def test_build_nested_function_qn_with_parent_functions(
+        self, python_parser: Parser
+    ) -> None:
+        handler = BaseLanguageHandler()
+        code = b"""
+def outer():
+    def inner():
+        pass
+"""
+        tree = python_parser.parse(code)
+        outer_func = tree.root_node.children[0]
+        body = outer_func.child_by_field_name("body")
+        inner_func = body.children[0]
+
+        result = handler.build_nested_function_qn(
+            func_node=inner_func,
+            module_qn="project.module",
+            func_name="inner",
+            lang_config=LANGUAGE_SPECS[cs.SupportedLanguage.PYTHON],
+        )
+        assert result == "project.module.outer.inner"
+
+    @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="Python parser not available")
+    def test_build_nested_function_qn_stops_at_class(
+        self, python_parser: Parser
+    ) -> None:
+        handler = BaseLanguageHandler()
+        code = b"""
+class MyClass:
+    def method(self):
+        def nested():
+            pass
+"""
+        tree = python_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method = class_body.children[0]
+        method_body = method.child_by_field_name("body")
+        nested_func = method_body.children[0]
+
+        result = handler.build_nested_function_qn(
+            func_node=nested_func,
+            module_qn="project.module",
+            func_name="nested",
+            lang_config=LANGUAGE_SPECS[cs.SupportedLanguage.PYTHON],
+        )
+        assert result is None
+
+
+@pytest.mark.skipif(not JS_AVAILABLE, reason="tree-sitter-javascript not available")
+class TestJsTsHandler:
+    def test_is_inside_method_with_object_literals_nested_in_method(
+        self, js_parser: Parser
+    ) -> None:
+        handler = JsTsHandler()
+        code = b"""
+class MyClass {
+    myMethod() {
+        return {
+            nested() { return 'nested'; }
+        };
+    }
+}
+"""
+        tree = js_parser.parse(code)
+        class_body = tree.root_node.children[0].child_by_field_name("body")
+        method_def = class_body.children[1]
+        method_body = method_def.child_by_field_name("body")
+        return_stmt = method_body.children[1]
+        obj = return_stmt.children[1]
+        pair = obj.children[1]
+        nested_func = pair.children[0]
+
+        assert handler.is_inside_method_with_object_literals(nested_func) is True
+
+    def test_is_inside_method_with_object_literals_standalone_object(
+        self, js_parser: Parser
+    ) -> None:
+        handler = JsTsHandler()
+        code = b"""
+const obj = {
+    method() { return 'method'; }
+};
+"""
+        tree = js_parser.parse(code)
+        var_decl = tree.root_node.children[0]
+        declarator = var_decl.children[1]
+        obj = declarator.child_by_field_name("value")
+        pair = obj.children[1]
+
+        assert handler.is_inside_method_with_object_literals(pair) is False
+
+    def test_is_inside_method_with_object_literals_stops_at_class_body(
+        self, js_parser: Parser
+    ) -> None:
+        handler = JsTsHandler()
+        code = b"""
+class MyClass {
+    myMethod() { return 'method'; }
+}
+"""
+        tree = js_parser.parse(code)
+        class_body = tree.root_node.children[0].child_by_field_name("body")
+        method_def = class_body.children[1]
+
+        assert handler.is_inside_method_with_object_literals(method_def) is False
+
+    def test_is_class_method_in_class_body(self, js_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"""
+class MyClass {
+    myMethod() { return 'method'; }
+}
+"""
+        tree = js_parser.parse(code)
+        class_body = tree.root_node.children[0].child_by_field_name("body")
+        method_node = class_body.children[1]
+
+        assert handler.is_class_method(method_node) is True
+
+    def test_is_class_method_at_module_level(self, js_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"function standalone() { return 'standalone'; }"
+        tree = js_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        assert handler.is_class_method(func_node) is False
+
+    def test_is_export_inside_function_at_module_level(self, js_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"export function myFunc() { return 'exported'; }"
+        tree = js_parser.parse(code)
+        export_node = tree.root_node.children[0]
+
+        assert handler.is_export_inside_function(export_node) is False
+
+    def test_is_export_inside_function_nested(self, js_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"""
+function outer() {
+    module.exports.inner = function() { return 'inner'; };
+}
+"""
+        tree = js_parser.parse(code)
+        func_node = tree.root_node.children[0]
+        body = func_node.child_by_field_name("body")
+        expr_stmt = body.children[1]
+
+        assert handler.is_export_inside_function(expr_stmt) is True
+
+    def test_extract_function_name_arrow_in_variable_declarator(
+        self, js_parser: Parser
+    ) -> None:
+        handler = JsTsHandler()
+        code = b"const myArrow = (x) => x * 2;"
+        tree = js_parser.parse(code)
+        var_decl = tree.root_node.children[0]
+        declarator = var_decl.children[1]
+        arrow_node = declarator.child_by_field_name("value")
+
+        result = handler.extract_function_name(arrow_node)
+        assert result == "myArrow"
+
+    def test_extract_function_name_arrow_in_callback(self, js_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"doSomething((x) => x * 2);"
+        tree = js_parser.parse(code)
+        expr_stmt = tree.root_node.children[0]
+        call = expr_stmt.children[0]
+        args = call.child_by_field_name("arguments")
+        arrow_node = args.children[1]
+
+        result = handler.extract_function_name(arrow_node)
+        assert result is None
+
+    def test_extract_function_name_regular_function(self, js_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"function myFunc() { return 42; }"
+        tree = js_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.extract_function_name(func_node)
+        assert result == "myFunc"
+
+    def test_build_nested_function_qn_with_class_and_object_literals(
+        self, js_parser: Parser
+    ) -> None:
+        handler = JsTsHandler()
+        code = b"""
+class MyClass {
+    myMethod() {
+        return {
+            nested() { return 'nested'; }
+        };
+    }
+}
+"""
+        tree = js_parser.parse(code)
+        class_body = tree.root_node.children[0].child_by_field_name("body")
+        method_def = class_body.children[1]
+        method_body = method_def.child_by_field_name("body")
+        return_stmt = method_body.children[1]
+        obj = return_stmt.children[1]
+        pair = obj.children[1]
+        nested_func = pair.children[0]
+
+        result = handler.build_nested_function_qn(
+            func_node=nested_func,
+            module_qn="project.module",
+            func_name="nested",
+            lang_config=LANGUAGE_SPECS[cs.SupportedLanguage.JS],
+        )
+        assert result is not None
+        assert "MyClass" in result
+        assert "myMethod" in result
+        assert "nested" in result
+
+    def test_build_nested_function_qn_skips_class_without_object_literals(
+        self, js_parser: Parser
+    ) -> None:
+        handler = JsTsHandler()
+        code = b"""
+class MyClass {
+    myMethod() {
+        function nested() { return 'nested'; }
+    }
+}
+"""
+        tree = js_parser.parse(code)
+        class_body = tree.root_node.children[0].child_by_field_name("body")
+        method_def = class_body.children[1]
+        method_body = method_def.child_by_field_name("body")
+        nested_func = method_body.children[1]
+
+        result = handler.build_nested_function_qn(
+            func_node=nested_func,
+            module_qn="project.module",
+            func_name="nested",
+            lang_config=LANGUAGE_SPECS[cs.SupportedLanguage.JS],
+        )
+        assert result is None
+
+
+@pytest.mark.skipif(not CPP_AVAILABLE, reason="tree-sitter-cpp not available")
+class TestCppHandler:
+    def test_extract_function_name_regular_function(self, cpp_parser: Parser) -> None:
+        handler = CppHandler()
+        code = b"void myFunction() {}"
+        tree = cpp_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.extract_function_name(func_node)
+        assert result == "myFunction"
+
+    def test_extract_function_name_lambda_expression(self, cpp_parser: Parser) -> None:
+        handler = CppHandler()
+        code = b"auto lambda = []() { return 42; };"
+        tree = cpp_parser.parse(code)
+        decl = tree.root_node.children[0]
+
+        def find_lambda(node: ASTNode) -> ASTNode | None:
+            if node.type == cs.TS_CPP_LAMBDA_EXPRESSION:
+                return node
+            for child in node.children:
+                if result := find_lambda(child):
+                    return result
+            return None
+
+        lambda_node = find_lambda(decl)
+        assert lambda_node is not None
+
+        result = handler.extract_function_name(lambda_node)
+        assert result is not None
+        assert result.startswith("lambda_")
+
+    def test_build_function_qualified_name_simple(self, cpp_parser: Parser) -> None:
+        handler = CppHandler()
+        code = b"void myFunction() {}"
+        tree = cpp_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.build_function_qualified_name(
+            node=func_node,
+            module_qn="project.source.main",
+            func_name="myFunction",
+            lang_config=None,
+            file_path=None,
+            repo_path=Path("/repo"),
+            project_name="project",
+        )
+        assert "myFunction" in result
+
+    def test_is_function_exported_without_export(self, cpp_parser: Parser) -> None:
+        handler = CppHandler()
+        code = b"void myFunction() {}"
+        tree = cpp_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.is_function_exported(func_node)
+        assert result is False
+
+    def test_extract_base_class_name_simple_identifier(
+        self, cpp_parser: Parser
+    ) -> None:
+        handler = CppHandler()
+        code = b"class Derived : public Base {};"
+        tree = cpp_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        def find_base_clause(node: ASTNode) -> ASTNode | None:
+            if node.type == "base_class_clause":
+                return node
+            for child in node.children:
+                if result := find_base_clause(child):
+                    return result
+            return None
+
+        base_clause = find_base_clause(class_node)
+        assert base_clause is not None
+
+        def find_type_identifier(node: ASTNode) -> ASTNode | None:
+            if node.type == "type_identifier":
+                return node
+            for child in node.children:
+                if result := find_type_identifier(child):
+                    return result
+            return None
+
+        base_node = find_type_identifier(base_clause)
+        assert base_node is not None
+
+        result = handler.extract_base_class_name(base_node)
+        assert result == "Base"
+
+    def test_extract_base_class_name_template_type(self, cpp_parser: Parser) -> None:
+        handler = CppHandler()
+        code = b"class Derived : public Base<int> {};"
+        tree = cpp_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        def find_template_type(node: ASTNode) -> ASTNode | None:
+            if node.type == "template_type":
+                return node
+            for child in node.children:
+                if result := find_template_type(child):
+                    return result
+            return None
+
+        template_node = find_template_type(class_node)
+        assert template_node is not None
+
+        result = handler.extract_base_class_name(template_node)
+        assert result == "Base"
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="tree-sitter-rust not available")
+class TestRustHandler:
+    def test_should_process_as_impl_block_with_impl_item(
+        self, rust_parser: Parser
+    ) -> None:
+        handler = RustHandler()
+        code = b"""
+impl MyStruct {
+    fn method(&self) {}
+}
+"""
+        tree = rust_parser.parse(code)
+        impl_node = tree.root_node.children[0]
+
+        assert handler.should_process_as_impl_block(impl_node) is True
+
+    def test_should_process_as_impl_block_with_other_node(
+        self, rust_parser: Parser
+    ) -> None:
+        handler = RustHandler()
+        code = b"fn my_function() {}"
+        tree = rust_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        assert handler.should_process_as_impl_block(func_node) is False
+
+    def test_extract_impl_target_struct(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"""
+impl MyStruct {
+    fn method(&self) {}
+}
+"""
+        tree = rust_parser.parse(code)
+        impl_node = tree.root_node.children[0]
+
+        result = handler.extract_impl_target(impl_node)
+        assert result == "MyStruct"
+
+    def test_extract_impl_target_trait_for_struct(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"""
+impl MyTrait for MyStruct {
+    fn method(&self) {}
+}
+"""
+        tree = rust_parser.parse(code)
+        impl_node = tree.root_node.children[0]
+
+        result = handler.extract_impl_target(impl_node)
+        assert result == "MyStruct"
+
+    def test_build_function_qualified_name_simple(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"fn my_function() {}"
+        tree = rust_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.build_function_qualified_name(
+            node=func_node,
+            module_qn="project.src.lib",
+            func_name="my_function",
+            lang_config=None,
+            file_path=None,
+            repo_path=Path("/repo"),
+            project_name="project",
+        )
+        assert "my_function" in result
+
+
+@pytest.mark.skipif(not JAVA_AVAILABLE, reason="tree-sitter-java not available")
+class TestJavaHandler:
+    def test_build_method_qualified_name_with_params(self, java_parser: Parser) -> None:
+        handler = JavaHandler()
+        code = b"""
+class MyClass {
+    void myMethod(int a, String b) {}
+}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method_node = class_body.children[1]
+
+        result = handler.build_method_qualified_name(
+            class_qn="project.module.MyClass",
+            method_name="myMethod",
+            method_node=method_node,
+        )
+        assert "myMethod" in result
+        assert "int" in result
+        assert "String" in result
+
+    def test_build_method_qualified_name_without_params(
+        self, java_parser: Parser
+    ) -> None:
+        handler = JavaHandler()
+        code = b"""
+class MyClass {
+    void myMethod() {}
+}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method_node = class_body.children[1]
+
+        result = handler.build_method_qualified_name(
+            class_qn="project.module.MyClass",
+            method_name="myMethod",
+            method_node=method_node,
+        )
+        assert result == "project.module.MyClass.myMethod"
+
+    def test_build_method_qualified_name_overloaded_methods(
+        self, java_parser: Parser
+    ) -> None:
+        handler = JavaHandler()
+        code = b"""
+class MyClass {
+    void process(int x) {}
+    void process(String s) {}
+}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method1 = class_body.children[1]
+        method2 = class_body.children[2]
+
+        result1 = handler.build_method_qualified_name(
+            class_qn="project.module.MyClass",
+            method_name="process",
+            method_node=method1,
+        )
+        result2 = handler.build_method_qualified_name(
+            class_qn="project.module.MyClass",
+            method_name="process",
+            method_node=method2,
+        )
+        assert result1 != result2
+        assert "int" in result1
+        assert "String" in result2
+
+
+@pytest.mark.skipif(not LUA_AVAILABLE, reason="tree-sitter-lua not available")
+class TestLuaHandler:
+    def test_extract_function_name_with_name_field(self, lua_parser: Parser) -> None:
+        handler = LuaHandler()
+        code = b"function myFunc() end"
+        tree = lua_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.extract_function_name(func_node)
+        assert result == "myFunc"
+
+    def test_extract_function_name_assigned_to_identifier(
+        self, lua_parser: Parser
+    ) -> None:
+        handler = LuaHandler()
+        code = b"myFunc = function() end"
+        tree = lua_parser.parse(code)
+        assignment = tree.root_node.children[0]
+
+        def find_function_definition(node: ASTNode) -> ASTNode | None:
+            if node.type == cs.TS_LUA_FUNCTION_DEFINITION:
+                return node
+            for child in node.children:
+                if result := find_function_definition(child):
+                    return result
+            return None
+
+        func_node = find_function_definition(assignment)
+        assert func_node is not None
+
+        result = handler.extract_function_name(func_node)
+        assert result == "myFunc"
+
+    def test_extract_function_name_assigned_to_dot_index(
+        self, lua_parser: Parser
+    ) -> None:
+        handler = LuaHandler()
+        code = b"MyModule.myFunc = function() end"
+        tree = lua_parser.parse(code)
+        assignment = tree.root_node.children[0]
+
+        def find_function_definition(node: ASTNode) -> ASTNode | None:
+            if node.type == cs.TS_LUA_FUNCTION_DEFINITION:
+                return node
+            for child in node.children:
+                if result := find_function_definition(child):
+                    return result
+            return None
+
+        func_node = find_function_definition(assignment)
+        assert func_node is not None
+
+        result = handler.extract_function_name(func_node)
+        assert result is not None
+        assert "myFunc" in result
+
+    def test_extract_function_name_anonymous_returns_none(
+        self, lua_parser: Parser
+    ) -> None:
+        handler = LuaHandler()
+        code = b"doSomething(function() end)"
+        tree = lua_parser.parse(code)
+
+        def find_function_definition(node: ASTNode) -> ASTNode | None:
+            if node.type == cs.TS_LUA_FUNCTION_DEFINITION:
+                return node
+            for child in node.children:
+                if result := find_function_definition(child):
+                    return result
+            return None
+
+        func_node = find_function_definition(tree.root_node)
+        assert func_node is not None
+
+        result = handler.extract_function_name(func_node)
+        assert result is None

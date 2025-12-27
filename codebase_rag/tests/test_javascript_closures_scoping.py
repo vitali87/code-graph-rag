@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import SEPARATOR_DOT
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
@@ -227,7 +228,7 @@ const varResults = varFunctions.map(fn => fn());
         call
         for call in function_calls
         if "basic_closures" in call[0][1]["qualified_name"]
-        and len(call[0][1]["qualified_name"].split(".")) > 3
+        and len(call[0][1]["qualified_name"].split(SEPARATOR_DOT)) > 3
     ]
 
     assert len(nested_functions) >= 5, (
@@ -506,7 +507,7 @@ tryCatchScope();
         call
         for call in function_calls
         if "variable_scoping" in call[0][1]["qualified_name"]
-        and len(call[0][1]["qualified_name"].split(".")) > 3
+        and len(call[0][1]["qualified_name"].split(SEPARATOR_DOT)) > 3
     ]
 
     assert len(nested_scoping_functions) >= 8, (

@@ -1,39 +1,24 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from loguru import logger
-from pydantic import BaseModel
 from pydantic_ai import Tool
 
-
-class FileReadResult(BaseModel):
-    """Data model for file read results."""
-
-    file_path: str
-    content: str | None = None
-    error_message: str | None = None
+from .. import constants as cs
+from .. import logs as ls
+from .. import tool_errors as te
+from ..schemas import FileReadResult
+from . import tool_descriptions as td
 
 
 class FileReader:
-    """Service to read file content from the filesystem."""
-
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
-        self.binary_extensions = {
-            ".pdf",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-            ".bmp",
-            ".ico",
-            ".tiff",
-            ".webp",
-        }
-        logger.info(f"FileReader initialized with root: {self.project_root}")
+        logger.info(ls.FILE_READER_INIT.format(root=self.project_root))
 
     async def read_file(self, file_path: str) -> FileReadResult:
-        """Reads and returns the content of a text-based file."""
-        logger.info(f"[FileReader] Attempting to read file: {file_path}")
+        logger.info(ls.TOOL_FILE_READ.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
             try:
@@ -41,60 +26,59 @@ class FileReader:
             except ValueError:
                 return FileReadResult(
                     file_path=file_path,
-                    error_message="Security risk: Attempted to read file outside of project root.",
+                    error_message=ls.FILE_OUTSIDE_ROOT.format(
+                        action=cs.FileAction.READ
+                    ),
                 )
 
             if not str(full_path).startswith(str(self.project_root.resolve())):
                 return FileReadResult(
                     file_path=file_path,
-                    error_message="Security risk: Attempted to read file outside of project root.",
+                    error_message=ls.FILE_OUTSIDE_ROOT.format(
+                        action=cs.FileAction.READ
+                    ),
                 )
 
             if not full_path.is_file():
                 return FileReadResult(
-                    file_path=file_path, error_message="File not found."
+                    file_path=file_path, error_message=te.FILE_NOT_FOUND
                 )
 
-            if full_path.suffix.lower() in self.binary_extensions:
-                error_msg = f"File '{file_path}' is a binary file. Use the 'analyze_document' tool for this file type."
-                logger.warning(f"[FileReader] {error_msg}")
+            if full_path.suffix.lower() in cs.BINARY_EXTENSIONS:
+                error_msg = te.BINARY_FILE.format(path=file_path)
+                logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
                 return FileReadResult(file_path=file_path, error_message=error_msg)
 
             try:
-                content = full_path.read_text(encoding="utf-8")
-                logger.info(f"[FileReader] Successfully read text from {file_path}")
+                content = full_path.read_text(encoding=cs.ENCODING_UTF8)
+                logger.info(ls.TOOL_FILE_READ_SUCCESS.format(path=file_path))
                 return FileReadResult(file_path=file_path, content=content)
             except UnicodeDecodeError:
-                error_msg = f"File '{file_path}' could not be read as text. It may be a binary file. If it is a document (e.g., PDF), use the 'analyze_document' tool."
-                logger.warning(f"[FileReader] {error_msg}")
+                error_msg = te.UNICODE_DECODE.format(path=file_path)
+                logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
                 return FileReadResult(file_path=file_path, error_message=error_msg)
 
         except ValueError:
             return FileReadResult(
                 file_path=file_path,
-                error_message="Security risk: Attempted to read file outside of project root.",
+                error_message=ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.READ),
             )
         except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
+            logger.error(ls.FILE_READER_ERR.format(path=file_path, error=e))
             return FileReadResult(
-                file_path=file_path, error_message=f"An unexpected error occurred: {e}"
+                file_path=file_path,
+                error_message=ls.UNEXPECTED.format(error=e),
             )
 
 
 def create_file_reader_tool(file_reader: FileReader) -> Tool:
-    """Factory function to create the file reader tool."""
-
     async def read_file_content(file_path: str) -> str:
-        """
-        Reads the content of a specified text-based file (e.g., source code, README.md, config files).
-        This tool should NOT be used for binary files like PDFs or images. For those, use the 'analyze_document' tool.
-        """
         result = await file_reader.read_file(file_path)
         if result.error_message:
-            return f"Error: {result.error_message}"
+            return te.ERROR_WRAPPER.format(message=result.error_message)
         return result.content or ""
 
     return Tool(
         function=read_file_content,
-        description="Reads the content of text-based files. For documents like PDFs or images, use the 'analyze_document' tool instead.",
+        description=td.FILE_READER,
     )

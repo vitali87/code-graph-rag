@@ -1,34 +1,23 @@
-from typing import Any
+from __future__ import annotations
 
 from loguru import logger
 from pydantic_ai import Tool
 
+from .. import constants as cs
+from .. import exceptions as ex
+from .. import logs as ls
+from ..cypher_queries import (
+    CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+    build_nodes_by_ids_query,
+)
+from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
+from . import tool_descriptions as td
 
 
-def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
-    """
-    Search for functions/methods by natural language intent using semantic embeddings.
-
-    Args:
-        query: Natural language description of desired functionality
-        top_k: Number of results to return
-
-    Returns:
-        List of dictionaries with node information:
-        [
-            {
-                "node_id": int,
-                "qualified_name": str,
-                "type": str,
-                "score": float
-            }
-        ]
-    """
+def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResult]:
     if not has_semantic_dependencies():
-        logger.warning(
-            "Semantic search requires 'semantic' extra: uv sync --extra semantic"
-        )
+        logger.warning(ex.SEMANTIC_EXTRA)
         return []
 
     try:
@@ -42,60 +31,53 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
         search_results = search_embeddings(query_embedding, top_k=top_k)
 
         if not search_results:
-            logger.info(f"No semantic matches found for query: {query}")
+            logger.info(ls.SEMANTIC_NO_MATCH.format(query=query))
             return []
 
         node_ids = [node_id for node_id, _ in search_results]
 
         with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT, batch_size=100
+            host=settings.MEMGRAPH_HOST,
+            port=settings.MEMGRAPH_PORT,
+            batch_size=cs.SEMANTIC_BATCH_SIZE,
         ) as ingestor:
-            placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
-            cypher_query = f"""
-            MATCH (n)
-            WHERE id(n) IN [{placeholders}]
-            RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
-                   labels(n) AS type, n.name AS name
-            ORDER BY n.qualified_name
-            """
-
+            cypher_query = build_nodes_by_ids_query(node_ids)
             params = {str(i): node_id for i, node_id in enumerate(node_ids)}
             results = ingestor._execute_query(cypher_query, params)
 
             results_map = {res["node_id"]: res for res in results}
 
-            formatted_results = []
+            formatted_results: list[SemanticSearchResult] = []
             for node_id, score in search_results:
                 if node_id in results_map:
                     result = results_map[node_id]
+                    result_type = result["type"]
+                    type_str = (
+                        result_type[0]
+                        if isinstance(result_type, list) and result_type
+                        else cs.SEMANTIC_TYPE_UNKNOWN
+                    )
                     formatted_results.append(
-                        {
-                            "node_id": node_id,
-                            "qualified_name": result["qualified_name"],
-                            "name": result["name"],
-                            "type": result["type"][0] if result["type"] else "Unknown",
-                            "score": round(score, 3),
-                        }
+                        SemanticSearchResult(
+                            node_id=node_id,
+                            qualified_name=str(result["qualified_name"]),
+                            name=str(result["name"]),
+                            type=type_str,
+                            score=round(score, 3),
+                        )
                     )
 
-            logger.info(f"Found {len(formatted_results)} semantic matches for: {query}")
+            logger.info(
+                ls.SEMANTIC_FOUND.format(count=len(formatted_results), query=query)
+            )
             return formatted_results
 
     except Exception as e:
-        logger.error(f"Semantic search failed for query '{query}': {e}")
+        logger.error(ls.SEMANTIC_FAILED.format(query=query, error=e))
         return []
 
 
 def get_function_source_code(node_id: int) -> str | None:
-    """
-    Retrieve source code for a function/method by node ID.
-
-    Args:
-        node_id: Memgraph node ID
-
-    Returns:
-        Source code string or None if not found
-    """
     try:
         from ..config import settings
         from ..services.graph_service import MemgraphIngestor
@@ -105,19 +87,16 @@ def get_function_source_code(node_id: int) -> str | None:
         )
 
         with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT, batch_size=100
+            host=settings.MEMGRAPH_HOST,
+            port=settings.MEMGRAPH_PORT,
+            batch_size=cs.SEMANTIC_BATCH_SIZE,
         ) as ingestor:
-            query = """
-            MATCH (m:Module)-[:DEFINES]->(n)
-            WHERE id(n) = $node_id
-            RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-                   n.end_line AS end_line, m.path AS path
-            """
-
-            results = ingestor._execute_query(query, {"node_id": node_id})
+            results = ingestor._execute_query(
+                CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
+            )
 
             if not results:
-                logger.warning(f"No node found with ID: {node_id}")
+                logger.warning(ls.SEMANTIC_NODE_NOT_FOUND.format(id=node_id))
                 return None
 
             result = results[0]
@@ -129,47 +108,24 @@ def get_function_source_code(node_id: int) -> str | None:
                 file_path, start_line, end_line
             )
             if not is_valid or file_path_obj is None:
-                logger.warning(
-                    f"Missing or invalid source location info for node {node_id}"
-                )
+                logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
                 return None
 
             return extract_source_lines(file_path_obj, start_line, end_line)
 
     except Exception as e:
-        logger.error(f"Failed to get source code for node {node_id}: {e}")
+        logger.error(ls.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
         return None
 
 
 def create_semantic_search_tool() -> Tool:
-    """
-    Factory function to create the semantic code search tool.
-    """
-
     async def semantic_search_functions(query: str, top_k: int = 5) -> str:
-        """
-        Search for functions/methods using natural language descriptions of their purpose.
-
-        Use this tool when you need to find code that performs specific functionality
-        based on intent rather than exact names. Perfect for questions like:
-        - "Find error handling functions"
-        - "Show me authentication-related code"
-        - "Where is data validation implemented?"
-        - "Find functions that handle file I/O"
-
-        Args:
-            query: Natural language description of the desired functionality
-            top_k: Maximum number of results to return (default: 5)
-
-        Returns:
-            String describing the found functions with their qualified names and similarity scores
-        """
-        logger.info(f"[Tool:SemanticSearch] Searching for: '{query}'")
+        logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
         results = semantic_code_search(query, top_k)
 
         if not results:
-            return f"No semantic matches found for query: '{query}'. This could mean:\n1. No functions match this description\n2. Semantic search dependencies are not installed\n3. No embeddings have been generated yet"
+            return cs.MSG_SEMANTIC_NO_RESULTS.format(query=query)
 
         formatted_results = []
         for i, result in enumerate(results, 1):
@@ -177,42 +133,24 @@ def create_semantic_search_tool() -> Tool:
                 f"{i}. {result['qualified_name']} (type: {result['type']}, score: {result['score']})"
             )
 
-        response = f"Found {len(results)} semantic matches for '{query}':\n\n"
+        response = cs.MSG_SEMANTIC_RESULT_HEADER.format(count=len(results), query=query)
         response += "\n".join(formatted_results)
-        response += "\n\nUse the qualified names above with other tools to get more details or source code."
+        response += cs.MSG_SEMANTIC_RESULT_FOOTER
 
         return response
 
-    return Tool(semantic_search_functions, name="semantic_search_functions")
+    return Tool(semantic_search_functions, name=td.Name.SEMANTIC_SEARCH)
 
 
 def create_get_function_source_tool() -> Tool:
-    """
-    Factory function to create the function source code retrieval tool.
-    """
-
     async def get_function_source_by_id(node_id: int) -> str:
-        """
-        Retrieve the complete source code for a function or method by its node ID.
-
-        Use this tool after semantic search to get the actual implementation
-        of functions you're interested in.
-
-        Args:
-            node_id: The Memgraph node ID of the function/method
-
-        Returns:
-            The complete source code of the function/method
-        """
-        logger.info(
-            f"[Tool:GetFunctionSource] Retrieving source for node ID: {node_id}"
-        )
+        logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = get_function_source_code(node_id)
 
         if source_code is None:
-            return f"Could not retrieve source code for node ID {node_id}. The node may not exist or source file may be unavailable."
+            return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
 
-        return f"Source code for node ID {node_id}:\n\n```\n{source_code}\n```"
+        return cs.MSG_SEMANTIC_SOURCE_FORMAT.format(id=node_id, code=source_code)
 
-    return Tool(get_function_source_by_id, name="get_function_source_by_id")
+    return Tool(get_function_source_by_id, name=td.Name.GET_FUNCTION_SOURCE)

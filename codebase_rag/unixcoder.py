@@ -1,20 +1,16 @@
+# Adapted from https://github.com/microsoft/unixcoder
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
 import torch
-import torch.nn as nn
+from torch import nn
 from transformers import RobertaConfig, RobertaModel, RobertaTokenizer
+
+from . import constants as cs
 
 
 class UniXcoder(nn.Module):
     def __init__(self, model_name: str) -> None:
-        """
-        Build UniXcoder.
-
-        Parameters:
-
-        * `model_name`- huggingface model card name. e.g. microsoft/unixcoder-base
-        """
         super().__init__()
         self.tokenizer: RobertaTokenizer = RobertaTokenizer.from_pretrained(model_name)
         self.config: RobertaConfig = RobertaConfig.from_pretrained(model_name)
@@ -24,8 +20,13 @@ class UniXcoder(nn.Module):
         )
 
         self.register_buffer(
-            "bias",
-            torch.tril(torch.ones((1024, 1024), dtype=torch.uint8)).view(1, 1024, 1024),
+            cs.UNIXCODER_BUFFER_BIAS,
+            torch.tril(
+                torch.ones(
+                    (cs.UNIXCODER_MAX_CONTEXT, cs.UNIXCODER_MAX_CONTEXT),
+                    dtype=torch.uint8,
+                )
+            ).view(1, cs.UNIXCODER_MAX_CONTEXT, cs.UNIXCODER_MAX_CONTEXT),
         )
         self.lm_head: nn.Linear = nn.Linear(
             self.config.hidden_size, self.config.vocab_size, bias=False
@@ -33,61 +34,53 @@ class UniXcoder(nn.Module):
         self.lm_head.weight = self.model.embeddings.word_embeddings.weight
         self.lsm: nn.LogSoftmax = nn.LogSoftmax(dim=-1)
 
-        self.tokenizer.add_tokens(["<mask0>"], special_tokens=True)
+        self.tokenizer.add_tokens([cs.UNIXCODER_MASK_TOKEN], special_tokens=True)
 
     def tokenize(
         self,
         inputs: list[str],
-        mode: str = "<encoder-only>",
+        mode: cs.UniXcoderMode = cs.UniXcoderMode.ENCODER_ONLY,
         max_length: int = 512,
         padding: bool = False,
     ) -> list[list[int]]:
-        """
-        Convert string to token ids
-
-        Parameters:
-
-        * `inputs`- list of input strings.
-        * `max_length`- The maximum total source sequence length after tokenization.
-        * `padding`- whether to pad source sequence length to max_length.
-        * `mode`- which mode the sequence will use. i.e. <encoder-only>, <decoder-only>, <encoder-decoder>
-        """
-        assert mode in ["<encoder-only>", "<decoder-only>", "<encoder-decoder>"]
-        assert max_length < 1024
+        assert max_length < cs.UNIXCODER_MAX_CONTEXT
 
         tokenizer = self.tokenizer
 
         tokens_ids = []
         for x in inputs:
             tokens = tokenizer.tokenize(x)
-            if mode == "<encoder-only>":
-                tokens = tokens[: max_length - 4]
-                tokens = (
-                    [tokenizer.cls_token, mode, tokenizer.sep_token]
-                    + tokens
-                    + [tokenizer.sep_token]
-                )
-            elif mode == "<decoder-only>":
-                tokens = tokens[-(max_length - 3) :]
-                tokens = [tokenizer.cls_token, mode, tokenizer.sep_token] + tokens
-            else:
-                tokens = tokens[: max_length - 5]
-                tokens = (
-                    [tokenizer.cls_token, mode, tokenizer.sep_token]
-                    + tokens
-                    + [tokenizer.sep_token]
-                )
+            match mode:
+                case cs.UniXcoderMode.ENCODER_ONLY:
+                    tokens = tokens[: max_length - 4]
+                    tokens = (
+                        [tokenizer.cls_token, mode, tokenizer.sep_token]
+                        + tokens
+                        + [tokenizer.sep_token]
+                    )
+                case cs.UniXcoderMode.DECODER_ONLY:
+                    tokens = tokens[-(max_length - 3) :]
+                    tokens = [tokenizer.cls_token, mode, tokenizer.sep_token] + tokens
+                case cs.UniXcoderMode.ENCODER_DECODER:
+                    tokens = tokens[: max_length - 5]
+                    tokens = (
+                        [tokenizer.cls_token, mode, tokenizer.sep_token]
+                        + tokens
+                        + [tokenizer.sep_token]
+                    )
 
-            tokens_id: list[int] = tokenizer.convert_tokens_to_ids(tokens)  # type: ignore[assignment]
+            converted = tokenizer.convert_tokens_to_ids(tokens)
+            tokens_id: list[int] = (
+                converted if isinstance(converted, list) else [converted]
+            )
             if padding:
                 pad_id = self.config.pad_token_id
                 assert pad_id is not None
-                tokens_id = tokens_id + [pad_id] * (max_length - len(tokens_id))
+                tokens_id += [pad_id] * (max_length - len(tokens_id))
             tokens_ids.append(tokens_id)
         return tokens_ids
 
     def decode(self, source_ids: torch.Tensor) -> list[list[str]]:
-        """Convert token ids to string"""
         predictions = []
         for x in source_ids:
             prediction = []
@@ -102,7 +95,6 @@ class UniXcoder(nn.Module):
         return predictions
 
     def forward(self, source_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Obtain token embeddings and sentence embeddings"""
         pad_id = self.config.pad_token_id
         assert pad_id is not None
         mask = source_ids.ne(pad_id)
@@ -122,9 +114,8 @@ class UniXcoder(nn.Module):
         beam_size: int = 5,
         max_length: int = 64,
     ) -> torch.Tensor:
-        """Generate sequence given context (source_ids)"""
         # (H) self.bias is registered as buffer (Tensor) but typed as Module by ty
-        bias: torch.Tensor = self.bias  # type: ignore[assignment]
+        bias: torch.Tensor = getattr(self, cs.UNIXCODER_BUFFER_BIAS)
         pad_id = self.config.pad_token_id
         assert pad_id is not None
 
@@ -210,26 +201,13 @@ class Beam:
         self.finished: list[tuple[torch.Tensor, int, int]] = []
 
     def getCurrentState(self) -> torch.Tensor:
-        "Get the outputs for the current timestep."
         batch = self.nextYs[-1].view(-1, 1)
         return batch
 
     def getCurrentOrigin(self) -> torch.Tensor:
-        "Get the backpointers for the current timestep."
         return self.prevKs[-1]
 
     def advance(self, wordLk: torch.Tensor) -> None:
-        """
-        Given prob over words for every last beam `wordLk` and attention
-        `attnOut`: Compute and update the beam search.
-
-        Parameters:
-
-        * `wordLk`- probs of advancing from the last step (K x words)
-        * `attnOut`- attention at the last step
-
-        Returns: True if beam search is complete.
-        """
         numWords = wordLk.size(1)
 
         if len(self.prevKs) > 0:
@@ -265,11 +243,11 @@ class Beam:
             self.finished.append((self.scores[0], len(self.nextYs) - 1, 0))
         self.finished.sort(key=lambda a: -a[0])
         if len(self.finished) != self.size:
-            unfinished = []
-            for i in range(self.nextYs[-1].size(0)):
-                if self.nextYs[-1][i] != self._eos:
-                    s = self.scores[i]
-                    unfinished.append((s, len(self.nextYs) - 1, i))
+            unfinished = [
+                (self.scores[i], len(self.nextYs) - 1, i)
+                for i in range(self.nextYs[-1].size(0))
+                if self.nextYs[-1][i] != self._eos
+            ]
             unfinished.sort(key=lambda a: -a[0])
             self.finished += unfinished[: self.size - len(self.finished)]
         return self.finished[: self.size]
@@ -277,9 +255,6 @@ class Beam:
     def getHyp(
         self, beam_res: list[tuple[torch.Tensor, int, int]]
     ) -> list[list[torch.Tensor]]:
-        """
-        Walk back to construct the full hypothesis.
-        """
         hyps: list[list[torch.Tensor]] = []
         for _, timestep, k in beam_res:
             hyp: list[torch.Tensor] = []

@@ -15,3 +15,7 @@ wheels/
 .pytest_cache/
 .claude/
 .qdrant_code_embeddings/
+CLAUDE.md
+AGENTS.md
+PROJECT.md
+.coverage

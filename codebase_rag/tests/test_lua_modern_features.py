@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.types_defs import NodeType
 
 
 def test_lua_54_attributes_syntax(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -177,7 +178,7 @@ print("Sum:", sum)
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c[0][0] == "Function"
+            if c[0][0] == NodeType.FUNCTION
         ]
         fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -380,7 +381,7 @@ print("Index results:", table.concat(index_results, ", "))
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c[0][0] == "Function"
+            if c[0][0] == NodeType.FUNCTION
         ]
         fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -594,7 +595,7 @@ end
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c[0][0] == "Function"
+            if c[0][0] == NodeType.FUNCTION
         ]
         fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -782,7 +783,7 @@ print("Control flow: break =", #control_results.break_test, "continue =", #contr
         created_functions = [
             c
             for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c[0][0] == "Function"
+            if c[0][0] == NodeType.FUNCTION
         ]
         fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 

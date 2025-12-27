@@ -1,95 +1,100 @@
 #!/usr/bin/env python3
 
-import argparse
 import sys
 from pathlib import Path
+from typing import Annotated
+
+import typer
+from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from codebase_rag import cli_help as ch
+from codebase_rag import logs
+from codebase_rag.constants import (
+    DEFAULT_NAME,
+    KEY_EXPORTED_AT,
+    KEY_METADATA,
+    KEY_NAME,
+    KEY_NODE_LABELS,
+    KEY_RELATIONSHIP_TYPES,
+    KEY_TOTAL_NODES,
+    KEY_TOTAL_RELATIONSHIPS,
+    NodeLabel,
+)
 from codebase_rag.graph_loader import GraphLoader, load_graph
+from codebase_rag.types_defs import GraphSummary
 
 
-def print_summary(summary: dict) -> None:
-    """Prints the high-level summary of the graph."""
-    print("\n📊 Graph Summary:")
-    print(f"   • Total nodes: {summary.get('total_nodes', 0):,}")
-    print(f"   • Total relationships: {summary.get('total_relationships', 0):,}")
-    if "metadata" in summary and "exported_at" in summary["metadata"]:
-        print(f"   • Exported at: {summary['metadata']['exported_at']}")
+def log_summary(summary: GraphSummary) -> None:
+    logger.info(logs.GRAPH_SUMMARY)
+    logger.info(logs.GRAPH_TOTAL_NODES.format(count=summary.get(KEY_TOTAL_NODES, 0)))
+    logger.info(
+        logs.GRAPH_TOTAL_RELS.format(count=summary.get(KEY_TOTAL_RELATIONSHIPS, 0))
+    )
+    if KEY_METADATA in summary and KEY_EXPORTED_AT in summary[KEY_METADATA]:
+        logger.info(
+            logs.GRAPH_EXPORTED_AT.format(
+                timestamp=summary[KEY_METADATA][KEY_EXPORTED_AT]
+            )
+        )
 
 
-def print_node_and_relationship_types(summary: dict) -> None:
-    """Prints the breakdown of node and relationship labels."""
-    print("\n🏷️  Node Types:")
-    for label, count in summary.get("node_labels", {}).items():
-        print(f"   • {label}: {count:,} nodes")
+def log_node_and_relationship_types(summary: GraphSummary) -> None:
+    logger.info(logs.GRAPH_NODE_TYPES)
+    for label, count in summary.get(KEY_NODE_LABELS, {}).items():
+        logger.info(logs.GRAPH_NODE_COUNT.format(label=label, count=count))
 
-    print("\n🔗 Relationship Types:")
-    for rel_type, count in summary.get("relationship_types", {}).items():
-        print(f"   • {rel_type}: {count:,} relationships")
+    logger.info(logs.GRAPH_REL_TYPES)
+    for rel_type, count in summary.get(KEY_RELATIONSHIP_TYPES, {}).items():
+        logger.info(logs.GRAPH_REL_COUNT.format(rel_type=rel_type, count=count))
 
 
-def print_example_nodes(graph: GraphLoader, node_label: str, limit: int = 5) -> None:
-    """Finds and prints a sample of nodes for a given label."""
+def log_example_nodes(graph: GraphLoader, node_label: str, limit: int = 5) -> None:
     nodes = graph.find_nodes_by_label(node_label)
-    print(f"\n🔍 Found {len(nodes)} '{node_label}' nodes.")
+    logger.info(logs.GRAPH_FOUND_NODES.format(count=len(nodes), label=node_label))
 
     if nodes:
-        print(f"   📝 Example {node_label} names:")
+        logger.info(logs.GRAPH_EXAMPLE_NAMES.format(label=node_label))
         for node in nodes[:limit]:
-            name = node.properties.get("name", "Unknown")
-            print(f"      - {name}")
+            name = node.properties.get(KEY_NAME, DEFAULT_NAME)
+            logger.info(logs.GRAPH_EXAMPLE_NAME.format(name=name))
         if len(nodes) > limit:
-            print(f"      ... and {len(nodes) - limit} more")
+            logger.info(logs.GRAPH_MORE_NODES.format(count=len(nodes) - limit))
 
 
 def analyze_graph(graph_file: str) -> None:
-    """Analyze the exported graph and show useful information."""
-    print(f"\n🔍 Analyzing graph from: {graph_file}")
-    print("=" * 60)
+    logger.info(logs.GRAPH_ANALYZING.format(path=graph_file))
 
     try:
-        graph = load_graph(graph_file)
-        summary = graph.summary()
-
-        print_summary(summary)
-        print_node_and_relationship_types(summary)
-
-        print_example_nodes(graph, "Function")
-        print_example_nodes(graph, "Class")
-
-        print("\n✅ Analysis complete!")
-
+        _perform_graph_analysis(graph_file)
     except Exception as e:
-        print(f"❌ Error analyzing graph: {e}", file=sys.stderr)
+        logger.error(logs.GRAPH_ANALYSIS_ERROR.format(error=e))
         sys.exit(1)
 
 
-def main() -> None:
-    """Main function to demonstrate graph analysis."""
-    parser = argparse.ArgumentParser(
-        description="Analyze an exported codebase graph.",
-        epilog="""
-To create an exported graph file, run:
-  cgr start --repo-path /path/to/repo --update-graph -o graph.json
-Or to export an existing graph:
-  cgr export -o graph.json
-""",
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument(
-        "graph_file", type=str, help="Path to the exported_graph.json file."
-    )
+def _perform_graph_analysis(graph_file: str) -> None:
+    graph = load_graph(graph_file)
+    summary = graph.summary()
 
-    args = parser.parse_args()
+    log_summary(summary)
+    log_node_and_relationship_types(summary)
 
-    graph_path = Path(args.graph_file)
-    if not graph_path.exists():
-        print(f"❌ Graph file not found: {graph_path}", file=sys.stderr)
-        sys.exit(1)
+    log_example_nodes(graph, NodeLabel.FUNCTION)
+    log_example_nodes(graph, NodeLabel.CLASS)
 
-    analyze_graph(str(graph_path))
+    logger.success(logs.GRAPH_ANALYSIS_COMPLETE)
+
+
+def main(
+    graph_file: Annotated[Path, typer.Argument(help=ch.HELP_EXPORTED_GRAPH_FILE)],
+) -> None:
+    if not graph_file.exists():
+        logger.error(logs.GRAPH_FILE_NOT_FOUND.format(path=graph_file))
+        raise typer.Exit(1)
+
+    analyze_graph(str(graph_file))
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

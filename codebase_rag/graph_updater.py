@@ -1,202 +1,179 @@
 import sys
 from collections import OrderedDict, defaultdict
-from collections.abc import ItemsView, KeysView
+from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from tree_sitter import Node, Parser
 
-from .config import IGNORE_PATTERNS
-from .language_config import LANGUAGE_FQN_CONFIGS, get_language_config
+from . import constants as cs
+from . import logs as ls
+from .config import settings
+from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
 from .parsers.factory import ProcessorFactory
 from .services import IngestorProtocol, QueryProtocol
+from .types_defs import (
+    EmbeddingQueryResult,
+    FunctionRegistry,
+    LanguageQueries,
+    NodeType,
+    QualifiedName,
+    ResultRow,
+    SimpleNameLookup,
+    TrieNode,
+)
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.source_extraction import extract_source_with_fallback
 
 
 class FunctionRegistryTrie:
-    """Trie data structure optimized for function qualified name lookups."""
-
-    def __init__(self, simple_name_lookup: dict[str, set[str]] | None = None) -> None:
-        self.root: dict[str, Any] = {}
-        self._entries: dict[str, str] = {}
-        # Reference to simple_name_lookup for O(1) suffix lookups
+    def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
+        self.root: TrieNode = {}
+        self._entries: FunctionRegistry = {}
         self._simple_name_lookup = simple_name_lookup
 
-    def insert(self, qualified_name: str, func_type: str) -> None:
-        """Insert a function into the trie."""
+    def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self._entries[qualified_name] = func_type
 
-        parts = qualified_name.split(".")
-        current = self.root
+        parts = qualified_name.split(cs.SEPARATOR_DOT)
+        current: TrieNode = self.root
 
         for part in parts:
             if part not in current:
                 current[part] = {}
-            current = current[part]
+            child = current[part]
+            assert isinstance(child, dict)
+            current = child
 
-        current["__type__"] = func_type
-        current["__qn__"] = qualified_name
+        current[cs.TRIE_TYPE_KEY] = func_type
+        current[cs.TRIE_QN_KEY] = qualified_name
 
-    def get(self, qualified_name: str, default: str | None = None) -> str | None:
-        """Get function type by exact qualified name."""
+    def get(
+        self, qualified_name: QualifiedName, default: NodeType | None = None
+    ) -> NodeType | None:
         return self._entries.get(qualified_name, default)
 
-    def __contains__(self, qualified_name: str) -> bool:
-        """Check if qualified name exists in registry."""
+    def __contains__(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._entries
 
-    def __getitem__(self, qualified_name: str) -> str:
-        """Get function type by qualified name."""
+    def __getitem__(self, qualified_name: QualifiedName) -> NodeType:
         return self._entries[qualified_name]
 
-    def __setitem__(self, qualified_name: str, func_type: str) -> None:
-        """Set function type for qualified name."""
+    def __setitem__(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self.insert(qualified_name, func_type)
 
-    def __delitem__(self, qualified_name: str) -> None:
-        """Remove qualified name from registry and clean up trie structure.
-
-        Performs proper cleanup of the trie to prevent memory leaks during
-        long-running sessions with file deletions/updates.
-        """
+    def __delitem__(self, qualified_name: QualifiedName) -> None:
         if qualified_name not in self._entries:
             return
 
         del self._entries[qualified_name]
 
-        parts = qualified_name.split(".")
+        parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
 
-    def _cleanup_trie_path(self, parts: list[str], node: dict[str, Any]) -> bool:
-        """Recursively clean up empty trie nodes.
-
-        Args:
-            parts: Remaining parts of the qualified name path
-            node: Current trie node
-
-        Returns:
-            True if current node is empty and can be deleted
-        """
+    def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
         if not parts:
-            node.pop("__qn__", None)
-            node.pop("__type__", None)
-            return len(node) == 0
+            node.pop(cs.TRIE_QN_KEY, None)
+            node.pop(cs.TRIE_TYPE_KEY, None)
+            return not node
 
         part = parts[0]
         if part not in node:
             return False
 
-        child_empty = self._cleanup_trie_path(parts[1:], node[part])
-
-        if child_empty:
+        child = node[part]
+        assert isinstance(child, dict)
+        if self._cleanup_trie_path(parts[1:], child):
             del node[part]
 
-        is_endpoint = "__qn__" in node
-        has_children = any(not key.startswith("__") for key in node)
+        is_endpoint = cs.TRIE_QN_KEY in node
+        has_children = any(not key.startswith(cs.TRIE_INTERNAL_PREFIX) for key in node)
         return not has_children and not is_endpoint
 
-    def keys(self) -> KeysView[str]:
-        """Return all qualified names."""
+    def _navigate_to_prefix(self, prefix: str) -> TrieNode | None:
+        parts = prefix.split(cs.SEPARATOR_DOT) if prefix else []
+        current: TrieNode = self.root
+        for part in parts:
+            if part not in current:
+                return None
+            child = current[part]
+            assert isinstance(child, dict)
+            current = child
+        return current
+
+    def _collect_from_subtree(
+        self,
+        node: TrieNode,
+        filter_fn: Callable[[QualifiedName], bool] | None = None,
+    ) -> list[tuple[QualifiedName, NodeType]]:
+        results: list[tuple[QualifiedName, NodeType]] = []
+
+        def dfs(n: TrieNode) -> None:
+            if cs.TRIE_QN_KEY in n:
+                qn = n[cs.TRIE_QN_KEY]
+                func_type = n[cs.TRIE_TYPE_KEY]
+                assert isinstance(qn, str) and isinstance(func_type, NodeType)
+                if filter_fn is None or filter_fn(qn):
+                    results.append((qn, func_type))
+
+            for key, child in n.items():
+                if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
+                    assert isinstance(child, dict)
+                    dfs(child)
+
+        dfs(node)
+        return results
+
+    def keys(self) -> KeysView[QualifiedName]:
         return self._entries.keys()
 
-    def items(self) -> ItemsView[str, str]:
-        """Return all (qualified_name, type) pairs."""
+    def items(self) -> ItemsView[QualifiedName, NodeType]:
         return self._entries.items()
 
     def __len__(self) -> int:
-        """Return number of entries."""
         return len(self._entries)
 
-    def find_with_prefix_and_suffix(self, prefix: str, suffix: str) -> list[str]:
-        """Find all qualified names that start with prefix and end with suffix."""
-        results = []
-        prefix_parts = prefix.split(".") if prefix else []
+    def find_with_prefix_and_suffix(
+        self, prefix: str, suffix: str
+    ) -> list[QualifiedName]:
+        node = self._navigate_to_prefix(prefix)
+        if node is None:
+            return []
+        suffix_pattern = f".{suffix}"
+        matches = self._collect_from_subtree(
+            node, lambda qn: qn.endswith(suffix_pattern)
+        )
+        return [qn for qn, _ in matches]
 
-        current = self.root
-        for part in prefix_parts:
-            if part not in current:
-                return []
-            current = current[part]
-
-        def dfs(node: dict[str, Any]) -> None:
-            if "__qn__" in node:
-                qn = node["__qn__"]
-                if qn.endswith(f".{suffix}"):
-                    results.append(qn)
-
-            for key, child in node.items():
-                if not key.startswith("__"):
-                    dfs(child)
-
-        dfs(current)
-        return results
-
-    def find_ending_with(self, suffix: str) -> list[str]:
-        """Find all qualified names ending with the given suffix.
-
-        Uses simple_name_lookup for O(1) lookup if available, falls back to O(n) scan.
-        """
+    def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
-            # O(1) lookup using the simple_name_lookup index
+            # (H) O(1) lookup using the simple_name_lookup index
             return list(self._simple_name_lookup[suffix])
-        # Fallback to linear scan if no index available
+        # (H) Fallback to linear scan if no index available
         return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
 
-    def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
-        """Find all qualified names that start with the given prefix.
-
-        Args:
-            prefix: The prefix to search for (e.g., "module.Class.method")
-
-        Returns:
-            List of (qualified_name, type) tuples matching the prefix
-        """
-        results = []
-        prefix_parts = prefix.split(".")
-
-        current = self.root
-        for part in prefix_parts:
-            if part not in current:
-                return []
-            current = current[part]
-
-        def dfs(node: dict[str, Any]) -> None:
-            if "__qn__" in node:
-                qn = node["__qn__"]
-                func_type = node["__type__"]
-                results.append((qn, func_type))
-
-            for key, child in node.items():
-                if not key.startswith("__"):
-                    dfs(child)
-
-        dfs(current)
-        return results
+    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
+        node = self._navigate_to_prefix(prefix)
+        return [] if node is None else self._collect_from_subtree(node)
 
 
 class BoundedASTCache:
-    """Memory-aware AST cache with automatic cleanup to prevent memory leaks.
+    def __init__(
+        self,
+        max_entries: int | None = None,
+        max_memory_mb: int | None = None,
+    ):
+        self.cache: OrderedDict[Path, tuple[Node, cs.SupportedLanguage]] = OrderedDict()
+        self.max_entries = (
+            max_entries if max_entries is not None else settings.CACHE_MAX_ENTRIES
+        )
+        max_mem = (
+            max_memory_mb if max_memory_mb is not None else settings.CACHE_MAX_MEMORY_MB
+        )
+        self.max_memory_bytes = max_mem * cs.BYTES_PER_MB
 
-    Uses LRU eviction strategy and monitors memory usage to maintain
-    reasonable memory consumption during long-running analysis sessions.
-    """
-
-    def __init__(self, max_entries: int = 1000, max_memory_mb: int = 500):
-        """Initialize the bounded AST cache.
-
-        Args:
-            max_entries: Maximum number of AST entries to cache
-            max_memory_mb: Soft memory limit in MB for cache eviction
-        """
-        self.cache: OrderedDict[Path, tuple[Node, str]] = OrderedDict()
-        self.max_entries = max_entries
-        self.max_memory_bytes = max_memory_mb * 1024 * 1024
-
-    def __setitem__(self, key: Path, value: tuple[Node, str]) -> None:
-        """Add or update an AST cache entry with automatic cleanup."""
+    def __setitem__(self, key: Path, value: tuple[Node, cs.SupportedLanguage]) -> None:
         if key in self.cache:
             del self.cache[key]
 
@@ -204,69 +181,68 @@ class BoundedASTCache:
 
         self._enforce_limits()
 
-    def __getitem__(self, key: Path) -> tuple[Node, str]:
-        """Get AST cache entry and mark as recently used."""
+    def __getitem__(self, key: Path) -> tuple[Node, cs.SupportedLanguage]:
         value = self.cache[key]
         self.cache.move_to_end(key)
         return value
 
     def __delitem__(self, key: Path) -> None:
-        """Remove entry from cache."""
         if key in self.cache:
             del self.cache[key]
 
     def __contains__(self, key: Path) -> bool:
-        """Check if key exists in cache."""
         return key in self.cache
 
-    def items(self) -> Any:
-        """Return all cache items."""
+    def items(self) -> ItemsView[Path, tuple[Node, cs.SupportedLanguage]]:
         return self.cache.items()
 
     def _enforce_limits(self) -> None:
-        """Enforce cache size and memory limits by evicting old entries."""
         while len(self.cache) > self.max_entries:
             self.cache.popitem(last=False)  # (H) Remove least recently used
 
         if self._should_evict_for_memory():
-            entries_to_remove = max(1, len(self.cache) // 10)
+            entries_to_remove = max(
+                1, len(self.cache) // settings.CACHE_EVICTION_DIVISOR
+            )
             for _ in range(entries_to_remove):
                 if self.cache:
                     self.cache.popitem(last=False)
 
     def _should_evict_for_memory(self) -> bool:
-        """Check if we should evict entries due to memory pressure."""
         try:
             cache_size = sum(sys.getsizeof(v) for v in self.cache.values())
             return cache_size > self.max_memory_bytes
         except Exception:
-            return len(self.cache) > self.max_entries * 0.8
+            return (
+                len(self.cache)
+                > self.max_entries * settings.CACHE_MEMORY_THRESHOLD_RATIO
+            )
 
 
 class GraphUpdater:
-    """Parses code using Tree-sitter and updates the graph."""
-
     def __init__(
         self,
         ingestor: IngestorProtocol,
         repo_path: Path,
-        parsers: dict[str, Parser],
-        queries: dict[str, Any],
+        parsers: dict[cs.SupportedLanguage, Parser],
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.parsers = parsers
-        self.queries = self._prepare_queries_with_parsers(queries, parsers)
+        self.queries = queries
         self.project_name = repo_path.name
-        self.simple_name_lookup: dict[str, set[str]] = defaultdict(set)
-        self.function_registry = FunctionRegistryTrie(simple_name_lookup=self.simple_name_lookup)
-        self.ast_cache = BoundedASTCache(max_entries=1000, max_memory_mb=500)
-        self.ignore_dirs = IGNORE_PATTERNS
+        self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
+        self.function_registry = FunctionRegistryTrie(
+            simple_name_lookup=self.simple_name_lookup
+        )
+        self.ast_cache = BoundedASTCache()
+        self.ignore_dirs = cs.IGNORE_PATTERNS
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
-            repo_path_getter=lambda: self.repo_path,
-            project_name_getter=lambda: self.project_name,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
             queries=self.queries,
             function_registry=self.function_registry,
             simple_name_lookup=self.simple_name_lookup,
@@ -274,105 +250,68 @@ class GraphUpdater:
         )
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
-        """Check if a file is a dependency file that should be processed for external dependencies."""
-        dependency_files = {
-            "pyproject.toml",
-            "requirements.txt",
-            "package.json",
-            "cargo.toml",
-            "go.mod",
-            "gemfile",
-            "composer.json",
-        }
-
-        if file_name.lower() in dependency_files:
-            return True
-
-        if filepath.suffix.lower() == ".csproj":
-            return True
-
-        return False
-
-    def _prepare_queries_with_parsers(
-        self, queries: dict[str, Any], parsers: dict[str, Parser]
-    ) -> dict[str, Any]:
-        """Add parser references to query objects for processors."""
-        updated_queries = {}
-        for lang, query_data in queries.items():
-            if lang in parsers:
-                updated_queries[lang] = {**query_data, "parser": parsers[lang]}
-            else:
-                updated_queries[lang] = query_data
-        return updated_queries
+        return (
+            file_name.lower() in cs.DEPENDENCY_FILES
+            or filepath.suffix.lower() == cs.CSPROJ_SUFFIX
+        )
 
     def run(self) -> None:
-        """Orchestrates the parsing and ingestion process."""
-        self.ingestor.ensure_node_batch("Project", {"name": self.project_name})
-        logger.info(f"Ensuring Project: {self.project_name}")
+        self.ingestor.ensure_node_batch(
+            cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
+        )
+        logger.info(ls.ENSURING_PROJECT.format(name=self.project_name))
 
-        logger.info("--- Pass 1: Identifying Packages and Folders ---")
+        logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
-        logger.info(
-            "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
-        )
+        logger.info(ls.PASS_2_FILES)
         self._process_files()
 
-        logger.info(
-            f"\n--- Found {len(self.function_registry)} functions/methods in codebase ---"
-        )
-        logger.info("--- Pass 3: Processing Function Calls from AST Cache ---")
+        logger.info(ls.FOUND_FUNCTIONS.format(count=len(self.function_registry)))
+        logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
 
         self.factory.definition_processor.process_all_method_overrides()
 
-        logger.info("\n--- Analysis complete. Flushing all data to database... ---")
+        logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
 
         self._generate_semantic_embeddings()
 
     def remove_file_from_state(self, file_path: Path) -> None:
-        """Removes all state associated with a file from the updater's memory."""
-        logger.debug(f"Removing in-memory state for: {file_path}")
+        logger.debug(ls.REMOVING_STATE.format(path=file_path))
 
         if file_path in self.ast_cache:
             del self.ast_cache[file_path]
-            logger.debug("  - Removed from ast_cache")
+            logger.debug(ls.REMOVED_FROM_CACHE)
 
         relative_path = file_path.relative_to(self.repo_path)
-        if file_path.name == "__init__.py":
-            module_qn_prefix = ".".join(
-                [self.project_name] + list(relative_path.parent.parts)
-            )
-        else:
-            module_qn_prefix = ".".join(
-                [self.project_name] + list(relative_path.with_suffix("").parts)
-            )
+        path_parts = (
+            relative_path.parent.parts
+            if file_path.name == cs.INIT_PY
+            else relative_path.with_suffix("").parts
+        )
+        module_qn_prefix = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
 
         qns_to_remove = set()
 
         for qn in list(self.function_registry.keys()):
-            if qn.startswith(module_qn_prefix + ".") or qn == module_qn_prefix:
+            if qn.startswith(f"{module_qn_prefix}.") or qn == module_qn_prefix:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 
         if qns_to_remove:
-            logger.debug(
-                f"  - Removing {len(qns_to_remove)} QNs from function_registry"
-            )
+            logger.debug(ls.REMOVING_QNS.format(count=len(qns_to_remove)))
 
         for simple_name, qn_set in self.simple_name_lookup.items():
             original_count = len(qn_set)
             new_qn_set = qn_set - qns_to_remove
             if len(new_qn_set) < original_count:
                 self.simple_name_lookup[simple_name] = new_qn_set
-                logger.debug(f"  - Cleaned simple_name '{simple_name}'")
+                logger.debug(ls.CLEANED_SIMPLE_NAME.format(name=simple_name))
 
     def _process_files(self) -> None:
-        """Second pass: Efficiently processes all files, parses them, and caches their ASTs."""
-
         def should_skip_path(path: Path) -> bool:
-            """Check if file path should be skipped based on ignore patterns."""
             return any(
                 part in self.ignore_dirs
                 for part in path.relative_to(self.repo_path).parts
@@ -380,34 +319,29 @@ class GraphUpdater:
 
         for filepath in self.repo_path.rglob("*"):
             if filepath.is_file() and not should_skip_path(filepath):
-                lang_config = get_language_config(filepath.suffix)
-                if lang_config and lang_config.name in self.parsers:
+                lang_config = get_language_spec(filepath.suffix)
+                if (
+                    lang_config
+                    and isinstance(lang_config.language, cs.SupportedLanguage)
+                    and lang_config.language in self.parsers
+                ):
                     result = self.factory.definition_processor.process_file(
                         filepath,
-                        lang_config.name,
+                        lang_config.language,
                         self.queries,
                         self.factory.structure_processor.structural_elements,
                     )
                     if result:
                         root_node, language = result
                         self.ast_cache[filepath] = (root_node, language)
-
-                    self.factory.structure_processor.process_generic_file(
-                        filepath, filepath.name
-                    )
-
                 elif self._is_dependency_file(filepath.name, filepath):
                     self.factory.definition_processor.process_dependencies(filepath)
-                    self.factory.structure_processor.process_generic_file(
-                        filepath, filepath.name
-                    )
-                else:
-                    self.factory.structure_processor.process_generic_file(
-                        filepath, filepath.name
-                    )
+
+                self.factory.structure_processor.process_generic_file(
+                    filepath, filepath.name
+                )
 
     def _process_function_calls(self) -> None:
-        """Third pass: Process function calls using the cached ASTs."""
         ast_cache_items = list(self.ast_cache.items())
         for file_path, (root_node, language) in ast_cache_items:
             self.factory.call_processor.process_calls_in_file(
@@ -415,79 +349,72 @@ class GraphUpdater:
             )
 
     def _generate_semantic_embeddings(self) -> None:
-        """Generate and store semantic embeddings for functions and methods."""
         if not has_semantic_dependencies():
-            logger.info(
-                "Semantic search dependencies not available, skipping embedding generation"
-            )
+            logger.info(ls.SEMANTIC_NOT_AVAILABLE)
             return
 
         if not isinstance(self.ingestor, QueryProtocol):
-            logger.info(
-                "Ingestor does not support querying, skipping embedding generation"
-            )
+            logger.info(ls.INGESTOR_NO_QUERY)
             return
 
         try:
             from .embedder import embed_code
             from .vector_store import store_embedding
 
-            logger.info("--- Pass 4: Generating semantic embeddings ---")
+            logger.info(ls.PASS_4_EMBEDDINGS)
 
-            query = """
-            MATCH (m:Module)-[:DEFINES]->(n)
-            WHERE n:Function OR n:Method
-            RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
-                   n.start_line AS start_line, n.end_line AS end_line,
-                   m.path AS path
-            ORDER BY n.qualified_name
-            """
-
-            results = self.ingestor.fetch_all(query)
+            results = self.ingestor.fetch_all(cs.CYPHER_QUERY_EMBEDDINGS)
 
             if not results:
-                logger.info("No functions or methods found for embedding generation")
+                logger.info(ls.NO_FUNCTIONS_FOR_EMBEDDING)
                 return
 
-            logger.info(f"Generating embeddings for {len(results)} functions/methods")
+            logger.info(ls.GENERATING_EMBEDDINGS.format(count=len(results)))
 
             embedded_count = 0
-            for result in results:
-                node_id = result["node_id"]
-                qualified_name = result["qualified_name"]
-                start_line = result.get("start_line")
-                end_line = result.get("end_line")
-                file_path = result.get("path")
+            for row in results:
+                parsed = self._parse_embedding_result(row)
+                if parsed is None:
+                    continue
 
-                source_code = self._extract_source_code(
+                node_id = parsed[cs.KEY_NODE_ID]
+                qualified_name = parsed[cs.KEY_QUALIFIED_NAME]
+                start_line = parsed.get(cs.KEY_START_LINE)
+                end_line = parsed.get(cs.KEY_END_LINE)
+                file_path = parsed.get(cs.KEY_PATH)
+
+                if start_line is None or end_line is None or file_path is None:
+                    logger.debug(ls.NO_SOURCE_FOR.format(name=qualified_name))
+
+                elif source_code := self._extract_source_code(
                     qualified_name, file_path, start_line, end_line
-                )
-
-                if source_code:
+                ):
                     try:
                         embedding = embed_code(source_code)
                         store_embedding(node_id, embedding, qualified_name)
                         embedded_count += 1
 
-                        if embedded_count % 10 == 0:
+                        if embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0:
                             logger.debug(
-                                f"Generated {embedded_count}/{len(results)} embeddings"
+                                ls.EMBEDDING_PROGRESS.format(
+                                    done=embedded_count, total=len(results)
+                                )
                             )
 
                     except Exception as e:
-                        logger.warning(f"Failed to embed {qualified_name}: {e}")
+                        logger.warning(
+                            ls.EMBEDDING_FAILED.format(name=qualified_name, error=e)
+                        )
                 else:
-                    logger.debug(f"No source code found for {qualified_name}")
-
-            logger.info(f"Successfully generated {embedded_count} semantic embeddings")
+                    logger.debug(ls.NO_SOURCE_FOR.format(name=qualified_name))
+            logger.info(ls.EMBEDDINGS_COMPLETE.format(count=embedded_count))
 
         except Exception as e:
-            logger.warning(f"Failed to generate semantic embeddings: {e}")
+            logger.warning(ls.EMBEDDING_GENERATION_FAILED.format(error=e))
 
     def _extract_source_code(
         self, qualified_name: str, file_path: str, start_line: int, end_line: int
     ) -> str | None:
-        """Extract source code for a function/method from cached AST or file."""
         if not file_path or not start_line or not end_line:
             return None
 
@@ -496,7 +423,7 @@ class GraphUpdater:
         ast_extractor = None
         if file_path_obj in self.ast_cache:
             root_node, language = self.ast_cache[file_path_obj]
-            fqn_config = LANGUAGE_FQN_CONFIGS.get(language)
+            fqn_config = LANGUAGE_FQN_SPECS.get(language)
 
             if fqn_config:
 
@@ -514,4 +441,23 @@ class GraphUpdater:
 
         return extract_source_with_fallback(
             file_path_obj, start_line, end_line, qualified_name, ast_extractor
+        )
+
+    def _parse_embedding_result(self, row: ResultRow) -> EmbeddingQueryResult | None:
+        node_id = row.get(cs.KEY_NODE_ID)
+        qualified_name = row.get(cs.KEY_QUALIFIED_NAME)
+
+        if not isinstance(node_id, int) or not isinstance(qualified_name, str):
+            return None
+
+        start_line = row.get(cs.KEY_START_LINE)
+        end_line = row.get(cs.KEY_END_LINE)
+        file_path = row.get(cs.KEY_PATH)
+
+        return EmbeddingQueryResult(
+            node_id=node_id,
+            qualified_name=qualified_name,
+            start_line=start_line if isinstance(start_line, int) else None,
+            end_line=end_line if isinstance(end_line, int) else None,
+            path=file_path if isinstance(file_path, str) else None,
         )

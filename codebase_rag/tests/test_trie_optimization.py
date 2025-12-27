@@ -5,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.types_defs import NodeType
 
 
 class TestTrieOptimization:
@@ -14,14 +15,14 @@ class TestTrieOptimization:
         """Test basic Trie operations work correctly."""
         trie = FunctionRegistryTrie()
 
-        trie.insert("com.example.utils.Logger", "CLASS")
-        trie.insert("com.example.utils.Logger.info", "FUNCTION")
-        trie.insert("com.example.models.User", "CLASS")
-        trie.insert("com.example.models.User.get_name", "FUNCTION")
-        trie.insert("com.example.models.User.set_name", "FUNCTION")
+        trie.insert("com.example.utils.Logger", NodeType.CLASS)
+        trie.insert("com.example.utils.Logger.info", NodeType.FUNCTION)
+        trie.insert("com.example.models.User", NodeType.CLASS)
+        trie.insert("com.example.models.User.get_name", NodeType.FUNCTION)
+        trie.insert("com.example.models.User.set_name", NodeType.FUNCTION)
 
-        assert trie.get("com.example.utils.Logger") == "CLASS"
-        assert trie.get("com.example.models.User.get_name") == "FUNCTION"
+        assert trie.get("com.example.utils.Logger") == NodeType.CLASS
+        assert trie.get("com.example.models.User.get_name") == NodeType.FUNCTION
         assert trie.get("nonexistent") is None
 
         assert "com.example.utils.Logger" in trie
@@ -45,7 +46,7 @@ class TestTrieOptimization:
         ]
 
         for func in functions:
-            trie.insert(func, "FUNCTION")
+            trie.insert(func, NodeType.FUNCTION)
 
         results = trie.find_with_prefix_and_suffix("project.services", "create_user")
         expected = [
@@ -76,11 +77,11 @@ class TestTrieOptimization:
             for sub in submodules:
                 for cls in classes:
                     class_qn = f"{base}.{sub}.{cls}"
-                    trie.insert(class_qn, "CLASS")
+                    trie.insert(class_qn, NodeType.CLASS)
 
                     for method in methods:
                         method_qn = f"{class_qn}.{method}"
-                        trie.insert(method_qn, "FUNCTION")
+                        trie.insert(method_qn, NodeType.FUNCTION)
 
         results = trie.find_with_prefix_and_suffix("com.example.services", "create")
         assert len(results) > 0
@@ -102,12 +103,12 @@ class TestTrieOptimization:
         )
 
         test_functions = [
-            ("test.services.user.UserService.create_user", "FUNCTION"),
-            ("test.services.user.UserService.find_user", "FUNCTION"),
-            ("test.models.user.User.get_name", "FUNCTION"),
-            ("test.models.user.User.validate", "FUNCTION"),
-            ("test.utils.helper.Helper.process", "FUNCTION"),
-            ("test.controllers.user.UserController.handle_request", "FUNCTION"),
+            ("test.services.user.UserService.create_user", NodeType.FUNCTION),
+            ("test.services.user.UserService.find_user", NodeType.FUNCTION),
+            ("test.models.user.User.get_name", NodeType.FUNCTION),
+            ("test.models.user.User.validate", NodeType.FUNCTION),
+            ("test.utils.helper.Helper.process", NodeType.FUNCTION),
+            ("test.controllers.user.UserController.handle_request", NodeType.FUNCTION),
         ]
 
         for qn, func_type in test_functions:
@@ -121,21 +122,21 @@ class TestTrieOptimization:
         """Test that function resolution works correctly with Trie optimization."""
         updater = graph_updater_with_trie
 
-        result = updater.factory.call_processor._resolve_function_call(
+        result = updater.factory.call_processor._resolver.resolve_function_call(
             "create_user", "test.services.user.UserService"
         )
         assert result is not None
         func_type, qn = result
         assert qn == "test.services.user.UserService.create_user"
 
-        result = updater.factory.call_processor._resolve_function_call(
+        result = updater.factory.call_processor._resolver.resolve_function_call(
             "process", "test.services.user"
         )
         assert result is not None
         func_type, qn = result
         assert qn == "test.utils.helper.Helper.process"
 
-        result = updater.factory.call_processor._resolve_function_call(
+        result = updater.factory.call_processor._resolver.resolve_function_call(
             "nonexistent", "test.services.user"
         )
         assert result is None
@@ -147,14 +148,14 @@ class TestTrieOptimization:
         updater = graph_updater_with_trie
         registry = updater.function_registry
 
-        assert registry["test.models.user.User.get_name"] == "FUNCTION"
+        assert registry["test.models.user.User.get_name"] == NodeType.FUNCTION
 
         all_qns = list(registry.keys())
         assert "test.models.user.User.get_name" in all_qns
 
         all_items = list(registry.items())
-        assert ("test.models.user.User.get_name", "FUNCTION") in all_items
+        assert ("test.models.user.User.get_name", NodeType.FUNCTION) in all_items
 
-        registry["new.function.test"] = "FUNCTION"
+        registry["new.function.test"] = NodeType.FUNCTION
         assert "new.function.test" in registry
-        assert registry["new.function.test"] == "FUNCTION"
+        assert registry["new.function.test"] == NodeType.FUNCTION

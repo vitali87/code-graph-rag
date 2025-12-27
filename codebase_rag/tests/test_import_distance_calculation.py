@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.types_defs import NodeType
 
 
 class TestImportDistanceCalculation:
@@ -23,12 +24,14 @@ class TestImportDistanceCalculation:
     ) -> None:
         """Test that functions in sibling modules receive the proximity bonus."""
         function_qn = "proj.pkg.sibling_mod.some_func"
-        mock_updater.function_registry[function_qn] = "Function"
+        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
 
         caller_module = "proj.pkg.caller_mod"
 
-        distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
 
         assert distance == 1, (
@@ -38,12 +41,14 @@ class TestImportDistanceCalculation:
     def test_sibling_module_bonus_for_methods(self, mock_updater: GraphUpdater) -> None:
         """Test that methods in sibling modules receive the proximity bonus."""
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
-        mock_updater.function_registry[method_qn] = "Method"
+        mock_updater.function_registry[method_qn] = NodeType.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
-        distance = mock_updater.factory.call_processor._calculate_import_distance(
-            method_qn, caller_module
+        distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                method_qn, caller_module
+            )
         )
 
         assert distance == 2, (
@@ -56,16 +61,18 @@ class TestImportDistanceCalculation:
         """Test that the distance difference between functions and methods is predictable."""
         function_qn = "proj.pkg.sibling_mod.some_func"
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
-        mock_updater.function_registry[function_qn] = "Function"
-        mock_updater.function_registry[method_qn] = "Method"
+        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
+        mock_updater.function_registry[method_qn] = NodeType.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )
@@ -80,16 +87,18 @@ class TestImportDistanceCalculation:
         """Test that non-sibling modules don't receive the proximity bonus."""
         function_qn = "proj.other_pkg.other_mod.some_func"
         method_qn = "proj.other_pkg.other_mod.SomeClass.some_method"
-        mock_updater.function_registry[function_qn] = "Function"
-        mock_updater.function_registry[method_qn] = "Method"
+        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
+        mock_updater.function_registry[method_qn] = NodeType.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )
@@ -105,16 +114,18 @@ class TestImportDistanceCalculation:
         """Test distance calculation for candidates in the same module as caller."""
         function_qn = "proj.pkg.caller_mod.local_func"
         method_qn = "proj.pkg.caller_mod.LocalClass.local_method"
-        mock_updater.function_registry[function_qn] = "Function"
-        mock_updater.function_registry[method_qn] = "Method"
+        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
+        mock_updater.function_registry[method_qn] = NodeType.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )
@@ -132,8 +143,10 @@ class TestImportDistanceCalculation:
         unknown_qn = "proj.pkg.sibling_mod.unknown_func"
         caller_module = "proj.pkg.caller_mod"
 
-        distance = mock_updater.factory.call_processor._calculate_import_distance(
-            unknown_qn, caller_module
+        distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                unknown_qn, caller_module
+            )
         )
         assert isinstance(distance, int), (
             "Should return integer distance even for unknown candidates"
@@ -142,18 +155,20 @@ class TestImportDistanceCalculation:
     def test_method_detection_correctness(self, mock_updater: GraphUpdater) -> None:
         """Test that the method detection logic correctly identifies methods vs functions."""
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
-        mock_updater.function_registry[method_qn] = "Method"
+        mock_updater.function_registry[method_qn] = NodeType.METHOD
 
         function_qn = "proj.pkg.sibling_mod.some_func"
-        mock_updater.function_registry[function_qn] = "Function"
+        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
 
         caller_module = "proj.pkg.caller_mod"
 
-        func_distance = mock_updater.factory.call_processor._calculate_import_distance(
-            function_qn, caller_module
+        func_distance = (
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
+                function_qn, caller_module
+            )
         )
         method_distance = (
-            mock_updater.factory.call_processor._calculate_import_distance(
+            mock_updater.factory.call_processor._resolver._calculate_import_distance(
                 method_qn, caller_module
             )
         )

@@ -1,15 +1,17 @@
 import itertools
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
 
 from loguru import logger
 
+from codebase_rag import constants as cs
+from codebase_rag import logs as lg
+from codebase_rag import tool_errors as te
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
@@ -19,35 +21,23 @@ from codebase_rag.tools.directory_lister import (
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
-
-
-@dataclass
-class ToolMetadata:
-    """Metadata for an MCP tool including schema and handler information."""
-
-    name: str
-    description: str
-    input_schema: dict[str, Any]
-    handler: Callable[..., Any]
-    returns_json: bool
+from codebase_rag.types_defs import (
+    CodeSnippetResultDict,
+    MCPHandlerType,
+    MCPInputSchema,
+    MCPInputSchemaProperty,
+    MCPToolSchema,
+    QueryResultDict,
+)
 
 
 class MCPToolsRegistry:
-    """Registry for all MCP tools with shared dependencies."""
-
     def __init__(
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
         cypher_gen: CypherGenerator,
     ) -> None:
-        """Initialize the MCP tools registry.
-
-        Args:
-            project_root: Path to the target repository
-            ingestor: Memgraph ingestor instance
-            cypher_gen: Cypher query generator instance
-        """
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
@@ -72,160 +62,150 @@ class MCPToolsRegistry:
         )
 
         self._tools: dict[str, ToolMetadata] = {
-            "index_repository": ToolMetadata(
-                name="index_repository",
-                description="Parse and ingest the repository into the Memgraph knowledge graph. "
-                "This builds a comprehensive graph of functions, classes, dependencies, and relationships.",
-                input_schema={
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
+            cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
+                name=cs.MCPToolName.INDEX_REPOSITORY,
+                description=td.MCP_INDEX_REPOSITORY,
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={},
+                    required=[],
+                ),
                 handler=self.index_repository,
                 returns_json=False,
             ),
-            "query_code_graph": ToolMetadata(
-                name="query_code_graph",
-                description="Query the codebase knowledge graph using natural language. "
-                "Ask questions like 'What functions call UserService.create_user?' or "
-                "'Show me all classes that implement the Repository interface'.",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "natural_language_query": {
-                            "type": "string",
-                            "description": "Your question in plain English about the codebase",
-                        }
+            cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
+                name=cs.MCPToolName.QUERY_CODE_GRAPH,
+                description=td.MCP_QUERY_CODE_GRAPH,
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
+                        )
                     },
-                    "required": ["natural_language_query"],
-                },
+                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
+                ),
                 handler=self.query_code_graph,
                 returns_json=True,
             ),
-            "get_code_snippet": ToolMetadata(
-                name="get_code_snippet",
-                description="Retrieve source code for a function, class, or method by its qualified name. "
-                "Returns the source code, file path, line numbers, and docstring.",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "qualified_name": {
-                            "type": "string",
-                            "description": "Fully qualified name (e.g., 'app.services.UserService.create_user')",
-                        }
+            cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
+                name=cs.MCPToolName.GET_CODE_SNIPPET,
+                description=td.MCP_GET_CODE_SNIPPET,
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_QUALIFIED_NAME,
+                        )
                     },
-                    "required": ["qualified_name"],
-                },
+                    required=[cs.MCPParamName.QUALIFIED_NAME],
+                ),
                 handler=self.get_code_snippet,
                 returns_json=True,
             ),
-            "surgical_replace_code": ToolMetadata(
-                name="surgical_replace_code",
-                description="Surgically replace an exact code block in a file using diff-match-patch. "
-                "Only modifies the exact target block, leaving the rest unchanged.",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
-                        },
-                        "target_code": {
-                            "type": "string",
-                            "description": "Exact code block to replace",
-                        },
-                        "replacement_code": {
-                            "type": "string",
-                            "description": "New code to insert",
-                        },
+            cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
+                name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
+                description=td.MCP_SURGICAL_REPLACE_CODE,
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_FILE_PATH,
+                        ),
+                        cs.MCPParamName.TARGET_CODE: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_TARGET_CODE,
+                        ),
+                        cs.MCPParamName.REPLACEMENT_CODE: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_REPLACEMENT_CODE,
+                        ),
                     },
-                    "required": ["file_path", "target_code", "replacement_code"],
-                },
+                    required=[
+                        cs.MCPParamName.FILE_PATH,
+                        cs.MCPParamName.TARGET_CODE,
+                        cs.MCPParamName.REPLACEMENT_CODE,
+                    ],
+                ),
                 handler=self.surgical_replace_code,
                 returns_json=False,
             ),
-            "read_file": ToolMetadata(
-                name="read_file",
-                description="Read the contents of a file from the project. Supports pagination for large files.",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
-                        },
-                        "offset": {
-                            "type": "integer",
-                            "description": "Line number to start reading from (0-based, optional)",
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of lines to read (optional)",
-                        },
+            cs.MCPToolName.READ_FILE: ToolMetadata(
+                name=cs.MCPToolName.READ_FILE,
+                description=td.MCP_READ_FILE,
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_FILE_PATH,
+                        ),
+                        cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_OFFSET,
+                        ),
+                        cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_LIMIT,
+                        ),
                     },
-                    "required": ["file_path"],
-                },
+                    required=[cs.MCPParamName.FILE_PATH],
+                ),
                 handler=self.read_file,
                 returns_json=False,
             ),
-            "write_file": ToolMetadata(
-                name="write_file",
-                description="Write content to a file, creating it if it doesn't exist.",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Relative path to the file from project root",
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Content to write to the file",
-                        },
+            cs.MCPToolName.WRITE_FILE: ToolMetadata(
+                name=cs.MCPToolName.WRITE_FILE,
+                description=td.MCP_WRITE_FILE,
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_FILE_PATH,
+                        ),
+                        cs.MCPParamName.CONTENT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_CONTENT,
+                        ),
                     },
-                    "required": ["file_path", "content"],
-                },
+                    required=[
+                        cs.MCPParamName.FILE_PATH,
+                        cs.MCPParamName.CONTENT,
+                    ],
+                ),
                 handler=self.write_file,
                 returns_json=False,
             ),
-            "list_directory": ToolMetadata(
-                name="list_directory",
-                description="List contents of a directory in the project.",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "directory_path": {
-                            "type": "string",
-                            "description": "Relative path to directory from project root (default: '.')",
-                            "default": ".",
-                        }
+            cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
+                name=cs.MCPToolName.LIST_DIRECTORY,
+                description=td.MCP_LIST_DIRECTORY,
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.DIRECTORY_PATH: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_DIRECTORY_PATH,
+                            default=cs.MCP_DEFAULT_DIRECTORY,
+                        )
                     },
-                    "required": [],
-                },
+                    required=[],
+                ),
                 handler=self.list_directory,
                 returns_json=False,
             ),
         }
 
     async def index_repository(self) -> str:
-        """Parse and ingest the repository into the Memgraph knowledge graph.
-
-        This tool analyzes the codebase using Tree-sitter parsers and builds
-        a comprehensive knowledge graph with functions, classes, dependencies,
-        and relationships.
-
-        Note: This clears all existing data in the database before indexing.
-        Only one repository can be indexed at a time.
-
-        Returns:
-            Success message with indexing statistics
-        """
-        logger.info(f"[MCP] Indexing repository at: {self.project_root}")
+        logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
 
         try:
-            logger.info("[MCP] Clearing existing database to avoid conflicts...")
+            logger.info(lg.MCP_CLEARING_DB)
             self.ingestor.clean_database()
-            logger.info("[MCP] Database cleared. Starting fresh indexing...")
+            logger.info(lg.MCP_DB_CLEARED)
 
             updater = GraphUpdater(
                 ingestor=self.ingestor,
@@ -235,127 +215,78 @@ class MCPToolsRegistry:
             )
             updater.run()
 
-            return f"Successfully indexed repository at {self.project_root}. Knowledge graph has been updated (previous data cleared)."
+            return cs.MCP_INDEX_SUCCESS.format(path=self.project_root)
         except Exception as e:
-            logger.error(f"[MCP] Error indexing repository: {e}")
-            return f"Error indexing repository: {str(e)}"
+            logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
+            return cs.MCP_INDEX_ERROR.format(error=e)
 
-    async def query_code_graph(self, natural_language_query: str) -> dict[str, Any]:
-        """Query the codebase knowledge graph using natural language.
-
-        This tool converts your natural language question into a Cypher query,
-        executes it against the knowledge graph, and returns structured results
-        with summaries.
-
-        Args:
-            natural_language_query: Your question in plain English (e.g.,
-                "What functions call UserService.create_user?")
-
-        Returns:
-            Dictionary containing:
-                - cypher_query: The generated Cypher query
-                - results: List of result rows from the graph
-                - summary: Natural language summary of findings
-        """
-        logger.info(f"[MCP] query_code_graph: {natural_language_query}")
+    async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
+        logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
-            graph_data = await self._query_tool.function(natural_language_query)  # type: ignore[arg-type]
-            result_dict = cast(dict[str, Any], graph_data.model_dump())
+            graph_data = await self._query_tool.function(natural_language_query)
+            result_dict: QueryResultDict = graph_data.model_dump()
             logger.info(
-                f"[MCP] Query returned {len(result_dict.get('results', []))} results"
+                lg.MCP_QUERY_RESULTS.format(
+                    count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))
+                )
             )
             return result_dict
         except Exception as e:
-            logger.error(f"[MCP] Error querying code graph: {e}", exc_info=True)
-            return {
-                "error": str(e),
-                "query_used": "N/A",
-                "results": [],
-                "summary": f"Error executing query: {str(e)}",
-            }
+            logger.exception(lg.MCP_ERROR_QUERY.format(error=e))
+            return QueryResultDict(
+                error=str(e),
+                query_used=cs.QUERY_NOT_AVAILABLE,
+                results=[],
+                summary=cs.MCP_TOOL_EXEC_ERROR.format(
+                    name=cs.MCPToolName.QUERY_CODE_GRAPH, error=e
+                ),
+            )
 
-    async def get_code_snippet(self, qualified_name: str) -> dict[str, Any]:
-        """Retrieve source code for a function, class, or method by qualified name.
-
-        Args:
-            qualified_name: Fully qualified name (e.g., "app.services.UserService.create_user")
-
-        Returns:
-            Dictionary containing:
-                - file_path: Path to the source file
-                - src: The source code
-                - line_start: Starting line number
-                - line_end: Ending line number
-                - docstring: Docstring if available
-                - found: Whether the code was found
-        """
-        logger.info(f"[MCP] get_code_snippet: {qualified_name}")
+    async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
+        logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
             snippet = await self._code_tool.function(qualified_name=qualified_name)
-            result = snippet.model_dump()
+            result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:
-                return {
-                    "error": "Tool returned None",
-                    "found": False,
-                    "error_message": "Code snippet tool returned an invalid response",
-                }
-            return cast(dict[str, Any], result)
+                return CodeSnippetResultDict(
+                    error=te.MCP_TOOL_RETURNED_NONE,
+                    found=False,
+                    error_message=te.MCP_INVALID_RESPONSE,
+                )
+            return result
         except Exception as e:
-            logger.error(f"[MCP] Error retrieving code snippet: {e}")
-            return {
-                "error": str(e),
-                "found": False,
-                "error_message": str(e),
-            }
+            logger.error(lg.MCP_ERROR_CODE_SNIPPET.format(error=e))
+            return CodeSnippetResultDict(
+                error=str(e),
+                found=False,
+                error_message=str(e),
+            )
 
     async def surgical_replace_code(
         self, file_path: str, target_code: str, replacement_code: str
     ) -> str:
-        """Surgically replace an exact code block in a file.
-
-        Uses diff-match-patch algorithm to replace only the exact target block,
-        leaving the rest of the file unchanged.
-
-        Args:
-            file_path: Relative path to the file from project root
-            target_code: Exact code block to replace
-            replacement_code: New code to insert
-
-        Returns:
-            Success message or error description
-        """
-        logger.info(f"[MCP] surgical_replace_code in {file_path}")
+        logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
         try:
-            result = await self._file_editor_tool.function(  # type: ignore[call-arg]
+            result = await self._file_editor_tool.function(
                 file_path=file_path,
                 target_code=target_code,
                 replacement_code=replacement_code,
             )
-            return cast(str, result)
+            return str(result)
         except Exception as e:
-            logger.error(f"[MCP] Error replacing code: {e}")
-            return f"Error: {str(e)}"
+            logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
+            return te.ERROR_WRAPPER.format(message=e)
 
     async def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
-        """Read the contents of a file with optional pagination.
-
-        Args:
-            file_path: Relative path to the file from project root
-            offset: Line number to start reading from (0-based, optional)
-            limit: Maximum number of lines to read (optional)
-
-        Returns:
-            File contents (paginated if offset/limit provided) or error message
-        """
-        logger.info(f"[MCP] read_file: {file_path} (offset={offset}, limit={limit})")
+        logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         try:
             if offset is not None or limit is not None:
                 full_path = Path(self.project_root) / file_path
                 start = offset if offset is not None else 0
 
-                with open(full_path, encoding="utf-8") as f:
+                with open(full_path, encoding=cs.ENCODING_UTF8) as f:
                     skipped_count = sum(1 for _ in itertools.islice(f, start))
 
                     if limit is not None:
@@ -370,94 +301,57 @@ class MCPToolsRegistry:
                         skipped_count + len(sliced_lines) + remaining_lines_count
                     )
 
-                    header = f"# Lines {start + 1}-{start + len(sliced_lines)} of {total_lines}\n"
+                    header = cs.MCP_PAGINATION_HEADER.format(
+                        start=start + 1,
+                        end=start + len(sliced_lines),
+                        total=total_lines,
+                    )
                     return header + paginated_content
             else:
-                result = await self._file_reader_tool.function(file_path=file_path)  # type: ignore[call-arg]
-                return cast(str, result)
+                result = await self._file_reader_tool.function(file_path=file_path)
+                return str(result)
 
         except Exception as e:
-            logger.error(f"[MCP] Error reading file: {e}")
-            return f"Error: {str(e)}"
+            logger.error(lg.MCP_ERROR_READ.format(error=e))
+            return te.ERROR_WRAPPER.format(message=e)
 
     async def write_file(self, file_path: str, content: str) -> str:
-        """Write content to a file, creating it if it doesn't exist.
-
-        Args:
-            file_path: Relative path to the file from project root
-            content: Content to write to the file
-
-        Returns:
-            Success message or error description
-        """
-        logger.info(f"[MCP] write_file: {file_path}")
+        logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
         try:
-            result = await self._file_writer_tool.function(  # type: ignore[call-arg]
+            result = await self._file_writer_tool.function(
                 file_path=file_path, content=content
             )
             if result.success:
-                return f"Successfully wrote file: {file_path}"
-            else:
-                return f"Error: {result.error_message}"
+                return cs.MCP_WRITE_SUCCESS.format(path=file_path)
+            return te.ERROR_WRAPPER.format(message=result.error_message)
         except Exception as e:
-            logger.error(f"[MCP] Error writing file: {e}")
-            return f"Error: {str(e)}"
+            logger.error(lg.MCP_ERROR_WRITE.format(error=e))
+            return te.ERROR_WRAPPER.format(message=e)
 
-    async def list_directory(self, directory_path: str = ".") -> str:
-        """List contents of a directory.
-
-        Args:
-            directory_path: Relative path to directory from project root (default: ".")
-
-        Returns:
-            Formatted directory listing or error message
-        """
-        logger.info(f"[MCP] list_directory: {directory_path}")
+    async def list_directory(
+        self, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
+    ) -> str:
+        logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
-            result = self._directory_lister_tool.function(  # type: ignore[call-arg]
-                directory_path=directory_path
-            )
-            return cast(str, result)
+            result = self._directory_lister_tool.function(directory_path=directory_path)
+            return str(result)
         except Exception as e:
-            logger.error(f"[MCP] Error listing directory: {e}")
-            return f"Error: {str(e)}"
+            logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
+            return te.ERROR_WRAPPER.format(message=e)
 
-    def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Get MCP tool schemas for all registered tools.
-
-        Returns:
-            List of tool schema dictionaries suitable for MCP's list_tools()
-        """
+    def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [
-            {
-                "name": metadata.name,
-                "description": metadata.description,
-                "inputSchema": metadata.input_schema,
-            }
+            MCPToolSchema(
+                name=metadata.name,
+                description=metadata.description,
+                inputSchema=metadata.input_schema,
+            )
             for metadata in self._tools.values()
         ]
 
-    def get_tool_handler(self, name: str) -> tuple[Callable[..., Any], bool] | None:
-        """Get the handler function and return type info for a tool.
-
-        Args:
-            name: Tool name to look up
-
-        Returns:
-            Tuple of (handler_function, returns_json) or None if tool not found
-        """
+    def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
-        if metadata is None:
-            return None
-        return (metadata.handler, metadata.returns_json)
-
-    def list_tool_names(self) -> list[str]:
-        """Get a list of all registered tool names.
-
-        Returns:
-            List of tool names
-        """
-        return list(self._tools.keys())
+        return None if metadata is None else (metadata.handler, metadata.returns_json)
 
 
 def create_mcp_tools_registry(
@@ -465,16 +359,6 @@ def create_mcp_tools_registry(
     ingestor: MemgraphIngestor,
     cypher_gen: CypherGenerator,
 ) -> MCPToolsRegistry:
-    """Factory function to create an MCP tools registry.
-
-    Args:
-        project_root: Path to the target repository
-        ingestor: Memgraph ingestor instance
-        cypher_gen: Cypher query generator instance
-
-    Returns:
-        MCPToolsRegistry instance with all tools initialized
-    """
     return MCPToolsRegistry(
         project_root=project_root,
         ingestor=ingestor,

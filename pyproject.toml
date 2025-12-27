@@ -1,7 +1,7 @@
 [project]
 name = "graph-code"
 version = "0.0.24"
-description = "Add your description here"
+description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -20,13 +20,13 @@ dependencies = [
     "prompt-toolkit>=3.0.0",
     "diff-match-patch>=20241021",
     "click>=8.0.0",
-    "pytest-xdist>=3.8.0",
     "protobuf>=5.27.0",
+    "defusedxml>=0.7.1",
 ]
 
 [project.scripts]
-graph-code = "codebase_rag.main:app"
-cgr = "codebase_rag.main:app"
+graph-code = "codebase_rag.cli:app"
+cgr = "codebase_rag.cli:app"
 
 [tool.uv]
 package = true
@@ -38,10 +38,12 @@ packages = ["codebase_rag", "codec"]
 test = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
+    "pytest-xdist>=3.8.0",
+    "testcontainers>=4.9.0",
 ]
 dev = [
     "ruff>=0.5.5",
-    "ty>=0.0.1a32",
+    "ty>=0.0.7",
     "pre-commit>=4.2.0",
     "types-protobuf>=5.0.0",
 ]
@@ -67,16 +69,33 @@ semantic = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+exclude = ["codec/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP"]
-ignore = ["E501"]
+select = ["E", "F", "W", "I", "UP", "PL", "T201"]
+ignore = [
+    "E501",     # line too long
+    "PLR2004",  # magic value comparison (too noisy)
+    "PLC0415",  # import not at top-level (intentional lazy imports)
+    "PLR0913",  # too many arguments (often unavoidable)
+    "PLR0911",  # too many return statements
+    "PLR0912",  # too many branches
+    "PLR0915",  # too many statements
+    "PLW2901",  # loop variable overwritten (intentional for .strip())
+    "PLW0603",  # global statement (singleton pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.src]
+exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["codebase_rag/tests"]
@@ -86,10 +105,18 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = [
     "slow: marks tests as slow (may download models or require external services)",
+    "integration: marks tests as integration tests requiring Docker",
+    "e2e: marks tests as end-to-end tests",
 ]
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.2",
+    "coverage>=7.13.0",
     "pyinstaller>=6.14.1",
+    "pylint>=4.0.4",
+    "radon>=6.0.1",
+    "semgrep>=1.79.0",
     "types-toml>=0.10.8.20240310",
+    "vulture>=2.14",
 ]

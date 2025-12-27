@@ -12,10 +12,9 @@ class TestStandardLibraryImports:
 
     @pytest.fixture
     def mock_updater(self) -> GraphUpdater:
-        """Create a GraphUpdater instance with mock dependencies for testing."""
         mock_ingestor = MagicMock()
 
-        test_repo = Path("/tmp/test_repo")
+        test_repo = Path("/tmp/myproject")
         test_repo.mkdir(exist_ok=True)
 
         (test_repo / "utils").mkdir(exist_ok=True)
@@ -23,14 +22,12 @@ class TestStandardLibraryImports:
         (test_repo / "src").mkdir(exist_ok=True)
 
         parsers, queries = load_parsers()
-        updater = GraphUpdater(
+        return GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=test_repo,
             parsers=parsers,
             queries=queries,
         )
-        updater.project_name = "myproject"
-        return updater
 
     def test_standard_library_imports_not_prefixed(
         self, mock_updater: GraphUpdater

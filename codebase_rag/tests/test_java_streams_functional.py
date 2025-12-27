@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
+from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -700,8 +701,8 @@ public class FunctionalInterfaces {
     project_name = java_streams_project.name
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
-    class_calls = [call for call in all_calls if call[0][0] == "Class"]
-    interface_calls = [call for call in all_calls if call[0][0] == "Interface"]
+    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
+    interface_calls = [call for call in all_calls if call[0][0] == NodeType.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)

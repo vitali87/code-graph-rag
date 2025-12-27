@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import Unpack
 
 from dotenv import load_dotenv
-from prompt_toolkit.styles import Style
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from . import constants as cs
+from . import exceptions as ex
+from .types_defs import ModelConfigKwargs
 
 load_dotenv()
 
 
 @dataclass
 class ModelConfig:
-    """Configuration for a specific model."""
-
     provider: str
     model_id: str
     api_key: str | None = None
@@ -25,11 +26,16 @@ class ModelConfig:
     thinking_budget: int | None = None
     service_account_file: str | None = None
 
+    def to_update_kwargs(self) -> ModelConfigKwargs:
+        result = asdict(self)
+        del result[cs.FIELD_PROVIDER]
+        del result[cs.FIELD_MODEL_ID]
+        return ModelConfigKwargs(**result)
+
 
 class AppConfig(BaseSettings):
     """
-    Application Configuration using Pydantic for robust validation and type-safety.
-    All settings are loaded from environment variables or a .env file.
+    (H) All settings are loaded from environment variables or a .env file.
     """
 
     model_config = SettingsConfigDict(
@@ -44,13 +50,14 @@ class AppConfig(BaseSettings):
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
     AGENT_RETRIES: int = 3
+    ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 
     ORCHESTRATOR_PROVIDER: str = ""
     ORCHESTRATOR_MODEL: str = ""
     ORCHESTRATOR_API_KEY: str | None = None
     ORCHESTRATOR_ENDPOINT: str | None = None
     ORCHESTRATOR_PROJECT_ID: str | None = None
-    ORCHESTRATOR_REGION: str = "us-central1"
+    ORCHESTRATOR_REGION: str = cs.DEFAULT_REGION
     ORCHESTRATOR_PROVIDER_TYPE: str | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
@@ -60,7 +67,7 @@ class AppConfig(BaseSettings):
     CYPHER_API_KEY: str | None = None
     CYPHER_ENDPOINT: str | None = None
     CYPHER_PROJECT_ID: str | None = None
-    CYPHER_REGION: str = "us-central1"
+    CYPHER_REGION: str = cs.DEFAULT_REGION
     CYPHER_PROVIDER_TYPE: str | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
@@ -69,12 +76,68 @@ class AppConfig(BaseSettings):
 
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
+    SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
+        {
+            "ls",
+            "rg",
+            "cat",
+            "git",
+            "echo",
+            "pwd",
+            "pytest",
+            "mypy",
+            "ruff",
+            "uv",
+            "find",
+            "pre-commit",
+            "rm",
+            "cp",
+            "mv",
+            "mkdir",
+            "rmdir",
+        }
+    )
+    SHELL_READ_ONLY_COMMANDS: frozenset[str] = frozenset(
+        {
+            "ls",
+            "cat",
+            "find",
+            "pwd",
+            "rg",
+            "echo",
+        }
+    )
+    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset(
+        {
+            "status",
+            "log",
+            "diff",
+            "show",
+            "ls-files",
+            "remote",
+            "config",
+            "branch",
+        }
+    )
+
+    QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
+    QDRANT_COLLECTION_NAME: str = "code_embeddings"
+    QDRANT_VECTOR_DIM: int = 768
+    QDRANT_TOP_K: int = 5
+    EMBEDDING_MAX_LENGTH: int = 512
+    EMBEDDING_PROGRESS_INTERVAL: int = 10
+
+    CACHE_MAX_ENTRIES: int = 1000
+    CACHE_MAX_MEMORY_MB: int = 500
+    CACHE_EVICTION_DIVISOR: int = 10
+    CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
+
+    OLLAMA_HEALTH_TIMEOUT: float = 5.0
 
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
     def _get_default_config(self, role: str) -> ModelConfig:
-        """Determine default configuration for orchestrator or cypher."""
         role_upper = role.upper()
 
         provider = getattr(self, f"{role_upper}_PROVIDER", None)
@@ -87,7 +150,7 @@ class AppConfig(BaseSettings):
                 api_key=getattr(self, f"{role_upper}_API_KEY", None),
                 endpoint=getattr(self, f"{role_upper}_ENDPOINT", None),
                 project_id=getattr(self, f"{role_upper}_PROJECT_ID", None),
-                region=getattr(self, f"{role_upper}_REGION", "us-central1"),
+                region=getattr(self, f"{role_upper}_REGION", cs.DEFAULT_REGION),
                 provider_type=getattr(self, f"{role_upper}_PROVIDER_TYPE", None),
                 thinking_budget=getattr(self, f"{role_upper}_THINKING_BUDGET", None),
                 service_account_file=getattr(
@@ -96,131 +159,53 @@ class AppConfig(BaseSettings):
             )
 
         return ModelConfig(
-            provider="ollama",
-            model_id="llama3.2",
+            provider=cs.Provider.OLLAMA,
+            model_id=cs.DEFAULT_MODEL,
             endpoint=str(self.LOCAL_MODEL_ENDPOINT),
-            api_key="ollama",
+            api_key=cs.DEFAULT_API_KEY,
         )
 
     def _get_default_orchestrator_config(self) -> ModelConfig:
-        """Determine default orchestrator configuration."""
-        return self._get_default_config("orchestrator")
+        return self._get_default_config(cs.ModelRole.ORCHESTRATOR)
 
     def _get_default_cypher_config(self) -> ModelConfig:
-        """Determine default cypher configuration."""
-        return self._get_default_config("cypher")
+        return self._get_default_config(cs.ModelRole.CYPHER)
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:
-        """Get the active orchestrator model configuration."""
         return self._active_orchestrator or self._get_default_orchestrator_config()
 
     @property
     def active_cypher_config(self) -> ModelConfig:
-        """Get the active cypher model configuration."""
         return self._active_cypher or self._get_default_cypher_config()
 
-    def set_orchestrator(self, provider: str, model: str, **kwargs: Any) -> None:
-        """Set the active orchestrator configuration."""
+    def set_orchestrator(
+        self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
+    ) -> None:
         self._active_orchestrator = ModelConfig(
             provider=provider.lower(), model_id=model, **kwargs
         )
 
-    def set_cypher(self, provider: str, model: str, **kwargs: Any) -> None:
-        """Set the active cypher configuration."""
+    def set_cypher(
+        self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
+    ) -> None:
         self._active_cypher = ModelConfig(
             provider=provider.lower(), model_id=model, **kwargs
         )
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
-        """Parse provider:model string format."""
         if ":" not in model_string:
-            return "ollama", model_string
+            return cs.Provider.OLLAMA, model_string
         provider, model = model_string.split(":", 1)
         if not provider:
-            raise ValueError(
-                "Provider name cannot be empty in 'provider:model' format."
-            )
+            raise ValueError(ex.PROVIDER_EMPTY)
         return provider.lower(), model
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
-        """Return a validated batch size, falling back to config when needed."""
         resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size
         if resolved < 1:
-            raise ValueError("batch_size must be a positive integer")
+            raise ValueError(ex.BATCH_SIZE_POSITIVE)
         return resolved
 
 
 settings = AppConfig()
-
-IGNORE_PATTERNS = {
-    ".git",
-    "venv",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    "build",
-    "dist",
-    ".eggs",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".claude",
-    ".idea",
-    ".vscode",
-}
-IGNORE_SUFFIXES = {".tmp", "~"}
-
-EDIT_REQUEST_KEYWORDS = frozenset(
-    [
-        "modify",
-        "update",
-        "change",
-        "edit",
-        "fix",
-        "refactor",
-        "optimize",
-        "add",
-        "remove",
-        "delete",
-        "create",
-        "write",
-        "implement",
-        "replace",
-    ]
-)
-
-EDIT_TOOLS = frozenset(
-    [
-        "edit_file",
-        "write_file",
-        "file_editor",
-        "file_writer",
-        "create_file",
-        "replace_code_surgically",
-    ]
-)
-
-EDIT_INDICATORS = frozenset(
-    [
-        "modifying",
-        "updating",
-        "changing",
-        "replacing",
-        "adding to",
-        "deleting from",
-        "created file",
-        "editing",
-        "writing to",
-        "file has been",
-        "successfully modified",
-        "successfully updated",
-        "successfully created",
-        "changes have been made",
-        "file modified",
-        "file updated",
-        "file created",
-    ]
-)
-
-ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})

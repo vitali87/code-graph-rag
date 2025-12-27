@@ -187,7 +187,9 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test that query parameter is correctly passed."""
-        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
+        mock_func = mcp_registry._query_tool.function
+        assert isinstance(mock_func, AsyncMock)
+        mock_func.return_value = MagicMock(
             model_dump=lambda: {
                 "cypher_query": "MATCH (n) RETURN n",
                 "results": [],
@@ -198,7 +200,7 @@ class TestQueryCodeGraph:
         query = "Find all nodes"
         await mcp_registry.query_code_graph(query)
 
-        mcp_registry._query_tool.function.assert_called_once_with(query)
+        mock_func.assert_called_once_with(query)
 
 
 class TestIndexRepository:

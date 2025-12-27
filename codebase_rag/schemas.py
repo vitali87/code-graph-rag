@@ -1,31 +1,31 @@
-from typing import Any
+from pydantic import BaseModel, ConfigDict, field_validator
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from .types_defs import ResultRow
 
 
-class GraphData(BaseModel):
-    """Data model for results returned from the knowledge graph tool."""
-
+class QueryGraphData(BaseModel):
     query_used: str
-    results: list[dict[str, Any]]
-    summary: str = Field(description="A brief summary of the operation's outcome.")
+    results: list[ResultRow]
+    summary: str
 
     @field_validator("results", mode="before")
     @classmethod
-    def _format_results(cls, v: Any) -> list[dict[str, Any]]:
+    def _format_results(cls, v: list[ResultRow] | None) -> list[ResultRow]:
         if not isinstance(v, list):
             return []
 
-        clean_results = []
+        clean_results: list[ResultRow] = []
         for row in v:
-            clean_row = {}
-            for k, val in row.items():
-                if not isinstance(
-                    val, str | int | float | bool | list | dict | type(None)
-                ):
-                    clean_row[k] = str(val)
-                else:
-                    clean_row[k] = val  # type: ignore
+            clean_row: ResultRow = {
+                k: (
+                    val
+                    if isinstance(
+                        val, str | int | float | bool | list | dict | type(None)
+                    )
+                    else str(val)
+                )
+                for k, val in row.items()
+            }
             clean_results.append(clean_row)
         return clean_results
 
@@ -33,8 +33,6 @@ class GraphData(BaseModel):
 
 
 class CodeSnippet(BaseModel):
-    """Data model for code snippet results."""
-
     qualified_name: str
     source_code: str
     file_path: str
@@ -46,8 +44,24 @@ class CodeSnippet(BaseModel):
 
 
 class ShellCommandResult(BaseModel):
-    """Data model for shell command results."""
-
     return_code: int
     stdout: str
     stderr: str
+
+
+class EditResult(BaseModel):
+    file_path: str
+    success: bool
+    error_message: str | None = None
+
+
+class FileReadResult(BaseModel):
+    file_path: str
+    content: str | None = None
+    error_message: str | None = None
+
+
+class FileCreationResult(BaseModel):
+    file_path: str
+    success: bool = True
+    error_message: str | None = None

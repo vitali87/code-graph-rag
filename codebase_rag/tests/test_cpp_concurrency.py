@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
+from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -249,9 +250,9 @@ void demonstrateThreadUtilities() {
     ]
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == "Class"]
-    function_calls = [call for call in all_calls if call[0][0] == "Function"]
-    method_calls = [call for call in all_calls if call[0][0] == "Method"]
+    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
+    function_calls = [call for call in all_calls if call[0][0] == NodeType.FUNCTION]
+    method_calls = [call for call in all_calls if call[0][0] == NodeType.METHOD]
 
     created_entities = {
         call[0][1]["qualified_name"]

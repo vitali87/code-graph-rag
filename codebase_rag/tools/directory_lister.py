@@ -1,8 +1,15 @@
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
 from loguru import logger
 from pydantic_ai import Tool
+
+from .. import exceptions as ex
+from .. import logs as ls
+from .. import tool_errors as te
+from . import tool_descriptions as td
 
 
 class DirectoryLister:
@@ -10,30 +17,22 @@ class DirectoryLister:
         self.project_root = Path(project_root).resolve()
 
     def list_directory_contents(self, directory_path: str) -> str:
-        """
-        Lists the contents of a specified directory.
-        """
         target_path = self._get_safe_path(directory_path)
-        logger.info(f"Listing contents of directory: {target_path}")
+        logger.info(ls.DIR_LISTING.format(path=target_path))
 
         try:
             if not target_path.is_dir():
-                return f"Error: '{directory_path}' is not a valid directory."
+                return te.DIRECTORY_INVALID.format(path=directory_path)
 
             if contents := os.listdir(target_path):
                 return "\n".join(contents)
-            else:
-                return f"The directory '{directory_path}' is empty."
+            return te.DIRECTORY_EMPTY.format(path=directory_path)
 
         except Exception as e:
-            logger.error(f"Error listing directory {directory_path}: {e}")
-            return f"Error: Could not list contents of '{directory_path}'."
+            logger.error(ls.DIR_LIST_ERROR.format(path=directory_path, error=e))
+            return te.DIRECTORY_LIST_FAILED.format(path=directory_path)
 
     def _get_safe_path(self, file_path: str) -> Path:
-        """
-        Resolves the file path relative to the root and ensures it's within
-        the project directory.
-        """
         if Path(file_path).is_absolute():
             safe_path = Path(file_path).resolve()
         else:
@@ -42,14 +41,10 @@ class DirectoryLister:
         try:
             safe_path.relative_to(self.project_root.resolve())
         except ValueError as e:
-            raise PermissionError(
-                "Access denied: Cannot access files outside the project root."
-            ) from e
+            raise PermissionError(ex.ACCESS_DENIED) from e
 
         if not str(safe_path).startswith(str(self.project_root.resolve())):
-            raise PermissionError(
-                "Access denied: Cannot access files outside the project root."
-            )
+            raise PermissionError(ex.ACCESS_DENIED)
 
         return safe_path
 
@@ -57,5 +52,5 @@ class DirectoryLister:
 def create_directory_lister_tool(directory_lister: DirectoryLister) -> Tool:
     return Tool(
         function=directory_lister.list_directory_contents,
-        description="Lists the contents of a directory to explore the codebase.",
+        description=td.DIRECTORY_LISTER,
     )

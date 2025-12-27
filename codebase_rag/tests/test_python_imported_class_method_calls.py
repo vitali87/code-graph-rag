@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -122,7 +123,7 @@ def test_imported_class_method_calls_are_detected(
 
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
-    method_calls = [call for call in actual_calls if call.args[2][0] == "Method"]
+    method_calls = [call for call in actual_calls if call.args[2][0] == NodeType.METHOD]
 
     expected_method_calls = [
         (
