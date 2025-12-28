@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 from loguru import logger
 
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 SECTION_PATTERN = re.compile(
     r"(<!-- SECTION:(\w+) -->)\n.*?\n(<!-- /SECTION:\2 -->)",

@@ -15,11 +15,6 @@ class MakeCommand(NamedTuple):
     description: str
 
 
-class ToolInfo(NamedTuple):
-    name: str
-    description: str
-
-
 MAKEFILE_PATTERN = re.compile(r"^([a-zA-Z_-]+):.*?## (.+)$")
 
 CLI_COMMANDS: list[tuple[str, str]] = [
@@ -54,6 +49,17 @@ AGENTIC_TOOL_MAPPING: dict[str, str] = {
 }
 
 
+def format_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
+    separator = "|".join("-" * max(len(h), 3) for h in headers)
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "|" + separator + "|",
+    ]
+    for row in rows:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
 def extract_makefile_commands(makefile_path: Path) -> list[MakeCommand]:
     commands: list[MakeCommand] = []
     content = makefile_path.read_text()
@@ -66,13 +72,8 @@ def extract_makefile_commands(makefile_path: Path) -> list[MakeCommand]:
 
 
 def format_makefile_table(commands: list[MakeCommand]) -> str:
-    lines = [
-        "| Command | Description |",
-        "|---------|-------------|",
-    ]
-    for cmd in commands:
-        lines.append(f"| `make {cmd.name}` | {cmd.description} |")
-    return "\n".join(lines)
+    rows = [[f"`make {cmd.name}`", cmd.description] for cmd in commands]
+    return format_markdown_table(["Command", "Description"], rows)
 
 
 def extract_supported_languages() -> list[str]:
@@ -80,13 +81,8 @@ def extract_supported_languages() -> list[str]:
 
 
 def format_languages_table(languages: list[str]) -> str:
-    lines = [
-        "| Language | Status |",
-        "|----------|--------|",
-    ]
-    for lang in languages:
-        lines.append(f"| {lang} | Full support |")
-    return "\n".join(lines)
+    rows = [[lang, "Full support"] for lang in languages]
+    return format_markdown_table(["Language", "Status"], rows)
 
 
 def extract_node_schemas() -> list[tuple[str, str]]:
@@ -94,13 +90,8 @@ def extract_node_schemas() -> list[tuple[str, str]]:
 
 
 def format_node_schemas_table(schemas: list[tuple[str, str]]) -> str:
-    lines = [
-        "| Label | Properties |",
-        "|-------|------------|",
-    ]
-    for label, props in schemas:
-        lines.append(f"| {label} | `{props}` |")
-    return "\n".join(lines)
+    rows = [[label, f"`{props}`"] for label, props in schemas]
+    return format_markdown_table(["Label", "Properties"], rows)
 
 
 def extract_relationship_schemas() -> list[tuple[str, str, str]]:
@@ -113,43 +104,23 @@ def extract_relationship_schemas() -> list[tuple[str, str, str]]:
 
 
 def format_relationship_schemas_table(schemas: list[tuple[str, str, str]]) -> str:
-    lines = [
-        "| Source | Relationship | Target |",
-        "|--------|--------------|--------|",
-    ]
-    for source, rel, target in schemas:
-        lines.append(f"| {source} | {rel} | {target} |")
-    return "\n".join(lines)
+    rows = [[source, rel, target] for source, rel, target in schemas]
+    return format_markdown_table(["Source", "Relationship", "Target"], rows)
 
 
 def format_cli_commands_table() -> str:
-    lines = [
-        "| Command | Description |",
-        "|---------|-------------|",
-    ]
-    for cmd, desc in CLI_COMMANDS:
-        lines.append(f"| `codebase-rag {cmd}` | {desc} |")
-    return "\n".join(lines)
+    rows = [[f"`codebase-rag {cmd}`", desc] for cmd, desc in CLI_COMMANDS]
+    return format_markdown_table(["Command", "Description"], rows)
 
 
 def format_mcp_tools_table() -> str:
-    lines = [
-        "| Tool | Description |",
-        "|------|-------------|",
-    ]
-    for name, desc in MCP_TOOL_MAPPING.items():
-        lines.append(f"| `{name}` | {desc} |")
-    return "\n".join(lines)
+    rows = [[f"`{name}`", desc] for name, desc in MCP_TOOL_MAPPING.items()]
+    return format_markdown_table(["Tool", "Description"], rows)
 
 
 def format_agentic_tools_table() -> str:
-    lines = [
-        "| Tool | Description |",
-        "|------|-------------|",
-    ]
-    for name, desc in AGENTIC_TOOL_MAPPING.items():
-        lines.append(f"| `{name}` | {desc} |")
-    return "\n".join(lines)
+    rows = [[f"`{name}`", desc] for name, desc in AGENTIC_TOOL_MAPPING.items()]
+    return format_markdown_table(["Tool", "Description"], rows)
 
 
 def generate_all_sections(project_root: Path) -> dict[str, str]:

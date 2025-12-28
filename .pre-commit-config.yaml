@@ -41,8 +41,8 @@ repos:
     hooks:
     -   id: generate-readme
         name: generate README sections
-        entry: bash -c 'uv run python scripts/generate_readme.py && git add README.md'
-        language: system
+        entry: scripts/hooks/generate-readme.sh
+        language: script
         pass_filenames: false
         always_run: true
 -   repo: https://github.com/compilerla/conventional-pre-commit

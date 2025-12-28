@@ -219,7 +219,7 @@ Use the Makefile for common development tasks:
 
 <!-- SECTION:makefile_commands -->
 | Command | Description |
-|---------|-------------|
+|-------|-----------|
 | `make help` | Show this help message |
 | `make all` | Install everything for full development environment (deps, grammars, hooks, tests) |
 | `make install` | Install project dependencies with full language support |
@@ -515,7 +515,7 @@ claude mcp add --transport stdio graph-code \
 
 <!-- SECTION:mcp_tools -->
 | Tool | Description |
-|------|-------------|
+|----|-----------|
 | `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. |
 | `query_code_graph` | Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. |
 | `get_code_snippet` | Retrieve source code for a function, class, or method by its qualified name. Returns the source code, file path, line numbers, and docstring. |
@@ -543,7 +543,7 @@ The knowledge graph uses the following node types and relationships:
 
 <!-- SECTION:node_schemas -->
 | Label | Properties |
-|-------|------------|
+|-----|----------|
 | Project | `{name: string}` |
 | Package | `{qualified_name: string, name: string, path: string}` |
 | Folder | `{path: string, name: string}` |
@@ -574,7 +574,7 @@ The knowledge graph uses the following node types and relationships:
 
 <!-- SECTION:relationship_schemas -->
 | Source | Relationship | Target |
-|--------|--------------|--------|
+|------|------------|------|
 | Project, Package, Folder | CONTAINS_PACKAGE | Package |
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
@@ -648,7 +648,7 @@ The agent has access to a suite of tools to understand and interact with the cod
 
 <!-- SECTION:agentic_tools -->
 | Tool | Description |
-|------|-------------|
+|----|-----------|
 | `query_graph` | Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'. |
 | `read_file` | Reads the content of text-based files. For documents like PDFs or images, use the 'analyze_document' tool instead. |
 | `create_file` | Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications. |
