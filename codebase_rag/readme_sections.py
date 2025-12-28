@@ -5,9 +5,13 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import cli_help as ch
-from .constants import SupportedLanguage
+from .constants import LANGUAGE_METADATA, SupportedLanguage
+from .language_spec import LANGUAGE_SPECS
 from .tools import tool_descriptions as td
 from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
+
+CHECK_MARK = "\u2713"
+DASH = "-"
 
 
 class MakeCommand(NamedTuple):
@@ -76,13 +80,34 @@ def format_makefile_table(commands: list[MakeCommand]) -> str:
     return format_markdown_table(["Command", "Description"], rows)
 
 
-def extract_supported_languages() -> list[str]:
-    return [lang.value.title() for lang in SupportedLanguage]
-
-
-def format_languages_table(languages: list[str]) -> str:
-    rows = [[lang, "Full support"] for lang in languages]
-    return format_markdown_table(["Language", "Status"], rows)
+def format_full_languages_table() -> str:
+    headers = [
+        "Language",
+        "Status",
+        "Extensions",
+        "Functions",
+        "Classes/Structs",
+        "Modules",
+        "Package Detection",
+        "Additional Features",
+    ]
+    rows: list[list[str]] = []
+    for lang in SupportedLanguage:
+        spec = LANGUAGE_SPECS[lang]
+        meta = LANGUAGE_METADATA[lang]
+        rows.append(
+            [
+                lang.value.title(),
+                meta.status.value,
+                ", ".join(spec.file_extensions),
+                CHECK_MARK if spec.function_node_types else DASH,
+                CHECK_MARK if spec.class_node_types else DASH,
+                CHECK_MARK if spec.module_node_types else DASH,
+                CHECK_MARK if spec.package_indicators else DASH,
+                meta.additional_features,
+            ]
+        )
+    return format_markdown_table(headers, rows)
 
 
 def extract_node_schemas() -> list[tuple[str, str]]:
@@ -125,13 +150,12 @@ def format_agentic_tools_table() -> str:
 
 def generate_all_sections(project_root: Path) -> dict[str, str]:
     makefile_commands = extract_makefile_commands(project_root / "Makefile")
-    languages = extract_supported_languages()
     node_schemas = extract_node_schemas()
     rel_schemas = extract_relationship_schemas()
 
     return {
         "makefile_commands": format_makefile_table(makefile_commands),
-        "supported_languages": format_languages_table(languages),
+        "supported_languages": format_full_languages_table(),
         "node_schemas": format_node_schemas_table(node_schemas),
         "relationship_schemas": format_relationship_schemas_table(rel_schemas),
         "cli_commands": format_cli_commands_table(),

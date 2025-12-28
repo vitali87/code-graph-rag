@@ -382,6 +382,64 @@ class SupportedLanguage(StrEnum):
     LUA = "lua"
 
 
+class LanguageStatus(StrEnum):
+    FULL = "Fully Supported"
+    DEV = "In Development"
+
+
+class LanguageMetadata(NamedTuple):
+    status: LanguageStatus
+    additional_features: str
+
+
+LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
+    SupportedLanguage.PYTHON: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Type inference, decorators, nested functions",
+    ),
+    SupportedLanguage.JS: LanguageMetadata(
+        LanguageStatus.FULL,
+        "ES6 modules, CommonJS, prototype methods, object methods, arrow functions",
+    ),
+    SupportedLanguage.TS: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
+    ),
+    SupportedLanguage.CPP: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces",
+    ),
+    SupportedLanguage.LUA: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Local/global functions, metatables, closures, coroutines",
+    ),
+    SupportedLanguage.RUST: LanguageMetadata(
+        LanguageStatus.FULL,
+        "impl blocks, associated functions",
+    ),
+    SupportedLanguage.JAVA: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Generics, annotations, modern features (records/sealed classes), concurrency, reflection",
+    ),
+    SupportedLanguage.GO: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Methods, type declarations",
+    ),
+    SupportedLanguage.SCALA: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Case classes, objects",
+    ),
+    SupportedLanguage.CSHARP: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Classes, interfaces, generics (planned)",
+    ),
+    SupportedLanguage.PHP: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Classes, functions, namespaces",
+    ),
+}
+
+
 # (H) Tree-sitter AST node type constants
 FUNCTION_NODES_BASIC = ("function_declaration", "function_definition")
 FUNCTION_NODES_LAMBDA = (
