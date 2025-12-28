@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import shlex
-import time
-from collections.abc import Awaitable, Callable
-from functools import wraps
 from pathlib import Path
 
 from loguru import logger
@@ -14,6 +11,7 @@ from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
 from ..config import settings
+from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
 
@@ -43,29 +41,13 @@ def _requires_approval(command: str) -> bool:
     return True
 
 
-def timing_decorator[**P, T](
-    func: Callable[P, Awaitable[T]],
-) -> Callable[P, Awaitable[T]]:
-    @wraps(func)
-    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-        start_time = time.perf_counter()
-        result = await func(*args, **kwargs)
-        end_time = time.perf_counter()
-        execution_time = (end_time - start_time) * 1000
-        func_name = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
-        logger.info(ls.SHELL_TIMING.format(func=func_name, time=execution_time))
-        return result
-
-    return wrapper
-
-
 class ShellCommander:
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
-    @timing_decorator
+    @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:

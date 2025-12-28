@@ -8,6 +8,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as lg
+from ...decorators import recursion_guard
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType, SimpleNameLookup
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
@@ -46,7 +47,6 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     ast_cache: ASTCacheProtocol
 
     _method_return_type_cache: dict[str, str | None]
-    _type_inference_in_progress: set[str]
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:
@@ -114,31 +114,22 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     def _extract_full_method_call(self, attr_node: Node) -> str | None:
         return safe_decode_text(attr_node) if attr_node.text else None
 
+    @recursion_guard(
+        key_func=lambda self, method_call, module_qn, *_: f"{module_qn}:{method_call}",
+        guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
+    )
     def _infer_method_call_return_type(
         self,
         method_call: str,
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        cache_key = f"{module_qn}{cs.SEPARATOR_COLON}{method_call}"
-
-        # (H) Recursion guard: prevent infinite loops in recursive type inference.
-        if cache_key in self._type_inference_in_progress:
-            logger.debug(lg.PY_RECURSION_GUARD.format(method=method_call))
-            return None
-
-        self._type_inference_in_progress.add(cache_key)
-        try:
-            if cs.SEPARATOR_DOT in method_call and self._is_method_chain(method_call):
-                return self._infer_chained_call_return_type_fixed(
-                    method_call, module_qn, local_var_types
-                )
-
-            return self._infer_method_return_type(
+        if cs.SEPARATOR_DOT in method_call and self._is_method_chain(method_call):
+            return self._infer_chained_call_return_type_fixed(
                 method_call, module_qn, local_var_types
             )
-        finally:
-            self._type_inference_in_progress.discard(cache_key)
+
+        return self._infer_method_return_type(method_call, module_qn, local_var_types)
 
     def _is_method_chain(self, call_name: str) -> bool:
         return (
@@ -216,25 +207,22 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             expression, module_qn, local_var_types
         )
 
+    @recursion_guard(
+        key_func=lambda self, method_qn: method_qn,
+        guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
+    )
     def _get_method_return_type_from_ast(self, method_qn: str) -> str | None:
         if method_qn in self._method_return_type_cache:
             return self._method_return_type_cache[method_qn]
-        if method_qn in self._type_inference_in_progress:
-            logger.debug(lg.PY_RECURSION_GUARD_QN.format(method_qn=method_qn))
-            return None
 
-        self._type_inference_in_progress.add(method_qn)
-        try:
-            method_node = self._find_method_ast_node(method_qn)
-            result = (
-                self._analyze_method_return_statements(method_node, method_qn)
-                if method_node
-                else None
-            )
-            self._method_return_type_cache[method_qn] = result
-            return result
-        finally:
-            self._type_inference_in_progress.discard(method_qn)
+        method_node = self._find_method_ast_node(method_qn)
+        result = (
+            self._analyze_method_return_statements(method_node, method_qn)
+            if method_node
+            else None
+        )
+        self._method_return_type_cache[method_qn] = result
+        return result
 
     def _infer_method_return_type(
         self,

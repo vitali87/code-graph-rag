@@ -7,6 +7,7 @@ from loguru import logger
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
+from .decorators import ensure_loaded
 from .models import GraphNode, GraphRelationship
 from .types_defs import GraphData, GraphMetadata, GraphSummary, PropertyValue
 
@@ -87,36 +88,36 @@ class GraphLoader:
         self._property_indexes[property_name] = dict(index)
 
     @property
+    @ensure_loaded
     def nodes(self) -> list[GraphNode]:
-        self._ensure_loaded()
         assert self._nodes is not None, ex.NODES_NOT_LOADED
         return self._nodes
 
     @property
+    @ensure_loaded
     def relationships(self) -> list[GraphRelationship]:
-        self._ensure_loaded()
         assert self._relationships is not None, ex.RELATIONSHIPS_NOT_LOADED
         return self._relationships
 
     @property
+    @ensure_loaded
     def metadata(self) -> GraphMetadata:
-        self._ensure_loaded()
         assert self._data is not None, ex.DATA_NOT_LOADED
         return self._data[cs.KEY_METADATA]
 
+    @ensure_loaded
     def find_nodes_by_label(self, label: str) -> list[GraphNode]:
-        self._ensure_loaded()
         return self._nodes_by_label.get(label, [])
 
+    @ensure_loaded
     def find_node_by_property(
         self, property_name: str, value: PropertyValue
     ) -> list[GraphNode]:
-        self._ensure_loaded()
         self._build_property_index(property_name)
         return self._property_indexes[property_name].get(value, [])
 
+    @ensure_loaded
     def get_node_by_id(self, node_id: int) -> GraphNode | None:
-        self._ensure_loaded()
         return self._nodes_by_id.get(node_id)
 
     def get_relationships_for_node(self, node_id: int) -> list[GraphRelationship]:
@@ -124,12 +125,12 @@ class GraphLoader:
             node_id
         ) + self.get_incoming_relationships(node_id)
 
+    @ensure_loaded
     def get_outgoing_relationships(self, node_id: int) -> list[GraphRelationship]:
-        self._ensure_loaded()
         return self._outgoing_rels.get(node_id, [])
 
+    @ensure_loaded
     def get_incoming_relationships(self, node_id: int) -> list[GraphRelationship]:
-        self._ensure_loaded()
         return self._incoming_rels.get(node_id, [])
 
     def summary(self) -> GraphSummary:

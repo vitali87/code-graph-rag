@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, ItemsView, KeysView, Sequence
 from dataclasses import dataclass
@@ -14,7 +16,7 @@ if TYPE_CHECKING:
 
     from .models import LanguageSpec
 
-type LanguageLoader = Callable[[], "Language"] | None
+type LanguageLoader = Callable[[], Language] | None
 
 PropertyValue = str | int | float | bool | list[str] | None
 PropertyDict = dict[str, PropertyValue]
@@ -25,7 +27,7 @@ type ResultRow = dict[str, ResultValue]
 
 
 class FunctionMatch(TypedDict):
-    node: "Node"
+    node: Node
     simple_name: str
     qualified_name: str
     parent_class: str | None
@@ -92,20 +94,47 @@ class FunctionRegistryTrieProtocol(Protocol):
 
 
 class ASTCacheProtocol(Protocol):
-    def __setitem__(
-        self, key: Path, value: tuple["Node", SupportedLanguage]
-    ) -> None: ...
-    def __getitem__(self, key: Path) -> tuple["Node", SupportedLanguage]: ...
+    def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None: ...
+    def __getitem__(self, key: Path) -> tuple[Node, SupportedLanguage]: ...
     def __delitem__(self, key: Path) -> None: ...
     def __contains__(self, key: Path) -> bool: ...
-    def items(self) -> ItemsView[Path, tuple["Node", SupportedLanguage]]: ...
+    def items(self) -> ItemsView[Path, tuple[Node, SupportedLanguage]]: ...
+
+
+class ColumnDescriptor(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
+class LoadableProtocol(Protocol):
+    def _ensure_loaded(self) -> None: ...
+
+
+class CursorProtocol(Protocol):
+    def execute(
+        self,
+        query: str,
+        params: dict[str, PropertyValue]
+        | Sequence[BatchParams]
+        | BatchWrapper
+        | None = None,
+    ) -> None: ...
+    def close(self) -> None: ...
+    @property
+    def description(self) -> Sequence[ColumnDescriptor] | None: ...
+    def fetchall(self) -> list[tuple[PropertyValue, ...]]: ...
+
+
+class PathValidatorProtocol(Protocol):
+    @property
+    def project_root(self) -> Path: ...
 
 
 class TreeSitterNodeProtocol(Protocol):
     @property
     def type(self) -> str: ...
     @property
-    def children(self) -> list["TreeSitterNodeProtocol"]: ...
+    def children(self) -> list[TreeSitterNodeProtocol]: ...
     @property
     def text(self) -> bytes: ...
 
@@ -288,14 +317,14 @@ ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs
 
 
 class LanguageQueries(TypedDict):
-    functions: "Query | None"
-    classes: "Query | None"
-    calls: "Query | None"
-    imports: "Query | None"
-    locals: "Query | None"
-    config: "LanguageSpec"
-    language: "Language"
-    parser: "Parser"
+    functions: Query | None
+    classes: Query | None
+    calls: Query | None
+    imports: Query | None
+    locals: Query | None
+    config: LanguageSpec
+    language: Language
+    parser: Parser
 
 
 class FunctionNodeProps(TypedDict, total=False):
