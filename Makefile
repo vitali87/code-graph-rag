@@ -1,4 +1,4 @@
-.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch
+.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -60,3 +60,6 @@ watch: ## Watch repository for changes and update graph in real-time
 		--host $(or $(HOST),localhost) \
 		--port $(or $(PORT),7687) \
 		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),)
+
+readme: ## Regenerate README.md from codebase
+	uv run python scripts/generate_readme.py

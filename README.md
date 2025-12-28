@@ -217,21 +217,24 @@ docker-compose up -d
 
 Use the Makefile for common development tasks:
 
+<!-- SECTION:makefile_commands -->
 | Command | Description |
 |---------|-------------|
-| `make help` | Show all available commands |
-| `make all` | Full dev setup: deps, grammars, hooks, and run tests |
+| `make help` | Show this help message |
+| `make all` | Install everything for full development environment (deps, grammars, hooks, tests) |
 | `make install` | Install project dependencies with full language support |
-| `make python` | Install dependencies for Python only |
-| `make dev` | Setup dev environment (install deps + pre-commit hooks) |
+| `make python` | Install project dependencies for Python only |
+| `make dev` | Setup development environment (install deps + pre-commit hooks) |
 | `make test` | Run unit tests only (fast, no Docker) |
 | `make test-parallel` | Run unit tests in parallel (fast, no Docker) |
 | `make test-integration` | Run integration tests (requires Docker) |
-| `make test-all` | Run all tests including integration (requires Docker) |
-| `make test-parallel-all` | Run all tests in parallel including integration (requires Docker) |
+| `make test-all` | Run all tests including integration and e2e (requires Docker) |
+| `make test-parallel-all` | Run all tests in parallel including integration and e2e (requires Docker) |
+| `make clean` | Clean up build artifacts and cache |
 | `make build-grammars` | Build grammar submodules |
 | `make watch` | Watch repository for changes and update graph in real-time |
-| `make clean` | Clean up build artifacts and cache |
+| `make readme` | Regenerate README.md from codebase |
+<!-- /SECTION:makefile_commands -->
 
 ## 🎯 Usage
 
@@ -510,12 +513,17 @@ claude mcp add --transport stdio graph-code \
 
 ### Available Tools
 
-- **index_repository** - Build knowledge graph
-- **query_code_graph** - Natural language queries
-- **get_code_snippet** - Retrieve code by qualified name
-- **surgical_replace_code** - Precise code edits
-- **read_file / write_file** - File operations
-- **list_directory** - Browse project structure
+<!-- SECTION:mcp_tools -->
+| Tool | Description |
+|------|-------------|
+| `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. |
+| `query_code_graph` | Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. |
+| `get_code_snippet` | Retrieve source code for a function, class, or method by its qualified name. Returns the source code, file path, line numbers, and docstring. |
+| `surgical_replace_code` | Surgically replace an exact code block in a file using diff-match-patch. Only modifies the exact target block, leaving the rest unchanged. |
+| `read_file` | Read the contents of a file from the project. Supports pagination for large files. |
+| `write_file` | Write content to a file, creating it if it doesn't exist. |
+| `list_directory` | List contents of a directory in the project. |
+<!-- /SECTION:mcp_tools -->
 
 ### Example Usage
 
@@ -532,15 +540,26 @@ For detailed setup, see [Claude Code Setup Guide](docs/claude-code-setup.md).
 The knowledge graph uses the following node types and relationships:
 
 ### Node Types
-- **Project**: Root node representing the entire repository
-- **Package**: Language packages (Python: `__init__.py`, etc.)
-- **Module**: Individual source code files (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.rs`, `.go`, `.scala`, `.sc`, `.java`)
-- **Class**: Class/Struct/Enum definitions across all languages
-- **Function**: Module-level functions and standalone functions
-- **Method**: Class methods and associated functions
-- **Folder**: Regular directories
-- **File**: All files (source code and others)
-- **ExternalPackage**: External dependencies
+
+<!-- SECTION:node_schemas -->
+| Label | Properties |
+|-------|------------|
+| Project | `{name: string}` |
+| Package | `{qualified_name: string, name: string, path: string}` |
+| Folder | `{path: string, name: string}` |
+| File | `{path: string, name: string, extension: string}` |
+| Module | `{qualified_name: string, name: string, path: string}` |
+| Class | `{qualified_name: string, name: string, decorators: list[string]}` |
+| Function | `{qualified_name: string, name: string, decorators: list[string]}` |
+| Method | `{qualified_name: string, name: string, decorators: list[string]}` |
+| Interface | `{qualified_name: string, name: string}` |
+| Enum | `{qualified_name: string, name: string}` |
+| Type | `{qualified_name: string, name: string}` |
+| Union | `{qualified_name: string, name: string}` |
+| ModuleInterface | `{qualified_name: string, name: string, path: string}` |
+| ModuleImplementation | `{qualified_name: string, name: string, path: string, implements_module: string}` |
+| ExternalPackage | `{name: string, version_spec: string}` |
+<!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
 - **Python**: `function_definition`, `class_definition`
@@ -552,14 +571,27 @@ The knowledge graph uses the following node types and relationships:
 - **Java**: `method_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`
 
 ### Relationships
-- `CONTAINS_PACKAGE`: Project or Package contains Package nodes
-- `CONTAINS_FOLDER`: Project, Package, or Folder contains Folder nodes
-- `CONTAINS_FILE`: Project, Package, or Folder contains File nodes
-- `CONTAINS_MODULE`: Project, Package, or Folder contains Module nodes
-- `DEFINES`: Module defines classes/functions
-- `DEFINES_METHOD`: Class defines methods
-- `DEPENDS_ON_EXTERNAL`: Project depends on external packages
-- `CALLS`: Function or Method calls other functions/methods
+
+<!-- SECTION:relationship_schemas -->
+| Source | Relationship | Target |
+|--------|--------------|--------|
+| Project, Package, Folder | CONTAINS_PACKAGE | Package |
+| Project, Package, Folder | CONTAINS_FOLDER | Folder |
+| Project, Package, Folder | CONTAINS_FILE | File |
+| Project, Package, Folder | CONTAINS_MODULE | Module |
+| Module | DEFINES | Class, Function |
+| Class | DEFINES_METHOD | Method |
+| Module | IMPORTS | Module |
+| Module | EXPORTS | Class, Function |
+| Module | EXPORTS_MODULE | ModuleInterface |
+| Module | IMPLEMENTS_MODULE | ModuleImplementation |
+| Class | INHERITS | Class |
+| Class | IMPLEMENTS | Interface |
+| Method | OVERRIDES | Method |
+| ModuleImplementation | IMPLEMENTS | ModuleInterface |
+| Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
+| Function, Method | CALLS | Function, Method |
+<!-- /SECTION:relationship_schemas -->
 
 ## 🔧 Configuration
 
@@ -614,12 +646,18 @@ The agent is designed with a deliberate workflow to ensure it acts with context 
 
 The agent has access to a suite of tools to understand and interact with the codebase:
 
-- **`query_codebase_knowledge_graph`**: The primary tool for understanding the repository. It queries the graph database to find files, functions, classes, and their relationships based on natural language.
-- **`get_code_snippet`**: Retrieves the exact source code for a specific function or class.
-- **`read_file_content`**: Reads the entire content of a specified file.
-- **`create_new_file`**: Creates a new file with specified content.
-- **`replace_code_surgically`**: Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.
-- **`execute_shell_command`**: Executes a shell command in the project's environment.
+<!-- SECTION:agentic_tools -->
+| Tool | Description |
+|------|-------------|
+| `query_graph` | Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'. |
+| `read_file` | Reads the content of text-based files. For documents like PDFs or images, use the 'analyze_document' tool instead. |
+| `create_file` | Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications. |
+| `replace_code` | Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching. |
+| `list_directory` | Lists the contents of a directory to explore the codebase. |
+| `analyze_document` | Analyzes documents (PDFs, images) to answer questions about their content. |
+| `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
+| `semantic_search` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+<!-- /SECTION:agentic_tools -->
 
 ### Intelligent and Safe File Editing
 
