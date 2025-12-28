@@ -8,6 +8,7 @@ from pydantic_ai import Tool
 from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
+from ..decorators import validate_project_path
 from ..schemas import FileCreationResult
 from . import tool_descriptions as td
 
@@ -19,28 +20,24 @@ class FileWriter:
 
     async def create_file(self, file_path: str, content: str) -> FileCreationResult:
         logger.info(ls.FILE_WRITER_CREATE.format(path=file_path))
+        return await self._create_validated(file_path, content)
+
+    @validate_project_path(FileCreationResult, path_arg_name="file_path")
+    async def _create_validated(
+        self, file_path: Path, content: str
+    ) -> FileCreationResult:
         try:
-            full_path = (self.project_root / file_path).resolve()
-
-            full_path.relative_to(self.project_root)
-
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-            full_path.write_text(content, encoding=cs.ENCODING_UTF8)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding=cs.ENCODING_UTF8)
             logger.info(
                 ls.FILE_WRITER_SUCCESS.format(chars=len(content), path=file_path)
             )
-            return FileCreationResult(file_path=file_path)
-        except ValueError:
-            err_msg = te.FILE_WRITER_SECURITY.format(path=file_path)
-            logger.error(err_msg)
-            return FileCreationResult(
-                file_path=file_path, success=False, error_message=err_msg
-            )
+            return FileCreationResult(file_path=str(file_path))
         except Exception as e:
             err_msg = te.FILE_WRITER_CREATE.format(path=file_path, error=e)
             logger.error(err_msg)
             return FileCreationResult(
-                file_path=file_path, success=False, error_message=err_msg
+                file_path=str(file_path), success=False, error_message=err_msg
             )
 
 

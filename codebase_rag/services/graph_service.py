@@ -1,11 +1,12 @@
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
-from codebase_rag.types_defs import ResultValue
+from codebase_rag.types_defs import CursorProtocol, ResultValue
 
 from .. import exceptions as ex
 from .. import logs as ls
@@ -76,7 +77,19 @@ class MemgraphIngestor:
             self.conn.close()
             logger.info(ls.MG_DISCONNECTED)
 
-    def _cursor_to_results(self, cursor: mgclient.Cursor) -> list[ResultRow]:
+    @contextmanager
+    def _get_cursor(self) -> Generator[CursorProtocol, None, None]:
+        if not self.conn:
+            raise ConnectionError(ex.CONN)
+        cursor: CursorProtocol | None = None
+        try:
+            cursor = self.conn.cursor()
+            yield cursor
+        finally:
+            if cursor:
+                cursor.close()
+
+    def _cursor_to_results(self, cursor: CursorProtocol) -> list[ResultRow]:
         if not cursor.description:
             return []
         column_names = [desc.name for desc in cursor.description]
@@ -85,28 +98,24 @@ class MemgraphIngestor:
         ]
 
     def _execute_query(
-        self, query: str, params: dict[str, PropertyValue] | None = None
+        self,
+        query: str,
+        params: dict[str, PropertyValue] | None = None,
     ) -> list[ResultRow]:
-        if not self.conn:
-            raise ConnectionError(ex.CONN)
         params = params or {}
-        cursor = None
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(query, params)
-            return self._cursor_to_results(cursor)
-        except Exception as e:
-            if (
-                ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower()
-                and ERR_SUBSTR_CONSTRAINT not in str(e).lower()
-            ):
-                logger.error(ls.MG_CYPHER_ERROR.format(error=e))
-                logger.error(ls.MG_CYPHER_QUERY.format(query=query))
-                logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
-            raise
-        finally:
-            if cursor:
-                cursor.close()
+        with self._get_cursor() as cursor:
+            try:
+                cursor.execute(query, params)
+                return self._cursor_to_results(cursor)
+            except Exception as e:
+                if (
+                    ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower()
+                    and ERR_SUBSTR_CONSTRAINT not in str(e).lower()
+                ):
+                    logger.error(ls.MG_CYPHER_ERROR.format(error=e))
+                    logger.error(ls.MG_CYPHER_QUERY.format(query=query))
+                    logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
+                raise
 
     def _execute_batch(self, query: str, params_list: Sequence[BatchParams]) -> None:
         if not self.conn or not params_list:

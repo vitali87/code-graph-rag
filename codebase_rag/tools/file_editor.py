@@ -11,6 +11,7 @@ from tree_sitter import Node, Parser
 from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
+from ..decorators import validate_project_path
 from ..language_spec import get_language_for_extension, get_language_spec
 from ..parser_loader import load_parsers
 from ..schemas import EditResult
@@ -253,34 +254,29 @@ class FileEditor:
 
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
         logger.info(ls.TOOL_FILE_EDIT.format(path=file_path))
-        try:
-            full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root)
+        return await self._edit_validated(file_path, new_content)
 
-            if not full_path.is_file():
+    @validate_project_path(EditResult, path_arg_name="file_path")
+    async def _edit_validated(self, file_path: Path, new_content: str) -> EditResult:
+        try:
+            if not file_path.is_file():
                 error_msg = te.FILE_NOT_FOUND_OR_DIR.format(path=file_path)
                 logger.warning(ls.FILE_EDITOR_WARN.format(msg=error_msg))
                 return EditResult(
-                    file_path=file_path, success=False, error_message=error_msg
+                    file_path=str(file_path), success=False, error_message=error_msg
                 )
 
-            with open(full_path, "w", encoding=cs.ENCODING_UTF8) as f:
+            with open(file_path, "w", encoding=cs.ENCODING_UTF8) as f:
                 f.write(new_content)
 
             logger.success(ls.TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
-            return EditResult(file_path=file_path, success=True)
+            return EditResult(file_path=str(file_path), success=True)
 
-        except ValueError:
-            error_msg = ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT)
-            logger.error(ls.FILE_EDITOR_ERR.format(msg=error_msg))
-            return EditResult(
-                file_path=file_path, success=False, error_message=error_msg
-            )
         except Exception as e:
             error_msg = ls.UNEXPECTED.format(error=e)
             logger.error(ls.FILE_EDITOR_ERR_EDIT.format(path=file_path, error=e))
             return EditResult(
-                file_path=file_path, success=False, error_message=error_msg
+                file_path=str(file_path), success=False, error_message=error_msg
             )
 
 

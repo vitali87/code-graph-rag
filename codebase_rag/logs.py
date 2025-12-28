@@ -217,6 +217,9 @@ TOOL_DOC_ANALYZE = "[DocumentAnalyzer] Analyzing '{path}' with question: '{quest
 # (H) Shell timing log
 SHELL_TIMING = "'{func}' executed in {time:.2f}ms"
 
+# (H) Generic function timing log
+FUNC_TIMING = "{func} completed in {time:.2f}ms"
+
 # (H) File editor logs
 EDITOR_NO_PARSER = "No parser available for {path}"
 EDITOR_NO_LANG_CONFIG = "No language config found for extension {ext}"

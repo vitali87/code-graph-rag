@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from .types_defs import ResultRow
 
@@ -51,8 +53,14 @@ class ShellCommandResult(BaseModel):
 
 class EditResult(BaseModel):
     file_path: str
-    success: bool
+    success: bool = True
     error_message: str | None = None
+
+    @model_validator(mode="after")
+    def _set_success_on_error(self) -> EditResult:
+        if self.error_message is not None:
+            self.success = False
+        return self
 
 
 class FileReadResult(BaseModel):
@@ -65,3 +73,9 @@ class FileCreationResult(BaseModel):
     file_path: str
     success: bool = True
     error_message: str | None = None
+
+    @model_validator(mode="after")
+    def _set_success_on_error(self) -> FileCreationResult:
+        if self.error_message is not None:
+            self.success = False
+        return self
