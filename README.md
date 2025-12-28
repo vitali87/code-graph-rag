@@ -33,26 +33,6 @@ https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
 - **[NEW]** **MCP Server Integration**: Graph-Code now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
 - [2025/10/21] **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
 
-## 🛠️ Makefile Commands
-
-Use the Makefile for common development tasks:
-
-| Command | Description |
-|---------|-------------|
-| `make help` | Show all available commands |
-| `make all` | Full dev setup: deps, grammars, hooks, and run tests |
-| `make install` | Install project dependencies with full language support |
-| `make python` | Install dependencies for Python only |
-| `make dev` | Setup dev environment (install deps + pre-commit hooks) |
-| `make test` | Run unit tests only (fast, no Docker) |
-| `make test-parallel` | Run unit tests in parallel (fast, no Docker) |
-| `make test-integration` | Run integration tests (requires Docker) |
-| `make test-all` | Run all tests including integration (requires Docker) |
-| `make test-parallel-all` | Run all tests in parallel including integration (requires Docker) |
-| `make build-grammars` | Build grammar submodules |
-| `make watch` | Watch repository for changes and update graph in real-time |
-| `make clean` | Clean up build artifacts and cache |
-
 ## 🚀 Features
 
 - **🌍 Multi-Language Support**:
@@ -232,6 +212,26 @@ ollama pull llama3.2
 ```bash
 docker-compose up -d
 ```
+
+## 🛠️ Makefile Commands
+
+Use the Makefile for common development tasks:
+
+| Command | Description |
+|---------|-------------|
+| `make help` | Show all available commands |
+| `make all` | Full dev setup: deps, grammars, hooks, and run tests |
+| `make install` | Install project dependencies with full language support |
+| `make python` | Install dependencies for Python only |
+| `make dev` | Setup dev environment (install deps + pre-commit hooks) |
+| `make test` | Run unit tests only (fast, no Docker) |
+| `make test-parallel` | Run unit tests in parallel (fast, no Docker) |
+| `make test-integration` | Run integration tests (requires Docker) |
+| `make test-all` | Run all tests including integration (requires Docker) |
+| `make test-parallel-all` | Run all tests in parallel including integration (requires Docker) |
+| `make build-grammars` | Build grammar submodules |
+| `make watch` | Watch repository for changes and update graph in real-time |
+| `make clean` | Clean up build artifacts and cache |
 
 ## 🎯 Usage
 
