@@ -514,6 +514,10 @@ claude mcp add --transport stdio graph-code \
 - **surgical_replace_code** - Precise code edits
 - **read_file / write_file** - File operations
 - **list_directory** - Browse project structure
+- **shell_command** - Execute terminal commands
+- **document_analyzer** - Analyze PDFs and documents
+- **semantic_search** - Find functions by intent
+- **get_function_source** - Retrieve function source by ID
 
 ### Example Usage
 
@@ -618,6 +622,9 @@ The agent has access to a suite of tools to understand and interact with the cod
 - **`create_new_file`**: Creates a new file with specified content.
 - **`replace_code_surgically`**: Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.
 - **`execute_shell_command`**: Executes a shell command in the project's environment.
+- **`analyze_document`**: Analyzes PDFs and documents to answer questions about their content.
+- **`semantic_search_functions`**: Finds functions by natural language intent using embeddings.
+- **`get_function_source_by_id`**: Retrieves source code for a function by its node ID.
 
 ### Intelligent and Safe File Editing
 
