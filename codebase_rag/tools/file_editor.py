@@ -262,9 +262,7 @@ class FileEditor:
             if not file_path.is_file():
                 error_msg = te.FILE_NOT_FOUND_OR_DIR.format(path=file_path)
                 logger.warning(ls.FILE_EDITOR_WARN.format(msg=error_msg))
-                return EditResult(
-                    file_path=str(file_path), success=False, error_message=error_msg
-                )
+                return EditResult(file_path=str(file_path), error_message=error_msg)
 
             with open(file_path, "w", encoding=cs.ENCODING_UTF8) as f:
                 f.write(new_content)
@@ -275,9 +273,7 @@ class FileEditor:
         except Exception as e:
             error_msg = ls.UNEXPECTED.format(error=e)
             logger.error(ls.FILE_EDITOR_ERR_EDIT.format(path=file_path, error=e))
-            return EditResult(
-                file_path=str(file_path), success=False, error_message=error_msg
-            )
+            return EditResult(file_path=str(file_path), error_message=error_msg)
 
 
 def create_file_editor_tool(file_editor: FileEditor) -> Tool:

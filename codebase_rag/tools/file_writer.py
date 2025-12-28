@@ -36,9 +36,7 @@ class FileWriter:
         except Exception as e:
             err_msg = te.FILE_WRITER_CREATE.format(path=file_path, error=e)
             logger.error(err_msg)
-            return FileCreationResult(
-                file_path=str(file_path), success=False, error_message=err_msg
-            )
+            return FileCreationResult(file_path=str(file_path), error_message=err_msg)
 
 
 def create_file_writer_tool(file_writer: FileWriter) -> Tool:
