@@ -698,19 +698,6 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 
 ## 🌍 Multi-Language Support
 
-### Language-Specific Features
-
-- **Python**: Full support including nested functions, methods, classes, decorators, type hints, and package structure
-- **JavaScript**: ES6 modules, CommonJS modules, prototype-based methods, object methods, arrow functions, classes, and JSX support
-- **TypeScript**: All JavaScript features plus interfaces, type aliases, enums, namespaces, generics, and advanced type inference
-- **C++**: Comprehensive support including functions, classes, structs, unions, enums, constructors, destructors, operator overloading, templates, lambdas, namespaces, C++20 modules, inheritance, method calls, and modern C++ features
-- **Lua**: Functions, local/global variables, tables, metatables, closures, coroutines, and object-oriented patterns
-- **Rust**: Functions, structs, enums, impl blocks, traits, and associated functions
-- **Go**: Functions, methods, type declarations, interfaces, and struct definitions
-- **Scala**: Functions, methods, classes, objects, traits, case classes, implicits, and Scala 3 syntax
-- **Java**: Methods, constructors, classes, interfaces, enums, annotations, generics, modern features (records, sealed classes, switch expressions), concurrency patterns, reflection, and enterprise frameworks
-
-
 ### Adding New Languages
 
 Graph-Code makes it easy to add support for any language that has a Tree-sitter grammar. The system automatically handles grammar compilation and integration.
