@@ -93,7 +93,7 @@ def format_full_languages_table() -> str:
         meta = LANGUAGE_METADATA[lang]
         rows.append(
             [
-                lang.value.title(),
+                meta.display_name,
                 meta.status.value,
                 ", ".join(spec.file_extensions),
                 CHECK_MARK if spec.function_node_types else DASH,
@@ -147,11 +147,12 @@ def format_language_mappings() -> str:
     lines: list[str] = []
     for lang in sorted_langs:
         spec = LANGUAGE_SPECS[lang]
+        meta = LANGUAGE_METADATA[lang]
         node_types = list(spec.function_node_types) + list(spec.class_node_types)
         if not node_types:
             continue
         formatted_types = ", ".join(f"`{t}`" for t in sorted(node_types))
-        lines.append(f"- **{lang.value.title()}**: {formatted_types}")
+        lines.append(f"- **{meta.display_name}**: {formatted_types}")
     return "\n".join(lines)
 
 
@@ -167,7 +168,7 @@ def format_agentic_tools_table() -> str:
 
 def extract_dependencies(pyproject_path: Path) -> list[str]:
     content = pyproject_path.read_bytes()
-    data = tomllib.loads(content.decode())
+    data = tomllib.loads(content.decode(ENCODING_UTF8))
     deps = data.get("project", {}).get("dependencies", [])
     return [re.split(r"[<>=!~\[]", dep)[0].strip() for dep in deps]
 
