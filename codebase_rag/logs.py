@@ -110,9 +110,11 @@ BINARY_SIZE = "Size: {size:.1f} MB"
 BUILD_STDOUT = "STDOUT: {stdout}"
 BUILD_STDERR = "STDERR: {stderr}"
 
-# (H) Comment check logs
-COMMENTS_FOUND = "Comments without (H) marker found:"
-COMMENT_ERROR = "  {error}"
+# (H) No-docs check logs
+NO_DOCS_VIOLATIONS_FOUND = (
+    "No-docs violations found (module docstrings or inline comments):"
+)
+NO_DOCS_ERROR = "  {error}"
 
 # (H) Graph summary logs
 GRAPH_SUMMARY = "Graph Summary:"
