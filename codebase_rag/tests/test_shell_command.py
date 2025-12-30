@@ -179,8 +179,10 @@ class TestCreateShellCommandTool:
         assert isinstance(tool, Tool)
 
     def test_tool_has_correct_name(self, shell_commander: ShellCommander) -> None:
+        from codebase_rag.tools.tool_descriptions import AgenticToolName
+
         tool = create_shell_command_tool(shell_commander)
-        assert tool.name == "execute_shell_command"
+        assert tool.name == AgenticToolName.EXECUTE_SHELL
 
     def test_tool_has_description(self, shell_commander: ShellCommander) -> None:
         tool = create_shell_command_tool(shell_commander)

@@ -139,7 +139,7 @@ def create_semantic_search_tool() -> Tool:
 
         return response
 
-    return Tool(semantic_search_functions, name=td.Name.SEMANTIC_SEARCH)
+    return Tool(semantic_search_functions, name=td.AgenticToolName.SEMANTIC_SEARCH)
 
 
 def create_get_function_source_tool() -> Tool:
@@ -153,4 +153,4 @@ def create_get_function_source_tool() -> Tool:
 
         return cs.MSG_SEMANTIC_SOURCE_FORMAT.format(id=node_id, code=source_code)
 
-    return Tool(get_function_source_by_id, name=td.Name.GET_FUNCTION_SOURCE)
+    return Tool(get_function_source_by_id, name=td.AgenticToolName.GET_FUNCTION_SOURCE)

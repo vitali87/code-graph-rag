@@ -89,5 +89,6 @@ def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
 
     return Tool(
         function=get_code_snippet,
+        name=td.AgenticToolName.GET_CODE_SNIPPET,
         description=td.CODE_RETRIEVAL,
     )

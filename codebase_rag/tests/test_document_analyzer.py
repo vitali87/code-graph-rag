@@ -252,6 +252,8 @@ class TestCreateDocumentAnalyzerTool:
                 "codebase_rag.tools.document_analyzer.genai.Client",
                 return_value=mock_genai_client,
             ):
+                from codebase_rag.tools.tool_descriptions import AgenticToolName
+
                 analyzer = DocumentAnalyzer(str(temp_project_root))
                 tool = create_document_analyzer_tool(analyzer)
-                assert tool.name == "analyze_document"
+                assert tool.name == AgenticToolName.ANALYZE_DOCUMENT

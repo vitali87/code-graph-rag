@@ -289,6 +289,7 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
 
     return Tool(
         function=replace_code_surgically,
+        name=td.AgenticToolName.REPLACE_CODE,
         description=td.FILE_EDITOR,
         requires_approval=True,
     )

@@ -64,7 +64,7 @@ class MCPToolsRegistry:
         self._tools: dict[str, ToolMetadata] = {
             cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
                 name=cs.MCPToolName.INDEX_REPOSITORY,
-                description=td.MCP_INDEX_REPOSITORY,
+                description=td.MCP_TOOLS[cs.MCPToolName.INDEX_REPOSITORY],
                 input_schema=MCPInputSchema(
                     type=cs.MCPSchemaType.OBJECT,
                     properties={},
@@ -75,7 +75,7 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
-                description=td.MCP_QUERY_CODE_GRAPH,
+                description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
                 input_schema=MCPInputSchema(
                     type=cs.MCPSchemaType.OBJECT,
                     properties={
@@ -91,7 +91,7 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
                 name=cs.MCPToolName.GET_CODE_SNIPPET,
-                description=td.MCP_GET_CODE_SNIPPET,
+                description=td.MCP_TOOLS[cs.MCPToolName.GET_CODE_SNIPPET],
                 input_schema=MCPInputSchema(
                     type=cs.MCPSchemaType.OBJECT,
                     properties={
@@ -107,7 +107,7 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
                 name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
-                description=td.MCP_SURGICAL_REPLACE_CODE,
+                description=td.MCP_TOOLS[cs.MCPToolName.SURGICAL_REPLACE_CODE],
                 input_schema=MCPInputSchema(
                     type=cs.MCPSchemaType.OBJECT,
                     properties={
@@ -135,7 +135,7 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.READ_FILE: ToolMetadata(
                 name=cs.MCPToolName.READ_FILE,
-                description=td.MCP_READ_FILE,
+                description=td.MCP_TOOLS[cs.MCPToolName.READ_FILE],
                 input_schema=MCPInputSchema(
                     type=cs.MCPSchemaType.OBJECT,
                     properties={
@@ -159,7 +159,7 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.WRITE_FILE: ToolMetadata(
                 name=cs.MCPToolName.WRITE_FILE,
-                description=td.MCP_WRITE_FILE,
+                description=td.MCP_TOOLS[cs.MCPToolName.WRITE_FILE],
                 input_schema=MCPInputSchema(
                     type=cs.MCPSchemaType.OBJECT,
                     properties={
@@ -182,7 +182,7 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
                 name=cs.MCPToolName.LIST_DIRECTORY,
-                description=td.MCP_LIST_DIRECTORY,
+                description=td.MCP_TOOLS[cs.MCPToolName.LIST_DIRECTORY],
                 input_schema=MCPInputSchema(
                     type=cs.MCPSchemaType.OBJECT,
                     properties={

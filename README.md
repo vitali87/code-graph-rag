@@ -565,13 +565,20 @@ The knowledge graph uses the following node types and relationships:
 <!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
+
+<!-- SECTION:language_mappings -->
 - **Python**: `function_definition`, `class_definition`
-- **JavaScript/TypeScript**: `function_declaration`, `arrow_function`, `class_declaration`
-- **C++**: `function_definition`, `template_declaration`, `lambda_expression`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
-- **Rust**: `function_item`, `struct_item`, `enum_item`, `impl_item`
+- **Javascript**: `function_declaration`, `generator_function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `class_declaration`, `class`
+- **Typescript**: `function_declaration`, `generator_function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `function_signature`, `class_declaration`, `class`, `abstract_class_declaration`, `enum_declaration`, `interface_declaration`, `type_alias_declaration`, `internal_module`
+- **Rust**: `function_item`, `function_signature_item`, `closure_expression`, `struct_item`, `enum_item`, `union_item`, `trait_item`, `impl_item`, `type_item`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
-- **Scala**: `function_definition`, `class_definition`, `object_definition`, `trait_definition`
-- **Java**: `method_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`
+- **Scala**: `function_definition`, `function_declaration`, `class_definition`, `object_definition`, `trait_definition`
+- **Java**: `method_declaration`, `constructor_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`, `annotation_type_declaration`, `record_declaration`
+- **Cpp**: `function_definition`, `declaration`, `field_declaration`, `template_declaration`, `lambda_expression`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
+- **C-Sharp**: `destructor_declaration`, `local_function_statement`, `function_pointer_type`, `constructor_declaration`, `anonymous_method_expression`, `lambda_expression`, `method_declaration`, `class_declaration`, `struct_declaration`, `enum_declaration`, `interface_declaration`
+- **Php**: `function_static_declaration`, `anonymous_function`, `function_definition`, `arrow_function`, `trait_declaration`, `enum_declaration`, `interface_declaration`, `class_declaration`
+- **Lua**: `function_declaration`, `function_definition`
+<!-- /SECTION:language_mappings -->
 
 ### Relationships
 
@@ -634,12 +641,26 @@ Configuration is managed through environment variables in `.env` file:
 - `LOCAL_MODEL_ENDPOINT`: Fallback endpoint for Ollama (default: `http://localhost:11434/v1`)
 
 ### Key Dependencies
-- **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
-- **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
-- **pydantic-ai**: AI agent framework for RAG orchestration
-- **pymgclient**: Memgraph Python client for graph database operations
-- **loguru**: Advanced logging with structured output
-- **python-dotenv**: Environment variable management
+
+<!-- SECTION:dependencies -->
+- **loguru**: Python logging made (stupidly) simple
+- **mcp**: Model Context Protocol SDK
+- **pydantic-ai**: Agent Framework / shim to use Pydantic with LLMs
+- **pydantic-settings**: Settings management using Pydantic
+- **pymgclient**: Memgraph database adapter for Python language
+- **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
+- **toml**: Python Library for Tom's Obvious, Minimal Language
+- **tree-sitter-python**: Python grammar for tree-sitter
+- **tree-sitter**: Python bindings to the Tree-sitter parsing library
+- **watchdog**: Filesystem events monitoring
+- **typer**: Typer, build great CLIs. Easy to code. Based on Python type hints.
+- **rich**: Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal
+- **prompt-toolkit**: Library for building powerful interactive command lines in Python
+- **diff-match-patch**: Repackaging of Google's Diff Match and Patch libraries.
+- **click**: Composable command line interface toolkit
+- **protobuf**
+- **defusedxml**: XML bomb protection for Python stdlib modules
+<!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools
 
@@ -660,6 +681,8 @@ The agent has access to a suite of tools to understand and interact with the cod
 | `analyze_document` | Analyzes documents (PDFs, images) to answer questions about their content. |
 | `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
 | `semantic_search` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+| `get_function_source` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+| `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
 <!-- /SECTION:agentic_tools -->
 
 ### Intelligent and Safe File Editing

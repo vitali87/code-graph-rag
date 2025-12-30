@@ -162,6 +162,6 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
 
     return Tool(
         function=analyze_document,
-        name=td.Name.ANALYZE_DOCUMENT,
+        name=td.AgenticToolName.ANALYZE_DOCUMENT,
         description=td.ANALYZE_DOCUMENT,
     )

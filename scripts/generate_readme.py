@@ -9,7 +9,7 @@ from loguru import logger
 PROJECT_ROOT = Path(__file__).parent.parent
 
 SECTION_PATTERN = re.compile(
-    r"(<!-- SECTION:(\w+) -->)\n.*?\n(<!-- /SECTION:\2 -->)",
+    r"(<!-- SECTION:(\w+) -->)\n(.*?)(<!-- /SECTION:\2 -->)",
     re.DOTALL,
 )
 
@@ -18,7 +18,7 @@ def replace_sections(readme_content: str, sections: dict[str, str]) -> str:
     def replacer(match: re.Match[str]) -> str:
         start_tag = match.group(1)
         section_name = match.group(2)
-        end_tag = match.group(3)
+        end_tag = match.group(4)
 
         if section_name in sections:
             return f"{start_tag}\n{sections[section_name]}\n{end_tag}"

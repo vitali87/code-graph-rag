@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
 from . import cli_help as ch
 from .constants import LANGUAGE_METADATA, SupportedLanguage
 from .language_spec import LANGUAGE_SPECS
-from .tools import tool_descriptions as td
+from .tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
 from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
 
 CHECK_MARK = "\u2713"
@@ -30,27 +31,6 @@ CLI_COMMANDS: list[tuple[str, str]] = [
     ("graph-loader", ch.CMD_GRAPH_LOADER),
     ("language", ch.CMD_LANGUAGE),
 ]
-
-MCP_TOOL_MAPPING: dict[str, str] = {
-    "index_repository": td.MCP_INDEX_REPOSITORY,
-    "query_code_graph": td.MCP_QUERY_CODE_GRAPH,
-    "get_code_snippet": td.MCP_GET_CODE_SNIPPET,
-    "surgical_replace_code": td.MCP_SURGICAL_REPLACE_CODE,
-    "read_file": td.MCP_READ_FILE,
-    "write_file": td.MCP_WRITE_FILE,
-    "list_directory": td.MCP_LIST_DIRECTORY,
-}
-
-AGENTIC_TOOL_MAPPING: dict[str, str] = {
-    "query_graph": td.CODEBASE_QUERY,
-    "read_file": td.FILE_READER,
-    "create_file": td.FILE_WRITER,
-    "replace_code": td.FILE_EDITOR,
-    "list_directory": td.DIRECTORY_LISTER,
-    "analyze_document": td.ANALYZE_DOCUMENT,
-    "execute_shell": td.SHELL_COMMAND,
-    "semantic_search": td.CODE_RETRIEVAL,
-}
 
 
 def format_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -138,27 +118,72 @@ def format_cli_commands_table() -> str:
     return format_markdown_table(["Command", "Description"], rows)
 
 
+def format_language_mappings() -> str:
+    lines: list[str] = []
+    for lang in SupportedLanguage:
+        spec = LANGUAGE_SPECS[lang]
+        node_types = list(spec.function_node_types) + list(spec.class_node_types)
+        formatted_types = ", ".join(f"`{t}`" for t in node_types)
+        lines.append(f"- **{lang.value.title()}**: {formatted_types}")
+    return "\n".join(lines)
+
+
 def format_mcp_tools_table() -> str:
-    rows = [[f"`{name}`", desc] for name, desc in MCP_TOOL_MAPPING.items()]
+    rows = [[f"`{name.value}`", desc] for name, desc in MCP_TOOLS.items()]
     return format_markdown_table(["Tool", "Description"], rows)
 
 
 def format_agentic_tools_table() -> str:
-    rows = [[f"`{name}`", desc] for name, desc in AGENTIC_TOOL_MAPPING.items()]
+    rows = [[f"`{name.value}`", desc] for name, desc in AGENTIC_TOOLS.items()]
     return format_markdown_table(["Tool", "Description"], rows)
+
+
+def extract_dependencies(pyproject_path: Path) -> list[str]:
+    content = pyproject_path.read_bytes()
+    data = tomllib.loads(content.decode())
+    deps = data.get("project", {}).get("dependencies", [])
+    return [re.split(r"[<>=!~\[]", dep)[0].strip() for dep in deps]
+
+
+def fetch_pypi_summary(package_name: str) -> str:
+    import urllib.request
+
+    url = f"https://pypi.org/pypi/{package_name}/json"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            import json
+
+            data = json.loads(response.read().decode())
+            return data.get("info", {}).get("summary", "") or ""
+    except Exception:
+        return ""
+
+
+def format_dependencies(deps: list[str]) -> str:
+    lines: list[str] = []
+    for name in deps:
+        summary = fetch_pypi_summary(name)
+        if summary:
+            lines.append(f"- **{name}**: {summary}")
+        else:
+            lines.append(f"- **{name}**")
+    return "\n".join(lines)
 
 
 def generate_all_sections(project_root: Path) -> dict[str, str]:
     makefile_commands = extract_makefile_commands(project_root / "Makefile")
     node_schemas = extract_node_schemas()
     rel_schemas = extract_relationship_schemas()
+    deps = extract_dependencies(project_root / "pyproject.toml")
 
     return {
         "makefile_commands": format_makefile_table(makefile_commands),
         "supported_languages": format_full_languages_table(),
+        "language_mappings": format_language_mappings(),
         "node_schemas": format_node_schemas_table(node_schemas),
         "relationship_schemas": format_relationship_schemas_table(rel_schemas),
         "cli_commands": format_cli_commands_table(),
         "mcp_tools": format_mcp_tools_table(),
         "agentic_tools": format_agentic_tools_table(),
+        "dependencies": format_dependencies(deps),
     }

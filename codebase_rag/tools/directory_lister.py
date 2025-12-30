@@ -52,5 +52,6 @@ class DirectoryLister:
 def create_directory_lister_tool(directory_lister: DirectoryLister) -> Tool:
     return Tool(
         function=directory_lister.list_directory_contents,
+        name=td.AgenticToolName.LIST_DIRECTORY,
         description=td.DIRECTORY_LISTER,
     )
