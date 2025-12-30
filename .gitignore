@@ -21,3 +21,4 @@ PROJECT.md
 .coverage
 .envrc
 .DS_Store
+.pypi_cache.json
