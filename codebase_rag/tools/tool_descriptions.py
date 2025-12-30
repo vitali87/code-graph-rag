@@ -48,6 +48,16 @@ CODE_RETRIEVAL = (
     "using its full qualified name."
 )
 
+SEMANTIC_SEARCH = (
+    "Performs a semantic search for functions based on a natural language query "
+    "describing their purpose, returning a list of potential matches with similarity scores."
+)
+
+GET_FUNCTION_SOURCE = (
+    "Retrieves the source code for a specific function or method using its internal node ID, "
+    "typically obtained from a semantic search result."
+)
+
 FILE_READER = (
     "Reads the content of text-based files. "
     "For documents like PDFs or images, use the 'analyze_document' tool instead."
@@ -121,7 +131,7 @@ AGENTIC_TOOLS: dict[AgenticToolName, str] = {
     AgenticToolName.LIST_DIRECTORY: DIRECTORY_LISTER,
     AgenticToolName.ANALYZE_DOCUMENT: ANALYZE_DOCUMENT,
     AgenticToolName.EXECUTE_SHELL: SHELL_COMMAND,
-    AgenticToolName.SEMANTIC_SEARCH: CODE_RETRIEVAL,
-    AgenticToolName.GET_FUNCTION_SOURCE: CODE_RETRIEVAL,
+    AgenticToolName.SEMANTIC_SEARCH: SEMANTIC_SEARCH,
+    AgenticToolName.GET_FUNCTION_SOURCE: GET_FUNCTION_SOURCE,
     AgenticToolName.GET_CODE_SNIPPET: CODE_RETRIEVAL,
 }

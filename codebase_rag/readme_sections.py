@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import json
 import re
+import time
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import NamedTuple
+
+from loguru import logger
 
 from .constants import LANGUAGE_METADATA, LanguageStatus, SupportedLanguage
 from .language_spec import LANGUAGE_SPECS
 from .tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
 from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
+
+PYPI_CACHE_FILE = Path(__file__).parent.parent / ".pypi_cache.json"
+PYPI_CACHE_TTL_SECONDS = 86400
 
 CHECK_MARK = "\u2713"
 DASH = "-"
@@ -153,28 +162,49 @@ def extract_dependencies(pyproject_path: Path) -> list[str]:
     return [re.split(r"[<>=!~\[]", dep)[0].strip() for dep in deps]
 
 
-def fetch_pypi_summary(package_name: str) -> str:
-    import urllib.request
+def _load_pypi_cache() -> dict[str, tuple[str, float]]:
+    if not PYPI_CACHE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(PYPI_CACHE_FILE.read_text())
+        return {k: (v[0], v[1]) for k, v in data.items()}
+    except (json.JSONDecodeError, KeyError, IndexError):
+        return {}
+
+
+def _save_pypi_cache(cache: dict[str, tuple[str, float]]) -> None:
+    PYPI_CACHE_FILE.write_text(json.dumps({k: list(v) for k, v in cache.items()}))
+
+
+def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -> str:
+    now = time.time()
+    if package_name in cache:
+        summary, timestamp = cache[package_name]
+        if now - timestamp < PYPI_CACHE_TTL_SECONDS:
+            return summary
 
     url = f"https://pypi.org/pypi/{package_name}/json"
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
-            import json
-
             data = json.loads(response.read().decode())
-            return data.get("info", {}).get("summary", "") or ""
-    except Exception:
+            summary = data.get("info", {}).get("summary", "") or ""
+            cache[package_name] = (summary, now)
+            return summary
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        logger.warning(f"Could not fetch PyPI summary for {package_name}: {e}")
         return ""
 
 
 def format_dependencies(deps: list[str]) -> str:
+    cache = _load_pypi_cache()
     lines: list[str] = []
     for name in deps:
-        summary = fetch_pypi_summary(name)
+        summary = fetch_pypi_summary(name, cache)
         if summary:
             lines.append(f"- **{name}**: {summary}")
         else:
             lines.append(f"- **{name}**")
+    _save_pypi_cache(cache)
     return "\n".join(lines)
 
 

@@ -680,8 +680,8 @@ The agent has access to a suite of tools to understand and interact with the cod
 | `list_directory` | Lists the contents of a directory to explore the codebase. |
 | `analyze_document` | Analyzes documents (PDFs, images) to answer questions about their content. |
 | `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
-| `semantic_search` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
-| `get_function_source` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. |
+| `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
 | `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
 <!-- /SECTION:agentic_tools -->
 
