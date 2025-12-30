@@ -6,7 +6,9 @@ import time
 import tomllib
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from typing import NamedTuple
 
 from loguru import logger
@@ -18,6 +20,7 @@ from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
 
 PYPI_CACHE_FILE = Path(__file__).parent.parent / ".pypi_cache.json"
 PYPI_CACHE_TTL_SECONDS = 86400
+_PYPI_CACHE_LOCK = Lock()
 
 CHECK_MARK = "\u2713"
 DASH = "-"
@@ -188,7 +191,8 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
         with urllib.request.urlopen(url, timeout=5) as response:
             data = json.loads(response.read().decode())
             summary = data.get("info", {}).get("summary", "") or ""
-            cache[package_name] = (summary, now)
+            with _PYPI_CACHE_LOCK:
+                cache[package_name] = (summary, now)
             return summary
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
         logger.warning(f"Could not fetch PyPI summary for {package_name}: {e}")
@@ -197,9 +201,10 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
 
 def format_dependencies(deps: list[str]) -> str:
     cache = _load_pypi_cache()
+    with ThreadPoolExecutor() as executor:
+        summaries = list(executor.map(lambda dep: fetch_pypi_summary(dep, cache), deps))
     lines: list[str] = []
-    for name in deps:
-        summary = fetch_pypi_summary(name, cache)
+    for name, summary in zip(deps, summaries):
         if summary:
             lines.append(f"- **{name}**: {summary}")
         else:
