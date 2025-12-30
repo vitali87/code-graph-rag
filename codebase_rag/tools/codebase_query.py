@@ -89,5 +89,6 @@ def create_query_tool(
 
     return Tool(
         function=query_codebase_knowledge_graph,
+        name=td.AgenticToolName.QUERY_GRAPH,
         description=td.CODEBASE_QUERY,
     )

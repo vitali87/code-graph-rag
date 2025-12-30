@@ -1,3 +1,16 @@
+from enum import StrEnum
+
+
+class CLICommandName(StrEnum):
+    START = "start"
+    INDEX = "index"
+    EXPORT = "export"
+    OPTIMIZE = "optimize"
+    MCP_SERVER = "mcp-server"
+    GRAPH_LOADER = "graph-loader"
+    LANGUAGE = "language"
+
+
 APP_DESCRIPTION = (
     "An accurate Retrieval-Augmented Generation (RAG) system that analyzes "
     "multi-language codebases using Tree-sitter, builds comprehensive knowledge "
@@ -57,3 +70,13 @@ HELP_GRAMMAR_URL = (
     "will use https://github.com/tree-sitter/tree-sitter-<language_name>"
 )
 HELP_KEEP_SUBMODULE = "Keep the git submodule (default: remove it)"
+
+CLI_COMMANDS: dict[CLICommandName, str] = {
+    CLICommandName.START: CMD_START,
+    CLICommandName.INDEX: CMD_INDEX,
+    CLICommandName.EXPORT: CMD_EXPORT,
+    CLICommandName.OPTIMIZE: CMD_OPTIMIZE,
+    CLICommandName.MCP_SERVER: CMD_MCP_SERVER,
+    CLICommandName.GRAPH_LOADER: CMD_GRAPH_LOADER,
+    CLICommandName.LANGUAGE: CMD_LANGUAGE,
+}

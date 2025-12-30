@@ -35,20 +35,23 @@ https://github.com/user-attachments/assets/2fec9ef5-7121-4e6c-9b68-dc8d8a835115
 
 ## 🚀 Features
 
-- **🌍 Multi-Language Support**:
+- **Multi-Language Support**:
 
-  | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
-  |----------|--------|------------|-----------|-----------------|---------|-------------------|---------------------|
-  | ✅ Python | **Fully Supported** | `.py` | ✅ | ✅ | ✅ | `__init__.py` | Type inference, decorators, nested functions |
-  | ✅ JavaScript | **Fully Supported** | `.js`, `.jsx` | ✅ | ✅ | ✅ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
-  | ✅ TypeScript | **Fully Supported** | `.ts`, `.tsx` | ✅ | ✅ | ✅ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
-  | ✅ C++ | **Fully Supported** | `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.hh`, `.ixx`, `.cppm`, `.ccm` | ✅ | ✅ (classes/structs/unions/enums) | ✅ | CMakeLists.txt, Makefile | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
-  | ✅ Lua | **Fully Supported** | `.lua` | ✅ | ✅ (tables/modules) | ✅ | - | Local/global functions, metatables, closures, coroutines |
-  | ✅ Rust | **Fully Supported** | `.rs` | ✅ | ✅ (structs/enums) | ✅ | - | impl blocks, associated functions |
-  | ✅ Java | **Fully Supported** | `.java` | ✅ | ✅ (classes/interfaces/enums) | ✅ | package declarations | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
-  | 🚧 Go | In Development | `.go` | ✅ | ✅ (structs) | ✅ | - | Methods, type declarations |
-  | 🚧 Scala | In Development | `.scala`, `.sc` | ✅ | ✅ (classes/objects/traits) | ✅ | package declarations | Case classes, objects |
-  | 🚧 C# | In Development | `.cs` | - | - | - | - | Classes, interfaces, generics (planned) |
+<!-- SECTION:supported_languages -->
+| Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
+|--------|------|----------|---------|---------------|-------|-----------------|-------------------|
+| C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
+| Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
+| JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
+| Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
+| Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
+| Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions |
+| TypeScript | Fully Supported | .ts, .tsx | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
+| C# | In Development | .cs | ✓ | ✓ | ✓ | - | Classes, interfaces, generics (planned) |
+| Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
+| PHP | In Development | .php | ✓ | ✓ | ✓ | - | Classes, functions, namespaces |
+| Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
+<!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
@@ -217,21 +220,24 @@ docker-compose up -d
 
 Use the Makefile for common development tasks:
 
+<!-- SECTION:makefile_commands -->
 | Command | Description |
-|---------|-------------|
-| `make help` | Show all available commands |
-| `make all` | Full dev setup: deps, grammars, hooks, and run tests |
+|-------|-----------|
+| `make help` | Show this help message |
+| `make all` | Install everything for full development environment (deps, grammars, hooks, tests) |
 | `make install` | Install project dependencies with full language support |
-| `make python` | Install dependencies for Python only |
-| `make dev` | Setup dev environment (install deps + pre-commit hooks) |
+| `make python` | Install project dependencies for Python only |
+| `make dev` | Setup development environment (install deps + pre-commit hooks) |
 | `make test` | Run unit tests only (fast, no Docker) |
 | `make test-parallel` | Run unit tests in parallel (fast, no Docker) |
 | `make test-integration` | Run integration tests (requires Docker) |
-| `make test-all` | Run all tests including integration (requires Docker) |
-| `make test-parallel-all` | Run all tests in parallel including integration (requires Docker) |
+| `make test-all` | Run all tests including integration and e2e (requires Docker) |
+| `make test-parallel-all` | Run all tests in parallel including integration and e2e (requires Docker) |
+| `make clean` | Clean up build artifacts and cache |
 | `make build-grammars` | Build grammar submodules |
 | `make watch` | Watch repository for changes and update graph in real-time |
-| `make clean` | Clean up build artifacts and cache |
+| `make readme` | Regenerate README.md from codebase |
+<!-- /SECTION:makefile_commands -->
 
 ## 🎯 Usage
 
@@ -510,12 +516,17 @@ claude mcp add --transport stdio graph-code \
 
 ### Available Tools
 
-- **index_repository** - Build knowledge graph
-- **query_code_graph** - Natural language queries
-- **get_code_snippet** - Retrieve code by qualified name
-- **surgical_replace_code** - Precise code edits
-- **read_file / write_file** - File operations
-- **list_directory** - Browse project structure
+<!-- SECTION:mcp_tools -->
+| Tool | Description |
+|----|-----------|
+| `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. |
+| `query_code_graph` | Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. |
+| `get_code_snippet` | Retrieve source code for a function, class, or method by its qualified name. Returns the source code, file path, line numbers, and docstring. |
+| `surgical_replace_code` | Surgically replace an exact code block in a file using diff-match-patch. Only modifies the exact target block, leaving the rest unchanged. |
+| `read_file` | Read the contents of a file from the project. Supports pagination for large files. |
+| `write_file` | Write content to a file, creating it if it doesn't exist. |
+| `list_directory` | List contents of a directory in the project. |
+<!-- /SECTION:mcp_tools -->
 
 ### Example Usage
 
@@ -532,34 +543,65 @@ For detailed setup, see [Claude Code Setup Guide](docs/claude-code-setup.md).
 The knowledge graph uses the following node types and relationships:
 
 ### Node Types
-- **Project**: Root node representing the entire repository
-- **Package**: Language packages (Python: `__init__.py`, etc.)
-- **Module**: Individual source code files (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.rs`, `.go`, `.scala`, `.sc`, `.java`)
-- **Class**: Class/Struct/Enum definitions across all languages
-- **Function**: Module-level functions and standalone functions
-- **Method**: Class methods and associated functions
-- **Folder**: Regular directories
-- **File**: All files (source code and others)
-- **ExternalPackage**: External dependencies
+
+<!-- SECTION:node_schemas -->
+| Label | Properties |
+|-----|----------|
+| Project | `{name: string}` |
+| Package | `{qualified_name: string, name: string, path: string}` |
+| Folder | `{path: string, name: string}` |
+| File | `{path: string, name: string, extension: string}` |
+| Module | `{qualified_name: string, name: string, path: string}` |
+| Class | `{qualified_name: string, name: string, decorators: list[string]}` |
+| Function | `{qualified_name: string, name: string, decorators: list[string]}` |
+| Method | `{qualified_name: string, name: string, decorators: list[string]}` |
+| Interface | `{qualified_name: string, name: string}` |
+| Enum | `{qualified_name: string, name: string}` |
+| Type | `{qualified_name: string, name: string}` |
+| Union | `{qualified_name: string, name: string}` |
+| ModuleInterface | `{qualified_name: string, name: string, path: string}` |
+| ModuleImplementation | `{qualified_name: string, name: string, path: string, implements_module: string}` |
+| ExternalPackage | `{name: string, version_spec: string}` |
+<!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
-- **Python**: `function_definition`, `class_definition`
-- **JavaScript/TypeScript**: `function_declaration`, `arrow_function`, `class_declaration`
-- **C++**: `function_definition`, `template_declaration`, `lambda_expression`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
-- **Rust**: `function_item`, `struct_item`, `enum_item`, `impl_item`
+
+<!-- SECTION:language_mappings -->
+- **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
+- **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
+- **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
+- **Lua**: `function_declaration`, `function_definition`
+- **Python**: `class_definition`, `function_definition`
+- **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
+- **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
+- **C#**: `anonymous_method_expression`, `class_declaration`, `constructor_declaration`, `destructor_declaration`, `enum_declaration`, `function_pointer_type`, `interface_declaration`, `lambda_expression`, `local_function_statement`, `method_declaration`, `struct_declaration`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
-- **Scala**: `function_definition`, `class_definition`, `object_definition`, `trait_definition`
-- **Java**: `method_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`
+- **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `function_static_declaration`, `interface_declaration`, `trait_declaration`
+- **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
+<!-- /SECTION:language_mappings -->
 
 ### Relationships
-- `CONTAINS_PACKAGE`: Project or Package contains Package nodes
-- `CONTAINS_FOLDER`: Project, Package, or Folder contains Folder nodes
-- `CONTAINS_FILE`: Project, Package, or Folder contains File nodes
-- `CONTAINS_MODULE`: Project, Package, or Folder contains Module nodes
-- `DEFINES`: Module defines classes/functions
-- `DEFINES_METHOD`: Class defines methods
-- `DEPENDS_ON_EXTERNAL`: Project depends on external packages
-- `CALLS`: Function or Method calls other functions/methods
+
+<!-- SECTION:relationship_schemas -->
+| Source | Relationship | Target |
+|------|------------|------|
+| Project, Package, Folder | CONTAINS_PACKAGE | Package |
+| Project, Package, Folder | CONTAINS_FOLDER | Folder |
+| Project, Package, Folder | CONTAINS_FILE | File |
+| Project, Package, Folder | CONTAINS_MODULE | Module |
+| Module | DEFINES | Class, Function |
+| Class | DEFINES_METHOD | Method |
+| Module | IMPORTS | Module |
+| Module | EXPORTS | Class, Function |
+| Module | EXPORTS_MODULE | ModuleInterface |
+| Module | IMPLEMENTS_MODULE | ModuleImplementation |
+| Class | INHERITS | Class |
+| Class | IMPLEMENTS | Interface |
+| Method | OVERRIDES | Method |
+| ModuleImplementation | IMPLEMENTS | ModuleInterface |
+| Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
+| Function, Method | CALLS | Function, Method |
+<!-- /SECTION:relationship_schemas -->
 
 ## 🔧 Configuration
 
@@ -599,12 +641,26 @@ Configuration is managed through environment variables in `.env` file:
 - `LOCAL_MODEL_ENDPOINT`: Fallback endpoint for Ollama (default: `http://localhost:11434/v1`)
 
 ### Key Dependencies
-- **tree-sitter**: Core Tree-sitter library for language-agnostic parsing
-- **tree-sitter-{language}**: Language-specific grammars (Python, JS, TS, Rust, Go, Scala, Java)
-- **pydantic-ai**: AI agent framework for RAG orchestration
-- **pymgclient**: Memgraph Python client for graph database operations
-- **loguru**: Advanced logging with structured output
-- **python-dotenv**: Environment variable management
+
+<!-- SECTION:dependencies -->
+- **loguru**: Python logging made (stupidly) simple
+- **mcp**: Model Context Protocol SDK
+- **pydantic-ai**: Agent Framework / shim to use Pydantic with LLMs
+- **pydantic-settings**: Settings management using Pydantic
+- **pymgclient**: Memgraph database adapter for Python language
+- **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
+- **toml**: Python Library for Tom's Obvious, Minimal Language
+- **tree-sitter-python**: Python grammar for tree-sitter
+- **tree-sitter**: Python bindings to the Tree-sitter parsing library
+- **watchdog**: Filesystem events monitoring
+- **typer**: Typer, build great CLIs. Easy to code. Based on Python type hints.
+- **rich**: Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal
+- **prompt-toolkit**: Library for building powerful interactive command lines in Python
+- **diff-match-patch**: Repackaging of Google's Diff Match and Patch libraries.
+- **click**: Composable command line interface toolkit
+- **protobuf**
+- **defusedxml**: XML bomb protection for Python stdlib modules
+<!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools
 
@@ -614,12 +670,20 @@ The agent is designed with a deliberate workflow to ensure it acts with context 
 
 The agent has access to a suite of tools to understand and interact with the codebase:
 
-- **`query_codebase_knowledge_graph`**: The primary tool for understanding the repository. It queries the graph database to find files, functions, classes, and their relationships based on natural language.
-- **`get_code_snippet`**: Retrieves the exact source code for a specific function or class.
-- **`read_file_content`**: Reads the entire content of a specified file.
-- **`create_new_file`**: Creates a new file with specified content.
-- **`replace_code_surgically`**: Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching.
-- **`execute_shell_command`**: Executes a shell command in the project's environment.
+<!-- SECTION:agentic_tools -->
+| Tool | Description |
+|----|-----------|
+| `query_graph` | Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'. |
+| `read_file` | Reads the content of text-based files. For documents like PDFs or images, use the 'analyze_document' tool instead. |
+| `create_file` | Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications. |
+| `replace_code` | Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching. |
+| `list_directory` | Lists the contents of a directory to explore the codebase. |
+| `analyze_document` | Analyzes documents (PDFs, images) to answer questions about their content. |
+| `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
+| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. |
+| `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
+| `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+<!-- /SECTION:agentic_tools -->
 
 ### Intelligent and Safe File Editing
 
@@ -633,19 +697,6 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 
 
 ## 🌍 Multi-Language Support
-
-### Language-Specific Features
-
-- **Python**: Full support including nested functions, methods, classes, decorators, type hints, and package structure
-- **JavaScript**: ES6 modules, CommonJS modules, prototype-based methods, object methods, arrow functions, classes, and JSX support
-- **TypeScript**: All JavaScript features plus interfaces, type aliases, enums, namespaces, generics, and advanced type inference
-- **C++**: Comprehensive support including functions, classes, structs, unions, enums, constructors, destructors, operator overloading, templates, lambdas, namespaces, C++20 modules, inheritance, method calls, and modern C++ features
-- **Lua**: Functions, local/global variables, tables, metatables, closures, coroutines, and object-oriented patterns
-- **Rust**: Functions, structs, enums, impl blocks, traits, and associated functions
-- **Go**: Functions, methods, type declarations, interfaces, and struct definitions
-- **Scala**: Functions, methods, classes, objects, traits, case classes, implicits, and Scala 3 syntax
-- **Java**: Methods, constructors, classes, interfaces, enums, annotations, generics, modern features (records, sealed classes, switch expressions), concurrency patterns, reflection, and enterprise frameworks
-
 
 ### Adding New Languages
 

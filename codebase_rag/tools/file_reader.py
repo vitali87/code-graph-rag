@@ -61,5 +61,6 @@ def create_file_reader_tool(file_reader: FileReader) -> Tool:
 
     return Tool(
         function=read_file_content,
+        name=td.AgenticToolName.READ_FILE,
         description=td.FILE_READER,
     )

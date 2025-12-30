@@ -37,6 +37,14 @@ repos:
         language: system
         types: [python]
         exclude: ^codec/schema_pb2\.py$
+-   repo: local
+    hooks:
+    -   id: generate-readme
+        name: generate README sections
+        entry: scripts/hooks/generate-readme.sh
+        language: script
+        pass_filenames: false
+        always_run: true
 -   repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.2.0
     hooks:

@@ -305,11 +305,12 @@ def test_create_semantic_search_tool_returns_tool() -> None:
     from pydantic_ai import Tool
 
     from codebase_rag.tools.semantic_search import create_semantic_search_tool
+    from codebase_rag.tools.tool_descriptions import AgenticToolName
 
     tool = create_semantic_search_tool()
 
     assert isinstance(tool, Tool)
-    assert tool.name == "semantic_search_functions"
+    assert tool.name == AgenticToolName.SEMANTIC_SEARCH
 
 
 @pytest.mark.skipif(
@@ -319,11 +320,12 @@ def test_create_get_function_source_tool_returns_tool() -> None:
     from pydantic_ai import Tool
 
     from codebase_rag.tools.semantic_search import create_get_function_source_tool
+    from codebase_rag.tools.tool_descriptions import AgenticToolName
 
     tool = create_get_function_source_tool()
 
     assert isinstance(tool, Tool)
-    assert tool.name == "get_function_source_by_id"
+    assert tool.name == AgenticToolName.GET_FUNCTION_SOURCE
 
 
 @pytest.mark.skipif(

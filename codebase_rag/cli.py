@@ -267,7 +267,7 @@ def optimize(
         )
 
 
-@app.command(name="mcp-server", help=ch.CMD_MCP_SERVER)
+@app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
 def mcp_server() -> None:
     try:
         from codebase_rag.mcp import main as mcp_main
@@ -286,7 +286,7 @@ def mcp_server() -> None:
         )
 
 
-@app.command(name="graph-loader", help=ch.CMD_GRAPH_LOADER)
+@app.command(name=ch.CLICommandName.GRAPH_LOADER, help=ch.CMD_GRAPH_LOADER)
 def graph_loader_command(
     graph_file: str = typer.Argument(..., help=ch.HELP_GRAPH_FILE),
 ) -> None:
@@ -319,7 +319,7 @@ def graph_loader_command(
 
 
 @app.command(
-    name="language",
+    name=ch.CLICommandName.LANGUAGE,
     help=ch.CMD_LANGUAGE,
     context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
 )

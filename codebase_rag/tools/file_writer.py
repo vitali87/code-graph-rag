@@ -45,6 +45,7 @@ def create_file_writer_tool(file_writer: FileWriter) -> Tool:
 
     return Tool(
         function=create_new_file,
+        name=td.AgenticToolName.CREATE_FILE,
         description=td.FILE_WRITER,
         requires_approval=True,
     )
