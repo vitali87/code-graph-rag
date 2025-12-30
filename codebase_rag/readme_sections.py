@@ -181,22 +181,23 @@ def _save_pypi_cache(cache: dict[str, tuple[str, float]]) -> None:
 
 def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -> str:
     now = time.time()
-    if package_name in cache:
-        summary, timestamp = cache[package_name]
-        if now - timestamp < PYPI_CACHE_TTL_SECONDS:
-            return summary
+    with _PYPI_CACHE_LOCK:
+        cached = cache.get(package_name)
+        if cached and now - cached[1] < PYPI_CACHE_TTL_SECONDS:
+            return cached[0]
 
     url = f"https://pypi.org/pypi/{package_name}/json"
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
             data = json.loads(response.read().decode())
             summary = data.get("info", {}).get("summary", "") or ""
-            with _PYPI_CACHE_LOCK:
-                cache[package_name] = (summary, now)
-            return summary
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
         logger.warning(f"Could not fetch PyPI summary for {package_name}: {e}")
         return ""
+
+    with _PYPI_CACHE_LOCK:
+        cache[package_name] = (summary, now)
+    return summary
 
 
 def format_dependencies(deps: list[str]) -> str:
