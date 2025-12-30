@@ -567,17 +567,17 @@ The knowledge graph uses the following node types and relationships:
 ### Language-Specific Mappings
 
 <!-- SECTION:language_mappings -->
-- **Python**: `function_definition`, `class_definition`
-- **Javascript**: `function_declaration`, `generator_function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `class_declaration`, `class`
-- **Typescript**: `function_declaration`, `generator_function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `function_signature`, `class_declaration`, `class`, `abstract_class_declaration`, `enum_declaration`, `interface_declaration`, `type_alias_declaration`, `internal_module`
-- **Rust**: `function_item`, `function_signature_item`, `closure_expression`, `struct_item`, `enum_item`, `union_item`, `trait_item`, `impl_item`, `type_item`
-- **Go**: `function_declaration`, `method_declaration`, `type_declaration`
-- **Scala**: `function_definition`, `function_declaration`, `class_definition`, `object_definition`, `trait_definition`
-- **Java**: `method_declaration`, `constructor_declaration`, `class_declaration`, `interface_declaration`, `enum_declaration`, `annotation_type_declaration`, `record_declaration`
-- **Cpp**: `function_definition`, `declaration`, `field_declaration`, `template_declaration`, `lambda_expression`, `class_specifier`, `struct_specifier`, `union_specifier`, `enum_specifier`
-- **C-Sharp**: `destructor_declaration`, `local_function_statement`, `function_pointer_type`, `constructor_declaration`, `anonymous_method_expression`, `lambda_expression`, `method_declaration`, `class_declaration`, `struct_declaration`, `enum_declaration`, `interface_declaration`
-- **Php**: `function_static_declaration`, `anonymous_function`, `function_definition`, `arrow_function`, `trait_declaration`, `enum_declaration`, `interface_declaration`, `class_declaration`
+- **Cpp**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
+- **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
+- **Javascript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
 - **Lua**: `function_declaration`, `function_definition`
+- **Python**: `class_definition`, `function_definition`
+- **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
+- **Typescript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
+- **C-Sharp**: `anonymous_method_expression`, `class_declaration`, `constructor_declaration`, `destructor_declaration`, `enum_declaration`, `function_pointer_type`, `interface_declaration`, `lambda_expression`, `local_function_statement`, `method_declaration`, `struct_declaration`
+- **Go**: `function_declaration`, `method_declaration`, `type_declaration`
+- **Php**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `function_static_declaration`, `interface_declaration`, `trait_declaration`
+- **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->
 
 ### Relationships

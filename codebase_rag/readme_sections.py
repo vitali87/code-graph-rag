@@ -14,7 +14,12 @@ from typing import NamedTuple
 from loguru import logger
 
 from . import cli_help as ch
-from .constants import LANGUAGE_METADATA, LanguageStatus, SupportedLanguage
+from .constants import (
+    ENCODING_UTF8,
+    LANGUAGE_METADATA,
+    LanguageStatus,
+    SupportedLanguage,
+)
 from .language_spec import LANGUAGE_SPECS
 from .tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
 from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
@@ -36,12 +41,14 @@ MAKEFILE_PATTERN = re.compile(r"^([a-zA-Z_-]+):.*?## (.+)$")
 
 
 def format_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
-    separator = "|".join("-" * max(len(h), 3) for h in headers)
+    esc_headers = [str(h).replace("|", "\\|") for h in headers]
+    esc_rows = [[str(cell).replace("|", "\\|") for cell in row] for row in rows]
+    separator = "|".join("-" * max(len(h), 3) for h in esc_headers)
     lines = [
-        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(esc_headers) + " |",
         "|" + separator + "|",
     ]
-    for row in rows:
+    for row in esc_rows:
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
 
@@ -130,11 +137,20 @@ def format_cli_commands_table() -> str:
 
 
 def format_language_mappings() -> str:
+    sorted_langs = sorted(
+        SupportedLanguage,
+        key=lambda lang: (
+            LANGUAGE_METADATA[lang].status != LanguageStatus.FULL,
+            lang.value,
+        ),
+    )
     lines: list[str] = []
-    for lang in SupportedLanguage:
+    for lang in sorted_langs:
         spec = LANGUAGE_SPECS[lang]
         node_types = list(spec.function_node_types) + list(spec.class_node_types)
-        formatted_types = ", ".join(f"`{t}`" for t in node_types)
+        if not node_types:
+            continue
+        formatted_types = ", ".join(f"`{t}`" for t in sorted(node_types))
         lines.append(f"- **{lang.value.title()}**: {formatted_types}")
     return "\n".join(lines)
 
@@ -180,7 +196,8 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
     url = f"https://pypi.org/pypi/{package_name}/json"
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
-            data = json.loads(response.read().decode())
+            charset = response.headers.get_content_charset() or ENCODING_UTF8
+            data = json.loads(response.read().decode(charset))
             summary = data.get("info", {}).get("summary", "") or ""
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
         logger.warning(f"Could not fetch PyPI summary for {package_name}: {e}")
