@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
-from .constants import LANGUAGE_METADATA, SupportedLanguage
+from .constants import LANGUAGE_METADATA, LanguageStatus, SupportedLanguage
 from .language_spec import LANGUAGE_SPECS
 from .tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
 from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
@@ -60,8 +60,15 @@ def format_full_languages_table() -> str:
         "Package Detection",
         "Additional Features",
     ]
+    sorted_langs = sorted(
+        SupportedLanguage,
+        key=lambda lang: (
+            LANGUAGE_METADATA[lang].status != LanguageStatus.FULL,
+            lang.value,
+        ),
+    )
     rows: list[list[str]] = []
-    for lang in SupportedLanguage:
+    for lang in sorted_langs:
         spec = LANGUAGE_SPECS[lang]
         meta = LANGUAGE_METADATA[lang]
         rows.append(
