@@ -13,6 +13,7 @@ from typing import NamedTuple
 
 from loguru import logger
 
+from . import cli_help as ch
 from .constants import LANGUAGE_METADATA, LanguageStatus, SupportedLanguage
 from .language_spec import LANGUAGE_SPECS
 from .tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
@@ -121,20 +122,10 @@ def format_relationship_schemas_table(schemas: list[tuple[str, str, str]]) -> st
     return format_markdown_table(["Source", "Relationship", "Target"], rows)
 
 
-def extract_cli_commands() -> list[tuple[str, str]]:
-    from .cli import app
-
-    commands: list[tuple[str, str]] = []
-    for cmd_info in app.registered_commands:
-        name = cmd_info.name or cmd_info.callback.__name__
-        help_text = cmd_info.help or ""
-        commands.append((name, help_text))
-    return commands
-
-
 def format_cli_commands_table() -> str:
-    commands = extract_cli_commands()
-    rows = [[f"`codebase-rag {cmd}`", desc] for cmd, desc in commands]
+    rows = [
+        [f"`codebase-rag {cmd.value}`", desc] for cmd, desc in ch.CLI_COMMANDS.items()
+    ]
     return format_markdown_table(["Command", "Description"], rows)
 
 
