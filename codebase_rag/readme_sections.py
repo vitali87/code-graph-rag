@@ -5,7 +5,6 @@ import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
-from . import cli_help as ch
 from .constants import LANGUAGE_METADATA, SupportedLanguage
 from .language_spec import LANGUAGE_SPECS
 from .tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
@@ -21,16 +20,6 @@ class MakeCommand(NamedTuple):
 
 
 MAKEFILE_PATTERN = re.compile(r"^([a-zA-Z_-]+):.*?## (.+)$")
-
-CLI_COMMANDS: list[tuple[str, str]] = [
-    ("start", ch.CMD_START),
-    ("index", ch.CMD_INDEX),
-    ("export", ch.CMD_EXPORT),
-    ("optimize", ch.CMD_OPTIMIZE),
-    ("mcp-server", ch.CMD_MCP_SERVER),
-    ("graph-loader", ch.CMD_GRAPH_LOADER),
-    ("language", ch.CMD_LANGUAGE),
-]
 
 
 def format_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -113,8 +102,20 @@ def format_relationship_schemas_table(schemas: list[tuple[str, str, str]]) -> st
     return format_markdown_table(["Source", "Relationship", "Target"], rows)
 
 
+def extract_cli_commands() -> list[tuple[str, str]]:
+    from .cli import app
+
+    commands: list[tuple[str, str]] = []
+    for cmd_info in app.registered_commands:
+        name = cmd_info.name or cmd_info.callback.__name__
+        help_text = cmd_info.help or ""
+        commands.append((name, help_text))
+    return commands
+
+
 def format_cli_commands_table() -> str:
-    rows = [[f"`codebase-rag {cmd}`", desc] for cmd, desc in CLI_COMMANDS]
+    commands = extract_cli_commands()
+    rows = [[f"`codebase-rag {cmd}`", desc] for cmd, desc in commands]
     return format_markdown_table(["Command", "Description"], rows)
 
 
