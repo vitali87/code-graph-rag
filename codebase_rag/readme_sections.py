@@ -211,16 +211,20 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
 
 def format_dependencies(deps: list[str]) -> str:
     cache = _load_pypi_cache()
-    with ThreadPoolExecutor() as executor:
-        summaries = list(executor.map(lambda dep: fetch_pypi_summary(dep, cache), deps))
-    lines: list[str] = []
-    for name, summary in zip(deps, summaries):
-        if summary:
-            lines.append(f"- **{name}**: {summary}")
-        else:
-            lines.append(f"- **{name}**")
-    _save_pypi_cache(cache)
-    return "\n".join(lines)
+    try:
+        with ThreadPoolExecutor() as executor:
+            summaries = list(
+                executor.map(lambda dep: fetch_pypi_summary(dep, cache), deps)
+            )
+        lines: list[str] = []
+        for name, summary in zip(deps, summaries):
+            if summary:
+                lines.append(f"- **{name}**: {summary}")
+            else:
+                lines.append(f"- **{name}**")
+        return "\n".join(lines)
+    finally:
+        _save_pypi_cache(cache)
 
 
 def generate_all_sections(project_root: Path) -> dict[str, str]:
