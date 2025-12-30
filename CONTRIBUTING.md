@@ -122,6 +122,10 @@ uv run ruff format .
 | **Pydantic BaseModel** | Configs needing validation, serialization, or schema generation |
 
 ```python
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import NamedTuple, TypedDict
+
 # StrEnum - string constants
 class Status(StrEnum):
     PENDING = "pending"
@@ -199,6 +203,9 @@ return Result(success=True, data=data)
 In Protocols and mixin classes, use regular method definitions instead of `Callable` attributes. Callables are not bound (don't receive `self` implicitly) and descriptors are not invoked.
 
 ```python
+from abc import abstractmethod
+from typing import Callable, Protocol
+
 # Bad - Callable attribute (not bound, not recommended)
 class MyMixin:
     process: Callable[[str], int]
@@ -290,6 +297,8 @@ Define constants, patterns, and types once. Import everywhere.
 Use `StrEnum` when string values are used in code (defaults, comparisons, assignments):
 
 ```python
+from enum import StrEnum
+
 # Bad - hardcoded strings scattered in code
 def process(mode: str = "fast"): ...
 if status == "pending": ...
@@ -308,6 +317,8 @@ if status == Status.PENDING: ...
 Use an Enum with `__call__` for parameterized error messages:
 
 ```python
+from enum import Enum
+
 class Error(str, Enum):
     NOT_FOUND = "Item '{id}' not found"
     INVALID = "Invalid value"
