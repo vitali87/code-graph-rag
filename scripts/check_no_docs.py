@@ -44,12 +44,19 @@ def _has_allowed_marker(comment: str) -> bool:
     return any(marker in comment for marker in ALLOWED_COMMENT_MARKERS)
 
 
-def check_file(filepath: str) -> list[str]:
+def check_module_docstring(filepath: str, lines: list[str]) -> str | None:
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(COMMENT_CHAR):
+            continue
+        if any(stripped.startswith(q) for q in TRIPLE_QUOTES):
+            return f"{filepath}:{i}: module-level docstring found"
+        return None
+    return None
+
+
+def check_inline_comments(filepath: str, lines: list[str]) -> list[str]:
     errors = []
-
-    with open(filepath) as f:
-        lines = f.readlines()
-
     in_multiline_string = False
     found_first_code = False
 
@@ -83,6 +90,20 @@ def check_file(filepath: str) -> list[str]:
     return errors
 
 
+def check_file(filepath: str) -> list[str]:
+    errors = []
+
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    if docstring_error := check_module_docstring(filepath, lines):
+        errors.append(docstring_error)
+
+    errors.extend(check_inline_comments(filepath, lines))
+
+    return errors
+
+
 def main() -> int:
     all_errors = []
 
@@ -91,9 +112,9 @@ def main() -> int:
         all_errors.extend(errors)
 
     if all_errors:
-        logger.error(logs.COMMENTS_FOUND)
+        logger.error(logs.NO_DOCS_VIOLATIONS_FOUND)
         for error in all_errors:
-            logger.error(logs.COMMENT_ERROR.format(error=error))
+            logger.error(logs.NO_DOCS_ERROR.format(error=error))
         return 1
 
     return 0

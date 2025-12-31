@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from scripts.check_comments import (
+from scripts.check_no_docs import (
     _has_allowed_marker,
     check_file,
+    check_module_docstring,
     find_comment_start,
 )
 
@@ -99,14 +100,16 @@ class TestCheckFile:
         assert len(errors) == 1
         assert "bad comment" in errors[0]
 
-    def test_shebang_and_module_docstring_ignored(self) -> None:
+    def test_shebang_and_module_docstring_detected(self) -> None:
         content = '#!/usr/bin/env python3\n"""Module docstring."""\nx = 1  # bad\n'
         with NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(content)
             f.flush()
             errors = check_file(f.name)
         Path(f.name).unlink()
-        assert len(errors) == 1
+        assert len(errors) == 2
+        assert any("module-level docstring found" in e for e in errors)
+        assert any("bad" in e for e in errors)
 
     def test_multiline_string_not_treated_as_comment(self) -> None:
         content = 'x = """\nhas # inside\n"""\ny = 1  # bad\n'
@@ -144,3 +147,52 @@ class TestCheckFile:
             errors = check_file(f.name)
         Path(f.name).unlink()
         assert len(errors) == 2
+
+
+class TestCheckModuleDocstring:
+    def test_no_docstring(self) -> None:
+        lines = ["import os\n", "x = 1\n"]
+        assert check_module_docstring("test.py", lines) is None
+
+    def test_double_quote_docstring(self) -> None:
+        lines = ['"""Module docstring."""\n', "x = 1\n"]
+        result = check_module_docstring("test.py", lines)
+        assert result is not None
+        assert "module-level docstring found" in result
+
+    def test_single_quote_docstring(self) -> None:
+        lines = ["'''Module docstring.'''\n", "x = 1\n"]
+        result = check_module_docstring("test.py", lines)
+        assert result is not None
+        assert "module-level docstring found" in result
+
+    def test_empty_lines_before_code(self) -> None:
+        lines = ["\n", "\n", "import os\n"]
+        assert check_module_docstring("test.py", lines) is None
+
+    def test_empty_lines_before_docstring(self) -> None:
+        lines = ["\n", "\n", '"""Docstring."""\n']
+        result = check_module_docstring("test.py", lines)
+        assert result is not None
+        assert "module-level docstring found" in result
+
+    def test_shebang_then_docstring(self) -> None:
+        lines = ["#!/usr/bin/env python3\n", '"""Docstring."""\n']
+        result = check_module_docstring("test.py", lines)
+        assert result is not None
+        assert "test.py:2" in result
+        assert "module-level docstring found" in result
+
+    def test_shebang_then_code(self) -> None:
+        lines = ["#!/usr/bin/env python3\n", "import os\n"]
+        assert check_module_docstring("test.py", lines) is None
+
+    def test_file_with_module_docstring_detected(self) -> None:
+        content = '"""Module docstring."""\nx = 1\n'
+        with NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(content)
+            f.flush()
+            errors = check_file(f.name)
+        Path(f.name).unlink()
+        assert len(errors) == 1
+        assert "module-level docstring found" in errors[0]
