@@ -446,3 +446,54 @@ class TestSecurityIntegration:
         result = await shell_commander.execute("cat file.txt | rm -rf .")
         assert result.return_code == -1
         assert "dangerous" in result.stderr.lower()
+
+    async def test_invalid_syntax_rejected(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute("echo 'unclosed quote")
+        assert result.return_code == -1
+        assert "syntax" in result.stderr.lower()
+
+
+class TestAwkSedXargsPatterns:
+    def test_awk_system_call_detected(self) -> None:
+        reason = _check_dangerous_patterns("awk '{ system(\"id\") }'")
+        assert reason is not None
+        assert "awk" in reason.lower()
+
+    def test_awk_getline_detected(self) -> None:
+        reason = _check_dangerous_patterns("awk '{ getline < \"/etc/passwd\" }'")
+        assert reason is not None
+        assert "getline" in reason.lower()
+
+    def test_awk_pipe_detected(self) -> None:
+        reason = _check_dangerous_patterns("awk '{ print | \"sh\" }'")
+        assert reason is not None
+        assert "awk" in reason.lower()
+
+    def test_sed_execute_flag_detected(self) -> None:
+        reason = _check_dangerous_patterns("sed 'e id'")
+        assert reason is not None
+        assert "sed" in reason.lower()
+
+    def test_xargs_rm_detected(self) -> None:
+        reason = _check_dangerous_patterns("find . -name '*.tmp' | xargs rm")
+        assert reason is not None
+        assert "xargs" in reason.lower()
+
+    def test_xargs_chmod_detected(self) -> None:
+        reason = _check_dangerous_patterns("find . | xargs chmod 777")
+        assert reason is not None
+        assert "xargs" in reason.lower()
+
+    def test_safe_awk_not_flagged(self) -> None:
+        assert _check_dangerous_patterns("awk '{print $1}'") is None
+        assert _check_dangerous_patterns("awk -F: '{print $1}'") is None
+
+    def test_safe_sed_not_flagged(self) -> None:
+        assert _check_dangerous_patterns("sed 's/foo/bar/g'") is None
+        assert _check_dangerous_patterns("sed -n '1,10p'") is None
+
+    def test_safe_xargs_not_flagged(self) -> None:
+        assert _check_dangerous_patterns("find . -name '*.py' | xargs wc -l") is None
+        assert _check_dangerous_patterns("echo file.txt | xargs cat") is None

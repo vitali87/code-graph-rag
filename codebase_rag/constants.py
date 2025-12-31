@@ -943,6 +943,14 @@ SHELL_DANGEROUS_PATTERNS = (
     (r"base64\s+-d.*\|", "base64 decode pipe execution"),
     (r"eval\s+", "eval command"),
     (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
+    (r"awk\s+.*system\s*\(", "awk system() call"),
+    (r"awk\s+.*getline", "awk getline command execution"),
+    (r"awk\s+.*\|", "awk pipe execution"),
+    (r"sed\s+.*'e", "sed execute flag"),
+    (r'sed\s+.*"e', "sed execute flag"),
+    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
+    (r"xargs\s+-I.*sh", "xargs shell execution"),
+    (r"xargs\s+.*bash", "xargs bash execution"),
 )
 
 # (H) Query tool messages

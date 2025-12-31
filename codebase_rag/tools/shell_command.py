@@ -16,7 +16,7 @@ from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
 
-PIPE_SPLIT_PATTERN = re.compile(r"\s*(?:\||\|\||&&|;)\s*")
+PIPE_SPLIT_PATTERN = re.compile(r"\s*(?:\|\||&&|\||;)\s*")
 DANGEROUS_PATTERNS_COMPILED = tuple(
     (re.compile(pattern, re.IGNORECASE), reason)
     for pattern, reason in cs.SHELL_DANGEROUS_PATTERNS
@@ -30,12 +30,9 @@ def _extract_commands(command: str) -> list[str]:
         segment = segment.strip()
         if not segment:
             continue
-        try:
-            parts = shlex.split(segment)
-            if parts:
-                commands.append(parts[0])
-        except ValueError:
-            continue
+        parts = shlex.split(segment)
+        if parts:
+            commands.append(parts[0])
     return commands
 
 
@@ -134,7 +131,15 @@ class ShellCommander:
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
 
-            commands = _extract_commands(command)
+            try:
+                commands = _extract_commands(command)
+            except ValueError as e:
+                err_msg = te.COMMAND_INVALID_SYNTAX.format(segment=str(e))
+                logger.error(err_msg)
+                return ShellCommandResult(
+                    return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+                )
+
             if not commands:
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR,
@@ -173,21 +178,27 @@ class ShellCommander:
                     continue
                 try:
                     cmd_parts = shlex.split(segment)
-                    if not cmd_parts:
-                        continue
-                    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment)
-                    if is_dangerous:
-                        err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
-                            cmd=cmd_parts[0], reason=reason
-                        )
-                        logger.error(err_msg)
-                        return ShellCommandResult(
-                            return_code=cs.SHELL_RETURN_CODE_ERROR,
-                            stdout="",
-                            stderr=err_msg,
-                        )
                 except ValueError:
-                    pass
+                    err_msg = te.COMMAND_INVALID_SYNTAX.format(segment=segment)
+                    logger.error(err_msg)
+                    return ShellCommandResult(
+                        return_code=cs.SHELL_RETURN_CODE_ERROR,
+                        stdout="",
+                        stderr=err_msg,
+                    )
+                if not cmd_parts:
+                    continue
+                is_dangerous, reason = _is_dangerous_command(cmd_parts, segment)
+                if is_dangerous:
+                    err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
+                        cmd=cmd_parts[0], reason=reason
+                    )
+                    logger.error(err_msg)
+                    return ShellCommandResult(
+                        return_code=cs.SHELL_RETURN_CODE_ERROR,
+                        stdout="",
+                        stderr=err_msg,
+                    )
 
             process = await asyncio.create_subprocess_shell(
                 command,
