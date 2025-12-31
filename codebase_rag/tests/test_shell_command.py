@@ -309,6 +309,13 @@ class TestPipedCommandExecution:
         assert result.return_code == -1
         assert "Subshell" in result.stderr
 
+    async def test_dangerous_command_in_pipe_rejected(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute("ls | rm -rf /")
+        assert result.return_code == -1
+        assert "dangerous" in result.stderr.lower()
+
 
 class TestPipedCommandApproval:
     def test_all_read_only_no_approval(self) -> None:

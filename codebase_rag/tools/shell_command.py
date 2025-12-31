@@ -119,13 +119,22 @@ class ShellCommander:
                         stderr=err_msg,
                     )
 
-            cmd_parts = shlex.split(command)
-            if _is_dangerous_command(cmd_parts):
-                err_msg = te.COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
-                )
+            for segment in PIPE_SPLIT_PATTERN.split(command):
+                segment = segment.strip()
+                if not segment:
+                    continue
+                try:
+                    cmd_parts = shlex.split(segment)
+                    if cmd_parts and _is_dangerous_command(cmd_parts):
+                        err_msg = te.COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
+                        logger.error(err_msg)
+                        return ShellCommandResult(
+                            return_code=cs.SHELL_RETURN_CODE_ERROR,
+                            stdout="",
+                            stderr=err_msg,
+                        )
+                except ValueError:
+                    pass
 
             process = await asyncio.create_subprocess_shell(
                 command,
