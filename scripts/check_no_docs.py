@@ -45,12 +45,12 @@ def _has_allowed_marker(comment: str) -> bool:
 
 
 def check_module_docstring(filepath: str, lines: list[str]) -> str | None:
-    for line in lines:
+    for i, line in enumerate(lines, 1):
         stripped = line.strip()
-        if not stripped:
+        if not stripped or stripped.startswith(COMMENT_CHAR):
             continue
         if any(stripped.startswith(q) for q in TRIPLE_QUOTES):
-            return f"{filepath}:1: module-level docstring found"
+            return f"{filepath}:{i}: module-level docstring found"
         return None
     return None
 
