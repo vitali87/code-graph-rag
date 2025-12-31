@@ -863,6 +863,8 @@ SHELL_CMD_GIT = "git"
 SHELL_CMD_RM = "rm"
 SHELL_RM_RF_FLAG = "-rf"
 SHELL_RETURN_CODE_ERROR = -1
+SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
+SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"

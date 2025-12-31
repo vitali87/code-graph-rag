@@ -40,6 +40,7 @@ COMMAND_NOT_ALLOWED = "Command '{cmd}' is not in the allowlist.{suggestion} Avai
 COMMAND_EMPTY = "Empty command provided."
 COMMAND_DANGEROUS = "Rejected dangerous command: {cmd}"
 COMMAND_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
+COMMAND_SUBSHELL_NOT_ALLOWED = "Subshell execution not allowed: {pattern}"
 
 # (H) Code retrieval errors
 CODE_ENTITY_NOT_FOUND = "Entity not found in graph."

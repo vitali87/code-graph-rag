@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shlex
 from pathlib import Path
 
@@ -15,6 +16,31 @@ from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
 
+PIPE_SPLIT_PATTERN = re.compile(r"\s*(?:\||\|\||&&|;)\s*")
+
+
+def _extract_commands(command: str) -> list[str]:
+    segments = PIPE_SPLIT_PATTERN.split(command)
+    commands = []
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+        try:
+            parts = shlex.split(segment)
+            if parts:
+                commands.append(parts[0])
+        except ValueError:
+            continue
+    return commands
+
+
+def _has_subshell(command: str) -> str | None:
+    for pattern in cs.SHELL_SUBSHELL_PATTERNS:
+        if pattern in command:
+            return pattern
+    return None
+
 
 def _is_dangerous_command(cmd_parts: list[str]) -> bool:
     command = cmd_parts[0]
@@ -22,23 +48,32 @@ def _is_dangerous_command(cmd_parts: list[str]) -> bool:
 
 
 def _requires_approval(command: str) -> bool:
-    try:
-        cmd_parts = shlex.split(command)
-    except ValueError:
+    segments = PIPE_SPLIT_PATTERN.split(command)
+    has_commands = False
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+        try:
+            parts = shlex.split(segment)
+        except ValueError:
+            return True
+
+        if not parts:
+            continue
+
+        has_commands = True
+        base_cmd = parts[0]
+        if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
+            continue
+
+        if base_cmd == cs.SHELL_CMD_GIT and len(parts) > 1:
+            if parts[1] in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
+                continue
+
         return True
 
-    if not cmd_parts:
-        return True
-
-    base_cmd = cmd_parts[0]
-
-    if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
-        return False
-
-    if base_cmd == cs.SHELL_CMD_GIT and len(cmd_parts) > 1:
-        return cmd_parts[1] not in settings.SHELL_SAFE_GIT_SUBCOMMANDS
-
-    return True
+    return not has_commands
 
 
 class ShellCommander:
@@ -51,30 +86,40 @@ class ShellCommander:
     async def execute(self, command: str) -> ShellCommandResult:
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
-            cmd_parts = shlex.split(command)
-            if not cmd_parts:
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=te.COMMAND_EMPTY,
-                )
-
-            if cmd_parts[0] not in settings.SHELL_COMMAND_ALLOWLIST:
-                available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
-                suggestion = (
-                    cs.GREP_SUGGESTION if cmd_parts[0] == cs.SHELL_CMD_GREP else ""
-                )
-
-                err_msg = te.COMMAND_NOT_ALLOWED.format(
-                    cmd=cmd_parts[0],
-                    suggestion=suggestion,
-                    available=available_commands,
+            if subshell_pattern := _has_subshell(command):
+                err_msg = te.COMMAND_SUBSHELL_NOT_ALLOWED.format(
+                    pattern=subshell_pattern
                 )
                 logger.error(err_msg)
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
 
+            commands = _extract_commands(command)
+            if not commands:
+                return ShellCommandResult(
+                    return_code=cs.SHELL_RETURN_CODE_ERROR,
+                    stdout="",
+                    stderr=te.COMMAND_EMPTY,
+                )
+
+            available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+            for cmd in commands:
+                if cmd not in settings.SHELL_COMMAND_ALLOWLIST:
+                    suggestion = cs.GREP_SUGGESTION if cmd == cs.SHELL_CMD_GREP else ""
+                    err_msg = te.COMMAND_NOT_ALLOWED.format(
+                        cmd=cmd,
+                        suggestion=suggestion,
+                        available=available_commands,
+                    )
+                    logger.error(err_msg)
+                    return ShellCommandResult(
+                        return_code=cs.SHELL_RETURN_CODE_ERROR,
+                        stdout="",
+                        stderr=err_msg,
+                    )
+
+            cmd_parts = shlex.split(command)
             if _is_dangerous_command(cmd_parts):
                 err_msg = te.COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
                 logger.error(err_msg)
@@ -82,8 +127,8 @@ class ShellCommander:
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
 
-            process = await asyncio.create_subprocess_exec(
-                *cmd_parts,
+            process = await asyncio.create_subprocess_shell(
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.project_root,

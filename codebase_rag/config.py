@@ -95,6 +95,17 @@ class AppConfig(BaseSettings):
             "mv",
             "mkdir",
             "rmdir",
+            "wc",
+            "head",
+            "tail",
+            "sort",
+            "uniq",
+            "cut",
+            "tr",
+            "xargs",
+            "awk",
+            "sed",
+            "tee",
         }
     )
     SHELL_READ_ONLY_COMMANDS: frozenset[str] = frozenset(
@@ -105,6 +116,13 @@ class AppConfig(BaseSettings):
             "pwd",
             "rg",
             "echo",
+            "wc",
+            "head",
+            "tail",
+            "sort",
+            "uniq",
+            "cut",
+            "tr",
         }
     )
     SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset(
