@@ -497,3 +497,60 @@ class TestAwkSedXargsPatterns:
     def test_safe_xargs_not_flagged(self) -> None:
         assert _check_dangerous_patterns("find . -name '*.py' | xargs wc -l") is None
         assert _check_dangerous_patterns("echo file.txt | xargs cat") is None
+
+
+class TestAwkSedXargsIntegration:
+    async def test_awk_system_rejected(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("echo test | awk '{ system(\"id\") }'")
+        assert result.return_code == -1
+        assert (
+            "dangerous" in result.stderr.lower() or "pattern" in result.stderr.lower()
+        )
+
+    async def test_awk_getline_rejected(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute(
+            "awk 'BEGIN { getline < \"/etc/passwd\" }'"
+        )
+        assert result.return_code == -1
+
+    async def test_sed_execute_rejected(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("echo test | sed 'e id'")
+        assert result.return_code == -1
+
+    async def test_xargs_rm_rejected(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("find . -name '*.tmp' | xargs rm")
+        assert result.return_code == -1
+        assert (
+            "dangerous" in result.stderr.lower() or "pattern" in result.stderr.lower()
+        )
+
+    async def test_xargs_chmod_rejected(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("find . | xargs chmod 777")
+        assert result.return_code == -1
+
+    async def test_safe_awk_allowed(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        test_file = temp_project_root / "data.txt"
+        test_file.write_text("hello world\n", encoding="utf-8")
+        result = await shell_commander.execute("cat data.txt | awk '{print $1}'")
+        assert result.return_code == 0
+        assert "hello" in result.stdout
+
+    async def test_safe_sed_allowed(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        test_file = temp_project_root / "data.txt"
+        test_file.write_text("foo bar\n", encoding="utf-8")
+        result = await shell_commander.execute("cat data.txt | sed 's/foo/baz/'")
+        assert result.return_code == 0
+        assert "baz" in result.stdout
+
+    async def test_safe_xargs_allowed(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        test_file = temp_project_root / "file.txt"
+        test_file.write_text("content\n", encoding="utf-8")
+        result = await shell_commander.execute("echo file.txt | xargs cat")
+        assert result.return_code == 0
+        assert "content" in result.stdout
