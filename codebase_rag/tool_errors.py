@@ -39,6 +39,8 @@ DIRECTORY_LIST_FAILED = "Error: Could not list contents of '{path}'."
 COMMAND_NOT_ALLOWED = "Command '{cmd}' is not in the allowlist.{suggestion} Available commands: {available}"
 COMMAND_EMPTY = "Empty command provided."
 COMMAND_DANGEROUS = "Rejected dangerous command: {cmd}"
+COMMAND_DANGEROUS_BLOCKED = "Blocked dangerous command '{cmd}': {reason}"
+COMMAND_DANGEROUS_PATTERN = "Command matches dangerous pattern: {reason}"
 COMMAND_TIMEOUT = "Command '{cmd}' timed out after {timeout} seconds."
 COMMAND_SUBSHELL_NOT_ALLOWED = "Subshell execution not allowed: {pattern}"
 

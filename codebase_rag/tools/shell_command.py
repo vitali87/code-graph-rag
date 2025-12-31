@@ -17,6 +17,10 @@ from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
 
 PIPE_SPLIT_PATTERN = re.compile(r"\s*(?:\||\|\||&&|;)\s*")
+DANGEROUS_PATTERNS_COMPILED = tuple(
+    (re.compile(pattern, re.IGNORECASE), reason)
+    for pattern, reason in cs.SHELL_DANGEROUS_PATTERNS
+)
 
 
 def _extract_commands(command: str) -> list[str]:
@@ -42,9 +46,44 @@ def _has_subshell(command: str) -> str | None:
     return None
 
 
-def _is_dangerous_command(cmd_parts: list[str]) -> bool:
-    command = cmd_parts[0]
-    return command == cs.SHELL_CMD_RM and cs.SHELL_RM_RF_FLAG in cmd_parts
+def _is_blocked_command(cmd: str) -> bool:
+    return cmd in cs.SHELL_DANGEROUS_COMMANDS
+
+
+def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
+        return False
+    for part in cmd_parts[1:]:
+        if part in cs.SHELL_RM_DANGEROUS_FLAGS:
+            return True
+        if part.startswith("-") and "r" in part and "f" in part:
+            return True
+    return False
+
+
+def _check_dangerous_patterns(full_command: str) -> str | None:
+    for pattern, reason in DANGEROUS_PATTERNS_COMPILED:
+        if pattern.search(full_command):
+            return reason
+    return None
+
+
+def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool, str]:
+    if not cmd_parts:
+        return False, ""
+
+    base_cmd = cmd_parts[0]
+
+    if _is_blocked_command(base_cmd):
+        return True, f"blocked command: {base_cmd}"
+
+    if _is_dangerous_rm(cmd_parts):
+        return True, "rm with dangerous flags"
+
+    if reason := _check_dangerous_patterns(full_segment):
+        return True, reason
+
+    return False, ""
 
 
 def _requires_approval(command: str) -> bool:
@@ -119,14 +158,28 @@ class ShellCommander:
                         stderr=err_msg,
                     )
 
+            if pattern_reason := _check_dangerous_patterns(command):
+                err_msg = te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
+                logger.error(err_msg)
+                return ShellCommandResult(
+                    return_code=cs.SHELL_RETURN_CODE_ERROR,
+                    stdout="",
+                    stderr=err_msg,
+                )
+
             for segment in PIPE_SPLIT_PATTERN.split(command):
                 segment = segment.strip()
                 if not segment:
                     continue
                 try:
                     cmd_parts = shlex.split(segment)
-                    if cmd_parts and _is_dangerous_command(cmd_parts):
-                        err_msg = te.COMMAND_DANGEROUS.format(cmd=" ".join(cmd_parts))
+                    if not cmd_parts:
+                        continue
+                    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment)
+                    if is_dangerous:
+                        err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
+                            cmd=cmd_parts[0], reason=reason
+                        )
                         logger.error(err_msg)
                         return ShellCommandResult(
                             return_code=cs.SHELL_RETURN_CODE_ERROR,

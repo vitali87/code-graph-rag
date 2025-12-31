@@ -866,6 +866,85 @@ SHELL_RETURN_CODE_ERROR = -1
 SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 
+# (H) Dangerous commands - absolutely blocked
+SHELL_DANGEROUS_COMMANDS = frozenset(
+    {
+        "dd",
+        "mkfs",
+        "mkfs.ext4",
+        "mkfs.ext3",
+        "mkfs.xfs",
+        "mkfs.btrfs",
+        "mkfs.vfat",
+        "fdisk",
+        "parted",
+        "shred",
+        "wipefs",
+        "mkswap",
+        "swapon",
+        "swapoff",
+        "mount",
+        "umount",
+        "insmod",
+        "rmmod",
+        "modprobe",
+        "shutdown",
+        "reboot",
+        "halt",
+        "poweroff",
+        "init",
+        "telinit",
+        "systemctl",
+        "service",
+        "chroot",
+        "nohup",
+        "disown",
+        "crontab",
+        "at",
+        "batch",
+    }
+)
+
+# (H) Dangerous rm flags
+SHELL_RM_DANGEROUS_FLAGS = frozenset({"-rf", "-fr"})
+SHELL_RM_FORCE_FLAG = "-f"
+
+# (H) Dangerous patterns (regex strings) - checked against full command
+SHELL_DANGEROUS_PATTERNS = (
+    (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
+    (r"rm\s+.*-[rf]+\s+/[a-z]+($|\s)", "rm with system directory"),
+    (r"rm\s+.*-[rf]+\s+~($|\s)", "rm with home directory"),
+    (r"rm\s+.*-[rf]+\s+\*", "rm with wildcard"),
+    (r"rm\s+.*-[rf]+\s+\.\.", "rm with parent directory"),
+    (r"dd\s+.*of=/dev/", "dd writing to device"),
+    (r">\s*/dev/sd[a-z]", "redirect to disk device"),
+    (r">\s*/dev/nvme", "redirect to nvme device"),
+    (r">\s*/dev/null.*<", "null device manipulation"),
+    (r"chmod\s+.*-R\s+777\s+/", "recursive 777 on root"),
+    (r"chmod\s+.*777\s+/($|\s)", "777 on root"),
+    (r"chown\s+.*-R\s+.*\s+/($|\s)", "recursive chown on root"),
+    (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
+    (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
+    (r":\(\)\s*\{.*:\s*\|", "fork bomb pattern"),
+    (r"mv\s+.*\s+/dev/null", "move to /dev/null"),
+    (r"ln\s+-[sf]+\s+/dev/null", "symlink to /dev/null"),
+    (r"cat\s+.*/dev/zero", "cat /dev/zero"),
+    (r"cat\s+.*/dev/random", "cat /dev/random"),
+    (r">\s*/etc/passwd", "overwrite passwd"),
+    (r">\s*/etc/shadow", "overwrite shadow"),
+    (r">\s*/etc/sudoers", "overwrite sudoers"),
+    (r"echo\s+.*>\s*/etc/", "write to /etc"),
+    (r"python.*-c.*import\s+os", "python os import in command"),
+    (r"perl\s+-e", "perl one-liner"),
+    (r"ruby\s+-e", "ruby one-liner"),
+    (r"nc\s+-[el]", "netcat listener"),
+    (r"ncat\s+-[el]", "ncat listener"),
+    (r"/dev/tcp/", "bash tcp device"),
+    (r"base64\s+-d.*\|", "base64 decode pipe execution"),
+    (r"eval\s+", "eval command"),
+    (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
+)
+
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"

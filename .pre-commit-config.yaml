@@ -39,6 +39,13 @@ repos:
         language: script
         pass_filenames: false
         always_run: true
+-   repo: https://github.com/PyCQA/bandit
+    rev: 1.9.2
+    hooks:
+    -   id: bandit
+        args: ["-c", "pyproject.toml", "--severity-level", "high"]
+        additional_dependencies: ["bandit[toml]"]
+        exclude: ^(codebase_rag/tests/|scripts/)
 -   repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.2.0
     hooks:
