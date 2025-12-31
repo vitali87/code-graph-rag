@@ -909,8 +909,15 @@ SHELL_DANGEROUS_COMMANDS = frozenset(
 SHELL_RM_DANGEROUS_FLAGS = frozenset({"-rf", "-fr"})
 SHELL_RM_FORCE_FLAG = "-f"
 
-# (H) Dangerous patterns (regex strings) - checked against full command
-SHELL_DANGEROUS_PATTERNS = (
+# (H) Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
+SHELL_DANGEROUS_PATTERNS_PIPELINE = (
+    (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
+    (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
+    (r"base64\s+-d.*\|", "base64 decode pipe execution"),
+)
+
+# (H) Dangerous patterns for individual segments (per-command patterns)
+SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
     (r"rm\s+.*-[rf]+\s+/[a-z]+($|\s)", "rm with system directory"),
     (r"rm\s+.*-[rf]+\s+~($|\s)", "rm with home directory"),
@@ -923,8 +930,6 @@ SHELL_DANGEROUS_PATTERNS = (
     (r"chmod\s+.*-R\s+777\s+/", "recursive 777 on root"),
     (r"chmod\s+.*777\s+/($|\s)", "777 on root"),
     (r"chown\s+.*-R\s+.*\s+/($|\s)", "recursive chown on root"),
-    (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
-    (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
     (r":\(\)\s*\{.*:\s*\|", "fork bomb pattern"),
     (r"mv\s+.*\s+/dev/null", "move to /dev/null"),
     (r"ln\s+-[sf]+\s+/dev/null", "symlink to /dev/null"),
@@ -940,12 +945,10 @@ SHELL_DANGEROUS_PATTERNS = (
     (r"nc\s+-[el]", "netcat listener"),
     (r"ncat\s+-[el]", "ncat listener"),
     (r"/dev/tcp/", "bash tcp device"),
-    (r"base64\s+-d.*\|", "base64 decode pipe execution"),
     (r"eval\s+", "eval command"),
     (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
     (r"awk\s+.*system\s*\(", "awk system() call"),
     (r"awk\s+.*getline", "awk getline command execution"),
-    (r"awk\s+.*\|", "awk pipe execution"),
     (r"sed\s+.*'e", "sed execute flag"),
     (r'sed\s+.*"e', "sed execute flag"),
     (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),

@@ -17,9 +17,13 @@ from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
 
 PIPE_SPLIT_PATTERN = re.compile(r"\s*(?:\|\||&&|\||;)\s*")
-DANGEROUS_PATTERNS_COMPILED = tuple(
+PIPELINE_PATTERNS_COMPILED = tuple(
     (re.compile(pattern, re.IGNORECASE), reason)
-    for pattern, reason in cs.SHELL_DANGEROUS_PATTERNS
+    for pattern, reason in cs.SHELL_DANGEROUS_PATTERNS_PIPELINE
+)
+SEGMENT_PATTERNS_COMPILED = tuple(
+    (re.compile(pattern, re.IGNORECASE), reason)
+    for pattern, reason in cs.SHELL_DANGEROUS_PATTERNS_SEGMENT
 )
 
 
@@ -58,9 +62,16 @@ def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
     return False
 
 
-def _check_dangerous_patterns(full_command: str) -> str | None:
-    for pattern, reason in DANGEROUS_PATTERNS_COMPILED:
+def _check_pipeline_patterns(full_command: str) -> str | None:
+    for pattern, reason in PIPELINE_PATTERNS_COMPILED:
         if pattern.search(full_command):
+            return reason
+    return None
+
+
+def _check_segment_patterns(segment: str) -> str | None:
+    for pattern, reason in SEGMENT_PATTERNS_COMPILED:
+        if pattern.search(segment):
             return reason
     return None
 
@@ -77,7 +88,7 @@ def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool
     if _is_dangerous_rm(cmd_parts):
         return True, "rm with dangerous flags"
 
-    if reason := _check_dangerous_patterns(full_segment):
+    if reason := _check_segment_patterns(full_segment):
         return True, reason
 
     return False, ""
@@ -163,7 +174,7 @@ class ShellCommander:
                         stderr=err_msg,
                     )
 
-            if pattern_reason := _check_dangerous_patterns(command):
+            if pattern_reason := _check_pipeline_patterns(command):
                 err_msg = te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
                 logger.error(err_msg)
                 return ShellCommandResult(
