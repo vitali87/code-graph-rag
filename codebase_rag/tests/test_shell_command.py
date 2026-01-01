@@ -16,6 +16,7 @@ from codebase_rag.tools.shell_command import (
     _is_blocked_command,
     _is_dangerous_command,
     _is_dangerous_rm,
+    _parse_command,
     _requires_approval,
     _validate_segment,
     create_shell_command_tool,
@@ -322,6 +323,47 @@ class TestHasSubshell:
 
     def test_dollar_in_variable(self) -> None:
         assert _has_subshell("echo $HOME") is None
+
+
+class TestParseCommandEdgeCases:
+    def test_mixed_quote_styles(self) -> None:
+        groups = _parse_command('echo "it\'s" \'a "test"\'')
+        assert len(groups) == 1
+        assert groups[0].commands == ['echo "it\'s" \'a "test"\'']
+
+    def test_escaped_operators_in_quotes(self) -> None:
+        groups = _parse_command('echo "a | b"')
+        assert len(groups) == 1
+        assert groups[0].commands == ['echo "a | b"']
+
+    def test_pipe_in_single_quotes(self) -> None:
+        groups = _parse_command("echo 'a && b || c'")
+        assert len(groups) == 1
+        assert groups[0].commands == ["echo 'a && b || c'"]
+
+    def test_empty_command(self) -> None:
+        groups = _parse_command("")
+        assert len(groups) == 0
+
+    def test_trailing_pipe(self) -> None:
+        groups = _parse_command("ls |")
+        assert len(groups) == 1
+        assert groups[0].commands == ["ls"]
+
+    def test_trailing_and(self) -> None:
+        groups = _parse_command("ls &&")
+        assert len(groups) == 1
+        assert groups[0].commands == ["ls"]
+
+    def test_leading_operator(self) -> None:
+        groups = _parse_command("| ls")
+        assert len(groups) == 1
+        assert groups[0].commands == ["ls"]
+
+    def test_multiple_operators_in_sequence(self) -> None:
+        groups = _parse_command("ls | | wc")
+        assert len(groups) == 1
+        assert groups[0].commands == ["ls", "wc"]
 
 
 class TestPipedCommandExecution:

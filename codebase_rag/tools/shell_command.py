@@ -17,7 +17,6 @@ from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
 from . import tool_descriptions as td
 
-PIPE_SPLIT_PATTERN = re.compile(r"\s*(?:\|\||&&|\||;)\s*")
 PIPELINE_PATTERNS_COMPILED = tuple(
     (re.compile(pattern, re.IGNORECASE), reason)
     for pattern, reason in cs.SHELL_DANGEROUS_PATTERNS_PIPELINE
@@ -47,9 +46,15 @@ def _is_outside_quotes(command: str, pos: int) -> bool:
     i = 0
     while i < pos:
         char = command[i]
-        if char == "\\" and i + 1 < pos:
-            i += 2
-            continue
+        if char == "\\" and i + 1 < pos and not in_single:
+            if in_double:
+                next_char = command[i + 1]
+                if next_char in ('"', "\\", "$", "`"):
+                    i += 2
+                    continue
+            else:
+                i += 2
+                continue
         if char == "'" and not in_double:
             in_single = not in_single
         elif char == '"' and not in_single:
@@ -229,33 +234,41 @@ def _has_redirect_operators(parts: list[str]) -> bool:
 
 
 def _requires_approval(command: str) -> bool:
-    segments = PIPE_SPLIT_PATTERN.split(command)
+    if not command.strip():
+        return True
+
+    try:
+        groups = _parse_command(command)
+    except Exception:
+        return True
+
     has_commands = False
-    for segment in segments:
-        segment = segment.strip()
-        if not segment:
-            continue
-        try:
-            parts = shlex.split(segment)
-        except ValueError:
-            return True
+    for group in groups:
+        for segment in group.commands:
+            segment = segment.strip()
+            if not segment:
+                continue
+            try:
+                parts = shlex.split(segment)
+            except ValueError:
+                return True
 
-        if not parts:
-            continue
-
-        if _has_redirect_operators(parts):
-            return True
-
-        has_commands = True
-        base_cmd = parts[0]
-        if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
-            continue
-
-        if base_cmd == cs.SHELL_CMD_GIT and len(parts) > 1:
-            if parts[1] in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
+            if not parts:
                 continue
 
-        return True
+            if _has_redirect_operators(parts):
+                return True
+
+            has_commands = True
+            base_cmd = parts[0]
+            if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
+                continue
+
+            if base_cmd == cs.SHELL_CMD_GIT and len(parts) > 1:
+                if parts[1] in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
+                    continue
+
+            return True
 
     return not has_commands
 
@@ -268,31 +281,11 @@ class ShellCommander:
 
     async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
         start_time = time.monotonic()
-
-        if len(segments) == 1:
-            cmd_parts = shlex.split(segments[0])
-            proc = await asyncio.create_subprocess_exec(
-                cmd_parts[0],
-                *cmd_parts[1:],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.project_root,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self.timeout
-            )
-            return_code = (
-                proc.returncode
-                if proc.returncode is not None
-                else cs.SHELL_RETURN_CODE_ERROR
-            )
-            return return_code, stdout or b"", stderr or b""
-
         input_data: bytes | None = None
         all_stderr: list[bytes] = []
         last_return_code = 0
 
-        for i, segment in enumerate(segments):
+        for segment in segments:
             elapsed = time.monotonic() - start_time
             remaining_timeout = self.timeout - elapsed
             if remaining_timeout <= 0:
