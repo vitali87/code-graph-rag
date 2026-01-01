@@ -40,29 +40,6 @@ def _is_outside_single_quotes(command: str, pos: int) -> bool:
     return not in_single
 
 
-def _is_outside_quotes(command: str, pos: int) -> bool:
-    in_single = False
-    in_double = False
-    i = 0
-    while i < pos:
-        char = command[i]
-        if char == "\\" and i + 1 < pos and not in_single:
-            if in_double:
-                next_char = command[i + 1]
-                if next_char in ('"', "\\", "$", "`"):
-                    i += 2
-                    continue
-            else:
-                i += 2
-                continue
-        if char == "'" and not in_double:
-            in_single = not in_single
-        elif char == '"' and not in_single:
-            in_double = not in_double
-        i += 1
-    return not in_single and not in_double
-
-
 def _has_subshell(command: str) -> str | None:
     for pattern in cs.SHELL_SUBSHELL_PATTERNS:
         start = 0
@@ -153,13 +130,6 @@ def _parse_command(command: str) -> list[CommandGroup]:
         groups.append(CommandGroup(current_pipeline, pending_operator))
 
     return groups
-
-
-def _split_pipeline(command: str) -> list[str]:
-    groups = _parse_command(command)
-    if len(groups) != 1 or groups[0].operator is not None:
-        return []
-    return groups[0].commands
 
 
 def _is_blocked_command(cmd: str) -> bool:
