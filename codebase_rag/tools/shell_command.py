@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import shlex
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -25,6 +26,19 @@ SEGMENT_PATTERNS_COMPILED = tuple(
     (re.compile(pattern, re.IGNORECASE), reason)
     for pattern, reason in cs.SHELL_DANGEROUS_PATTERNS_SEGMENT
 )
+
+
+def _is_outside_single_quotes(command: str, pos: int) -> bool:
+    in_single = False
+    i = 0
+    while i < pos:
+        char = command[i]
+        if char == "'" and not in_single:
+            in_single = True
+        elif char == "'" and in_single:
+            in_single = False
+        i += 1
+    return not in_single
 
 
 def _is_outside_quotes(command: str, pos: int) -> bool:
@@ -51,7 +65,7 @@ def _has_subshell(command: str) -> str | None:
             pos = command.find(pattern, start)
             if pos == -1:
                 break
-            if _is_outside_quotes(command, pos):
+            if _is_outside_single_quotes(command, pos):
                 return pattern
             start = pos + 1
     return None
@@ -253,6 +267,8 @@ class ShellCommander:
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
     async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
+        start_time = time.monotonic()
+
         if len(segments) == 1:
             cmd_parts = shlex.split(segments[0])
             proc = await asyncio.create_subprocess_exec(
@@ -265,38 +281,49 @@ class ShellCommander:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout
             )
-            return proc.returncode or 0, stdout or b"", stderr or b""
+            return_code = (
+                proc.returncode
+                if proc.returncode is not None
+                else cs.SHELL_RETURN_CODE_ERROR
+            )
+            return return_code, stdout or b"", stderr or b""
 
         input_data: bytes | None = None
         all_stderr: list[bytes] = []
         last_return_code = 0
 
         for i, segment in enumerate(segments):
+            elapsed = time.monotonic() - start_time
+            remaining_timeout = self.timeout - elapsed
+            if remaining_timeout <= 0:
+                raise TimeoutError
+
             cmd_parts = shlex.split(segment)
-            is_last = i == len(segments) - 1
             proc = await asyncio.create_subprocess_exec(
                 cmd_parts[0],
                 *cmd_parts[1:],
                 stdin=asyncio.subprocess.PIPE if input_data is not None else None,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-                if is_last
-                else asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=self.project_root,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(input=input_data), timeout=self.timeout
+                    proc.communicate(input=input_data), timeout=remaining_timeout
                 )
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 raise
 
-            last_return_code = proc.returncode or 0
+            last_return_code = (
+                proc.returncode
+                if proc.returncode is not None
+                else cs.SHELL_RETURN_CODE_ERROR
+            )
             input_data = stdout
 
-            if is_last and stderr:
+            if stderr:
                 all_stderr.append(stderr)
 
         return last_return_code, input_data or b"", b"".join(all_stderr)

@@ -384,19 +384,27 @@ class TestQuoteAwareSubshellDetection:
         assert _has_subshell("echo '$(whoami)'") is None
         assert _has_subshell("rg '\\$\\('") is None
 
-    def test_subshell_in_double_quotes_not_detected(self) -> None:
-        assert _has_subshell('echo "$(whoami)"') is None
+    def test_subshell_in_double_quotes_detected(self) -> None:
+        assert _has_subshell('echo "$(whoami)"') == "$("
+        assert _has_subshell('echo "`id`"') == "`"
 
     def test_subshell_outside_quotes_detected(self) -> None:
         assert _has_subshell("echo $(whoami)") == "$("
         assert _has_subshell("echo `id`") == "`"
 
-    async def test_quoted_subshell_pattern_allowed(
+    async def test_single_quoted_subshell_pattern_allowed(
         self, shell_commander: ShellCommander
     ) -> None:
         result = await shell_commander.execute("echo 'a subshell is $(...)'")
         assert result.return_code == 0
         assert "a subshell is $(...)" in result.stdout
+
+    async def test_double_quoted_subshell_rejected(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute('echo "$(whoami)"')
+        assert result.return_code == -1
+        assert "Subshell" in result.stderr
 
 
 class TestShellOperators:
