@@ -533,7 +533,7 @@ class TestAwkSedXargsPatterns:
         assert "getline" in reason.lower()
 
     def test_sed_execute_flag_detected(self) -> None:
-        reason = _check_segment_patterns("sed 'e id'")
+        reason = _check_segment_patterns("sed 's/foo/bar/e'")
         assert reason is not None
         assert "sed" in reason.lower()
 
@@ -550,10 +550,14 @@ class TestAwkSedXargsPatterns:
     def test_safe_awk_not_flagged(self) -> None:
         assert _check_segment_patterns("awk '{print $1}'") is None
         assert _check_segment_patterns("awk -F: '{print $1}'") is None
+        assert _check_segment_patterns("awk '{print \"getline\"}'") is None
+        assert _check_segment_patterns("awk '{my_getline_var = 1}'") is None
 
     def test_safe_sed_not_flagged(self) -> None:
         assert _check_segment_patterns("sed 's/foo/bar/g'") is None
         assert _check_segment_patterns("sed -n '1,10p'") is None
+        assert _check_segment_patterns("sed -e 's/foo/bar/'") is None
+        assert _check_segment_patterns("sed 's/file/e/g'") is None
 
     def test_safe_xargs_not_flagged(self) -> None:
         assert _check_segment_patterns("xargs wc -l") is None
@@ -575,7 +579,7 @@ class TestAwkSedXargsIntegration:
         assert result.return_code == -1
 
     async def test_sed_execute_rejected(self, shell_commander: ShellCommander) -> None:
-        result = await shell_commander.execute("echo test | sed 'e id'")
+        result = await shell_commander.execute("echo test | sed 's/test/id/e'")
         assert result.return_code == -1
 
     async def test_xargs_rm_rejected(self, shell_commander: ShellCommander) -> None:
