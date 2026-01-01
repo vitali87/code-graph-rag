@@ -978,7 +978,7 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
     (r"awk\s+.*system\s*\(", "awk system() call"),
     (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
-    (r"sed\s+.*s/[^/]*/[^/]*/[gip]*e[gip]*", "sed execute flag"),
+    (r"sed\s+.*s(.).*?\1.*?\1[gip]*e", "sed execute flag"),
     (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
     (r"xargs\s+-I.*sh", "xargs shell execution"),
     (r"xargs\s+.*bash", "xargs bash execution"),

@@ -649,6 +649,11 @@ class TestAwkSedXargsPatterns:
         assert reason is not None
         assert "sed" in reason.lower()
 
+    def test_sed_execute_alternate_delimiters(self) -> None:
+        assert _check_segment_patterns("sed 's#foo#bar#e'") is not None
+        assert _check_segment_patterns("sed 's|foo|bar|e'") is not None
+        assert _check_segment_patterns("sed 's@foo@bar@ge'") is not None
+
     def test_xargs_rm_detected(self) -> None:
         reason = _check_segment_patterns("xargs rm")
         assert reason is not None
