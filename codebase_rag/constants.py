@@ -865,6 +865,7 @@ SHELL_RM_RF_FLAG = "-rf"
 SHELL_RETURN_CODE_ERROR = -1
 SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
+SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
 
 # (H) Dangerous commands - absolutely blocked
 SHELL_DANGEROUS_COMMANDS = frozenset(

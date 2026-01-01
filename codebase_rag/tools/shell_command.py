@@ -27,19 +27,6 @@ SEGMENT_PATTERNS_COMPILED = tuple(
 )
 
 
-def _extract_commands(command: str) -> list[str]:
-    segments = PIPE_SPLIT_PATTERN.split(command)
-    commands = []
-    for segment in segments:
-        segment = segment.strip()
-        if not segment:
-            continue
-        parts = shlex.split(segment)
-        if parts:
-            commands.append(parts[0])
-    return commands
-
-
 def _has_subshell(command: str) -> str | None:
     for pattern in cs.SHELL_SUBSHELL_PATTERNS:
         if pattern in command:
@@ -54,12 +41,8 @@ def _is_blocked_command(cmd: str) -> bool:
 def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False
-    for part in cmd_parts[1:]:
-        if part in cs.SHELL_RM_DANGEROUS_FLAGS:
-            return True
-        if part.startswith("-") and "r" in part and "f" in part:
-            return True
-    return False
+    flags = "".join(part for part in cmd_parts[1:] if part.startswith("-"))
+    return "r" in flags and "f" in flags
 
 
 def _check_pipeline_patterns(full_command: str) -> str | None:
@@ -94,6 +77,34 @@ def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool
     return False, ""
 
 
+def _validate_segment(segment: str, available_commands: str) -> str | None:
+    try:
+        cmd_parts = shlex.split(segment)
+    except ValueError:
+        return te.COMMAND_INVALID_SYNTAX.format(segment=segment)
+
+    if not cmd_parts:
+        return None
+
+    base_cmd = cmd_parts[0]
+
+    if base_cmd not in settings.SHELL_COMMAND_ALLOWLIST:
+        suggestion = cs.GREP_SUGGESTION if base_cmd == cs.SHELL_CMD_GREP else ""
+        return te.COMMAND_NOT_ALLOWED.format(
+            cmd=base_cmd, suggestion=suggestion, available=available_commands
+        )
+
+    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment)
+    if is_dangerous:
+        return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
+
+    return None
+
+
+def _has_redirect_operators(parts: list[str]) -> bool:
+    return any(p in cs.SHELL_REDIRECT_OPERATORS for p in parts)
+
+
 def _requires_approval(command: str) -> bool:
     segments = PIPE_SPLIT_PATTERN.split(command)
     has_commands = False
@@ -108,6 +119,9 @@ def _requires_approval(command: str) -> bool:
 
         if not parts:
             continue
+
+        if _has_redirect_operators(parts):
+            return True
 
         has_commands = True
         base_cmd = parts[0]
@@ -142,38 +156,6 @@ class ShellCommander:
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
 
-            try:
-                commands = _extract_commands(command)
-            except ValueError as e:
-                err_msg = te.COMMAND_INVALID_SYNTAX.format(segment=str(e))
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
-                )
-
-            if not commands:
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=te.COMMAND_EMPTY,
-                )
-
-            available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
-            for cmd in commands:
-                if cmd not in settings.SHELL_COMMAND_ALLOWLIST:
-                    suggestion = cs.GREP_SUGGESTION if cmd == cs.SHELL_CMD_GREP else ""
-                    err_msg = te.COMMAND_NOT_ALLOWED.format(
-                        cmd=cmd,
-                        suggestion=suggestion,
-                        available=available_commands,
-                    )
-                    logger.error(err_msg)
-                    return ShellCommandResult(
-                        return_code=cs.SHELL_RETURN_CODE_ERROR,
-                        stdout="",
-                        stderr=err_msg,
-                    )
-
             if pattern_reason := _check_pipeline_patterns(command):
                 err_msg = te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
                 logger.error(err_msg)
@@ -183,33 +165,27 @@ class ShellCommander:
                     stderr=err_msg,
                 )
 
+            available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+            has_segments = False
             for segment in PIPE_SPLIT_PATTERN.split(command):
                 segment = segment.strip()
                 if not segment:
                     continue
-                try:
-                    cmd_parts = shlex.split(segment)
-                except ValueError:
-                    err_msg = te.COMMAND_INVALID_SYNTAX.format(segment=segment)
+                has_segments = True
+                if err_msg := _validate_segment(segment, available_commands):
                     logger.error(err_msg)
                     return ShellCommandResult(
                         return_code=cs.SHELL_RETURN_CODE_ERROR,
                         stdout="",
                         stderr=err_msg,
                     )
-                if not cmd_parts:
-                    continue
-                is_dangerous, reason = _is_dangerous_command(cmd_parts, segment)
-                if is_dangerous:
-                    err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
-                        cmd=cmd_parts[0], reason=reason
-                    )
-                    logger.error(err_msg)
-                    return ShellCommandResult(
-                        return_code=cs.SHELL_RETURN_CODE_ERROR,
-                        stdout="",
-                        stderr=err_msg,
-                    )
+
+            if not has_segments:
+                return ShellCommandResult(
+                    return_code=cs.SHELL_RETURN_CODE_ERROR,
+                    stdout="",
+                    stderr=te.COMMAND_EMPTY,
+                )
 
             process = await asyncio.create_subprocess_shell(  # nosec B602
                 command,

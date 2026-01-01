@@ -11,12 +11,13 @@ from codebase_rag.tools.shell_command import (
     ShellCommander,
     _check_pipeline_patterns,
     _check_segment_patterns,
-    _extract_commands,
+    _has_redirect_operators,
     _has_subshell,
     _is_blocked_command,
     _is_dangerous_command,
     _is_dangerous_rm,
     _requires_approval,
+    _validate_segment,
     create_shell_command_tool,
 )
 
@@ -235,28 +236,78 @@ class TestToolApprovalBehavior:
         assert not test_file.exists()
 
 
-class TestExtractCommands:
-    def test_simple_command(self) -> None:
-        assert _extract_commands("ls -la") == ["ls"]
+class TestValidateSegment:
+    def test_valid_command(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        assert _validate_segment("ls -la", available) is None
 
-    def test_pipe(self) -> None:
-        assert _extract_commands("find . -name '*.py' | wc -l") == ["find", "wc"]
+    def test_command_not_in_allowlist(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        error = _validate_segment("curl http://example.com", available)
+        assert error is not None
+        assert "not in the allowlist" in error
 
-    def test_and_operator(self) -> None:
-        assert _extract_commands("ls && pwd") == ["ls", "pwd"]
+    def test_dangerous_command(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        error = _validate_segment("rm -rf /", available)
+        assert error is not None
+        assert "dangerous" in error.lower()
 
-    def test_or_operator(self) -> None:
-        assert _extract_commands("ls || echo 'failed'") == ["ls", "echo"]
+    def test_invalid_syntax(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        error = _validate_segment("echo 'unclosed", available)
+        assert error is not None
+        assert "syntax" in error.lower()
 
-    def test_semicolon(self) -> None:
-        assert _extract_commands("ls; pwd; echo done") == ["ls", "pwd", "echo"]
+    def test_empty_segment(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        assert _validate_segment("", available) is None
 
-    def test_complex_pipeline(self) -> None:
-        cmd = "find . -type f | grep py | wc -l"
-        assert _extract_commands(cmd) == ["find", "grep", "wc"]
 
-    def test_empty_command(self) -> None:
-        assert _extract_commands("") == []
+class TestHasRedirectOperators:
+    def test_output_redirect(self) -> None:
+        assert _has_redirect_operators(["echo", "test", ">", "file.txt"]) is True
+
+    def test_append_redirect(self) -> None:
+        assert _has_redirect_operators(["echo", "test", ">>", "file.txt"]) is True
+
+    def test_input_redirect(self) -> None:
+        assert _has_redirect_operators(["cat", "<", "file.txt"]) is True
+
+    def test_heredoc(self) -> None:
+        assert _has_redirect_operators(["cat", "<<", "EOF"]) is True
+
+    def test_no_redirect(self) -> None:
+        assert _has_redirect_operators(["ls", "-la"]) is False
+        assert _has_redirect_operators(["echo", "hello"]) is False
+
+
+class TestSeparateRmFlags:
+    def test_separate_r_f_flags(self) -> None:
+        assert _is_dangerous_rm(["rm", "-r", "-f", "/"]) is True
+        assert _is_dangerous_rm(["rm", "-f", "-r", "dir"]) is True
+
+    def test_flags_with_other_options(self) -> None:
+        assert _is_dangerous_rm(["rm", "-r", "-v", "-f", "dir"]) is True
+        assert _is_dangerous_rm(["rm", "-v", "-r", "-f", "dir"]) is True
+
+
+class TestRequiresApprovalWithRedirects:
+    def test_output_redirect_requires_approval(self) -> None:
+        assert _requires_approval("echo test > file.txt") is True
+
+    def test_append_redirect_requires_approval(self) -> None:
+        assert _requires_approval("echo test >> file.txt") is True
+
+    def test_input_redirect_requires_approval(self) -> None:
+        assert _requires_approval("cat < file.txt") is True
+
+    def test_heredoc_requires_approval(self) -> None:
+        assert _requires_approval("cat << EOF") is True
+
+    def test_read_only_without_redirect_no_approval(self) -> None:
+        assert _requires_approval("ls -la") is False
+        assert _requires_approval("cat file.txt") is False
 
 
 class TestHasSubshell:
