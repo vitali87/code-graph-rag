@@ -471,6 +471,14 @@ class TestSegmentPatterns:
         assert reason is not None
         assert "device" in reason.lower()
 
+    def test_rm_system_directory(self) -> None:
+        from codebase_rag.constants import SHELL_SYSTEM_DIRECTORIES
+
+        for sys_dir in SHELL_SYSTEM_DIRECTORIES:
+            reason = _check_segment_patterns(f"rm -rf /{sys_dir}")
+            assert reason is not None, f"Expected /{sys_dir} to be flagged"
+            assert "system directory" in reason.lower()
+
     def test_safe_segment_not_flagged(self) -> None:
         assert _check_segment_patterns("ls -la") is None
         assert _check_segment_patterns("cat file.txt") is None

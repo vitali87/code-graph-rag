@@ -910,6 +910,31 @@ SHELL_DANGEROUS_COMMANDS = frozenset(
 SHELL_RM_DANGEROUS_FLAGS = frozenset({"-rf", "-fr"})
 SHELL_RM_FORCE_FLAG = "-f"
 
+# (H) System directories to protect from rm -rf
+SHELL_SYSTEM_DIRECTORIES = frozenset(
+    {
+        "bin",
+        "boot",
+        "dev",
+        "etc",
+        "home",
+        "lib",
+        "lib64",
+        "media",
+        "mnt",
+        "opt",
+        "proc",
+        "root",
+        "run",
+        "sbin",
+        "srv",
+        "sys",
+        "tmp",
+        "usr",
+        "var",
+    }
+)
+
 # (H) Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
 SHELL_DANGEROUS_PATTERNS_PIPELINE = (
     (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
@@ -917,13 +942,13 @@ SHELL_DANGEROUS_PATTERNS_PIPELINE = (
     (r"base64\s+-d.*\|", "base64 decode pipe execution"),
 )
 
+# (H) Build system directory regex pattern dynamically
+_SYSTEM_DIRS_PATTERN = "|".join(SHELL_SYSTEM_DIRECTORIES)
+
 # (H) Dangerous patterns for individual segments (per-command patterns)
 SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
-    (
-        r"rm\s+.*-[rf]+\s+/(bin|boot|dev|etc|home|lib|lib64|media|mnt|opt|proc|root|run|sbin|srv|sys|tmp|usr|var)($|/|\s)",
-        "rm with system directory",
-    ),
+    (rf"rm\s+.*-[rf]+\s+/({_SYSTEM_DIRS_PATTERN})($|/|\s)", "rm with system directory"),
     (r"rm\s+.*-[rf]+\s+~($|\s)", "rm with home directory"),
     (r"rm\s+.*-[rf]+\s+\*", "rm with wildcard"),
     (r"rm\s+.*-[rf]+\s+\.\.", "rm with parent directory"),
