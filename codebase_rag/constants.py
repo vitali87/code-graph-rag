@@ -785,7 +785,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
 ]
 
 ALLOWED_COMMENT_MARKERS = frozenset(
-    {"(H)", "type:", "noqa", "pyright", "ty:", "@@protoc"}
+    {"(H)", "type:", "noqa", "pyright", "ty:", "@@protoc", "nosec"}
 )
 QUOTE_CHARS = frozenset({'"', "'"})
 TRIPLE_QUOTES = ('"""', "'''")
@@ -919,7 +919,10 @@ SHELL_DANGEROUS_PATTERNS_PIPELINE = (
 # (H) Dangerous patterns for individual segments (per-command patterns)
 SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r"rm\s+.*-[rf]+\s+/($|\s)", "rm with root path"),
-    (r"rm\s+.*-[rf]+\s+/[a-z]+($|\s)", "rm with system directory"),
+    (
+        r"rm\s+.*-[rf]+\s+/(bin|boot|dev|etc|home|lib|lib64|media|mnt|opt|proc|root|run|sbin|srv|sys|tmp|usr|var)($|/|\s)",
+        "rm with system directory",
+    ),
     (r"rm\s+.*-[rf]+\s+~($|\s)", "rm with home directory"),
     (r"rm\s+.*-[rf]+\s+\*", "rm with wildcard"),
     (r"rm\s+.*-[rf]+\s+\.\.", "rm with parent directory"),

@@ -211,7 +211,7 @@ class ShellCommander:
                         stderr=err_msg,
                     )
 
-            process = await asyncio.create_subprocess_shell(
+            process = await asyncio.create_subprocess_shell(  # nosec B602
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
