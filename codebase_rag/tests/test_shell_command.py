@@ -379,6 +379,68 @@ class TestPipedCommandExecution:
         assert "dangerous" in result.stderr.lower()
 
 
+class TestQuoteAwareSubshellDetection:
+    def test_subshell_in_single_quotes_not_detected(self) -> None:
+        assert _has_subshell("echo '$(whoami)'") is None
+        assert _has_subshell("rg '\\$\\('") is None
+
+    def test_subshell_in_double_quotes_not_detected(self) -> None:
+        assert _has_subshell('echo "$(whoami)"') is None
+
+    def test_subshell_outside_quotes_detected(self) -> None:
+        assert _has_subshell("echo $(whoami)") == "$("
+        assert _has_subshell("echo `id`") == "`"
+
+    async def test_quoted_subshell_pattern_allowed(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute("echo 'a subshell is $(...)'")
+        assert result.return_code == 0
+        assert "a subshell is $(...)" in result.stdout
+
+
+class TestShellOperators:
+    async def test_and_operator(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "test.txt").write_text("content", encoding="utf-8")
+        result = await shell_commander.execute("ls && pwd")
+        assert result.return_code == 0
+        assert "test.txt" in result.stdout
+        assert str(temp_project_root) in result.stdout
+
+    async def test_and_operator_short_circuit(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute(
+            "ls nonexistent_12345 && echo 'should not run'"
+        )
+        assert result.return_code != 0
+        assert "should not run" not in result.stdout
+
+    async def test_or_operator(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute(
+            "ls nonexistent_12345 || echo 'fallback'"
+        )
+        assert "fallback" in result.stdout
+
+    async def test_or_operator_short_circuit(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "test.txt").write_text("content", encoding="utf-8")
+        result = await shell_commander.execute("ls || echo 'should not run'")
+        assert result.return_code == 0
+        assert "should not run" not in result.stdout
+
+    async def test_semicolon_operator(
+        self, shell_commander: ShellCommander, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "test.txt").write_text("content", encoding="utf-8")
+        result = await shell_commander.execute("ls; pwd")
+        assert "test.txt" in result.stdout
+        assert str(temp_project_root) in result.stdout
+
+
 class TestPipedCommandApproval:
     def test_all_read_only_no_approval(self) -> None:
         assert _requires_approval("ls | wc -l") is False

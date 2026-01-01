@@ -27,11 +27,120 @@ SEGMENT_PATTERNS_COMPILED = tuple(
 )
 
 
+def _is_outside_quotes(command: str, pos: int) -> bool:
+    in_single = False
+    in_double = False
+    i = 0
+    while i < pos:
+        char = command[i]
+        if char == "\\" and i + 1 < pos:
+            i += 2
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+        elif char == '"' and not in_single:
+            in_double = not in_double
+        i += 1
+    return not in_single and not in_double
+
+
 def _has_subshell(command: str) -> str | None:
     for pattern in cs.SHELL_SUBSHELL_PATTERNS:
-        if pattern in command:
-            return pattern
+        start = 0
+        while True:
+            pos = command.find(pattern, start)
+            if pos == -1:
+                break
+            if _is_outside_quotes(command, pos):
+                return pattern
+            start = pos + 1
     return None
+
+
+class CommandGroup:
+    def __init__(self, commands: list[str], operator: str | None = None):
+        self.commands = commands
+        self.operator = operator
+
+
+def _parse_command(command: str) -> list[CommandGroup]:
+    groups: list[CommandGroup] = []
+    current_pipeline: list[str] = []
+    current_segment: list[str] = []
+    in_single = False
+    in_double = False
+    pending_operator: str | None = None
+    i = 0
+
+    while i < len(command):
+        char = command[i]
+        if char == "\\" and i + 1 < len(command):
+            current_segment.append(char)
+            current_segment.append(command[i + 1])
+            i += 2
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            current_segment.append(char)
+        elif char == '"' and not in_single:
+            in_double = not in_double
+            current_segment.append(char)
+        elif char == "|" and not in_single and not in_double:
+            if i + 1 < len(command) and command[i + 1] == "|":
+                seg = "".join(current_segment).strip()
+                if seg:
+                    current_pipeline.append(seg)
+                if current_pipeline:
+                    groups.append(CommandGroup(current_pipeline, pending_operator))
+                current_pipeline = []
+                current_segment = []
+                pending_operator = "||"
+                i += 2
+                continue
+            seg = "".join(current_segment).strip()
+            if seg:
+                current_pipeline.append(seg)
+            current_segment = []
+        elif char == "&" and not in_single and not in_double:
+            if i + 1 < len(command) and command[i + 1] == "&":
+                seg = "".join(current_segment).strip()
+                if seg:
+                    current_pipeline.append(seg)
+                if current_pipeline:
+                    groups.append(CommandGroup(current_pipeline, pending_operator))
+                current_pipeline = []
+                current_segment = []
+                pending_operator = "&&"
+                i += 2
+                continue
+            current_segment.append(char)
+        elif char == ";" and not in_single and not in_double:
+            seg = "".join(current_segment).strip()
+            if seg:
+                current_pipeline.append(seg)
+            if current_pipeline:
+                groups.append(CommandGroup(current_pipeline, pending_operator))
+            current_pipeline = []
+            current_segment = []
+            pending_operator = ";"
+        else:
+            current_segment.append(char)
+        i += 1
+
+    seg = "".join(current_segment).strip()
+    if seg:
+        current_pipeline.append(seg)
+    if current_pipeline:
+        groups.append(CommandGroup(current_pipeline, pending_operator))
+
+    return groups
+
+
+def _split_pipeline(command: str) -> list[str]:
+    groups = _parse_command(command)
+    if len(groups) != 1 or groups[0].operator is not None:
+        return []
+    return groups[0].commands
 
 
 def _is_blocked_command(cmd: str) -> bool:
@@ -143,6 +252,55 @@ class ShellCommander:
         self.timeout = timeout
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
+    async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
+        if len(segments) == 1:
+            cmd_parts = shlex.split(segments[0])
+            proc = await asyncio.create_subprocess_exec(
+                cmd_parts[0],
+                *cmd_parts[1:],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.project_root,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=self.timeout
+            )
+            return proc.returncode or 0, stdout or b"", stderr or b""
+
+        input_data: bytes | None = None
+        all_stderr: list[bytes] = []
+        last_return_code = 0
+
+        for i, segment in enumerate(segments):
+            cmd_parts = shlex.split(segment)
+            is_last = i == len(segments) - 1
+            proc = await asyncio.create_subprocess_exec(
+                cmd_parts[0],
+                *cmd_parts[1:],
+                stdin=asyncio.subprocess.PIPE if input_data is not None else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+                if is_last
+                else asyncio.subprocess.DEVNULL,
+                cwd=self.project_root,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(input=input_data), timeout=self.timeout
+                )
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise
+
+            last_return_code = proc.returncode or 0
+            input_data = stdout
+
+            if is_last and stderr:
+                all_stderr.append(stderr)
+
+        return last_return_code, input_data or b"", b"".join(all_stderr)
+
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
@@ -165,65 +323,69 @@ class ShellCommander:
                     stderr=err_msg,
                 )
 
-            available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
-            has_segments = False
-            for segment in PIPE_SPLIT_PATTERN.split(command):
-                segment = segment.strip()
-                if not segment:
-                    continue
-                has_segments = True
-                if err_msg := _validate_segment(segment, available_commands):
-                    logger.error(err_msg)
-                    return ShellCommandResult(
-                        return_code=cs.SHELL_RETURN_CODE_ERROR,
-                        stdout="",
-                        stderr=err_msg,
-                    )
-
-            if not has_segments:
+            groups = _parse_command(command)
+            if not groups:
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR,
                     stdout="",
                     stderr=te.COMMAND_EMPTY,
                 )
 
-            process = await asyncio.create_subprocess_shell(  # nosec B602
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.project_root,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=self.timeout
-            )
+            available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+            for group in groups:
+                for segment in group.commands:
+                    if err_msg := _validate_segment(segment, available_commands):
+                        logger.error(err_msg)
+                        return ShellCommandResult(
+                            return_code=cs.SHELL_RETURN_CODE_ERROR,
+                            stdout="",
+                            stderr=err_msg,
+                        )
 
-            stdout_str = stdout.decode(cs.ENCODING_UTF8, errors="replace").strip()
-            stderr_str = stderr.decode(cs.ENCODING_UTF8, errors="replace").strip()
+            all_stdout: list[str] = []
+            all_stderr: list[str] = []
+            last_return_code = 0
 
-            logger.info(ls.TOOL_SHELL_RETURN.format(code=process.returncode))
-            if stdout_str:
-                logger.info(ls.TOOL_SHELL_STDOUT.format(stdout=stdout_str))
-            if stderr_str:
-                logger.warning(ls.TOOL_SHELL_STDERR.format(stderr=stderr_str))
+            for group in groups:
+                should_run = True
+                if group.operator == "&&":
+                    should_run = last_return_code == 0
+                elif group.operator == "||":
+                    should_run = last_return_code != 0
+
+                if not should_run:
+                    continue
+
+                return_code, stdout, stderr = await self._execute_pipeline(
+                    group.commands
+                )
+                last_return_code = return_code
+
+                stdout_str = stdout.decode(cs.ENCODING_UTF8, errors="replace").strip()
+                stderr_str = stderr.decode(cs.ENCODING_UTF8, errors="replace").strip()
+
+                if stdout_str:
+                    all_stdout.append(stdout_str)
+                if stderr_str:
+                    all_stderr.append(stderr_str)
+
+            final_stdout = "\n".join(all_stdout)
+            final_stderr = "\n".join(all_stderr)
+
+            logger.info(ls.TOOL_SHELL_RETURN.format(code=last_return_code))
+            if final_stdout:
+                logger.info(ls.TOOL_SHELL_STDOUT.format(stdout=final_stdout))
+            if final_stderr:
+                logger.warning(ls.TOOL_SHELL_STDERR.format(stderr=final_stderr))
 
             return ShellCommandResult(
-                return_code=(
-                    process.returncode
-                    if process.returncode is not None
-                    else cs.SHELL_RETURN_CODE_ERROR
-                ),
-                stdout=stdout_str,
-                stderr=stderr_str,
+                return_code=last_return_code,
+                stdout=final_stdout,
+                stderr=final_stderr,
             )
         except TimeoutError:
             msg = te.COMMAND_TIMEOUT.format(cmd=command, timeout=self.timeout)
             logger.error(msg)
-            try:
-                process.kill()
-                await process.wait()
-                logger.info(ls.TOOL_SHELL_KILLED)
-            except ProcessLookupError:
-                logger.warning(ls.TOOL_SHELL_ALREADY_TERMINATED)
             return ShellCommandResult(
                 return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
             )
