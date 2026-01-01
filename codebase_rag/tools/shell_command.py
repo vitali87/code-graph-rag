@@ -68,6 +68,20 @@ def _parse_command(command: str) -> list[CommandGroup]:
     pending_operator: str | None = None
     i = 0
 
+    def finalize_segment() -> None:
+        seg = "".join(current_segment).strip()
+        if seg:
+            current_pipeline.append(seg)
+        current_segment.clear()
+
+    def finalize_group(new_operator: str) -> None:
+        nonlocal pending_operator
+        finalize_segment()
+        if current_pipeline:
+            groups.append(CommandGroup(list(current_pipeline), pending_operator))
+        current_pipeline.clear()
+        pending_operator = new_operator
+
     while i < len(command):
         char = command[i]
         if char == "\\" and i + 1 < len(command):
@@ -83,51 +97,25 @@ def _parse_command(command: str) -> list[CommandGroup]:
             current_segment.append(char)
         elif char == "|" and not in_single and not in_double:
             if i + 1 < len(command) and command[i + 1] == "|":
-                seg = "".join(current_segment).strip()
-                if seg:
-                    current_pipeline.append(seg)
-                if current_pipeline:
-                    groups.append(CommandGroup(current_pipeline, pending_operator))
-                current_pipeline = []
-                current_segment = []
-                pending_operator = "||"
+                finalize_group("||")
                 i += 2
                 continue
-            seg = "".join(current_segment).strip()
-            if seg:
-                current_pipeline.append(seg)
-            current_segment = []
+            finalize_segment()
         elif char == "&" and not in_single and not in_double:
             if i + 1 < len(command) and command[i + 1] == "&":
-                seg = "".join(current_segment).strip()
-                if seg:
-                    current_pipeline.append(seg)
-                if current_pipeline:
-                    groups.append(CommandGroup(current_pipeline, pending_operator))
-                current_pipeline = []
-                current_segment = []
-                pending_operator = "&&"
+                finalize_group("&&")
                 i += 2
                 continue
             current_segment.append(char)
         elif char == ";" and not in_single and not in_double:
-            seg = "".join(current_segment).strip()
-            if seg:
-                current_pipeline.append(seg)
-            if current_pipeline:
-                groups.append(CommandGroup(current_pipeline, pending_operator))
-            current_pipeline = []
-            current_segment = []
-            pending_operator = ";"
+            finalize_group(";")
         else:
             current_segment.append(char)
         i += 1
 
-    seg = "".join(current_segment).strip()
-    if seg:
-        current_pipeline.append(seg)
+    finalize_segment()
     if current_pipeline:
-        groups.append(CommandGroup(current_pipeline, pending_operator))
+        groups.append(CommandGroup(list(current_pipeline), pending_operator))
 
     return groups
 
