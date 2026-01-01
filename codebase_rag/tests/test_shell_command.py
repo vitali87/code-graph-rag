@@ -654,6 +654,12 @@ class TestAwkSedXargsPatterns:
         assert _check_segment_patterns("sed 's|foo|bar|e'") is not None
         assert _check_segment_patterns("sed 's@foo@bar@ge'") is not None
 
+    def test_sed_execute_flag_any_position(self) -> None:
+        assert _check_segment_patterns("sed 's/foo/bar/eg'") is not None
+        assert _check_segment_patterns("sed 's/foo/bar/egi'") is not None
+        assert _check_segment_patterns("sed 's/foo/bar/gei'") is not None
+        assert _check_segment_patterns("sed 's/foo/bar/ige'") is not None
+
     def test_xargs_rm_detected(self) -> None:
         reason = _check_segment_patterns("xargs rm")
         assert reason is not None
