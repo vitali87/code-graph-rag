@@ -12,7 +12,10 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.tools import tool_descriptions as td
-from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from codebase_rag.tools.code_retrieval import (
+    CodeRetriever,
+    create_code_retrieval_tool,
+)
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
@@ -29,6 +32,7 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
 )
+from codebase_rag.utils.dependencies import has_semantic_dependencies
 
 
 class MCPToolsRegistry:
@@ -53,13 +57,34 @@ class MCPToolsRegistry:
         self._query_tool = create_query_tool(
             ingestor=ingestor, cypher_gen=cypher_gen, console=None
         )
-        self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
-        self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
-        self._file_reader_tool = create_file_reader_tool(file_reader=self.file_reader)
-        self._file_writer_tool = create_file_writer_tool(file_writer=self.file_writer)
+        self._code_tool = create_code_retrieval_tool(
+            code_retriever=self.code_retriever
+        )
+        self._file_editor_tool = create_file_editor_tool(
+            file_editor=self.file_editor
+        )
+        self._file_reader_tool = create_file_reader_tool(
+            file_reader=self.file_reader
+        )
+        self._file_writer_tool = create_file_writer_tool(
+            file_writer=self.file_writer
+        )
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
+
+        self._semantic_search_tool = None
+        self._semantic_search_available = False
+
+        if has_semantic_dependencies():
+            from codebase_rag.tools.semantic_search import (
+                create_semantic_search_tool,
+            )
+
+            self._semantic_search_tool = create_semantic_search_tool()
+            self._semantic_search_available = True
+        else:
+            logger.info(lg.MCP_SEMANTIC_NOT_AVAILABLE)
 
         self._tools: dict[str, ToolMetadata] = {
             cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
@@ -71,6 +96,17 @@ class MCPToolsRegistry:
                     required=[],
                 ),
                 handler=self.index_repository,
+                returns_json=False,
+            ),
+            cs.MCPToolName.UPDATE_REPOSITORY: ToolMetadata(
+                name=cs.MCPToolName.UPDATE_REPOSITORY,
+                description=td.MCP_TOOLS[cs.MCPToolName.UPDATE_REPOSITORY],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={},
+                    required=[],
+                ),
+                handler=self.update_repository,
                 returns_json=False,
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
@@ -198,6 +234,28 @@ class MCPToolsRegistry:
                 returns_json=False,
             ),
         }
+        if self._semantic_search_available:
+            self._tools[cs.MCPToolName.SEMANTIC_SEARCH] = ToolMetadata(
+                name=cs.MCPToolName.SEMANTIC_SEARCH,
+                description=td.MCP_TOOLS[cs.MCPToolName.SEMANTIC_SEARCH],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
+                        ),
+                        cs.MCPParamName.TOP_K: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_TOP_K,
+                            default="5",
+                        ),
+                    },
+                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
+                ),
+                handler=self.semantic_search,
+                returns_json=False,
+            )
 
     async def index_repository(self) -> str:
         logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
@@ -220,10 +278,33 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)
 
-    async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
-        logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
+    async def update_repository(self) -> str:
+        logger.info(lg.MCP_UPDATING_REPO.format(path=self.project_root))
+
         try:
-            graph_data = await self._query_tool.function(natural_language_query)
+            updater = GraphUpdater(
+                ingestor=self.ingestor,
+                repo_path=Path(self.project_root),
+                parsers=self.parsers,
+                queries=self.queries,
+            )
+            updater.run()
+
+            return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_UPDATING.format(error=e))
+            return cs.MCP_UPDATE_ERROR.format(error=e)
+
+    async def query_code_graph(
+        self, natural_language_query: str
+    ) -> QueryResultDict:
+        logger.info(
+            lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query)
+        )
+        try:
+            graph_data = await self._query_tool.function(
+                natural_language_query
+            )
             result_dict: QueryResultDict = graph_data.model_dump()
             logger.info(
                 lg.MCP_QUERY_RESULTS.format(
@@ -242,10 +323,14 @@ class MCPToolsRegistry:
                 ),
             )
 
-    async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
+    async def get_code_snippet(
+        self, qualified_name: str
+    ) -> CodeSnippetResultDict:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
-            snippet = await self._code_tool.function(qualified_name=qualified_name)
+            snippet = await self._code_tool.function(
+                qualified_name=qualified_name
+            )
             result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:
                 return CodeSnippetResultDict(
@@ -278,9 +363,14 @@ class MCPToolsRegistry:
             return te.ERROR_WRAPPER.format(message=e)
 
     async def read_file(
-        self, file_path: str, offset: int | None = None, limit: int | None = None
+        self,
+        file_path: str,
+        offset: int | None = None,
+        limit: int | None = None,
     ) -> str:
-        logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
+        logger.info(
+            lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit)
+        )
         try:
             if offset is not None or limit is not None:
                 full_path = Path(self.project_root) / file_path
@@ -290,7 +380,9 @@ class MCPToolsRegistry:
                     skipped_count = sum(1 for _ in itertools.islice(f, start))
 
                     if limit is not None:
-                        sliced_lines = [line for _, line in zip(range(limit), f)]
+                        sliced_lines = [
+                            line for _, line in zip(range(limit), f)
+                        ]
                     else:
                         sliced_lines = list(f)
 
@@ -298,7 +390,9 @@ class MCPToolsRegistry:
 
                     remaining_lines_count = sum(1 for _ in f)
                     total_lines = (
-                        skipped_count + len(sliced_lines) + remaining_lines_count
+                        skipped_count
+                        + len(sliced_lines)
+                        + remaining_lines_count
                     )
 
                     header = cs.MCP_PAGINATION_HEADER.format(
@@ -308,7 +402,9 @@ class MCPToolsRegistry:
                     )
                     return header + paginated_content
             else:
-                result = await self._file_reader_tool.function(file_path=file_path)
+                result = await self._file_reader_tool.function(
+                    file_path=file_path
+                )
                 return str(result)
 
         except Exception as e:
@@ -333,11 +429,28 @@ class MCPToolsRegistry:
     ) -> str:
         logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
-            result = self._directory_lister_tool.function(directory_path=directory_path)
+            result = self._directory_lister_tool.function(
+                directory_path=directory_path
+            )
             return str(result)
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
+
+    async def semantic_search(
+        self, natural_language_query: str, top_k: int = 5
+    ) -> str:
+        if self._semantic_search_tool is None:
+            return cs.MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE
+
+        logger.info(
+            lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query)
+        )
+
+        result = await self._semantic_search_tool.function(
+            query=natural_language_query, top_k=top_k
+        )
+        return str(result)
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [
@@ -349,9 +462,15 @@ class MCPToolsRegistry:
             for metadata in self._tools.values()
         ]
 
-    def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
+    def get_tool_handler(
+        self, name: str
+    ) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
-        return None if metadata is None else (metadata.handler, metadata.returns_json)
+        return (
+            None
+            if metadata is None
+            else (metadata.handler, metadata.returns_json)
+        )
 
 
 def create_mcp_tools_registry(
