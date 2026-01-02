@@ -229,10 +229,10 @@ CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
-UI_TOOL_APPROVAL = (
-    "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
+UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
+UI_FEEDBACK_PROMPT = (
+    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]"
 )
-UI_FEEDBACK_PROMPT = "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]"
 UI_OPTIMIZATION_START = (
     "[bold green]Starting {language} optimization session...[/bold green]"
 )
@@ -246,9 +246,7 @@ UI_GRAPH_EXPORT_SUCCESS = (
     "[bold green]Graph exported successfully to: {path}[/bold green]"
 )
 UI_GRAPH_EXPORT_STATS = "[bold cyan]Export contains {nodes} nodes and {relationships} relationships[/bold cyan]"
-UI_ERR_UNEXPECTED = (
-    "[bold red]An unexpected error occurred: {error}[/bold red]"
-)
+UI_ERR_UNEXPECTED = "[bold red]An unexpected error occurred: {error}[/bold red]"
 UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
 UI_TOOL_ARGS_FORMAT = "    Arguments: {args}"
 UI_REFERENCE_DOC_INFO = " using the reference document: {reference_document}"
@@ -739,9 +737,7 @@ class EventType(StrEnum):
     CREATED = "created"
 
 
-CYPHER_DELETE_MODULE = (
-    "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
-)
+CYPHER_DELETE_MODULE = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 
 REALTIME_LOGGER_FORMAT = (
@@ -875,9 +871,7 @@ CYPHER_BACKTICK = "`"
 CYPHER_MATCH_KEYWORD = "MATCH"
 
 # (H) Tool success messages
-MSG_SURGICAL_SUCCESS = (
-    "Successfully applied surgical code replacement in: {path}"
-)
+MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
 MSG_SURGICAL_FAILED = (
     "Failed to apply surgical replacement in {path}. "
     "Target code not found or patches failed."
@@ -896,9 +890,7 @@ SHELL_RETURN_CODE_ERROR = -1
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
-QUERY_SUMMARY_SUCCESS = (
-    "Successfully retrieved {count} item(s) from the graph."
-)
+QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
@@ -919,12 +911,8 @@ MSG_SEMANTIC_SOURCE_UNAVAILABLE = (
     "Could not retrieve source code for node ID {id}. "
     "The node may not exist or source file may be unavailable."
 )
-MSG_SEMANTIC_SOURCE_FORMAT = (
-    "Source code for node ID {id}:\n\n```\n{code}\n```"
-)
-MSG_SEMANTIC_RESULT_HEADER = (
-    "Found {count} semantic matches for '{query}':\n\n"
-)
+MSG_SEMANTIC_SOURCE_FORMAT = "Source code for node ID {id}:\n\n```\n{code}\n```"
+MSG_SEMANTIC_RESULT_HEADER = "Found {count} semantic matches for '{query}':\n\n"
 MSG_SEMANTIC_RESULT_FOOTER = "\n\nUse the qualified names above with other tools to get more details or source code."
 SEMANTIC_BATCH_SIZE = 100
 SEMANTIC_TYPE_UNKNOWN = "Unknown"
@@ -933,7 +921,9 @@ SEMANTIC_TYPE_UNKNOWN = "Unknown"
 MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
 MSG_DOC_NO_CONTENT = "No text content received from the API."
 MIME_TYPE_DEFAULT = "application/octet-stream"
-DOC_PROMPT_PREFIX = "Based on the document provided, please answer the following question: {question}"
+DOC_PROMPT_PREFIX = (
+    "Based on the document provided, please answer the following question: {question}"
+)
 
 # (H) Call processor constants
 MOD_RS = "mod.rs"
@@ -1131,14 +1121,10 @@ LANG_MSG_FUNCTIONS = "Functions: {nodes}"
 LANG_MSG_CLASSES = "Classes: {nodes}"
 LANG_MSG_MODULES = "Modules: {nodes}"
 LANG_MSG_CALLS = "Calls: {nodes}"
-LANG_MSG_LANG_ADDED = (
-    "\nLanguage '{name}' has been added to the configuration!"
-)
+LANG_MSG_LANG_ADDED = "\nLanguage '{name}' has been added to the configuration!"
 LANG_MSG_UPDATED_CONFIG = "Updated {path}"
 LANG_MSG_REVIEW_PROMPT = "Please review the detected node types:"
-LANG_MSG_REVIEW_HINT = (
-    "   The auto-detection is good but may need manual adjustments."
-)
+LANG_MSG_REVIEW_HINT = "   The auto-detection is good but may need manual adjustments."
 LANG_MSG_EDIT_HINT = "   Edit the configuration in: {path}"
 LANG_MSG_COMMON_ISSUES = "Look for these common issues:"
 LANG_MSG_ISSUE_MISCLASSIFIED = (
@@ -1156,9 +1142,7 @@ LANG_MSG_LIST_HINT = (
 )
 LANG_MSG_LANG_NOT_FOUND = "Language '{name}' not found."
 LANG_MSG_AVAILABLE_LANGS = "Available languages: {langs}"
-LANG_MSG_REMOVED_FROM_CONFIG = (
-    "Removed language '{name}' from configuration file."
-)
+LANG_MSG_REMOVED_FROM_CONFIG = "Removed language '{name}' from configuration file."
 LANG_MSG_REMOVING_SUBMODULE = "Removing git submodule '{path}'..."
 LANG_MSG_CLEANED_MODULES = "Cleaned up git modules directory: {path}"
 LANG_MSG_SUBMODULE_REMOVED = "Successfully removed submodule '{path}'"
@@ -1174,24 +1158,16 @@ LANG_MSG_CLEANUP_COMPLETE = "Cleanup complete!"
 LANG_MSG_CLEANUP_CANCELLED = "Cleanup cancelled."
 
 # (H) Language CLI error messages
-LANG_ERR_MISSING_ARGS = (
-    "Error: Either language_name or --grammar-url must be provided"
-)
+LANG_ERR_MISSING_ARGS = "Error: Either language_name or --grammar-url must be provided"
 LANG_ERR_REINSTALL_FAILED = "Failed to reinstall submodule: {error}"
-LANG_ERR_MANUAL_REMOVE_HINT = (
-    "You may need to remove it manually and try again:"
-)
+LANG_ERR_MANUAL_REMOVE_HINT = "You may need to remove it manually and try again:"
 LANG_ERR_REPO_NOT_FOUND = "Error: Repository not found at {url}"
-LANG_ERR_CUSTOM_URL_HINT = (
-    "Try using a custom URL with: --grammar-url <your-repo-url>"
-)
+LANG_ERR_CUSTOM_URL_HINT = "Try using a custom URL with: --grammar-url <your-repo-url>"
 LANG_ERR_GIT = "Git error: {error}"
 LANG_ERR_NODE_TYPES_WARNING = (
     "Warning: node-types.json not found in any expected location for {name}"
 )
-LANG_ERR_TREE_SITTER_JSON_WARNING = (
-    "Warning: tree-sitter.json not found in {path}"
-)
+LANG_ERR_TREE_SITTER_JSON_WARNING = "Warning: tree-sitter.json not found in {path}"
 LANG_ERR_NO_GRAMMARS_WARNING = "Warning: No grammars found in tree-sitter.json"
 LANG_ERR_PARSE_NODE_TYPES = "Error parsing node-types.json: {error}"
 LANG_ERR_UPDATE_CONFIG = "Error updating config file: {error}"
@@ -1202,13 +1178,13 @@ LANG_ERR_REMOVE_SUBMODULE = "Failed to remove submodule: {error}"
 # (H) Language CLI prompts
 LANG_PROMPT_LANGUAGE_NAME = "Language name (e.g., 'c-sharp', 'python')"
 LANG_PROMPT_COMMON_NAME = "What is the common name for this language?"
-LANG_PROMPT_EXTENSIONS = "What file extensions should be associated with this language? (comma-separated)"
+LANG_PROMPT_EXTENSIONS = (
+    "What file extensions should be associated with this language? (comma-separated)"
+)
 LANG_PROMPT_FUNCTIONS = "Select nodes representing FUNCTIONS (comma-separated)"
 LANG_PROMPT_CLASSES = "Select nodes representing CLASSES (comma-separated)"
 LANG_PROMPT_MODULES = "Select nodes representing MODULES (comma-separated)"
-LANG_PROMPT_CALLS = (
-    "Select nodes representing FUNCTION CALLS (comma-separated)"
-)
+LANG_PROMPT_CALLS = "Select nodes representing FUNCTION CALLS (comma-separated)"
 LANG_PROMPT_CONTINUE = "Do you want to continue?"
 LANG_PROMPT_REMOVE_ORPHANS = "Do you want to remove these orphaned modules?"
 
@@ -1257,12 +1233,8 @@ class CppNodeType(StrEnum):
     QUALIFIED_IDENTIFIER = "qualified_identifier"
     OPERATOR_NAME = "operator_name"
     DESTRUCTOR_NAME = "destructor_name"
-    CONSTRUCTOR_OR_DESTRUCTOR_DEFINITION = (
-        "constructor_or_destructor_definition"
-    )
-    CONSTRUCTOR_OR_DESTRUCTOR_DECLARATION = (
-        "constructor_or_destructor_declaration"
-    )
+    CONSTRUCTOR_OR_DESTRUCTOR_DEFINITION = "constructor_or_destructor_definition"
+    CONSTRUCTOR_OR_DESTRUCTOR_DECLARATION = "constructor_or_destructor_declaration"
     INLINE_METHOD_DEFINITION = "inline_method_definition"
     OPERATOR_CAST_DEFINITION = "operator_cast_definition"
 
@@ -1295,9 +1267,7 @@ CPP_EXPORT_PREFIXES = (
 # (H) C++ keywords for class detection
 CPP_KEYWORD_CLASS = "class"
 CPP_KEYWORD_STRUCT = "struct"
-CPP_EXPORTED_CLASS_KEYWORDS = frozenset(
-    {CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT}
-)
+CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
@@ -2041,9 +2011,7 @@ JS_ASSIGNMENT_FUNCTION_QUERY = """
 
 # (H) JS/TS module system node types
 TS_OBJECT_PATTERN = "object_pattern"
-TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = (
-    "shorthand_property_identifier_pattern"
-)
+TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_PAIR_PATTERN = "pair_pattern"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
@@ -2226,9 +2194,7 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
-MCP_UPDATE_SUCCESS = (
-    "Successfully updated repository at {path} (no database wipe)."
-)
+MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"

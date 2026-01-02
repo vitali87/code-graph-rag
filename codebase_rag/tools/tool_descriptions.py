@@ -18,7 +18,9 @@ class AgenticToolName(StrEnum):
     GET_CODE_SNIPPET = "get_code_snippet"
 
 
-ANALYZE_DOCUMENT = "Analyzes documents (PDFs, images) to answer questions about their content."
+ANALYZE_DOCUMENT = (
+    "Analyzes documents (PDFs, images) to answer questions about their content."
+)
 
 CODEBASE_QUERY = (
     "Query the codebase knowledge graph using natural language questions. "
@@ -103,15 +105,15 @@ MCP_SEMANTIC_SEARCH = (
     "Requires the 'semantic' extra to be installed."
 )
 
-MCP_READ_FILE = "Read the contents of a file from the project. Supports pagination for large files."
+MCP_READ_FILE = (
+    "Read the contents of a file from the project. Supports pagination for large files."
+)
 
 MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
 
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
 
-MCP_PARAM_NATURAL_LANGUAGE_QUERY = (
-    "Your question in plain English about the codebase"
-)
+MCP_PARAM_NATURAL_LANGUAGE_QUERY = "Your question in plain English about the codebase"
 MCP_PARAM_QUALIFIED_NAME = (
     "Fully qualified name (e.g., 'app.services.UserService.create_user')"
 )
@@ -121,9 +123,7 @@ MCP_PARAM_REPLACEMENT_CODE = "New code to insert"
 MCP_PARAM_OFFSET = "Line number to start reading from (0-based, optional)"
 MCP_PARAM_LIMIT = "Maximum number of lines to read (optional)"
 MCP_PARAM_CONTENT = "Content to write to the file"
-MCP_PARAM_DIRECTORY_PATH = (
-    "Relative path to directory from project root (default: '.')"
-)
+MCP_PARAM_DIRECTORY_PATH = "Relative path to directory from project root (default: '.')"
 MCP_PARAM_TOP_K = "Max number of results to return (optional, default: 5)"
 
 
