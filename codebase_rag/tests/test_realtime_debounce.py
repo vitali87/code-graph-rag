@@ -5,6 +5,8 @@ These tests verify the hybrid debounce strategy that prevents redundant
 graph updates during rapid file saves.
 """
 
+from __future__ import annotations
+
 import threading
 import time
 from pathlib import Path
@@ -28,7 +30,7 @@ class MockQueryIngestor:
         self.ensure_node_batch = MagicMock()
         self.ensure_relationship_batch = MagicMock()
 
-    def __enter__(self) -> "MockQueryIngestor":
+    def __enter__(self) -> MockQueryIngestor:
         return self
 
     def __exit__(self, *args: Any) -> None:

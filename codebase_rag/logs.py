@@ -106,6 +106,10 @@ DEBOUNCE_SCHEDULED = (
 )
 DEBOUNCE_PROCESSING = "Processing debounced change: {path}"
 DEBOUNCE_NO_EVENT = "No pending event for {path}, skipping"
+DEBOUNCE_MAX_WAIT_ADJUSTED = (
+    "max_wait ({max_wait}s) is less than debounce ({debounce}s). "
+    "Setting max_wait to debounce value."
+)
 DELETION_QUERY = "Ran deletion query for path: {path}"
 RECALC_CALLS = "Recalculating all function call relationships for consistency..."
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"

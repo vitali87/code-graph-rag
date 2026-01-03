@@ -311,7 +311,7 @@ def _validate_positive_int(value: int | None) -> int | None:
 
 def _validate_non_negative_float(value: float) -> float:
     if value < 0:
-        raise typer.BadParameter(f"Value must be non-negative, got {value}")
+        raise typer.BadParameter(te.INVALID_NON_NEGATIVE_FLOAT.format(value=value))
     return value
 
 
@@ -381,8 +381,7 @@ def main(
     # (H) Validate max_wait is greater than debounce when both are enabled
     if debounce > 0 and max_wait > 0 and max_wait < debounce:
         logger.warning(
-            f"max_wait ({max_wait}s) is less than debounce ({debounce}s). "
-            f"Setting max_wait to debounce value."
+            logs.DEBOUNCE_MAX_WAIT_ADJUSTED.format(max_wait=max_wait, debounce=debounce)
         )
         max_wait = debounce
 
