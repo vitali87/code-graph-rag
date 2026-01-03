@@ -62,3 +62,4 @@ MCP_PATH_NOT_DIR = "Target repository path is not a directory: {path}"
 
 # (H) CLI validation errors
 INVALID_POSITIVE_INT = "{value!r} is not a valid positive integer"
+INVALID_NON_NEGATIVE_FLOAT = "Value must be non-negative, got {value}"

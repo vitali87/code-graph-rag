@@ -91,8 +91,25 @@ INITIALIZED_PARSERS = "Initialized parsers for: {languages}"
 
 # (H) File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
+WATCHER_DEBOUNCE_ACTIVE = (
+    "File watcher active with debouncing (debounce={debounce}s, max_wait={max_wait}s)"
+)
 WATCHER_SKIP_NO_QUERY = "Ingestor does not support querying, skipping real-time update."
 CHANGE_DETECTED = "Change detected: {event_type} on {path}. Updating graph."
+CHANGE_DEBOUNCING = (
+    "Change detected: {event_type} on {name} (debouncing for {debounce}s)"
+)
+DEBOUNCE_RESET = "Reset debounce timer for {path}"
+DEBOUNCE_MAX_WAIT = "Max wait ({max_wait}s) exceeded for {path}, processing now"
+DEBOUNCE_SCHEDULED = (
+    "Scheduled update for {path} in {debounce}s (max wait: {remaining}s remaining)"
+)
+DEBOUNCE_PROCESSING = "Processing debounced change: {path}"
+DEBOUNCE_NO_EVENT = "No pending event for {path}, skipping"
+DEBOUNCE_MAX_WAIT_ADJUSTED = (
+    "max_wait ({max_wait}s) is less than debounce ({debounce}s). "
+    "Setting max_wait to debounce value."
+)
 DELETION_QUERY = "Ran deletion query for path: {path}"
 RECALC_CALLS = "Recalculating all function call relationships for consistency..."
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
