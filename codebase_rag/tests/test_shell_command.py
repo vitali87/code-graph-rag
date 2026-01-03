@@ -7,6 +7,7 @@ import pytest
 from pydantic_ai import ApprovalRequired, Tool
 
 from codebase_rag.config import settings
+from codebase_rag.constants import SHELL_SYSTEM_DIRECTORIES
 from codebase_rag.tools.shell_command import (
     ShellCommander,
     _check_pipeline_patterns,
@@ -434,6 +435,10 @@ class TestQuoteAwareSubshellDetection:
         assert _has_subshell("echo $(whoami)") == "$("
         assert _has_subshell("echo `id`") == "`"
 
+    def test_escaped_quote_bypass_detected(self) -> None:
+        assert _has_subshell("echo \\'$(whoami)") == "$("
+        assert _has_subshell("echo \\' `id`") == "`"
+
     async def test_single_quoted_subshell_pattern_allowed(
         self, shell_commander: ShellCommander
     ) -> None:
@@ -584,8 +589,6 @@ class TestSegmentPatterns:
         assert "device" in reason.lower()
 
     def test_rm_system_directory(self) -> None:
-        from codebase_rag.constants import SHELL_SYSTEM_DIRECTORIES
-
         for sys_dir in SHELL_SYSTEM_DIRECTORIES:
             reason = _check_segment_patterns(f"rm -rf /{sys_dir}")
             assert reason is not None, f"Expected /{sys_dir} to be flagged"

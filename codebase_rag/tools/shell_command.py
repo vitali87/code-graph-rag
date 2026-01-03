@@ -32,10 +32,11 @@ def _is_outside_single_quotes(command: str, pos: int) -> bool:
     i = 0
     while i < pos:
         char = command[i]
-        if char == "'" and not in_single:
-            in_single = True
-        elif char == "'" and in_single:
-            in_single = False
+        if char == "\\" and not in_single and i + 1 < len(command):
+            i += 2
+            continue
+        if char == "'":
+            in_single = not in_single
         i += 1
     return not in_single
 
@@ -197,7 +198,7 @@ def _requires_approval(command: str) -> bool:
 
     try:
         groups = _parse_command(command)
-    except Exception:
+    except (ValueError, IndexError):
         return True
 
     has_commands = False
