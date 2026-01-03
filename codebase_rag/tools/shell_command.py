@@ -132,6 +132,33 @@ def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
     return "r" in flags and "f" in flags
 
 
+def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
+        return False, ""
+    path_args = [p for p in cmd_parts[1:] if not p.startswith("-")]
+    for path_arg in path_args:
+        if path_arg in ("*", ".", ".."):
+            return True, f"rm targeting dangerous path: {path_arg}"
+        try:
+            if path_arg.startswith("/"):
+                resolved = Path(path_arg).resolve()
+            else:
+                resolved = (project_root / path_arg).resolve()
+        except (OSError, ValueError):
+            return True, f"rm with invalid path: {path_arg}"
+        resolved_str = str(resolved)
+        if resolved_str == "/":
+            return True, "rm targeting root directory"
+        parts = resolved.parts
+        if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
+            return True, f"rm targeting system directory: {resolved_str}"
+        try:
+            resolved.relative_to(project_root)
+        except ValueError:
+            return True, f"rm targeting path outside project: {resolved_str}"
+    return False, ""
+
+
 def _check_pipeline_patterns(full_command: str) -> str | None:
     for pattern, reason in PIPELINE_PATTERNS_COMPILED:
         if pattern.search(full_command):
@@ -314,6 +341,23 @@ class ShellCommander:
             for group in groups:
                 for segment in group.commands:
                     if err_msg := _validate_segment(segment, available_commands):
+                        logger.error(err_msg)
+                        return ShellCommandResult(
+                            return_code=cs.SHELL_RETURN_CODE_ERROR,
+                            stdout="",
+                            stderr=err_msg,
+                        )
+                    try:
+                        cmd_parts = shlex.split(segment)
+                    except ValueError:
+                        continue
+                    is_dangerous, reason = _is_dangerous_rm_path(
+                        cmd_parts, self.project_root
+                    )
+                    if is_dangerous:
+                        err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
+                            cmd=cmd_parts[0], reason=reason
+                        )
                         logger.error(err_msg)
                         return ShellCommandResult(
                             return_code=cs.SHELL_RETURN_CODE_ERROR,
