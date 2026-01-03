@@ -691,23 +691,61 @@ TS_LOCALS_PATTERN = """
 # (H) File/directory ignore patterns
 IGNORE_PATTERNS = frozenset(
     {
+        # Version control
         ".git",
+        ".git-local",
+        # Python
         "venv",
         ".venv",
+        "env",
+        "ENV",
         "__pycache__",
-        "node_modules",
-        "build",
-        "dist",
         ".eggs",
         ".pytest_cache",
         ".mypy_cache",
         ".ruff_cache",
-        ".claude",
+        "develop-eggs",
+        ".tox",
+        ".nox",
+        ".coverage",
+        "htmlcov",
+        # Rust
+        "target",
+        ".fingerprint",
+        "incremental",
+        # TypeScript / JavaScript / Node
+        "node_modules",
+        ".npm",
+        ".yarn",
+        ".pnpm-store",
+        # Build outputs
+        "build",
+        "dist",
+        "out",
+        "gen",
+        # Coverage
+        "coverage",
+        "criterion",
+        # IDE / Editor
         ".idea",
         ".vscode",
+        ".fleet",
+        ".history",
+        # AI / Agent tools
+        ".claude",
+        ".waves",
+        ".agents",
+        ".agents2",
+        ".wagents",
+        ".codex",
+        ".opencode",
+        ".sisyphus",
+        # Misc
+        ".tmp",
+        ".pids",
     }
 )
-IGNORE_SUFFIXES = frozenset({".tmp", "~"})
+IGNORE_SUFFIXES = frozenset({".tmp", "~", ".bak", ".swp", ".pyc", ".pyo"})
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
