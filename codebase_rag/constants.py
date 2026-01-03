@@ -731,6 +731,10 @@ REALTIME_LOGGER_FORMAT = (
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 
+# (H) Debounce settings for realtime watcher
+DEFAULT_DEBOUNCE_SECONDS = 5
+DEFAULT_MAX_WAIT_SECONDS = 30
+
 
 class Architecture(StrEnum):
     X86_64 = "x86_64"
