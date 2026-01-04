@@ -173,3 +173,75 @@ class TestShellCommandErrorHandling:
     ) -> None:
         result = await shell_commander.execute("ls --invalid-flag-12345")
         assert result.return_code != 0
+
+
+class TestPipedCommandIntegration:
+    async def test_find_pipe_wc(
+        self, shell_commander: ShellCommander, temp_test_repo: Path
+    ) -> None:
+        result = await shell_commander.execute("find . -type f -name '*.txt' | wc -l")
+        assert result.return_code == 0
+        assert "2" in result.stdout
+
+    async def test_ls_pipe_head(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("ls | head -2")
+        assert result.return_code == 0
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) <= 2
+
+    async def test_cat_pipe_rg(
+        self, shell_commander: ShellCommander, temp_test_repo: Path
+    ) -> None:
+        result = await shell_commander.execute("cat file2.py | rg hello")
+        assert result.return_code == 0
+        assert "hello" in result.stdout
+
+    async def test_ls_pipe_sort(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("ls | sort")
+        assert result.return_code == 0
+        lines = result.stdout.strip().split("\n")
+        assert lines == sorted(lines)
+
+    async def test_echo_pipe_wc(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("echo 'one two three' | wc -w")
+        assert result.return_code == 0
+        assert "3" in result.stdout
+
+    async def test_find_pipe_rg_pipe_wc(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("find . -name '*.py' | rg py | wc -l")
+        assert result.return_code == 0
+
+    async def test_cat_pipe_cut(
+        self, shell_commander: ShellCommander, temp_test_repo: Path
+    ) -> None:
+        (temp_test_repo / "data.csv").write_text("a,b,c\n1,2,3\n", encoding="utf-8")
+        result = await shell_commander.execute("cat data.csv | cut -d',' -f2")
+        assert result.return_code == 0
+        assert "b" in result.stdout
+        assert "2" in result.stdout
+
+    async def test_disallowed_command_in_pipe_rejected(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        result = await shell_commander.execute("ls | curl http://example.com")
+        assert result.return_code == -1
+        assert "not in the allowlist" in result.stderr
+
+    async def test_subshell_rejected(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("echo $(whoami)")
+        assert result.return_code == -1
+        assert "Subshell" in result.stderr
+
+    async def test_and_operator(
+        self, shell_commander: ShellCommander, temp_test_repo: Path
+    ) -> None:
+        result = await shell_commander.execute("ls && pwd")
+        assert result.return_code == 0
+        assert "file1.txt" in result.stdout
+        assert str(temp_test_repo) in result.stdout
+
+    async def test_semicolon_operator(self, shell_commander: ShellCommander) -> None:
+        result = await shell_commander.execute("echo first; echo second")
+        assert result.return_code == 0
+        assert "first" in result.stdout
+        assert "second" in result.stdout
