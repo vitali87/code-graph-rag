@@ -787,8 +787,12 @@ def prompt_for_included_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
 ) -> frozenset[str]:
+    from .config import load_cgrignore_patterns
+
     detected = detect_excludable_directories(repo_path)
-    pre_excluded = frozenset(cli_excludes) if cli_excludes else frozenset()
+    cgrignore_patterns = load_cgrignore_patterns(repo_path)
+    cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
+    pre_excluded = cli_patterns | cgrignore_patterns
 
     if not detected and not pre_excluded:
         return frozenset()
