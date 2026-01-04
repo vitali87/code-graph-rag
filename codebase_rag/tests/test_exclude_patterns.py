@@ -1,6 +1,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from codebase_rag import constants as cs
 from codebase_rag.main import (
     detect_root_excludable_directories,
     prompt_exclude_directories,
@@ -129,3 +132,103 @@ class TestPromptExcludeDirectories:
 
         assert ".git" in result
         assert "custom" in result
+
+
+class TestIgnorePatterns:
+    def test_site_packages_in_ignore_patterns(self) -> None:
+        assert "site-packages" in cs.IGNORE_PATTERNS
+
+    def test_venv_patterns_in_ignore_patterns(self) -> None:
+        assert "venv" in cs.IGNORE_PATTERNS
+        assert ".venv" in cs.IGNORE_PATTERNS
+
+    def test_detects_site_packages_at_root(self, tmp_path: Path) -> None:
+        (tmp_path / "site-packages").mkdir()
+
+        detected = detect_root_excludable_directories(tmp_path)
+
+        assert "site-packages" in detected
+
+
+class TestNestedDirectoryExclusion:
+    @staticmethod
+    def should_skip_path(
+        path: Path, repo_path: Path, exclude_patterns: frozenset[str]
+    ) -> bool:
+        return any(
+            part in exclude_patterns for part in path.relative_to(repo_path).parts
+        )
+
+    def test_skips_nested_site_packages(self, tmp_path: Path) -> None:
+        nested_path = (
+            tmp_path / "notebook-venv" / "lib" / "python3.12" / "site-packages"
+        )
+        nested_path.mkdir(parents=True)
+        file_path = nested_path / "some_package" / "module.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_patterns = frozenset({"site-packages"})
+
+        assert self.should_skip_path(file_path, tmp_path, exclude_patterns)
+
+    def test_skips_deeply_nested_excluded_directory(self, tmp_path: Path) -> None:
+        nested_path = tmp_path / "a" / "b" / "c" / "node_modules" / "pkg"
+        nested_path.mkdir(parents=True)
+        file_path = nested_path / "index.js"
+        file_path.touch()
+
+        exclude_patterns = frozenset({"node_modules"})
+
+        assert self.should_skip_path(file_path, tmp_path, exclude_patterns)
+
+    def test_does_not_skip_without_matching_pattern(self, tmp_path: Path) -> None:
+        nested_path = tmp_path / "src" / "lib" / "utils"
+        nested_path.mkdir(parents=True)
+        file_path = nested_path / "helpers.py"
+        file_path.touch()
+
+        exclude_patterns = frozenset({"node_modules", "site-packages"})
+
+        assert not self.should_skip_path(file_path, tmp_path, exclude_patterns)
+
+    def test_skips_multiple_exclude_patterns(self, tmp_path: Path) -> None:
+        paths = [
+            tmp_path / "venv" / "lib" / "file.py",
+            tmp_path / "project" / "node_modules" / "pkg" / "index.js",
+            tmp_path / "env" / "site-packages" / "dep" / "module.py",
+        ]
+        for p in paths:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.touch()
+
+        exclude_patterns = frozenset({"venv", "node_modules", "site-packages"})
+
+        for p in paths:
+            assert self.should_skip_path(p, tmp_path, exclude_patterns)
+
+    @pytest.mark.parametrize(
+        "path_parts",
+        [
+            (
+                "notebook-venv",
+                "lib",
+                "python3.12",
+                "site-packages",
+                "requests",
+                "api.py",
+            ),
+            ("my-env", "lib", "site-packages", "numpy", "core.py"),
+            (".venv", "lib", "python3.11", "site-packages", "flask", "app.py"),
+        ],
+    )
+    def test_skips_various_site_packages_paths(
+        self, tmp_path: Path, path_parts: tuple[str, ...]
+    ) -> None:
+        file_path = tmp_path.joinpath(*path_parts)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.touch()
+
+        exclude_patterns = frozenset({"site-packages"})
+
+        assert self.should_skip_path(file_path, tmp_path, exclude_patterns)

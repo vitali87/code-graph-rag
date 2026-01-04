@@ -713,6 +713,7 @@ IGNORE_PATTERNS = frozenset(
         ".venv",
         "env",
         ".env",
+        "site-packages",
         "__pycache__",
         ".pytest_cache",
         ".mypy_cache",
