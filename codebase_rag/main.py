@@ -671,6 +671,12 @@ def detect_root_excludable_directories(repo_path: Path) -> set[str]:
     }
 
 
+def should_skip_path(
+    path: Path, repo_path: Path, exclude_patterns: frozenset[str]
+) -> bool:
+    return any(part in exclude_patterns for part in path.relative_to(repo_path).parts)
+
+
 def prompt_exclude_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,

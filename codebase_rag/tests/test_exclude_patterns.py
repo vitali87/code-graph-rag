@@ -7,6 +7,7 @@ from codebase_rag import constants as cs
 from codebase_rag.main import (
     detect_root_excludable_directories,
     prompt_exclude_directories,
+    should_skip_path,
 )
 
 
@@ -151,14 +152,6 @@ class TestIgnorePatterns:
 
 
 class TestNestedDirectoryExclusion:
-    @staticmethod
-    def should_skip_path(
-        path: Path, repo_path: Path, exclude_patterns: frozenset[str]
-    ) -> bool:
-        return any(
-            part in exclude_patterns for part in path.relative_to(repo_path).parts
-        )
-
     def test_skips_nested_site_packages(self, tmp_path: Path) -> None:
         nested_path = (
             tmp_path / "notebook-venv" / "lib" / "python3.12" / "site-packages"
@@ -170,7 +163,7 @@ class TestNestedDirectoryExclusion:
 
         exclude_patterns = frozenset({"site-packages"})
 
-        assert self.should_skip_path(file_path, tmp_path, exclude_patterns)
+        assert should_skip_path(file_path, tmp_path, exclude_patterns)
 
     def test_skips_deeply_nested_excluded_directory(self, tmp_path: Path) -> None:
         nested_path = tmp_path / "a" / "b" / "c" / "node_modules" / "pkg"
@@ -180,7 +173,7 @@ class TestNestedDirectoryExclusion:
 
         exclude_patterns = frozenset({"node_modules"})
 
-        assert self.should_skip_path(file_path, tmp_path, exclude_patterns)
+        assert should_skip_path(file_path, tmp_path, exclude_patterns)
 
     def test_does_not_skip_without_matching_pattern(self, tmp_path: Path) -> None:
         nested_path = tmp_path / "src" / "lib" / "utils"
@@ -190,7 +183,7 @@ class TestNestedDirectoryExclusion:
 
         exclude_patterns = frozenset({"node_modules", "site-packages"})
 
-        assert not self.should_skip_path(file_path, tmp_path, exclude_patterns)
+        assert not should_skip_path(file_path, tmp_path, exclude_patterns)
 
     def test_skips_multiple_exclude_patterns(self, tmp_path: Path) -> None:
         paths = [
@@ -205,7 +198,7 @@ class TestNestedDirectoryExclusion:
         exclude_patterns = frozenset({"venv", "node_modules", "site-packages"})
 
         for p in paths:
-            assert self.should_skip_path(p, tmp_path, exclude_patterns)
+            assert should_skip_path(p, tmp_path, exclude_patterns)
 
     @pytest.mark.parametrize(
         "path_parts",
@@ -231,4 +224,4 @@ class TestNestedDirectoryExclusion:
 
         exclude_patterns = frozenset({"site-packages"})
 
-        assert self.should_skip_path(file_path, tmp_path, exclude_patterns)
+        assert should_skip_path(file_path, tmp_path, exclude_patterns)

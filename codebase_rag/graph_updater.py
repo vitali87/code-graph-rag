@@ -10,6 +10,7 @@ from . import constants as cs
 from . import logs as ls
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
+from .main import should_skip_path
 from .parsers.factory import ProcessorFactory
 from .services import IngestorProtocol, QueryProtocol
 from .types_defs import (
@@ -313,14 +314,10 @@ class GraphUpdater:
                 logger.debug(ls.CLEANED_SIMPLE_NAME.format(name=simple_name))
 
     def _process_files(self) -> None:
-        def should_skip_path(path: Path) -> bool:
-            return any(
-                part in self.exclude_patterns
-                for part in path.relative_to(self.repo_path).parts
-            )
-
         for filepath in self.repo_path.rglob("*"):
-            if filepath.is_file() and not should_skip_path(filepath):
+            if filepath.is_file() and not should_skip_path(
+                filepath, self.repo_path, self.exclude_patterns
+            ):
                 lang_config = get_language_spec(filepath.suffix)
                 if (
                     lang_config
