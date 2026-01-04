@@ -663,10 +663,6 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-def parse_cli_excludes(exclude: list[str] | None) -> frozenset[str] | None:
-    return frozenset(exclude) if exclude else None
-
-
 def detect_root_excludable_directories(repo_path: Path) -> set[str]:
     return {
         path.name
@@ -677,11 +673,11 @@ def detect_root_excludable_directories(repo_path: Path) -> set[str]:
 
 def prompt_exclude_directories(
     repo_path: Path,
-    cli_excludes: frozenset[str] | None = None,
+    cli_excludes: list[str] | None = None,
     skip_prompt: bool = False,
 ) -> frozenset[str]:
     detected = detect_root_excludable_directories(repo_path)
-    pre_excluded = cli_excludes or frozenset()
+    pre_excluded = frozenset(cli_excludes) if cli_excludes else frozenset()
 
     if not detected and not pre_excluded:
         return frozenset()

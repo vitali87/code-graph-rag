@@ -53,7 +53,7 @@ class TestPromptExcludeDirectories:
 
     def test_skip_prompt_includes_cli_excludes(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
-        cli_excludes = frozenset({"custom_dir"})
+        cli_excludes = ["custom_dir"]
 
         result = prompt_exclude_directories(
             tmp_path, cli_excludes=cli_excludes, skip_prompt=True
@@ -67,7 +67,7 @@ class TestPromptExcludeDirectories:
         assert result == frozenset()
 
     def test_cli_excludes_only_with_skip_prompt(self, tmp_path: Path) -> None:
-        cli_excludes = frozenset({"vendor", "build"})
+        cli_excludes = ["vendor", "build"]
 
         result = prompt_exclude_directories(
             tmp_path, cli_excludes=cli_excludes, skip_prompt=True
@@ -122,7 +122,7 @@ class TestPromptExcludeDirectories:
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
         (tmp_path / ".git").mkdir()
-        cli_excludes = frozenset({"custom"})
+        cli_excludes = ["custom"]
         mock_ask.return_value = "all"
 
         result = prompt_exclude_directories(tmp_path, cli_excludes=cli_excludes)

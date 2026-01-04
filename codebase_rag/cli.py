@@ -15,7 +15,6 @@ from .main import (
     export_graph_to_file,
     main_async,
     main_optimize_async,
-    parse_cli_excludes,
     prompt_exclude_directories,
     style,
     update_model_settings,
@@ -106,7 +105,7 @@ def start(
         )
 
         exclude_patterns = prompt_exclude_directories(
-            repo_to_update, parse_cli_excludes(exclude), skip_prompt=no_prompt_exclude
+            repo_to_update, exclude, skip_prompt=no_prompt_exclude
         )
 
         with connect_memgraph(effective_batch_size) as ingestor:
@@ -182,7 +181,7 @@ def index(
     )
 
     exclude_patterns = prompt_exclude_directories(
-        repo_to_index, parse_cli_excludes(exclude), skip_prompt=no_prompt_exclude
+        repo_to_index, exclude, skip_prompt=no_prompt_exclude
     )
 
     try:
