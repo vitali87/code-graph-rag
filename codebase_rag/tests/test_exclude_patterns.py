@@ -1,18 +1,19 @@
-from __future__ import annotations
-
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from codebase_rag.main import detect_excludable_directories, prompt_exclude_directories
+from codebase_rag.main import (
+    detect_root_excludable_directories,
+    prompt_exclude_directories,
+)
 
 
-class TestDetectExcludableDirectories:
+class TestDetectRootExcludableDirectories:
     def test_detects_matching_patterns(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
         (tmp_path / "node_modules").mkdir()
         (tmp_path / "src").mkdir()
 
-        detected = detect_excludable_directories(tmp_path)
+        detected = detect_root_excludable_directories(tmp_path)
 
         assert ".git" in detected
         assert "node_modules" in detected
@@ -22,13 +23,13 @@ class TestDetectExcludableDirectories:
         (tmp_path / ".git").touch()
         (tmp_path / "venv").mkdir()
 
-        detected = detect_excludable_directories(tmp_path)
+        detected = detect_root_excludable_directories(tmp_path)
 
         assert ".git" not in detected
         assert "venv" in detected
 
     def test_empty_repo_returns_empty_set(self, tmp_path: Path) -> None:
-        detected = detect_excludable_directories(tmp_path)
+        detected = detect_root_excludable_directories(tmp_path)
         assert detected == set()
 
     def test_no_matching_patterns(self, tmp_path: Path) -> None:
@@ -36,7 +37,7 @@ class TestDetectExcludableDirectories:
         (tmp_path / "lib").mkdir()
         (tmp_path / "tests").mkdir()
 
-        detected = detect_excludable_directories(tmp_path)
+        detected = detect_root_excludable_directories(tmp_path)
         assert detected == set()
 
 

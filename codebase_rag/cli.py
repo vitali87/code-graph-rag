@@ -15,6 +15,7 @@ from .main import (
     export_graph_to_file,
     main_async,
     main_optimize_async,
+    parse_cli_excludes,
     prompt_exclude_directories,
     style,
     update_model_settings,
@@ -104,9 +105,8 @@ def start(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
         )
 
-        cli_excludes = frozenset(exclude) if exclude else None
         exclude_patterns = prompt_exclude_directories(
-            repo_to_update, cli_excludes, skip_prompt=no_prompt_exclude
+            repo_to_update, parse_cli_excludes(exclude), skip_prompt=no_prompt_exclude
         )
 
         with connect_memgraph(effective_batch_size) as ingestor:
@@ -181,9 +181,8 @@ def index(
         style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN)
     )
 
-    cli_excludes = frozenset(exclude) if exclude else None
     exclude_patterns = prompt_exclude_directories(
-        repo_to_index, cli_excludes, skip_prompt=no_prompt_exclude
+        repo_to_index, parse_cli_excludes(exclude), skip_prompt=no_prompt_exclude
     )
 
     try:
