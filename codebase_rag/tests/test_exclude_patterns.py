@@ -7,8 +7,8 @@ from codebase_rag import constants as cs
 from codebase_rag.main import (
     detect_root_excludable_directories,
     prompt_exclude_directories,
-    should_skip_path,
 )
+from codebase_rag.utils.path_utils import should_skip_path
 
 
 class TestDetectRootExcludableDirectories:

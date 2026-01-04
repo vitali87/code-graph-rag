@@ -4,9 +4,9 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs
-from ..main import should_skip_path
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
+from ..utils.path_utils import should_skip_path
 
 
 class StructureProcessor:

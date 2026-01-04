@@ -10,7 +10,6 @@ from . import constants as cs
 from . import logs as ls
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
-from .main import should_skip_path
 from .parsers.factory import ProcessorFactory
 from .services import IngestorProtocol, QueryProtocol
 from .types_defs import (
@@ -25,6 +24,7 @@ from .types_defs import (
 )
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
+from .utils.path_utils import should_skip_path
 from .utils.source_extraction import extract_source_with_fallback
 
 
