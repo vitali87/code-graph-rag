@@ -696,6 +696,7 @@ IGNORE_PATTERNS = frozenset(
         ".venv",
         "__pycache__",
         "node_modules",
+        "site-packages",
         "build",
         "dist",
         ".eggs",
