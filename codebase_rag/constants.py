@@ -618,6 +618,21 @@ PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
 MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
 
+# (H) Exclude directories prompt
+EXCLUDE_PROMPT_TITLE = "Detected Directories"
+EXCLUDE_COL_NUM = "#"
+EXCLUDE_COL_DIRECTORY = "Directory"
+EXCLUDE_COL_STATUS = "Source"
+EXCLUDE_STATUS_DETECTED = "auto-detected"
+EXCLUDE_STATUS_CLI = "--exclude"
+EXCLUDE_PROMPT_INSTRUCTIONS = (
+    "Options: 'all' (exclude all), 'none' (exclude nothing), "
+    "or numbers like '1,3,5' (exclude specific)"
+)
+EXCLUDE_PROMPT_ASK = "Exclude"
+EXCLUDE_DEFAULT_ALL = "all"
+EXCLUDE_NONE = "none"
+
 # (H) JSON formatting
 JSON_INDENT = 2
 
@@ -688,26 +703,55 @@ TS_LOCALS_PATTERN = """
 (identifier) @local.reference
 """
 
-# (H) File/directory ignore patterns
+# (H) Patterns to detect and prompt user about excluding
 IGNORE_PATTERNS = frozenset(
     {
         ".git",
+        ".svn",
+        ".hg",
         "venv",
         ".venv",
+        "env",
+        ".env",
         "__pycache__",
-        "node_modules",
-        "build",
-        "dist",
-        ".eggs",
         ".pytest_cache",
         ".mypy_cache",
         ".ruff_cache",
-        ".claude",
+        ".tox",
+        ".nox",
+        ".eggs",
+        "node_modules",
+        ".npm",
+        ".yarn",
+        ".pnpm-store",
+        "bower_components",
+        "build",
+        "dist",
+        "out",
+        "target",
+        "vendor",
+        "bin",
+        "obj",
+        ".gradle",
+        ".maven",
+        "Pods",
         ".idea",
         ".vscode",
+        ".vs",
+        ".eclipse",
+        ".claude",
+        ".cache",
+        ".tmp",
+        "tmp",
+        "temp",
+        "coverage",
+        ".nyc_output",
+        "htmlcov",
     }
 )
-IGNORE_SUFFIXES = frozenset({".tmp", "~"})
+IGNORE_SUFFIXES = frozenset(
+    {".tmp", "~", ".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".class"}
+)
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"

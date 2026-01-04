@@ -52,6 +52,7 @@ def processor(
         repo_path=temp_repo,
         project_name="test_project",
         queries=mock_language_queries,
+        exclude_patterns=frozenset({".git", "__pycache__", "venv"}),
     )
 
 

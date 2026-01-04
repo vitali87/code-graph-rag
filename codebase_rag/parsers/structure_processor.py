@@ -15,13 +15,14 @@ class StructureProcessor:
         repo_path: Path,
         project_name: str,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        exclude_patterns: frozenset[str] | None = None,
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
         self.queries = queries
         self.structural_elements: dict[Path, str | None] = {}
-        self.ignore_dirs = cs.IGNORE_PATTERNS
+        self.ignore_dirs = exclude_patterns or frozenset()
 
     def _get_parent_identifier(
         self, parent_rel_path: Path, parent_container_qn: str | None
