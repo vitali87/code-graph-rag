@@ -643,6 +643,10 @@ class TestSegmentPatterns:
             assert reason is not None, f"Expected /{sys_dir} to be flagged"
             assert "system directory" in reason.lower()
 
+    def test_python_os_import_detected(self) -> None:
+        assert _check_segment_patterns("python -c 'import os'") is not None
+        assert _check_segment_patterns("python3 -c \"__import__('os')\"") is not None
+
     def test_safe_segment_not_flagged(self) -> None:
         assert _check_segment_patterns("ls -la") is None
         assert _check_segment_patterns("cat file.txt") is None

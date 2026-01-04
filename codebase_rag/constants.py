@@ -968,7 +968,10 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r">\s*/etc/shadow", "overwrite shadow"),
     (r">\s*/etc/sudoers", "overwrite sudoers"),
     (r"echo\s+.*>\s*/etc/", "write to /etc"),
-    (r"python.*-c.*import\s+os", "python os import in command"),
+    (
+        r"python.*-c.*(import\s+os|__import__\s*\(\s*['\"]os['\"]\s*\))",
+        "python os import in command",
+    ),
     (r"perl\s+-e", "perl one-liner"),
     (r"ruby\s+-e", "ruby one-liner"),
     (r"nc\s+-[el]", "netcat listener"),
