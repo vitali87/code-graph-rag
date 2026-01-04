@@ -15,6 +15,7 @@ from .main import (
     export_graph_to_file,
     main_async,
     main_optimize_async,
+    prompt_exclude_directories,
     style,
     update_model_settings,
 )
@@ -72,6 +73,16 @@ def start(
         min=1,
         help=ch.HELP_BATCH_SIZE,
     ),
+    exclude: list[str] | None = typer.Option(
+        None,
+        "--exclude",
+        help=ch.HELP_EXCLUDE_PATTERNS,
+    ),
+    no_prompt_exclude: bool = typer.Option(
+        False,
+        "--no-prompt-exclude",
+        help=ch.HELP_NO_PROMPT_EXCLUDE,
+    ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
 
@@ -93,6 +104,10 @@ def start(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
         )
 
+        exclude_patterns = prompt_exclude_directories(
+            repo_to_update, exclude, skip_prompt=no_prompt_exclude
+        )
+
         with connect_memgraph(effective_batch_size) as ingestor:
             if clean:
                 app_context.console.print(
@@ -103,7 +118,9 @@ def start(
 
             parsers, queries = load_parsers()
 
-            updater = GraphUpdater(ingestor, repo_to_update, parsers, queries)
+            updater = GraphUpdater(
+                ingestor, repo_to_update, parsers, queries, exclude_patterns
+            )
             updater.run()
 
             if output:
@@ -142,6 +159,16 @@ def index(
         "--split-index",
         help=ch.HELP_SPLIT_INDEX,
     ),
+    exclude: list[str] | None = typer.Option(
+        None,
+        "--exclude",
+        help=ch.HELP_EXCLUDE_PATTERNS,
+    ),
+    no_prompt_exclude: bool = typer.Option(
+        False,
+        "--no-prompt-exclude",
+        help=ch.HELP_NO_PROMPT_EXCLUDE,
+    ),
 ) -> None:
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     repo_to_index = Path(target_repo_path)
@@ -153,12 +180,18 @@ def index(
         style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN)
     )
 
+    exclude_patterns = prompt_exclude_directories(
+        repo_to_index, exclude, skip_prompt=no_prompt_exclude
+    )
+
     try:
         ingestor = ProtobufFileIngestor(
             output_path=output_proto_dir, split_index=split_index
         )
         parsers, queries = load_parsers()
-        updater = GraphUpdater(ingestor, repo_to_index, parsers, queries)
+        updater = GraphUpdater(
+            ingestor, repo_to_index, parsers, queries, exclude_patterns
+        )
 
         updater.run()
 
