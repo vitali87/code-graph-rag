@@ -6,6 +6,7 @@ from .. import constants as cs
 from .. import logs
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
+from ..utils.path_utils import should_skip_path
 
 
 class StructureProcessor:
@@ -36,9 +37,8 @@ class StructureProcessor:
     def identify_structure(self) -> None:
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
-            if path.is_dir() and not any(
-                part in self.exclude_patterns
-                for part in path.relative_to(self.repo_path).parts
+            if path.is_dir() and not should_skip_path(
+                path, self.repo_path, self.exclude_patterns
             ):
                 directories.add(path)
 
