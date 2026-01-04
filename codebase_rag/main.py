@@ -676,8 +676,12 @@ def prompt_exclude_directories(
     cli_excludes: list[str] | None = None,
     skip_prompt: bool = False,
 ) -> frozenset[str]:
+    from .config import load_cgrignore_patterns
+
     detected = detect_root_excludable_directories(repo_path)
-    pre_excluded = frozenset(cli_excludes) if cli_excludes else frozenset()
+    cgrignore_patterns = load_cgrignore_patterns(repo_path)
+    cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
+    pre_excluded = cli_patterns | cgrignore_patterns
 
     if not detected and not pre_excluded:
         return frozenset()
@@ -693,11 +697,12 @@ def prompt_exclude_directories(
     table.add_column(cs.EXCLUDE_COL_STATUS, style=cs.Color.GREEN)
 
     for i, name in enumerate(all_candidates, 1):
-        status = (
-            cs.EXCLUDE_STATUS_CLI
-            if name in pre_excluded
-            else cs.EXCLUDE_STATUS_DETECTED
-        )
+        if name in cli_patterns:
+            status = cs.EXCLUDE_STATUS_CLI
+        elif name in cgrignore_patterns:
+            status = cs.EXCLUDE_STATUS_CGRIGNORE
+        else:
+            status = cs.EXCLUDE_STATUS_DETECTED
         table.add_row(str(i), name, status)
 
     app_context.console.print(table)

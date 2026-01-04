@@ -625,6 +625,7 @@ EXCLUDE_COL_DIRECTORY = "Directory"
 EXCLUDE_COL_STATUS = "Source"
 EXCLUDE_STATUS_DETECTED = "auto-detected"
 EXCLUDE_STATUS_CLI = "--exclude"
+EXCLUDE_STATUS_CGRIGNORE = ".cgrignore"
 EXCLUDE_PROMPT_INSTRUCTIONS = (
     "Options: 'all' (exclude all), 'none' (exclude nothing), "
     "or numbers like '1,3,5' (exclude specific)"

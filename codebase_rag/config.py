@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Unpack
 
 from dotenv import load_dotenv
@@ -227,3 +228,28 @@ class AppConfig(BaseSettings):
 
 
 settings = AppConfig()
+
+CGRIGNORE_FILENAME = ".cgrignore"
+
+
+def load_cgrignore_patterns(repo_path: Path) -> frozenset[str]:
+    from loguru import logger
+
+    ignore_file = repo_path / CGRIGNORE_FILENAME
+    if not ignore_file.exists():
+        return frozenset()
+
+    patterns: set[str] = set()
+    try:
+        with ignore_file.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                patterns.add(line)
+        if patterns:
+            logger.info(f"Loaded {len(patterns)} patterns from {ignore_file}")
+        return frozenset(patterns)
+    except OSError as e:
+        logger.warning(f"Failed to read {ignore_file}: {e}")
+        return frozenset()
