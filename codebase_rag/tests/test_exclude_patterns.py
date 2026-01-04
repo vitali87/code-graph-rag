@@ -154,11 +154,15 @@ class TestIgnorePatterns:
 class TestNestedDirectoryExclusion:
     def test_skips_nested_site_packages(self, tmp_path: Path) -> None:
         nested_path = (
-            tmp_path / "notebook-venv" / "lib" / "python3.12" / "site-packages"
+            tmp_path
+            / "notebook-venv"
+            / "lib"
+            / "python3.12"
+            / "site-packages"
+            / "some_package"
         )
         nested_path.mkdir(parents=True)
-        file_path = nested_path / "some_package" / "module.py"
-        file_path.parent.mkdir(parents=True)
+        file_path = nested_path / "module.py"
         file_path.touch()
 
         exclude_patterns = frozenset({"site-packages"})
