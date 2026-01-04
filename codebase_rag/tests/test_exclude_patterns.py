@@ -113,7 +113,7 @@ class TestPromptExcludeDirectories:
 
         result = prompt_exclude_directories(tmp_path)
 
-        assert len(result) == 2
+        assert result == frozenset({".git", "venv"})
 
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")

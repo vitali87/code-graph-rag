@@ -664,11 +664,11 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
 
 def detect_excludable_directories(repo_path: Path) -> set[str]:
-    detected: set[str] = set()
-    for path in repo_path.iterdir():
-        if path.is_dir() and path.name in cs.IGNORE_PATTERNS:
-            detected.add(path.name)
-    return detected
+    return {
+        path.name
+        for path in repo_path.iterdir()
+        if path.is_dir() and path.name in cs.IGNORE_PATTERNS
+    }
 
 
 def prompt_exclude_directories(
@@ -685,7 +685,7 @@ def prompt_exclude_directories(
     if skip_prompt:
         return frozenset(detected) | pre_excluded
 
-    all_candidates = sorted(detected | set(pre_excluded))
+    all_candidates = sorted(detected | pre_excluded)
 
     if not all_candidates:
         return frozenset()
@@ -726,8 +726,6 @@ def prompt_exclude_directories(
             idx = int(part) - 1
             if 0 <= idx < len(all_candidates):
                 selected.add(all_candidates[idx])
-        elif part in all_candidates:
-            selected.add(part)
 
     return frozenset(selected)
 
