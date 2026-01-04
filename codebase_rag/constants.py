@@ -703,7 +703,7 @@ TS_LOCALS_PATTERN = """
 (identifier) @local.reference
 """
 
-# (H) Patterns to detect and prompt user about excluding
+# (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
 IGNORE_PATTERNS = frozenset(
     {
         ".git",
