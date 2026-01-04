@@ -687,9 +687,6 @@ def prompt_exclude_directories(
 
     all_candidates = sorted(detected | pre_excluded)
 
-    if not all_candidates:
-        return frozenset()
-
     table = Table(title=style(cs.EXCLUDE_PROMPT_TITLE, cs.Color.CYAN))
     table.add_column(cs.EXCLUDE_COL_NUM, style=cs.Color.YELLOW, width=4)
     table.add_column(cs.EXCLUDE_COL_DIRECTORY)
