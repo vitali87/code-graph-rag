@@ -683,7 +683,7 @@ def prompt_exclude_directories(
         return frozenset()
 
     if skip_prompt:
-        return frozenset(detected) | pre_excluded
+        return pre_excluded | detected
 
     all_candidates = sorted(detected | pre_excluded)
 
