@@ -76,55 +76,55 @@ class TestDetectExcludableDirectories:
         assert detected == set()
 
 
-class TestFindMatchingPattern:
+class TestGetGroupingKey:
     def test_root_level_pattern_returns_itself(self) -> None:
-        from codebase_rag.main import _find_matching_pattern
+        from codebase_rag.main import _get_grouping_key
 
-        assert _find_matching_pattern(".git") == ".git"
-        assert _find_matching_pattern(".venv") == ".venv"
-        assert _find_matching_pattern("node_modules") == "node_modules"
-        assert _find_matching_pattern("__pycache__") == "__pycache__"
+        assert _get_grouping_key(".git") == ".git"
+        assert _get_grouping_key(".venv") == ".venv"
+        assert _get_grouping_key("node_modules") == "node_modules"
+        assert _get_grouping_key("__pycache__") == "__pycache__"
 
     def test_nested_path_returns_first_matching_pattern(self) -> None:
-        from codebase_rag.main import _find_matching_pattern
+        from codebase_rag.main import _get_grouping_key
 
-        assert _find_matching_pattern(".venv/bin") == ".venv"
-        assert _find_matching_pattern(".venv/lib/site-packages") == ".venv"
-        assert _find_matching_pattern(".git/objects/pack") == ".git"
+        assert _get_grouping_key(".venv/bin") == ".venv"
+        assert _get_grouping_key(".venv/lib/site-packages") == ".venv"
+        assert _get_grouping_key(".git/objects/pack") == ".git"
 
     def test_deep_nested_pattern_returns_first_match(self) -> None:
-        from codebase_rag.main import _find_matching_pattern
+        from codebase_rag.main import _get_grouping_key
 
-        assert _find_matching_pattern("src/pkg/__pycache__") == "__pycache__"
-        assert _find_matching_pattern("app/tests/unit/__pycache__") == "__pycache__"
-        assert _find_matching_pattern("a/b/c/d/e/__pycache__") == "__pycache__"
+        assert _get_grouping_key("src/pkg/__pycache__") == "__pycache__"
+        assert _get_grouping_key("app/tests/unit/__pycache__") == "__pycache__"
+        assert _get_grouping_key("a/b/c/d/e/__pycache__") == "__pycache__"
 
     def test_multiple_patterns_in_path_returns_first(self) -> None:
-        from codebase_rag.main import _find_matching_pattern
+        from codebase_rag.main import _get_grouping_key
 
-        assert _find_matching_pattern(".venv/lib/site-packages/__pycache__") == ".venv"
-        assert _find_matching_pattern("node_modules/pkg/__pycache__") == "node_modules"
+        assert _get_grouping_key(".venv/lib/site-packages/__pycache__") == ".venv"
+        assert _get_grouping_key("node_modules/pkg/__pycache__") == "node_modules"
 
     def test_no_matching_pattern_returns_first_component(self) -> None:
-        from codebase_rag.main import _find_matching_pattern
+        from codebase_rag.main import _get_grouping_key
 
-        assert _find_matching_pattern("custom_dir") == "custom_dir"
-        assert _find_matching_pattern("my/custom/path") == "my"
-        assert _find_matching_pattern("src/lib/utils") == "src"
+        assert _get_grouping_key("custom_dir") == "custom_dir"
+        assert _get_grouping_key("my/custom/path") == "my"
+        assert _get_grouping_key("src/lib/utils") == "src"
 
     def test_similar_names_not_matching_patterns(self) -> None:
-        from codebase_rag.main import _find_matching_pattern
+        from codebase_rag.main import _get_grouping_key
 
-        assert _find_matching_pattern("my-venv/file") == "my-venv"
-        assert _find_matching_pattern("not_pycache/file") == "not_pycache"
-        assert _find_matching_pattern("git-repo/file") == "git-repo"
+        assert _get_grouping_key("my-venv/file") == "my-venv"
+        assert _get_grouping_key("not_pycache/file") == "not_pycache"
+        assert _get_grouping_key("git-repo/file") == "git-repo"
 
     def test_pattern_must_be_exact_match(self) -> None:
-        from codebase_rag.main import _find_matching_pattern
+        from codebase_rag.main import _get_grouping_key
 
-        assert _find_matching_pattern("venv-backup/lib") == "venv-backup"
-        assert _find_matching_pattern("my.git/objects") == "my.git"
-        assert _find_matching_pattern("node_modules_old/pkg") == "node_modules_old"
+        assert _get_grouping_key("venv-backup/lib") == "venv-backup"
+        assert _get_grouping_key("my.git/objects") == "my.git"
+        assert _get_grouping_key("node_modules_old/pkg") == "node_modules_old"
 
 
 class TestGroupPathsByPattern:

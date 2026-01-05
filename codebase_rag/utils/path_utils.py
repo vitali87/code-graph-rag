@@ -10,14 +10,13 @@ def should_skip_path(
     include_paths: frozenset[str] | None = None,
 ) -> bool:
     rel_path = path.relative_to(repo_path)
-    rel_str = str(rel_path)
     if include_paths:
-        for included in include_paths:
-            if rel_str == included or rel_str.startswith(f"{included}/"):
+        for included_str in include_paths:
+            included_path = Path(included_str)
+            if rel_path == included_path or included_path in rel_path.parents:
                 return False
-    if exclude_paths:
-        for excluded in exclude_paths:
-            if rel_str == excluded or rel_str.startswith(f"{excluded}/"):
-                return True
     dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
-    return any(part in cs.IGNORE_PATTERNS for part in dir_parts)
+    all_excludes = (
+        cs.IGNORE_PATTERNS | exclude_paths if exclude_paths else cs.IGNORE_PATTERNS
+    )
+    return any(part in all_excludes for part in dir_parts)

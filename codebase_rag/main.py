@@ -666,9 +666,11 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
 def detect_excludable_directories(repo_path: Path) -> set[str]:
     detected: set[str] = set()
-    queue: deque[Path] = deque([repo_path])
+    queue: deque[tuple[Path, int]] = deque([(repo_path, 0)])
     while queue:
-        current = queue.popleft()
+        current, depth = queue.popleft()
+        if depth >= cs.INTERACTIVE_BFS_MAX_DEPTH:
+            continue
         try:
             entries = list(current.iterdir())
         except PermissionError:
@@ -679,12 +681,12 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
             if path.name in cs.IGNORE_PATTERNS:
                 detected.add(str(path.relative_to(repo_path)))
             else:
-                queue.append(path)
+                queue.append((path, depth + 1))
     return detected
 
 
-def _find_matching_pattern(path: str) -> str:
-    parts = path.split("/")
+def _get_grouping_key(path: str) -> str:
+    parts = Path(path).parts
     for part in parts:
         if part in cs.IGNORE_PATTERNS:
             return part
@@ -694,10 +696,10 @@ def _find_matching_pattern(path: str) -> str:
 def _group_paths_by_pattern(paths: set[str]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {}
     for path in paths:
-        pattern = _find_matching_pattern(path)
-        if pattern not in groups:
-            groups[pattern] = []
-        groups[pattern].append(path)
+        key = _get_grouping_key(path)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(path)
     for group_paths in groups.values():
         group_paths.sort()
     return groups
