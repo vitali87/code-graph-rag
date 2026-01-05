@@ -712,9 +712,7 @@ def _format_nested_count(count: int) -> str:
     return template.format(count=count)
 
 
-def _display_grouped_table(
-    groups: dict[str, list[str]], pre_excluded: frozenset[str]
-) -> list[str]:
+def _display_grouped_table(groups: dict[str, list[str]]) -> list[str]:
     sorted_roots = sorted(groups.keys())
     table = Table(title=style(cs.INTERACTIVE_TITLE_GROUPED, cs.Color.CYAN))
     table.add_column(cs.INTERACTIVE_COL_NUM, style=cs.Color.YELLOW, width=4)
@@ -795,7 +793,7 @@ def prompt_for_included_directories(
 
     all_candidates = detected | pre_excluded
     groups = _group_paths_by_pattern(all_candidates)
-    sorted_roots = _display_grouped_table(groups, pre_excluded)
+    sorted_roots = _display_grouped_table(groups)
 
     response = Prompt.ask(
         style(cs.INTERACTIVE_PROMPT_KEEP, cs.Color.CYAN),
