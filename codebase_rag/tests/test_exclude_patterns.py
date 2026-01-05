@@ -76,6 +76,199 @@ class TestDetectExcludableDirectories:
         assert detected == set()
 
 
+class TestFindMatchingPattern:
+    def test_root_level_pattern_returns_itself(self) -> None:
+        from codebase_rag.main import _find_matching_pattern
+
+        assert _find_matching_pattern(".git") == ".git"
+        assert _find_matching_pattern(".venv") == ".venv"
+        assert _find_matching_pattern("node_modules") == "node_modules"
+        assert _find_matching_pattern("__pycache__") == "__pycache__"
+
+    def test_nested_path_returns_first_matching_pattern(self) -> None:
+        from codebase_rag.main import _find_matching_pattern
+
+        assert _find_matching_pattern(".venv/bin") == ".venv"
+        assert _find_matching_pattern(".venv/lib/site-packages") == ".venv"
+        assert _find_matching_pattern(".git/objects/pack") == ".git"
+
+    def test_deep_nested_pattern_returns_first_match(self) -> None:
+        from codebase_rag.main import _find_matching_pattern
+
+        assert _find_matching_pattern("src/pkg/__pycache__") == "__pycache__"
+        assert _find_matching_pattern("app/tests/unit/__pycache__") == "__pycache__"
+        assert _find_matching_pattern("a/b/c/d/e/__pycache__") == "__pycache__"
+
+    def test_multiple_patterns_in_path_returns_first(self) -> None:
+        from codebase_rag.main import _find_matching_pattern
+
+        assert _find_matching_pattern(".venv/lib/site-packages/__pycache__") == ".venv"
+        assert _find_matching_pattern("node_modules/pkg/__pycache__") == "node_modules"
+
+    def test_no_matching_pattern_returns_first_component(self) -> None:
+        from codebase_rag.main import _find_matching_pattern
+
+        assert _find_matching_pattern("custom_dir") == "custom_dir"
+        assert _find_matching_pattern("my/custom/path") == "my"
+        assert _find_matching_pattern("src/lib/utils") == "src"
+
+    def test_similar_names_not_matching_patterns(self) -> None:
+        from codebase_rag.main import _find_matching_pattern
+
+        assert _find_matching_pattern("my-venv/file") == "my-venv"
+        assert _find_matching_pattern("not_pycache/file") == "not_pycache"
+        assert _find_matching_pattern("git-repo/file") == "git-repo"
+
+    def test_pattern_must_be_exact_match(self) -> None:
+        from codebase_rag.main import _find_matching_pattern
+
+        assert _find_matching_pattern("venv-backup/lib") == "venv-backup"
+        assert _find_matching_pattern("my.git/objects") == "my.git"
+        assert _find_matching_pattern("node_modules_old/pkg") == "node_modules_old"
+
+
+class TestGroupPathsByPattern:
+    def test_groups_single_level_paths(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {".git", ".venv", "node_modules"}
+        groups = _group_paths_by_pattern(paths)
+
+        assert set(groups.keys()) == {".git", ".venv", "node_modules"}
+        assert groups[".git"] == [".git"]
+        assert groups[".venv"] == [".venv"]
+
+    def test_groups_nested_paths_under_first_matching_pattern(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {
+            ".venv",
+            ".venv/bin",
+            ".venv/lib/python3.12/site-packages",
+            ".git",
+        }
+        groups = _group_paths_by_pattern(paths)
+
+        assert set(groups.keys()) == {".git", ".venv"}
+        assert groups[".venv"] == [
+            ".venv",
+            ".venv/bin",
+            ".venv/lib/python3.12/site-packages",
+        ]
+
+    def test_groups_by_matching_pattern_not_parent_directory(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {"src/__pycache__", "tests/__pycache__", ".git"}
+        groups = _group_paths_by_pattern(paths)
+
+        assert set(groups.keys()) == {".git", "__pycache__"}
+        assert groups["__pycache__"] == ["src/__pycache__", "tests/__pycache__"]
+
+    def test_codebase_with_nested_pycache_groups_correctly(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {
+            "codebase_rag/__pycache__",
+            "codebase_rag/tests/__pycache__",
+            "codebase_rag/parsers/__pycache__",
+            ".git",
+            ".venv",
+        }
+        groups = _group_paths_by_pattern(paths)
+
+        assert set(groups.keys()) == {".git", ".venv", "__pycache__"}
+        assert "codebase_rag" not in groups
+        assert groups["__pycache__"] == [
+            "codebase_rag/__pycache__",
+            "codebase_rag/parsers/__pycache__",
+            "codebase_rag/tests/__pycache__",
+        ]
+
+    def test_mixed_root_and_nested_patterns(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {
+            ".venv",
+            ".venv/lib/site-packages",
+            "src/__pycache__",
+            "tests/__pycache__",
+            ".git",
+            "docs/build",
+        }
+        groups = _group_paths_by_pattern(paths)
+
+        assert set(groups.keys()) == {".git", ".venv", "__pycache__", "build"}
+        assert groups[".venv"] == [".venv", ".venv/lib/site-packages"]
+        assert groups["__pycache__"] == ["src/__pycache__", "tests/__pycache__"]
+        assert groups["build"] == ["docs/build"]
+
+    def test_cli_excludes_without_pattern_match(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {"custom_vendor", "my_build", ".git"}
+        groups = _group_paths_by_pattern(paths)
+
+        assert set(groups.keys()) == {".git", "custom_vendor", "my_build"}
+        assert groups["custom_vendor"] == ["custom_vendor"]
+        assert groups["my_build"] == ["my_build"]
+
+    def test_deeply_nested_patterns(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {
+            "a/b/c/d/__pycache__",
+            "x/y/z/__pycache__",
+            "pkg/subpkg/tests/__pycache__",
+        }
+        groups = _group_paths_by_pattern(paths)
+
+        assert set(groups.keys()) == {"__pycache__"}
+        assert len(groups["__pycache__"]) == 3
+
+    def test_sorts_paths_within_group(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {"src/z/__pycache__", "src/a/__pycache__", "src/m/__pycache__"}
+        groups = _group_paths_by_pattern(paths)
+
+        assert groups["__pycache__"] == [
+            "src/a/__pycache__",
+            "src/m/__pycache__",
+            "src/z/__pycache__",
+        ]
+
+    def test_empty_paths_returns_empty_groups(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        groups = _group_paths_by_pattern(set())
+        assert groups == {}
+
+    def test_real_world_scenario_with_venv_and_pycache(self) -> None:
+        from codebase_rag.main import _group_paths_by_pattern
+
+        paths = {
+            ".venv",
+            ".venv/bin",
+            ".venv/lib/python3.12/site-packages",
+            ".venv/lib/python3.12/site-packages/__pycache__",
+            ".git",
+            "myproject/__pycache__",
+            "myproject/tests/__pycache__",
+            "myproject/utils/__pycache__",
+        }
+        groups = _group_paths_by_pattern(paths)
+
+        assert ".venv" in groups
+        assert "__pycache__" in groups
+        assert ".git" in groups
+        assert "myproject" not in groups
+
+        assert ".venv/lib/python3.12/site-packages/__pycache__" in groups[".venv"]
+        assert "myproject/__pycache__" in groups["__pycache__"]
+        assert "myproject/tests/__pycache__" in groups["__pycache__"]
+
+
 class TestPromptExcludeDirectories:
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")
@@ -115,17 +308,35 @@ class TestPromptExcludeDirectories:
 
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")
-    def test_prompt_specific_numbers_keeps_selected(
+    def test_prompt_number_keeps_entire_group(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
         (tmp_path / ".git").mkdir()
-        (tmp_path / "node_modules").mkdir()
-        (tmp_path / "venv").mkdir()
-        mock_ask.return_value = "1,3"
+        (tmp_path / ".venv").mkdir()
+        (tmp_path / ".venv" / "bin").mkdir()
+        mock_ask.return_value = "2"
 
         result = prompt_exclude_directories(tmp_path)
 
-        assert result == frozenset({".git", "venv"})
+        assert ".venv" in result
+        assert ".venv/bin" in result
+        assert ".git" not in result
+
+    @patch("codebase_rag.main.Prompt.ask")
+    @patch("codebase_rag.main.app_context")
+    def test_prompt_expand_then_select_nested(
+        self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".venv").mkdir()
+        (tmp_path / ".venv" / "bin").mkdir()
+        (tmp_path / ".venv" / "lib").mkdir()
+        mock_ask.side_effect = ["1e", "2"]
+
+        result = prompt_exclude_directories(tmp_path)
+
+        assert ".venv/bin" in result
+        assert ".venv" not in result
+        assert ".venv/lib" not in result
 
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")

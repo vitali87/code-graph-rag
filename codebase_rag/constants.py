@@ -622,21 +622,31 @@ PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
 MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
 
-# (H) Interactive setup prompt
-INTERACTIVE_PROMPT_TITLE = "Directories to Exclude"
+# (H) Interactive setup prompt - grouped view
+INTERACTIVE_TITLE_GROUPED = "Directories to Exclude (grouped)"
+INTERACTIVE_TITLE_NESTED = "Nested paths in '{pattern}'"
 INTERACTIVE_COL_NUM = "#"
-INTERACTIVE_COL_DIRECTORY = "Directory"
-INTERACTIVE_COL_STATUS = "Source"
+INTERACTIVE_COL_PATTERN = "Pattern"
+INTERACTIVE_COL_NESTED = "Nested"
+INTERACTIVE_COL_PATH = "Path"
+INTERACTIVE_STYLE_DIM = "dim"
 INTERACTIVE_STATUS_DETECTED = "auto-detected"
 INTERACTIVE_STATUS_CLI = "--exclude"
-INTERACTIVE_PROMPT_INSTRUCTIONS = (
+INTERACTIVE_NESTED_SINGULAR = "{count} dir"
+INTERACTIVE_NESTED_PLURAL = "{count} dirs"
+INTERACTIVE_INSTRUCTIONS_GROUPED = (
     "These directories would normally be excluded. "
     "Options: 'all' (keep all), 'none' (keep none), "
-    "or numbers like '1,3,5' (keep specific)"
+    "numbers like '1,3' (keep groups), or '1e' to expand group 1"
 )
-INTERACTIVE_PROMPT_ASK = "Keep"
+INTERACTIVE_INSTRUCTIONS_NESTED = (
+    "Select paths to keep from '{pattern}'. "
+    "Options: 'all', 'none', or numbers like '1,3'"
+)
+INTERACTIVE_PROMPT_KEEP = "Keep"
 INTERACTIVE_KEEP_ALL = "all"
 INTERACTIVE_KEEP_NONE = "none"
+INTERACTIVE_EXPAND_SUFFIX = "e"
 
 # (H) JSON formatting
 JSON_INDENT = 2
