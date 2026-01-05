@@ -78,10 +78,10 @@ def start(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
-    no_prompt_exclude: bool = typer.Option(
+    interactive_setup: bool = typer.Option(
         False,
-        "--no-prompt-exclude",
-        help=ch.HELP_NO_PROMPT_EXCLUDE,
+        "--interactive-setup",
+        help=ch.HELP_INTERACTIVE_SETUP,
     ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
@@ -104,9 +104,11 @@ def start(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
         )
 
-        exclude_patterns = prompt_exclude_directories(
-            repo_to_update, exclude, skip_prompt=no_prompt_exclude
-        )
+        include_paths: frozenset[str] | None = None
+        if interactive_setup:
+            include_paths = prompt_exclude_directories(repo_to_update, exclude)
+        else:
+            app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
 
         with connect_memgraph(effective_batch_size) as ingestor:
             if clean:
@@ -119,7 +121,7 @@ def start(
             parsers, queries = load_parsers()
 
             updater = GraphUpdater(
-                ingestor, repo_to_update, parsers, queries, exclude_patterns
+                ingestor, repo_to_update, parsers, queries, include_paths
             )
             updater.run()
 
@@ -164,10 +166,10 @@ def index(
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
     ),
-    no_prompt_exclude: bool = typer.Option(
+    interactive_setup: bool = typer.Option(
         False,
-        "--no-prompt-exclude",
-        help=ch.HELP_NO_PROMPT_EXCLUDE,
+        "--interactive-setup",
+        help=ch.HELP_INTERACTIVE_SETUP,
     ),
 ) -> None:
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
@@ -180,18 +182,18 @@ def index(
         style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN)
     )
 
-    exclude_patterns = prompt_exclude_directories(
-        repo_to_index, exclude, skip_prompt=no_prompt_exclude
-    )
+    include_paths: frozenset[str] | None = None
+    if interactive_setup:
+        include_paths = prompt_exclude_directories(repo_to_index, exclude)
+    else:
+        app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
 
     try:
         ingestor = ProtobufFileIngestor(
             output_path=output_proto_dir, split_index=split_index
         )
         parsers, queries = load_parsers()
-        updater = GraphUpdater(
-            ingestor, repo_to_index, parsers, queries, exclude_patterns
-        )
+        updater = GraphUpdater(ingestor, repo_to_index, parsers, queries, include_paths)
 
         updater.run()
 

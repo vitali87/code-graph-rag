@@ -7,6 +7,7 @@ import shlex
 import shutil
 import sys
 import uuid
+from collections import deque
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -663,57 +664,61 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
         return False
 
 
-def detect_root_excludable_directories(repo_path: Path) -> set[str]:
-    return {
-        path.name
-        for path in repo_path.iterdir()
-        if path.is_dir() and path.name in cs.IGNORE_PATTERNS
-    }
+def detect_excludable_directories(repo_path: Path) -> set[str]:
+    detected: set[str] = set()
+    queue: deque[Path] = deque([repo_path])
+    while queue:
+        current = queue.popleft()
+        for path in current.iterdir():
+            if not path.is_dir():
+                continue
+            if path.name in cs.IGNORE_PATTERNS:
+                detected.add(str(path.relative_to(repo_path)))
+            queue.append(path)
+    return detected
 
 
 def prompt_exclude_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
-    skip_prompt: bool = False,
 ) -> frozenset[str]:
-    detected = detect_root_excludable_directories(repo_path)
+    detected = detect_excludable_directories(repo_path)
     pre_excluded = frozenset(cli_excludes) if cli_excludes else frozenset()
 
     if not detected and not pre_excluded:
         return frozenset()
 
-    if skip_prompt:
-        return pre_excluded | detected
-
     all_candidates = sorted(detected | pre_excluded)
 
-    table = Table(title=style(cs.EXCLUDE_PROMPT_TITLE, cs.Color.CYAN))
-    table.add_column(cs.EXCLUDE_COL_NUM, style=cs.Color.YELLOW, width=4)
-    table.add_column(cs.EXCLUDE_COL_DIRECTORY)
-    table.add_column(cs.EXCLUDE_COL_STATUS, style=cs.Color.GREEN)
+    table = Table(title=style(cs.INTERACTIVE_PROMPT_TITLE, cs.Color.CYAN))
+    table.add_column(cs.INTERACTIVE_COL_NUM, style=cs.Color.YELLOW, width=4)
+    table.add_column(cs.INTERACTIVE_COL_DIRECTORY)
+    table.add_column(cs.INTERACTIVE_COL_STATUS, style=cs.Color.GREEN)
 
     for i, name in enumerate(all_candidates, 1):
         status = (
-            cs.EXCLUDE_STATUS_CLI
+            cs.INTERACTIVE_STATUS_CLI
             if name in pre_excluded
-            else cs.EXCLUDE_STATUS_DETECTED
+            else cs.INTERACTIVE_STATUS_DETECTED
         )
         table.add_row(str(i), name, status)
 
     app_context.console.print(table)
     app_context.console.print(
-        style(cs.EXCLUDE_PROMPT_INSTRUCTIONS, cs.Color.YELLOW, cs.StyleModifier.NONE)
+        style(
+            cs.INTERACTIVE_PROMPT_INSTRUCTIONS, cs.Color.YELLOW, cs.StyleModifier.NONE
+        )
     )
 
     response = Prompt.ask(
-        style(cs.EXCLUDE_PROMPT_ASK, cs.Color.CYAN),
-        default=cs.EXCLUDE_DEFAULT_ALL,
+        style(cs.INTERACTIVE_PROMPT_ASK, cs.Color.CYAN),
+        default=cs.INTERACTIVE_KEEP_NONE,
     )
 
-    if response.lower() == cs.EXCLUDE_DEFAULT_ALL:
+    if response.lower() == cs.INTERACTIVE_KEEP_ALL:
         return frozenset(all_candidates)
 
-    if response.lower() == cs.EXCLUDE_NONE:
+    if response.lower() == cs.INTERACTIVE_KEEP_NONE:
         return frozenset()
 
     selected: set[str] = set()

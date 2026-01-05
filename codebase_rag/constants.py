@@ -225,6 +225,10 @@ CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
 CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
+CLI_MSG_AUTO_EXCLUDE = (
+    "Auto-excluding common directories (venv, node_modules, .git, etc.). "
+    "Use --interactive-setup to customize."
+)
 
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
@@ -618,20 +622,21 @@ PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
 MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
 
-# (H) Exclude directories prompt
-EXCLUDE_PROMPT_TITLE = "Detected Directories"
-EXCLUDE_COL_NUM = "#"
-EXCLUDE_COL_DIRECTORY = "Directory"
-EXCLUDE_COL_STATUS = "Source"
-EXCLUDE_STATUS_DETECTED = "auto-detected"
-EXCLUDE_STATUS_CLI = "--exclude"
-EXCLUDE_PROMPT_INSTRUCTIONS = (
-    "Options: 'all' (exclude all), 'none' (exclude nothing), "
-    "or numbers like '1,3,5' (exclude specific)"
+# (H) Interactive setup prompt
+INTERACTIVE_PROMPT_TITLE = "Directories to Exclude"
+INTERACTIVE_COL_NUM = "#"
+INTERACTIVE_COL_DIRECTORY = "Directory"
+INTERACTIVE_COL_STATUS = "Source"
+INTERACTIVE_STATUS_DETECTED = "auto-detected"
+INTERACTIVE_STATUS_CLI = "--exclude"
+INTERACTIVE_PROMPT_INSTRUCTIONS = (
+    "These directories would normally be excluded. "
+    "Options: 'all' (keep all), 'none' (keep none), "
+    "or numbers like '1,3,5' (keep specific)"
 )
-EXCLUDE_PROMPT_ASK = "Exclude"
-EXCLUDE_DEFAULT_ALL = "all"
-EXCLUDE_NONE = "none"
+INTERACTIVE_PROMPT_ASK = "Keep"
+INTERACTIVE_KEEP_ALL = "all"
+INTERACTIVE_KEEP_NONE = "none"
 
 # (H) JSON formatting
 JSON_INDENT = 2
