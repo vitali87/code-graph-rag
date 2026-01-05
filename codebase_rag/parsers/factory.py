@@ -26,6 +26,7 @@ class ProcessorFactory:
         simple_name_lookup: SimpleNameLookup,
         ast_cache: ASTCacheProtocol,
         include_paths: frozenset[str] | None = None,
+        exclude_paths: frozenset[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -35,6 +36,7 @@ class ProcessorFactory:
         self.simple_name_lookup = simple_name_lookup
         self.ast_cache = ast_cache
         self.include_paths = include_paths
+        self.exclude_paths = exclude_paths
 
         self.module_qn_to_file_path: dict[str, Path] = {}
 
@@ -64,6 +66,7 @@ class ProcessorFactory:
                 project_name=self.project_name,
                 queries=self.queries,
                 include_paths=self.include_paths,
+                exclude_paths=self.exclude_paths,
             )
         return self._structure_processor
 

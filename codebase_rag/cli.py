@@ -15,7 +15,7 @@ from .main import (
     export_graph_to_file,
     main_async,
     main_optimize_async,
-    prompt_exclude_directories,
+    prompt_for_included_directories,
     style,
     update_model_settings,
 )
@@ -104,9 +104,10 @@ def start(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
         )
 
+        exclude_paths = frozenset(exclude) if exclude else None
         include_paths: frozenset[str] | None = None
         if interactive_setup:
-            include_paths = prompt_exclude_directories(repo_to_update, exclude)
+            include_paths = prompt_for_included_directories(repo_to_update, exclude)
         else:
             app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
 
@@ -121,7 +122,12 @@ def start(
             parsers, queries = load_parsers()
 
             updater = GraphUpdater(
-                ingestor, repo_to_update, parsers, queries, include_paths
+                ingestor,
+                repo_to_update,
+                parsers,
+                queries,
+                include_paths,
+                exclude_paths,
             )
             updater.run()
 
@@ -182,9 +188,10 @@ def index(
         style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN)
     )
 
+    exclude_paths = frozenset(exclude) if exclude else None
     include_paths: frozenset[str] | None = None
     if interactive_setup:
-        include_paths = prompt_exclude_directories(repo_to_index, exclude)
+        include_paths = prompt_for_included_directories(repo_to_index, exclude)
     else:
         app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
 
@@ -193,7 +200,9 @@ def index(
             output_path=output_proto_dir, split_index=split_index
         )
         parsers, queries = load_parsers()
-        updater = GraphUpdater(ingestor, repo_to_index, parsers, queries, include_paths)
+        updater = GraphUpdater(
+            ingestor, repo_to_index, parsers, queries, include_paths, exclude_paths
+        )
 
         updater.run()
 

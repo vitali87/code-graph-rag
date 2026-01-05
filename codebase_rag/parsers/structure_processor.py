@@ -17,6 +17,7 @@ class StructureProcessor:
         project_name: str,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         include_paths: frozenset[str] | None = None,
+        exclude_paths: frozenset[str] | None = None,
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -24,6 +25,7 @@ class StructureProcessor:
         self.queries = queries
         self.structural_elements: dict[Path, str | None] = {}
         self.include_paths = include_paths
+        self.exclude_paths = exclude_paths
 
     def _get_parent_identifier(
         self, parent_rel_path: Path, parent_container_qn: str | None
@@ -38,7 +40,10 @@ class StructureProcessor:
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
             if path.is_dir() and not should_skip_path(
-                path, self.repo_path, include_paths=self.include_paths
+                path,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                include_paths=self.include_paths,
             ):
                 directories.add(path)
 

@@ -228,6 +228,7 @@ class GraphUpdater:
         parsers: dict[cs.SupportedLanguage, Parser],
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         include_paths: frozenset[str] | None = None,
+        exclude_paths: frozenset[str] | None = None,
     ):
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -240,6 +241,7 @@ class GraphUpdater:
         )
         self.ast_cache = BoundedASTCache()
         self.include_paths = include_paths
+        self.exclude_paths = exclude_paths
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -250,6 +252,7 @@ class GraphUpdater:
             simple_name_lookup=self.simple_name_lookup,
             ast_cache=self.ast_cache,
             include_paths=self.include_paths,
+            exclude_paths=self.exclude_paths,
         )
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
@@ -316,7 +319,10 @@ class GraphUpdater:
     def _process_files(self) -> None:
         for filepath in self.repo_path.rglob("*"):
             if filepath.is_file() and not should_skip_path(
-                filepath, self.repo_path, include_paths=self.include_paths
+                filepath,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                include_paths=self.include_paths,
             ):
                 lang_config = get_language_spec(filepath.suffix)
                 if (

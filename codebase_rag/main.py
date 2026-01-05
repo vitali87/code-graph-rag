@@ -669,12 +669,17 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
     queue: deque[Path] = deque([repo_path])
     while queue:
         current = queue.popleft()
-        for path in current.iterdir():
+        try:
+            entries = list(current.iterdir())
+        except PermissionError:
+            continue
+        for path in entries:
             if not path.is_dir():
                 continue
             if path.name in cs.IGNORE_PATTERNS:
                 detected.add(str(path.relative_to(repo_path)))
-            queue.append(path)
+            else:
+                queue.append(path)
     return detected
 
 
@@ -776,7 +781,7 @@ def _prompt_nested_selection(pattern: str, paths: list[str]) -> set[str]:
     return selected
 
 
-def prompt_exclude_directories(
+def prompt_for_included_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
 ) -> frozenset[str]:

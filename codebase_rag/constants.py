@@ -623,7 +623,7 @@ PROMPT_YOUR_RESPONSE = "Your response"
 MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
 
 # (H) Interactive setup prompt - grouped view
-INTERACTIVE_TITLE_GROUPED = "Directories to Exclude (grouped)"
+INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"
 INTERACTIVE_TITLE_NESTED = "Nested paths in '{pattern}'"
 INTERACTIVE_COL_NUM = "#"
 INTERACTIVE_COL_PATTERN = "Pattern"

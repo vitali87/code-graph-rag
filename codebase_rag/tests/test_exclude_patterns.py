@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from codebase_rag import constants as cs
 from codebase_rag.main import (
     detect_excludable_directories,
-    prompt_exclude_directories,
+    prompt_for_included_directories,
 )
 from codebase_rag.utils.path_utils import should_skip_path
 
@@ -33,15 +33,15 @@ class TestDetectExcludableDirectories:
 
         assert "notebook-venv/lib/python3.12/site-packages" in detected
 
-    def test_detects_all_nested_patterns(self, tmp_path: Path) -> None:
+    def test_stops_at_first_matching_pattern(self, tmp_path: Path) -> None:
         (tmp_path / ".venv" / "lib" / "site-packages" / "vendor").mkdir(parents=True)
         (tmp_path / "src").mkdir()
 
         detected = detect_excludable_directories(tmp_path)
 
         assert ".venv" in detected
-        assert ".venv/lib/site-packages" in detected
-        assert ".venv/lib/site-packages/vendor" in detected
+        assert ".venv/lib/site-packages" not in detected
+        assert ".venv/lib/site-packages/vendor" not in detected
 
     def test_detects_multiple_git_directories(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
@@ -275,7 +275,7 @@ class TestPromptExcludeDirectories:
     def test_empty_repo_returns_empty(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
-        result = prompt_exclude_directories(tmp_path)
+        result = prompt_for_included_directories(tmp_path)
         assert result == frozenset()
         mock_ask.assert_not_called()
 
@@ -288,7 +288,7 @@ class TestPromptExcludeDirectories:
         (tmp_path / "node_modules").mkdir()
         mock_ask.return_value = "all"
 
-        result = prompt_exclude_directories(tmp_path)
+        result = prompt_for_included_directories(tmp_path)
 
         assert ".git" in result
         assert "node_modules" in result
@@ -302,7 +302,7 @@ class TestPromptExcludeDirectories:
         (tmp_path / "node_modules").mkdir()
         mock_ask.return_value = "none"
 
-        result = prompt_exclude_directories(tmp_path)
+        result = prompt_for_included_directories(tmp_path)
 
         assert result == frozenset()
 
@@ -313,30 +313,29 @@ class TestPromptExcludeDirectories:
     ) -> None:
         (tmp_path / ".git").mkdir()
         (tmp_path / ".venv").mkdir()
-        (tmp_path / ".venv" / "bin").mkdir()
         mock_ask.return_value = "2"
 
-        result = prompt_exclude_directories(tmp_path)
+        result = prompt_for_included_directories(tmp_path)
 
         assert ".venv" in result
-        assert ".venv/bin" in result
         assert ".git" not in result
 
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")
-    def test_prompt_expand_then_select_nested(
+    def test_prompt_expand_then_select_from_group(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
-        (tmp_path / ".venv").mkdir()
-        (tmp_path / ".venv" / "bin").mkdir()
-        (tmp_path / ".venv" / "lib").mkdir()
+        (tmp_path / "src" / "__pycache__").mkdir(parents=True)
+        (tmp_path / "tests" / "__pycache__").mkdir(parents=True)
+        (tmp_path / "lib" / "__pycache__").mkdir(parents=True)
         mock_ask.side_effect = ["1e", "2"]
 
-        result = prompt_exclude_directories(tmp_path)
+        result = prompt_for_included_directories(tmp_path)
 
-        assert ".venv/bin" in result
-        assert ".venv" not in result
-        assert ".venv/lib" not in result
+        assert len(result) == 1
+        assert "src/__pycache__" in result
+        assert "tests/__pycache__" not in result
+        assert "lib/__pycache__" not in result
 
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")
@@ -347,7 +346,7 @@ class TestPromptExcludeDirectories:
         cli_excludes = ["custom"]
         mock_ask.return_value = "all"
 
-        result = prompt_exclude_directories(tmp_path, cli_excludes=cli_excludes)
+        result = prompt_for_included_directories(tmp_path, cli_excludes=cli_excludes)
 
         assert ".git" in result
         assert "custom" in result
