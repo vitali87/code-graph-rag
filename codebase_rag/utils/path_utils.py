@@ -13,10 +13,9 @@ def should_skip_path(
         return True
     rel_path = path.relative_to(repo_path)
     if include_paths:
-        include_path_strs = set(include_paths)
         rel_path_str = str(rel_path)
-        if rel_path_str in include_path_strs or any(
-            str(p) in include_path_strs for p in rel_path.parents
+        if rel_path_str in include_paths or any(
+            str(p) in include_paths for p in rel_path.parents
         ):
             return False
     dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
