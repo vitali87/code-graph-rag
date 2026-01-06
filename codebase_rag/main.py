@@ -27,7 +27,7 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import settings
+from .config import load_cgrignore_patterns, settings
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .services import QueryProtocol
@@ -788,7 +788,9 @@ def prompt_for_included_directories(
     cli_excludes: list[str] | None = None,
 ) -> frozenset[str]:
     detected = detect_excludable_directories(repo_path)
-    pre_excluded = frozenset(cli_excludes) if cli_excludes else frozenset()
+    cgrignore_patterns = load_cgrignore_patterns(repo_path)
+    cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
+    pre_excluded = cli_patterns | cgrignore_patterns
 
     if not detected and not pre_excluded:
         return frozenset()

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Unpack
 
 from dotenv import load_dotenv
+from loguru import logger
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
+from . import logs
 from .types_defs import ModelConfigKwargs
 
 load_dotenv()
@@ -227,3 +230,28 @@ class AppConfig(BaseSettings):
 
 
 settings = AppConfig()
+
+CGRIGNORE_FILENAME = ".cgrignore"
+
+
+def load_cgrignore_patterns(repo_path: Path) -> frozenset[str]:
+    ignore_file = repo_path / CGRIGNORE_FILENAME
+    if not ignore_file.is_file():
+        return frozenset()
+
+    patterns: set[str] = set()
+    try:
+        with ignore_file.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                patterns.add(line)
+        if patterns:
+            logger.info(
+                logs.CGRIGNORE_LOADED.format(count=len(patterns), path=ignore_file)
+            )
+        return frozenset(patterns)
+    except OSError as e:
+        logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
+        return frozenset()

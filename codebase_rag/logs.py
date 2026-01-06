@@ -89,6 +89,10 @@ GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 INITIALIZED_PARSERS = "Initialized parsers for: {languages}"
 
+# (H) Ignore pattern logs
+CGRIGNORE_LOADED = "Loaded {count} patterns from {path}"
+CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
+
 # (H) File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
 WATCHER_SKIP_NO_QUERY = "Ingestor does not support querying, skipping real-time update."

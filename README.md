@@ -640,6 +640,23 @@ Configuration is managed through environment variables in `.env` file:
 - `TARGET_REPO_PATH`: Default repository path (default: `.`)
 - `LOCAL_MODEL_ENDPOINT`: Fallback endpoint for Ollama (default: `http://localhost:11434/v1`)
 
+### Custom Ignore Patterns
+
+You can specify additional directories to exclude by creating a `.cgrignore` file in your repository root:
+
+```
+# Comments start with #
+vendor
+.custom_cache
+my_build_output
+```
+
+- One directory name per line
+- Lines starting with `#` are comments
+- Blank lines are ignored
+- Patterns are exact directory name matches (not globs)
+- Patterns from `.cgrignore` are merged with `--exclude` flags and auto-detected directories
+
 ### Key Dependencies
 
 <!-- SECTION:dependencies -->
