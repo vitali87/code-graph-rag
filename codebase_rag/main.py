@@ -669,7 +669,7 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
     queue: deque[tuple[Path, int]] = deque([(repo_path, 0)])
     while queue:
         current, depth = queue.popleft()
-        if depth >= cs.INTERACTIVE_BFS_MAX_DEPTH:
+        if depth > cs.INTERACTIVE_BFS_MAX_DEPTH:
             continue
         try:
             entries = list(current.iterdir())
@@ -687,6 +687,8 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
 
 def _get_grouping_key(path: str) -> str:
     parts = Path(path).parts
+    if not parts:
+        return cs.INTERACTIVE_DEFAULT_GROUP
     for part in parts:
         if part in cs.IGNORE_PATTERNS:
             return part
@@ -808,6 +810,7 @@ def prompt_for_included_directories(
 
     selected: set[str] = set()
     expand_requests: list[int] = []
+    regular_selections: list[int] = []
 
     for part in response.split(","):
         part = part.strip().lower()
@@ -817,12 +820,7 @@ def prompt_for_included_directories(
         if part.endswith(cs.INTERACTIVE_EXPAND_SUFFIX) and part[:-1].isdigit():
             expand_requests.append(int(part[:-1]) - 1)
         elif part.isdigit():
-            idx = int(part) - 1
-            if 0 <= idx < len(sorted_roots):
-                root = sorted_roots[idx]
-                selected.update(groups[root])
-            else:
-                logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=part))
+            regular_selections.append(int(part) - 1)
         else:
             logger.warning(ls.EXCLUDE_INVALID_INPUT.format(input=part))
 
@@ -831,6 +829,13 @@ def prompt_for_included_directories(
             root = sorted_roots[idx]
             nested_selected = _prompt_nested_selection(root, groups[root])
             selected.update(nested_selected)
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
+
+    for idx in regular_selections:
+        if 0 <= idx < len(sorted_roots):
+            root = sorted_roots[idx]
+            selected.update(groups[root])
         else:
             logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
 
