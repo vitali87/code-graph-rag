@@ -13,6 +13,7 @@ from codebase_rag.parsers.handlers.cpp import CppHandler
 from codebase_rag.parsers.handlers.java import JavaHandler
 from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 from codebase_rag.parsers.handlers.lua import LuaHandler
+from codebase_rag.parsers.handlers.python import PythonHandler
 from codebase_rag.parsers.handlers.rust import RustHandler
 from codebase_rag.tests.conftest import create_mock_node
 
@@ -976,3 +977,78 @@ class TestLuaHandler:
 
         result = handler.extract_function_name(func_node)
         assert result is None
+
+
+@pytest.mark.skipif(not PYTHON_AVAILABLE, reason="tree-sitter-python not available")
+class TestPythonHandler:
+    def test_extract_decorators_simple_identifier(self, python_parser: Parser) -> None:
+        handler = PythonHandler()
+        code = b"@my_decorator\ndef func(): pass"
+        tree = python_parser.parse(code)
+        decorated_def = tree.root_node.children[0]
+        func_node = next(
+            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
+        )
+
+        result = handler.extract_decorators(func_node)
+        assert "my_decorator" in result
+
+    def test_extract_decorators_call_decorator(self, python_parser: Parser) -> None:
+        handler = PythonHandler()
+        code = b"@decorator_factory(arg1, arg2)\ndef func(): pass"
+        tree = python_parser.parse(code)
+        decorated_def = tree.root_node.children[0]
+        func_node = next(
+            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
+        )
+
+        result = handler.extract_decorators(func_node)
+        assert "decorator_factory" in result
+
+    def test_extract_decorators_dotted_decorator(self, python_parser: Parser) -> None:
+        handler = PythonHandler()
+        code = b"@module.submodule.decorator\ndef func(): pass"
+        tree = python_parser.parse(code)
+        decorated_def = tree.root_node.children[0]
+        func_node = next(
+            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
+        )
+
+        result = handler.extract_decorators(func_node)
+        assert any("module.submodule.decorator" in d for d in result)
+
+    def test_extract_decorators_multiple(self, python_parser: Parser) -> None:
+        handler = PythonHandler()
+        code = b"@first\n@second\n@third\ndef func(): pass"
+        tree = python_parser.parse(code)
+        decorated_def = tree.root_node.children[0]
+        func_node = next(
+            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
+        )
+
+        result = handler.extract_decorators(func_node)
+        assert len(result) == 3
+        assert "first" in result
+        assert "second" in result
+        assert "third" in result
+
+    def test_extract_decorators_no_decorators(self, python_parser: Parser) -> None:
+        handler = PythonHandler()
+        code = b"def func(): pass"
+        tree = python_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(func_node)
+        assert result == []
+
+    def test_extract_decorators_class_decorator(self, python_parser: Parser) -> None:
+        handler = PythonHandler()
+        code = b"@dataclass\nclass MyClass: pass"
+        tree = python_parser.parse(code)
+        decorated_def = tree.root_node.children[0]
+        class_node = next(
+            c for c in decorated_def.children if c.type == cs.TS_PY_CLASS_DEFINITION
+        )
+
+        result = handler.extract_decorators(class_node)
+        assert "dataclass" in result
