@@ -9,6 +9,8 @@ def should_skip_path(
     exclude_paths: frozenset[str] | None = None,
     include_paths: frozenset[str] | None = None,
 ) -> bool:
+    if path.is_file() and path.suffix in cs.IGNORE_SUFFIXES:
+        return True
     rel_path = path.relative_to(repo_path)
     if include_paths:
         include_path_strs = set(include_paths)
