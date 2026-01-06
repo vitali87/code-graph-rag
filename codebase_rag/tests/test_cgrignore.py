@@ -72,6 +72,15 @@ def test_handles_duplicates(temp_repo: Path) -> None:
     assert len(result) == 2
 
 
+def test_returns_empty_if_cgrignore_is_a_directory(temp_repo: Path) -> None:
+    cgrignore_path = temp_repo / CGRIGNORE_FILENAME
+    cgrignore_path.mkdir()
+
+    result = load_cgrignore_patterns(temp_repo)
+
+    assert result == frozenset()
+
+
 class TestCgrignoreIntegration:
     @patch("codebase_rag.main.Prompt.ask")
     @patch("codebase_rag.main.app_context")

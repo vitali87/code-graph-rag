@@ -236,7 +236,7 @@ CGRIGNORE_FILENAME = ".cgrignore"
 
 def load_cgrignore_patterns(repo_path: Path) -> frozenset[str]:
     ignore_file = repo_path / CGRIGNORE_FILENAME
-    if not ignore_file.exists():
+    if not ignore_file.is_file():
         return frozenset()
 
     patterns: set[str] = set()
