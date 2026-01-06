@@ -72,10 +72,12 @@ HELP_GRAMMAR_URL = (
 HELP_KEEP_SUBMODULE = "Keep the git submodule (default: remove it)"
 
 HELP_EXCLUDE_PATTERNS = (
-    "Directories to exclude from indexing. Can be specified multiple times. "
-    "Pre-adds to exclude list before interactive prompt."
+    "Additional directories to exclude from indexing. Can be specified multiple times."
 )
-HELP_NO_PROMPT_EXCLUDE = "Skip interactive prompt for exclude patterns"
+HELP_INTERACTIVE_SETUP = (
+    "Show interactive prompt to select which detected directories to keep. "
+    "Without this flag, all directories matching ignore patterns are automatically excluded."
+)
 
 CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.START: CMD_START,

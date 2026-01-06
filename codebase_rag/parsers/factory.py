@@ -25,7 +25,8 @@ class ProcessorFactory:
         function_registry: FunctionRegistryTrieProtocol,
         simple_name_lookup: SimpleNameLookup,
         ast_cache: ASTCacheProtocol,
-        exclude_patterns: frozenset[str] | None = None,
+        include_paths: frozenset[str] | None = None,
+        exclude_paths: frozenset[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -34,7 +35,8 @@ class ProcessorFactory:
         self.function_registry = function_registry
         self.simple_name_lookup = simple_name_lookup
         self.ast_cache = ast_cache
-        self.exclude_patterns = exclude_patterns or frozenset()
+        self.include_paths = include_paths
+        self.exclude_paths = exclude_paths
 
         self.module_qn_to_file_path: dict[str, Path] = {}
 
@@ -63,7 +65,8 @@ class ProcessorFactory:
                 repo_path=self.repo_path,
                 project_name=self.project_name,
                 queries=self.queries,
-                exclude_patterns=self.exclude_patterns,
+                include_paths=self.include_paths,
+                exclude_paths=self.exclude_paths,
             )
         return self._structure_processor
 
