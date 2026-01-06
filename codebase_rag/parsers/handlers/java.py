@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 
 class JavaHandler(BaseLanguageHandler):
+    def extract_decorators(self, node: ASTNode) -> list[str]:
+        mods_and_annots = java_utils.extract_modifiers_and_annotations(node)
+        return mods_and_annots.annotations
+
     def build_method_qualified_name(
         self,
         class_qn: str,

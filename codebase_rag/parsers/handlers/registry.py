@@ -9,9 +9,11 @@ from .java import JavaHandler
 from .js_ts import JsTsHandler
 from .lua import LuaHandler
 from .protocol import LanguageHandler
+from .python import PythonHandler
 from .rust import RustHandler
 
 _HANDLERS: dict[SupportedLanguage, type[BaseLanguageHandler]] = {
+    SupportedLanguage.PYTHON: PythonHandler,
     SupportedLanguage.JS: JsTsHandler,
     SupportedLanguage.TS: JsTsHandler,
     SupportedLanguage.CPP: CppHandler,

@@ -189,6 +189,11 @@ class TestBaseLanguageHandler:
         node = create_mock_node(cs.TS_IDENTIFIER, text="")
         assert handler.extract_base_class_name(node) is None
 
+    def test_extract_decorators_returns_empty_list(self) -> None:
+        handler = BaseLanguageHandler()
+        node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
+        assert handler.extract_decorators(node) == []
+
     @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="Python parser not available")
     def test_build_nested_function_qn_with_parent_functions(
         self, python_parser: Parser
@@ -432,6 +437,87 @@ class MyClass {
         )
         assert result is None
 
+    def test_extract_decorators_returns_empty_for_undecorated(
+        self, js_parser: Parser
+    ) -> None:
+        handler = JsTsHandler()
+        code = b"function foo() {}"
+        tree = js_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(func_node)
+        assert result == []
+
+
+try:
+    import tree_sitter_typescript as tsts
+
+    TS_AVAILABLE = True
+except ImportError:
+    TS_AVAILABLE = False
+
+
+@pytest.fixture
+def ts_parser() -> Parser | None:
+    if not TS_AVAILABLE:
+        return None
+    language = Language(tsts.language_typescript())
+    return Parser(language)
+
+
+@pytest.mark.skipif(not TS_AVAILABLE, reason="tree-sitter-typescript not available")
+class TestJsTsHandlerTypeScriptDecorators:
+    def test_extract_decorators_single_decorator(self, ts_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"""
+@Component
+class MyClass {}
+"""
+        tree = ts_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(class_node)
+        assert "Component" in result
+
+    def test_extract_decorators_decorator_with_call(self, ts_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"""
+@Injectable()
+class MyService {}
+"""
+        tree = ts_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(class_node)
+        assert "Injectable" in result
+
+    def test_extract_decorators_multiple_decorators(self, ts_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"""
+@Component
+@Injectable()
+class MyClass {}
+"""
+        tree = ts_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(class_node)
+        assert len(result) == 2
+        assert "Component" in result
+        assert "Injectable" in result
+
+    def test_extract_decorators_member_expression(self, ts_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"""
+@ng.Component
+class MyClass {}
+"""
+        tree = ts_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(class_node)
+        assert any("ng.Component" in d for d in result)
+
 
 @pytest.mark.skipif(not CPP_AVAILABLE, reason="tree-sitter-cpp not available")
 class TestCppHandler:
@@ -614,6 +700,50 @@ impl MyTrait for MyStruct {
         )
         assert "my_function" in result
 
+    def test_extract_decorators_single_attribute(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"#[derive(Debug)]\nstruct MyStruct {}"
+        tree = rust_parser.parse(code)
+        struct_node = next(
+            c for c in tree.root_node.children if c.type == cs.TS_RS_STRUCT_ITEM
+        )
+
+        result = handler.extract_decorators(struct_node)
+        assert any("derive" in attr for attr in result)
+
+    def test_extract_decorators_multiple_attributes(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"#[derive(Debug, Clone)]\n#[allow(dead_code)]\nstruct MyStruct {}"
+        tree = rust_parser.parse(code)
+        struct_node = next(
+            c for c in tree.root_node.children if c.type == cs.TS_RS_STRUCT_ITEM
+        )
+
+        result = handler.extract_decorators(struct_node)
+        assert len(result) == 2
+        assert any("derive" in attr for attr in result)
+        assert any("allow" in attr for attr in result)
+
+    def test_extract_decorators_function_attribute(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"#[test]\nfn my_test() {}"
+        tree = rust_parser.parse(code)
+        func_node = next(
+            c for c in tree.root_node.children if c.type == cs.TS_RS_FUNCTION_ITEM
+        )
+
+        result = handler.extract_decorators(func_node)
+        assert any("test" in attr for attr in result)
+
+    def test_extract_decorators_no_attributes(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"fn my_function() {}"
+        tree = rust_parser.parse(code)
+        func_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(func_node)
+        assert result == []
+
 
 @pytest.mark.skipif(not JAVA_AVAILABLE, reason="tree-sitter-java not available")
 class TestJavaHandler:
@@ -688,6 +818,86 @@ class MyClass {
         assert result1 != result2
         assert "int" in result1
         assert "String" in result2
+
+    def test_extract_decorators_single_annotation(self, java_parser: Parser) -> None:
+        handler = JavaHandler()
+        code = b"""
+class MyClass {
+    @Override
+    void myMethod() {}
+}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method_node = class_body.children[1]
+
+        result = handler.extract_decorators(method_node)
+        assert "@Override" in result
+
+    def test_extract_decorators_multiple_annotations(self, java_parser: Parser) -> None:
+        handler = JavaHandler()
+        code = b"""
+class MyClass {
+    @Override
+    @Deprecated
+    void myMethod() {}
+}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method_node = class_body.children[1]
+
+        result = handler.extract_decorators(method_node)
+        assert len(result) == 2
+        assert "@Override" in result
+        assert "@Deprecated" in result
+
+    def test_extract_decorators_parameterized_annotation(
+        self, java_parser: Parser
+    ) -> None:
+        handler = JavaHandler()
+        code = b"""
+class MyClass {
+    @SuppressWarnings("unchecked")
+    void myMethod() {}
+}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method_node = class_body.children[1]
+
+        result = handler.extract_decorators(method_node)
+        assert any("SuppressWarnings" in ann for ann in result)
+
+    def test_extract_decorators_class_annotation(self, java_parser: Parser) -> None:
+        handler = JavaHandler()
+        code = b"""
+@Deprecated
+public class MyClass {}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(class_node)
+        assert "@Deprecated" in result
+
+    def test_extract_decorators_no_annotations(self, java_parser: Parser) -> None:
+        handler = JavaHandler()
+        code = b"""
+class MyClass {
+    void myMethod() {}
+}
+"""
+        tree = java_parser.parse(code)
+        class_node = tree.root_node.children[0]
+        class_body = class_node.child_by_field_name("body")
+        method_node = class_body.children[1]
+
+        result = handler.extract_decorators(method_node)
+        assert result == []
 
 
 @pytest.mark.skipif(not LUA_AVAILABLE, reason="tree-sitter-lua not available")

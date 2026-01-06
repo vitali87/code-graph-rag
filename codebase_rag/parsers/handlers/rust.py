@@ -6,6 +6,7 @@ from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import resolve_fqn_from_ast
 from ..rs import utils as rs_utils
+from ..utils import safe_decode_text
 from .base import BaseLanguageHandler
 
 if TYPE_CHECKING:
@@ -16,6 +17,17 @@ if TYPE_CHECKING:
 
 
 class RustHandler(BaseLanguageHandler):
+    def extract_decorators(self, node: ASTNode) -> list[str]:
+        decorators: list[str] = []
+
+        sibling = node.prev_named_sibling
+        while sibling and sibling.type == cs.TS_RS_ATTRIBUTE_ITEM:
+            if attr_text := safe_decode_text(sibling):
+                decorators.insert(0, attr_text)
+            sibling = sibling.prev_named_sibling
+
+        return decorators
+
     def build_function_qualified_name(
         self,
         node: ASTNode,

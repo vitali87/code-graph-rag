@@ -9,11 +9,11 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.handlers import get_handler
-from codebase_rag.parsers.handlers.base import BaseLanguageHandler
 from codebase_rag.parsers.handlers.cpp import CppHandler
 from codebase_rag.parsers.handlers.java import JavaHandler
 from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 from codebase_rag.parsers.handlers.lua import LuaHandler
+from codebase_rag.parsers.handlers.python import PythonHandler
 from codebase_rag.parsers.handlers.rust import RustHandler
 from codebase_rag.tests.conftest import get_node_names, get_nodes, run_updater
 
@@ -149,7 +149,7 @@ class TestHandlerDelegationInPipeline:
         function_nodes = get_nodes(mock_ingestor, "Function")
         assert len(function_nodes) >= 1
 
-    def test_base_handler_used_for_python_files(
+    def test_python_handler_used_for_python_files(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
         project_path = temp_repo / "python_handler_test"
@@ -161,8 +161,7 @@ class TestHandlerDelegationInPipeline:
             pytest.skip("Python parser not available")
 
         handler = get_handler(cs.SupportedLanguage.PYTHON)
-        assert isinstance(handler, BaseLanguageHandler)
-        assert type(handler) is BaseLanguageHandler
+        assert isinstance(handler, PythonHandler)
 
         run_updater(project_path, mock_ingestor)
 
@@ -309,7 +308,7 @@ void process() {
         function_names = get_node_names(mock_ingestor, "Function")
         assert any("process" in name for name in function_names)
         lambda_names = [n for n in function_names if "lambda" in n.lower()]
-        assert len(lambda_names) >= 1
+        assert lambda_names
 
     def test_namespaced_functions_have_full_qn(
         self, temp_repo: Path, mock_ingestor: MagicMock
@@ -332,7 +331,7 @@ namespace MyNamespace {
 
         function_names = get_node_names(mock_ingestor, "Function")
         namespaced_funcs = [n for n in function_names if "myFunction" in n]
-        assert len(namespaced_funcs) >= 1
+        assert namespaced_funcs
         assert any("MyNamespace" in n for n in namespaced_funcs)
 
     def test_template_base_class_names_extracted(

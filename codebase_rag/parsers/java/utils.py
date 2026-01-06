@@ -247,11 +247,11 @@ def _extract_method_parameters(method_node: ASTNode) -> list[str]:
     return parameters
 
 
-def _extract_modifiers_and_annotations(
-    method_node: ASTNode,
+def extract_modifiers_and_annotations(
+    node: ASTNode,
 ) -> MethodModifiersAndAnnotations:
     result = MethodModifiersAndAnnotations()
-    for child in method_node.children:
+    for child in node.children:
         if child.type != cs.TS_MODIFIERS:
             continue
         for modifier_child in child.children:
@@ -259,7 +259,7 @@ def _extract_modifiers_and_annotations(
                 case _ if modifier_child.type in cs.JAVA_METHOD_MODIFIERS:
                     if modifier := safe_decode_text(modifier_child):
                         result.modifiers.append(modifier)
-                case cs.TS_ANNOTATION:
+                case cs.TS_ANNOTATION | cs.TS_MARKER_ANNOTATION:
                     if annotation := safe_decode_text(modifier_child):
                         result.annotations.append(annotation)
     return result
@@ -277,7 +277,7 @@ def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
             annotations=[],
         )
 
-    mods_and_annots = _extract_modifiers_and_annotations(method_node)
+    mods_and_annots = extract_modifiers_and_annotations(method_node)
 
     return JavaMethodInfo(
         name=safe_decode_text(method_node.child_by_field_name(cs.TS_FIELD_NAME)),

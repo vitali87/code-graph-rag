@@ -59,6 +59,9 @@ class BaseLanguageHandler:
     def extract_base_class_name(self, base_node: ASTNode) -> str | None:
         return safe_decode_text(base_node) if base_node.text else None
 
+    def extract_decorators(self, node: ASTNode) -> list[str]:
+        return []
+
     def build_nested_function_qn(
         self,
         func_node: ASTNode,

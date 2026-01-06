@@ -9,6 +9,7 @@ from codebase_rag.parsers.handlers.cpp import CppHandler
 from codebase_rag.parsers.handlers.java import JavaHandler
 from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 from codebase_rag.parsers.handlers.lua import LuaHandler
+from codebase_rag.parsers.handlers.python import PythonHandler
 from codebase_rag.parsers.handlers.rust import RustHandler
 
 
@@ -37,10 +38,9 @@ class TestGetHandler:
         handler = get_handler(SupportedLanguage.LUA)
         assert isinstance(handler, LuaHandler)
 
-    def test_returns_base_handler_for_python(self) -> None:
+    def test_returns_python_handler_for_python(self) -> None:
         handler = get_handler(SupportedLanguage.PYTHON)
-        assert isinstance(handler, BaseLanguageHandler)
-        assert type(handler) is BaseLanguageHandler
+        assert isinstance(handler, PythonHandler)
 
     def test_returns_base_handler_for_go(self) -> None:
         handler = get_handler(SupportedLanguage.GO)
@@ -102,6 +102,7 @@ class TestHandlerProtocol:
         assert hasattr(handler, "build_method_qualified_name")
         assert hasattr(handler, "extract_base_class_name")
         assert hasattr(handler, "build_nested_function_qn")
+        assert hasattr(handler, "extract_decorators")
 
     @pytest.mark.parametrize(
         "language",
@@ -129,6 +130,7 @@ class TestHandlerProtocol:
         assert callable(handler.build_method_qualified_name)
         assert callable(handler.extract_base_class_name)
         assert callable(handler.build_nested_function_qn)
+        assert callable(handler.extract_decorators)
 
 
 class TestHandlerInheritance:
@@ -146,3 +148,6 @@ class TestHandlerInheritance:
 
     def test_lua_handler_extends_base(self) -> None:
         assert issubclass(LuaHandler, BaseLanguageHandler)
+
+    def test_python_handler_extends_base(self) -> None:
+        assert issubclass(PythonHandler, BaseLanguageHandler)
