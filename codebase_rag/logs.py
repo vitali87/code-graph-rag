@@ -595,6 +595,12 @@ MCP_WIPE_DB_CANCELLED = "[MCP] Database wipe cancelled (confirm=false)"
 MCP_ERROR_WIPE_DB = "[MCP] Error wiping database: {error}"
 MCP_CLEARING_PROJECT = "[MCP] Clearing existing data for project '{name}'..."
 MCP_INDEX_PROJECT_SUCCESS = "[MCP] Successfully indexed project '{name}'"
+MCP_SCOPE_VIOLATION = (
+    "[MCP] Scope violation: attempted to access '{target}' from project '{current}'"
+)
+MCP_WIPE_DISABLED = (
+    "[MCP] wipe_database is disabled in scoped mode. Use delete_project instead."
+)
 
 # (H) MCP server logs
 MCP_SERVER_INFERRED_ROOT = "[GraphCode MCP] Using inferred project root: {path}"

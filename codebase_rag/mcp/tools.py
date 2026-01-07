@@ -39,10 +39,13 @@ class MCPToolsRegistry:
         project_root: str,
         ingestor: MemgraphIngestor,
         cypher_gen: CypherGenerator,
+        enforce_scope: bool = True,
     ) -> None:
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
+        self.enforce_scope = enforce_scope
+        self.current_project = Path(project_root).resolve().name
 
         self.parsers, self.queries = load_parsers()
 
@@ -387,7 +390,11 @@ class MCPToolsRegistry:
     async def list_projects(self) -> ListProjectsResultDict:
         logger.info(lg.MCP_LIST_PROJECTS)
         try:
-            projects = self.ingestor.list_projects()
+            all_projects = self.ingestor.list_projects()
+            if self.enforce_scope:
+                projects = [p for p in all_projects if p == self.current_project]
+            else:
+                projects = all_projects
             logger.info(lg.MCP_LIST_PROJECTS_RESULT.format(count=len(projects)))
             return ListProjectsResultDict(projects=projects, count=len(projects))
         except Exception as e:
@@ -397,6 +404,17 @@ class MCPToolsRegistry:
     async def delete_project(self, project_name: str) -> DeleteProjectResultDict:
         logger.info(lg.MCP_DELETE_PROJECT.format(name=project_name))
         try:
+            if self.enforce_scope and project_name != self.current_project:
+                logger.warning(
+                    lg.MCP_SCOPE_VIOLATION.format(
+                        target=project_name, current=self.current_project
+                    )
+                )
+                return DeleteProjectResultDict(
+                    success=False,
+                    error=f"Scope violation: can only delete '{self.current_project}', "
+                    f"not '{project_name}'.",
+                )
             projects = self.ingestor.list_projects()
             if project_name not in projects:
                 logger.warning(
@@ -404,7 +422,7 @@ class MCPToolsRegistry:
                 )
                 return DeleteProjectResultDict(
                     success=False,
-                    error=f"Project '{project_name}' not found. Available: {projects}",
+                    error=f"Project '{project_name}' not found.",
                 )
             self.ingestor.delete_project(project_name)
             logger.info(lg.MCP_DELETE_PROJECT_SUCCESS.format(name=project_name))
@@ -418,6 +436,12 @@ class MCPToolsRegistry:
             return DeleteProjectResultDict(success=False, error=str(e))
 
     async def wipe_database(self, confirm: bool) -> str:
+        if self.enforce_scope:
+            logger.warning(lg.MCP_WIPE_DISABLED)
+            return (
+                "wipe_database is disabled in scoped mode to protect other projects. "
+                f"Use delete_project('{self.current_project}') to remove this project only."
+            )
         if not confirm:
             logger.info(lg.MCP_WIPE_DB_CANCELLED)
             return "Database wipe cancelled. Set confirm=true to proceed."
