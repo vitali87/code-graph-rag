@@ -378,7 +378,26 @@ class CodeSnippetResultDict(TypedDict, total=False):
     error: str
 
 
-MCPResultType = str | QueryResultDict | CodeSnippetResultDict
+class ListProjectsResultDict(TypedDict, total=False):
+    projects: list[str]
+    count: int
+    error: str
+
+
+class DeleteProjectResultDict(TypedDict, total=False):
+    success: bool
+    project: str
+    message: str
+    error: str
+
+
+MCPResultType = (
+    str
+    | QueryResultDict
+    | CodeSnippetResultDict
+    | ListProjectsResultDict
+    | DeleteProjectResultDict
+)
 MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
 
 

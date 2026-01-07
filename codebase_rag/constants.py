@@ -2301,6 +2301,9 @@ class MCPToolName(StrEnum):
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
+    LIST_PROJECTS = "list_projects"
+    DELETE_PROJECT = "delete_project"
+    WIPE_DATABASE = "wipe_database"
 
 
 # (H) MCP environment variables
@@ -2315,6 +2318,7 @@ class MCPSchemaType(StrEnum):
     OBJECT = "object"
     STRING = "string"
     INTEGER = "integer"
+    BOOLEAN = "boolean"
 
 
 # (H) MCP schema fields
@@ -2337,6 +2341,8 @@ class MCPParamName(StrEnum):
     LIMIT = "limit"
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
+    PROJECT_NAME = "project_name"
+    CONFIRM = "confirm"
 
 
 # (H) MCP server constants

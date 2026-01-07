@@ -526,6 +526,9 @@ claude mcp add --transport stdio graph-code \
 | `read_file` | Read the contents of a file from the project. Supports pagination for large files. |
 | `write_file` | Write content to a file, creating it if it doesn't exist. |
 | `list_directory` | List contents of a directory in the project. |
+| `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. |
+| `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
+| `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
 <!-- /SECTION:mcp_tools -->
 
 ### Example Usage

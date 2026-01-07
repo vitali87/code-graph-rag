@@ -23,6 +23,8 @@ from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.types_defs import (
     CodeSnippetResultDict,
+    DeleteProjectResultDict,
+    ListProjectsResultDict,
     MCPHandlerType,
     MCPInputSchema,
     MCPInputSchemaProperty,
@@ -197,15 +199,58 @@ class MCPToolsRegistry:
                 handler=self.list_directory,
                 returns_json=False,
             ),
+            cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
+                name=cs.MCPToolName.LIST_PROJECTS,
+                description=td.MCP_TOOLS[cs.MCPToolName.LIST_PROJECTS],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={},
+                    required=[],
+                ),
+                handler=self.list_projects,
+                returns_json=True,
+            ),
+            cs.MCPToolName.DELETE_PROJECT: ToolMetadata(
+                name=cs.MCPToolName.DELETE_PROJECT,
+                description=td.MCP_TOOLS[cs.MCPToolName.DELETE_PROJECT],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.PROJECT_NAME: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_PROJECT_NAME,
+                        )
+                    },
+                    required=[cs.MCPParamName.PROJECT_NAME],
+                ),
+                handler=self.delete_project,
+                returns_json=True,
+            ),
+            cs.MCPToolName.WIPE_DATABASE: ToolMetadata(
+                name=cs.MCPToolName.WIPE_DATABASE,
+                description=td.MCP_TOOLS[cs.MCPToolName.WIPE_DATABASE],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.CONFIRM: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.BOOLEAN,
+                            description=td.MCP_PARAM_CONFIRM,
+                        )
+                    },
+                    required=[cs.MCPParamName.CONFIRM],
+                ),
+                handler=self.wipe_database,
+                returns_json=False,
+            ),
         }
 
     async def index_repository(self) -> str:
         logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
+        project_name = Path(self.project_root).resolve().name
 
         try:
-            logger.info(lg.MCP_CLEARING_DB)
-            self.ingestor.clean_database()
-            logger.info(lg.MCP_DB_CLEARED)
+            logger.info(lg.MCP_CLEARING_PROJECT.format(name=project_name))
+            self.ingestor.delete_project(project_name)
 
             updater = GraphUpdater(
                 ingestor=self.ingestor,
@@ -215,7 +260,7 @@ class MCPToolsRegistry:
             )
             updater.run()
 
-            return cs.MCP_INDEX_SUCCESS.format(path=self.project_root)
+            return lg.MCP_INDEX_PROJECT_SUCCESS.format(name=project_name)
         except Exception as e:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)
@@ -337,6 +382,51 @@ class MCPToolsRegistry:
             return str(result)
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
+            return te.ERROR_WRAPPER.format(message=e)
+
+    async def list_projects(self) -> ListProjectsResultDict:
+        logger.info(lg.MCP_LIST_PROJECTS)
+        try:
+            projects = self.ingestor.list_projects()
+            logger.info(lg.MCP_LIST_PROJECTS_RESULT.format(count=len(projects)))
+            return ListProjectsResultDict(projects=projects, count=len(projects))
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
+            return ListProjectsResultDict(error=str(e), projects=[], count=0)
+
+    async def delete_project(self, project_name: str) -> DeleteProjectResultDict:
+        logger.info(lg.MCP_DELETE_PROJECT.format(name=project_name))
+        try:
+            projects = self.ingestor.list_projects()
+            if project_name not in projects:
+                logger.warning(
+                    lg.MCP_DELETE_PROJECT_NOT_FOUND.format(name=project_name)
+                )
+                return DeleteProjectResultDict(
+                    success=False,
+                    error=f"Project '{project_name}' not found. Available: {projects}",
+                )
+            self.ingestor.delete_project(project_name)
+            logger.info(lg.MCP_DELETE_PROJECT_SUCCESS.format(name=project_name))
+            return DeleteProjectResultDict(
+                success=True,
+                project=project_name,
+                message=f"Successfully deleted project '{project_name}'.",
+            )
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_DELETE_PROJECT.format(error=e))
+            return DeleteProjectResultDict(success=False, error=str(e))
+
+    async def wipe_database(self, confirm: bool) -> str:
+        if not confirm:
+            logger.info(lg.MCP_WIPE_DB_CANCELLED)
+            return "Database wipe cancelled. Set confirm=true to proceed."
+        logger.warning(lg.MCP_WIPE_DB)
+        try:
+            self.ingestor.clean_database()
+            return "Database completely wiped. All projects have been removed."
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_WIPE_DB.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:

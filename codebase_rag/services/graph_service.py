@@ -164,6 +164,26 @@ class MemgraphIngestor:
         self._execute_query(CYPHER_DELETE_ALL)
         logger.info(ls.MG_DB_CLEANED)
 
+    def list_projects(self) -> list[str]:
+        logger.info(ls.MG_LISTING_PROJECTS)
+        result = self.fetch_all(
+            "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
+        )
+        return [str(r["name"]) for r in result if r.get("name")]
+
+    def delete_project(self, project_name: str) -> None:
+        logger.info(ls.MG_DELETING_PROJECT.format(name=project_name))
+        self._execute_query(
+            """
+            MATCH (n)
+            WHERE n.qualified_name STARTS WITH $prefix
+               OR (n:Project AND n.name = $project_name)
+            DETACH DELETE n
+            """,
+            {"prefix": f"{project_name}.", "project_name": project_name},
+        )
+        logger.info(ls.MG_PROJECT_DELETED.format(name=project_name))
+
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
