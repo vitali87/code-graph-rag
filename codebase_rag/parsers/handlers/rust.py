@@ -26,7 +26,17 @@ class RustHandler(BaseLanguageHandler):
                 decorators.insert(0, attr_text)
             sibling = sibling.prev_named_sibling
 
-        return decorators
+        nodes_to_search = [node]
+        if body_node := node.child_by_field_name(cs.FIELD_BODY):
+            nodes_to_search.append(body_node)
+
+        for search_node in nodes_to_search:
+            for child in search_node.children:
+                if child.type == cs.TS_RS_INNER_ATTRIBUTE_ITEM:
+                    if attr_text := safe_decode_text(child):
+                        decorators.append(attr_text)
+
+        return list(dict.fromkeys(decorators))
 
     def build_function_qualified_name(
         self,

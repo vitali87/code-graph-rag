@@ -24,9 +24,7 @@ class JsTsHandler(BaseLanguageHandler):
 
     def _get_ts_decorator_name(self, decorator_node: ASTNode) -> str | None:
         for child in decorator_node.children:
-            if child.type == cs.TS_IDENTIFIER:
-                return safe_decode_text(child)
-            if child.type == cs.TS_MEMBER_EXPRESSION:
+            if child.type in (cs.TS_IDENTIFIER, cs.TS_MEMBER_EXPRESSION):
                 return safe_decode_text(child)
             if child.type == cs.TS_CALL_EXPRESSION:
                 if func_node := child.child_by_field_name(cs.FIELD_FUNCTION):

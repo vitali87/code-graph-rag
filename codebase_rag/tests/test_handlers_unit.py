@@ -745,6 +745,15 @@ impl MyTrait for MyStruct {
         result = handler.extract_decorators(func_node)
         assert result == []
 
+    def test_extract_decorators_inner_attribute(self, rust_parser: Parser) -> None:
+        handler = RustHandler()
+        code = b"mod my_module {\n    #![allow(dead_code)]\n}"
+        tree = rust_parser.parse(code)
+        mod_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(mod_node)
+        assert any("allow" in attr for attr in result)
+
 
 @pytest.mark.skipif(not JAVA_AVAILABLE, reason="tree-sitter-java not available")
 class TestJavaHandler:
