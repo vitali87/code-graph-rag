@@ -169,17 +169,19 @@ def _extract_from_modifiers_node(
     node: ASTNode, allowed_modifiers: frozenset[str]
 ) -> MethodModifiersAndAnnotations:
     result = MethodModifiersAndAnnotations()
-    for child in node.children:
-        if child.type != cs.TS_MODIFIERS:
-            continue
-        for modifier_child in child.children:
-            match modifier_child.type:
-                case _ if modifier_child.type in allowed_modifiers:
-                    if modifier := safe_decode_text(modifier_child):
-                        result.modifiers.append(modifier)
-                case cs.TS_ANNOTATION | cs.TS_MARKER_ANNOTATION:
-                    if annotation := safe_decode_text(modifier_child):
-                        result.annotations.append(annotation)
+    modifiers_node = next(
+        (child for child in node.children if child.type == cs.TS_MODIFIERS), None
+    )
+    if not modifiers_node:
+        return result
+    for modifier_child in modifiers_node.children:
+        match modifier_child.type:
+            case _ if modifier_child.type in allowed_modifiers:
+                if modifier := safe_decode_text(modifier_child):
+                    result.modifiers.append(modifier)
+            case cs.TS_ANNOTATION | cs.TS_MARKER_ANNOTATION:
+                if annotation := safe_decode_text(modifier_child):
+                    result.annotations.append(annotation)
     return result
 
 
