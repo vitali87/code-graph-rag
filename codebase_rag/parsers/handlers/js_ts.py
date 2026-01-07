@@ -14,21 +14,11 @@ if TYPE_CHECKING:
 class JsTsHandler(BaseLanguageHandler):
     def extract_decorators(self, node: ASTNode) -> list[str]:
         return [
-            decorator_name
+            decorator_text
             for child in node.children
             if child.type == cs.TS_DECORATOR
-            if (decorator_name := self._get_ts_decorator_name(child))
+            if (decorator_text := safe_decode_text(child))
         ]
-
-    def _get_ts_decorator_name(self, decorator_node: ASTNode) -> str | None:
-        for child in decorator_node.children:
-            if child.type in (cs.TS_IDENTIFIER, cs.TS_MEMBER_EXPRESSION):
-                return safe_decode_text(child)
-            if child.type == cs.TS_CALL_EXPRESSION:
-                if func_node := child.child_by_field_name(cs.FIELD_FUNCTION):
-                    if func_node.type in (cs.TS_IDENTIFIER, cs.TS_MEMBER_EXPRESSION):
-                        return safe_decode_text(func_node)
-        return None
 
     def is_inside_method_with_object_literals(self, node: ASTNode) -> bool:
         current = node.parent

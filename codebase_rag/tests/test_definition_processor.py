@@ -185,7 +185,7 @@ def my_func():
 
         handler = PythonHandler()
         result = handler.extract_decorators(func_node)
-        assert "decorator" in result
+        assert result == ["@decorator"]
 
     def test_multiple_decorators(self, py_parser: Parser) -> None:
         code = b"""
@@ -207,9 +207,9 @@ def my_func():
 
         handler = PythonHandler()
         result = handler.extract_decorators(func_node)
-        assert "first_decorator" in result
-        assert "second_decorator" in result
-        assert "third_decorator" in result
+        assert "@first_decorator" in result
+        assert "@second_decorator" in result
+        assert "@third_decorator" in result
 
     def test_decorator_with_arguments(self, py_parser: Parser) -> None:
         code = b"""
@@ -229,7 +229,7 @@ def my_func():
 
         handler = PythonHandler()
         result = handler.extract_decorators(func_node)
-        assert "decorator_with_args" in result
+        assert result == ["@decorator_with_args(arg1, arg2)"]
 
     def test_dotted_decorator(self, py_parser: Parser) -> None:
         code = b"""
@@ -249,7 +249,7 @@ def my_func():
 
         handler = PythonHandler()
         result = handler.extract_decorators(func_node)
-        assert any("module.submodule.decorator" in d for d in result)
+        assert result == ["@module.submodule.decorator"]
 
     def test_no_decorators(self, py_parser: Parser) -> None:
         code = b"""
@@ -283,7 +283,7 @@ class MyClass:
 
         handler = PythonHandler()
         result = handler.extract_decorators(class_node)
-        assert "dataclass" in result
+        assert result == ["@dataclass"]
 
     def test_builtin_decorators(self, py_parser: Parser) -> None:
         code = b"""

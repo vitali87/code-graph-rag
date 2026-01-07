@@ -174,15 +174,17 @@ def test_simple_function_decorators(
     project_name = decorator_project.name
 
     expected_decorators = {
-        f"{project_name}.decorators.simple_decorated_function": ["timing_decorator"],
+        f"{project_name}.decorators.simple_decorated_function": ["@timing_decorator"],
         f"{project_name}.decorators.multiple_decorated_function": [
-            "timing_decorator",
-            "retry",
+            "@timing_decorator",
+            "@retry(attempts=5)",
         ],
-        f"{project_name}.decorators.parameterized_decorated_function": ["retry"],
+        f"{project_name}.decorators.parameterized_decorated_function": [
+            "@retry(attempts=3)"
+        ],
         f"{project_name}.decorators.complex_decorated_function": [
-            "retry",
-            "functools.lru_cache",
+            "@retry(attempts=5)",
+            "@functools.lru_cache(maxsize=256)",
         ],
     }
 
@@ -220,11 +222,13 @@ def test_class_decorators(decorator_project: Path, mock_ingestor: MagicMock) -> 
     project_name = decorator_project.name
 
     expected_decorators = {
-        f"{project_name}.decorators.DecoratedClass": ["dataclass"],
-        f"{project_name}.decorators.ParameterizedDecoratedClass": ["dataclass"],
+        f"{project_name}.decorators.DecoratedClass": ["@dataclass"],
+        f"{project_name}.decorators.ParameterizedDecoratedClass": [
+            "@dataclass(frozen=True)"
+        ],
         f"{project_name}.decorators.ComplexDecoratedClass": [
-            "dataclass",
-            "timing_decorator",
+            "@dataclass",
+            "@timing_decorator",
         ],
     }
 
@@ -263,31 +267,31 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
 
     expected_decorators = {
         f"{project_name}.decorators.PropertyDecoratorExample.create_from_string": [
-            "classmethod"
+            "@classmethod"
         ],
         f"{project_name}.decorators.PropertyDecoratorExample.utility_function": [
-            "staticmethod"
+            "@staticmethod"
         ],
         f"{project_name}.decorators.PropertyDecoratorExample.decorated_instance_method": [
-            "timing_decorator"
+            "@timing_decorator"
         ],
         f"{project_name}.decorators.PropertyDecoratorExample.cached_method": [
-            "functools.lru_cache"
+            "@functools.lru_cache(maxsize=128)"
         ],
         f"{project_name}.decorators.ComplexDecoratedClass.factory_method": [
-            "classmethod",
-            "retry",
+            "@classmethod",
+            "@retry(attempts=2)",
         ],
     }
 
     property_methods = {
         f"{project_name}.decorators.PropertyDecoratorExample.value": [
-            ["property"],
-            ["value.setter"],
+            ["@property"],
+            ["@value.setter"],
         ],
         f"{project_name}.decorators.ComplexDecoratedClass.computed_value": [
-            ["property", "timing_decorator"],
-            ["computed_value.setter", "timing_decorator"],
+            ["@property", "@timing_decorator"],
+            ["@computed_value.setter", "@timing_decorator"],
         ],
     }
 
@@ -340,7 +344,7 @@ def test_nested_function_decorators(
     project_name = decorator_project.name
 
     expected_qn = f"{project_name}.decorators.outer_with_decorators.nested_decorated"
-    expected_decorators = ["timing_decorator"]
+    expected_decorators = ["@timing_decorator"]
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
@@ -381,11 +385,11 @@ def test_decorator_with_complex_arguments(
     test_cases = [
         {
             "qn": f"{project_name}.decorators.parameterized_decorated_function",
-            "expected": ["retry"],
+            "expected": ["@retry(attempts=3)"],
         },
         {
             "qn": f"{project_name}.decorators.complex_decorated_function",
-            "expected": ["retry", "functools.lru_cache"],
+            "expected": ["@retry(attempts=5)", "@functools.lru_cache(maxsize=256)"],
         },
     ]
 

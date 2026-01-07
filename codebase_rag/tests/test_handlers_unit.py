@@ -478,7 +478,7 @@ class MyClass {}
         class_node = tree.root_node.children[0]
 
         result = handler.extract_decorators(class_node)
-        assert "Component" in result
+        assert result == ["@Component"]
 
     def test_extract_decorators_decorator_with_call(self, ts_parser: Parser) -> None:
         handler = JsTsHandler()
@@ -490,7 +490,22 @@ class MyService {}
         class_node = tree.root_node.children[0]
 
         result = handler.extract_decorators(class_node)
-        assert "Injectable" in result
+        assert result == ["@Injectable()"]
+
+    def test_extract_decorators_decorator_with_args(self, ts_parser: Parser) -> None:
+        handler = JsTsHandler()
+        code = b"""
+@Component({selector: 'app-root', template: '<div></div>'})
+class AppComponent {}
+"""
+        tree = ts_parser.parse(code)
+        class_node = tree.root_node.children[0]
+
+        result = handler.extract_decorators(class_node)
+        assert len(result) == 1
+        assert (
+            "@Component({selector: 'app-root', template: '<div></div>'})" in result[0]
+        )
 
     def test_extract_decorators_multiple_decorators(self, ts_parser: Parser) -> None:
         handler = JsTsHandler()
@@ -504,8 +519,8 @@ class MyClass {}
 
         result = handler.extract_decorators(class_node)
         assert len(result) == 2
-        assert "Component" in result
-        assert "Injectable" in result
+        assert "@Component" in result
+        assert "@Injectable()" in result
 
     def test_extract_decorators_member_expression(self, ts_parser: Parser) -> None:
         handler = JsTsHandler()
@@ -517,7 +532,7 @@ class MyClass {}
         class_node = tree.root_node.children[0]
 
         result = handler.extract_decorators(class_node)
-        assert any("ng.Component" in d for d in result)
+        assert result == ["@ng.Component"]
 
 
 @pytest.mark.skipif(not CPP_AVAILABLE, reason="tree-sitter-cpp not available")
@@ -1000,7 +1015,7 @@ class TestPythonHandler:
         )
 
         result = handler.extract_decorators(func_node)
-        assert "my_decorator" in result
+        assert result == ["@my_decorator"]
 
     def test_extract_decorators_call_decorator(self, python_parser: Parser) -> None:
         handler = PythonHandler()
@@ -1012,7 +1027,7 @@ class TestPythonHandler:
         )
 
         result = handler.extract_decorators(func_node)
-        assert "decorator_factory" in result
+        assert result == ["@decorator_factory(arg1, arg2)"]
 
     def test_extract_decorators_dotted_decorator(self, python_parser: Parser) -> None:
         handler = PythonHandler()
@@ -1024,7 +1039,7 @@ class TestPythonHandler:
         )
 
         result = handler.extract_decorators(func_node)
-        assert any("module.submodule.decorator" in d for d in result)
+        assert result == ["@module.submodule.decorator"]
 
     def test_extract_decorators_multiple(self, python_parser: Parser) -> None:
         handler = PythonHandler()
@@ -1037,9 +1052,9 @@ class TestPythonHandler:
 
         result = handler.extract_decorators(func_node)
         assert len(result) == 3
-        assert "first" in result
-        assert "second" in result
-        assert "third" in result
+        assert "@first" in result
+        assert "@second" in result
+        assert "@third" in result
 
     def test_extract_decorators_no_decorators(self, python_parser: Parser) -> None:
         handler = PythonHandler()
@@ -1060,4 +1075,33 @@ class TestPythonHandler:
         )
 
         result = handler.extract_decorators(class_node)
-        assert "dataclass" in result
+        assert result == ["@dataclass"]
+
+    def test_extract_decorators_with_args(self, python_parser: Parser) -> None:
+        handler = PythonHandler()
+        code = (
+            b"@app.route('/api/users', methods=['GET', 'POST'])\ndef get_users(): pass"
+        )
+        tree = python_parser.parse(code)
+        decorated_def = tree.root_node.children[0]
+        func_node = next(
+            c for c in decorated_def.children if c.type == cs.TS_PY_FUNCTION_DEFINITION
+        )
+
+        result = handler.extract_decorators(func_node)
+        assert len(result) == 1
+        assert "@app.route('/api/users', methods=['GET', 'POST'])" in result[0]
+
+    def test_extract_decorators_dataclass_with_options(
+        self, python_parser: Parser
+    ) -> None:
+        handler = PythonHandler()
+        code = b"@dataclass(frozen=True, slots=True)\nclass Config: pass"
+        tree = python_parser.parse(code)
+        decorated_def = tree.root_node.children[0]
+        class_node = next(
+            c for c in decorated_def.children if c.type == cs.TS_PY_CLASS_DEFINITION
+        )
+
+        result = handler.extract_decorators(class_node)
+        assert result == ["@dataclass(frozen=True, slots=True)"]

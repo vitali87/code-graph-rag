@@ -15,18 +15,8 @@ class PythonHandler(BaseLanguageHandler):
         if not node.parent or node.parent.type != cs.TS_PY_DECORATED_DEFINITION:
             return []
         return [
-            decorator_name
+            decorator_text
             for child in node.parent.children
             if child.type == cs.TS_PY_DECORATOR
-            if (decorator_name := self._get_decorator_name(child))
+            if (decorator_text := safe_decode_text(child))
         ]
-
-    def _get_decorator_name(self, decorator_node: ASTNode) -> str | None:
-        for child in decorator_node.children:
-            if child.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
-                return safe_decode_text(child)
-            if child.type == cs.TS_PY_CALL:
-                if func_node := child.child_by_field_name(cs.FIELD_FUNCTION):
-                    if func_node.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
-                        return safe_decode_text(func_node)
-        return None
