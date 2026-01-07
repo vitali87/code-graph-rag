@@ -219,7 +219,7 @@ class TestIndexRepository:
 
             assert "Error:" not in result
             assert "Success" in result or "indexed" in result.lower()
-            assert str(temp_project_root) in result
+            assert temp_project_root.name in result
             mock_updater.run.assert_called_once()
 
     async def test_index_repository_creates_graph_updater(
@@ -293,7 +293,7 @@ class TestIndexRepository:
     async def test_index_repository_clears_database_first(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that database is cleared before indexing."""
+        """Test that project data is cleared before indexing."""
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
             mock_updater = MagicMock()
             mock_updater.run.return_value = None
@@ -301,23 +301,24 @@ class TestIndexRepository:
 
             result = await mcp_registry.index_repository()
 
-            mcp_registry.ingestor.clean_database.assert_called_once()  # type: ignore[attr-defined]
+            mcp_registry.ingestor.delete_project.assert_called_once_with(  # type: ignore[attr-defined]
+                mcp_registry.current_project
+            )
             assert "Error:" not in result
-            assert "cleared" in result.lower() or "previous data" in result.lower()
 
     async def test_index_repository_clears_before_updater_runs(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that database clearing happens before GraphUpdater runs."""
+        """Test that project deletion happens before GraphUpdater runs."""
         call_order: list[str] = []
 
-        def mock_clean() -> None:
-            call_order.append("clean")
+        def mock_delete(project_name: str) -> None:
+            call_order.append("delete")
 
         def mock_run() -> None:
             call_order.append("run")
 
-        mcp_registry.ingestor.clean_database = MagicMock(side_effect=mock_clean)  # type: ignore[method-assign]
+        mcp_registry.ingestor.delete_project = MagicMock(side_effect=mock_delete)  # type: ignore[method-assign]
 
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -326,12 +327,12 @@ class TestIndexRepository:
 
             await mcp_registry.index_repository()
 
-            assert call_order == ["clean", "run"]
+            assert call_order == ["delete", "run"]
 
     async def test_sequential_index_clears_previous_repo_data(
         self, tmp_path: Path
     ) -> None:
-        """Test that indexing a second repository clears the first repository's data."""
+        """Test that indexing repositories deletes only their own project data."""
         mock_ingestor = MagicMock()
         mock_cypher = MagicMock()
 
@@ -357,10 +358,12 @@ class TestIndexRepository:
             mock_updater_class.return_value = mock_updater
 
             await registry1.index_repository()
-            assert mock_ingestor.clean_database.call_count == 1
+            assert mock_ingestor.delete_project.call_count == 1
+            mock_ingestor.delete_project.assert_called_with("project1")
 
             await registry2.index_repository()
-            assert mock_ingestor.clean_database.call_count == 2
+            assert mock_ingestor.delete_project.call_count == 2
+            mock_ingestor.delete_project.assert_called_with("project2")
 
 
 class TestQueryAndIndexIntegration:

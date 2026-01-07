@@ -249,11 +249,10 @@ class MCPToolsRegistry:
 
     async def index_repository(self) -> str:
         logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
-        project_name = Path(self.project_root).resolve().name
 
         try:
-            logger.info(lg.MCP_CLEARING_PROJECT.format(name=project_name))
-            self.ingestor.delete_project(project_name)
+            logger.info(lg.MCP_CLEARING_PROJECT.format(name=self.current_project))
+            self.ingestor.delete_project(self.current_project)
 
             updater = GraphUpdater(
                 ingestor=self.ingestor,
@@ -263,7 +262,7 @@ class MCPToolsRegistry:
             )
             updater.run()
 
-            return lg.MCP_INDEX_PROJECT_SUCCESS.format(name=project_name)
+            return lg.MCP_INDEX_PROJECT_SUCCESS.format(name=self.current_project)
         except Exception as e:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)

@@ -173,14 +173,16 @@ class MemgraphIngestor:
 
     def delete_project(self, project_name: str) -> None:
         logger.info(ls.MG_DELETING_PROJECT.format(name=project_name))
+        # Use graph traversal to delete all nodes connected to the project.
+        # This catches File/Folder nodes (which use 'path' not 'qualified_name')
+        # as well as all other nodes reachable from the Project.
         self._execute_query(
             """
-            MATCH (n)
-            WHERE n.qualified_name STARTS WITH $prefix
-               OR (n:Project AND n.name = $project_name)
-            DETACH DELETE n
+            MATCH (p:Project {name: $project_name})
+            OPTIONAL MATCH (p)-[*]->(connected)
+            DETACH DELETE p, connected
             """,
-            {"prefix": f"{project_name}.", "project_name": project_name},
+            {"project_name": project_name},
         )
         logger.info(ls.MG_PROJECT_DELETED.format(name=project_name))
 
