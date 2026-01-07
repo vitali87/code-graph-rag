@@ -165,15 +165,26 @@ def _extract_type_parameters(class_node: ASTNode) -> list[str]:
     return type_parameters
 
 
-def _extract_class_modifiers(class_node: ASTNode) -> list[str]:
-    modifiers: list[str] = []
-    for child in class_node.children:
-        if child.type == cs.TS_MODIFIERS:
-            for modifier_child in child.children:
-                if modifier_child.type in cs.JAVA_CLASS_MODIFIERS:
+def _extract_from_modifiers_node(
+    node: ASTNode, allowed_modifiers: frozenset[str]
+) -> MethodModifiersAndAnnotations:
+    result = MethodModifiersAndAnnotations()
+    for child in node.children:
+        if child.type != cs.TS_MODIFIERS:
+            continue
+        for modifier_child in child.children:
+            match modifier_child.type:
+                case _ if modifier_child.type in allowed_modifiers:
                     if modifier := safe_decode_text(modifier_child):
-                        modifiers.append(modifier)
-    return modifiers
+                        result.modifiers.append(modifier)
+                case cs.TS_ANNOTATION | cs.TS_MARKER_ANNOTATION:
+                    if annotation := safe_decode_text(modifier_child):
+                        result.annotations.append(annotation)
+    return result
+
+
+def _extract_class_modifiers(class_node: ASTNode) -> list[str]:
+    return _extract_from_modifiers_node(class_node, cs.JAVA_CLASS_MODIFIERS).modifiers
 
 
 def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
@@ -250,19 +261,7 @@ def _extract_method_parameters(method_node: ASTNode) -> list[str]:
 def extract_modifiers_and_annotations(
     node: ASTNode,
 ) -> MethodModifiersAndAnnotations:
-    result = MethodModifiersAndAnnotations()
-    for child in node.children:
-        if child.type != cs.TS_MODIFIERS:
-            continue
-        for modifier_child in child.children:
-            match modifier_child.type:
-                case _ if modifier_child.type in cs.JAVA_METHOD_MODIFIERS:
-                    if modifier := safe_decode_text(modifier_child):
-                        result.modifiers.append(modifier)
-                case cs.TS_ANNOTATION | cs.TS_MARKER_ANNOTATION:
-                    if annotation := safe_decode_text(modifier_child):
-                        result.annotations.append(annotation)
-    return result
+    return _extract_from_modifiers_node(node, cs.JAVA_METHOD_MODIFIERS)
 
 
 def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
@@ -299,9 +298,6 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
             annotations=[],
         )
 
-    modifiers: list[str] = []
-    annotations: list[str] = []
-
     field_type: str | None = None
     if type_node := field_node.child_by_field_name(cs.TS_FIELD_TYPE):
         field_type = safe_decode_text(type_node)
@@ -312,22 +308,13 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
         if name_node := declarator_node.child_by_field_name(cs.TS_FIELD_NAME):
             name = safe_decode_text(name_node)
 
-    for child in field_node.children:
-        if child.type == cs.TS_MODIFIERS:
-            for modifier_child in child.children:
-                match modifier_child.type:
-                    case _ if modifier_child.type in cs.JAVA_FIELD_MODIFIERS:
-                        if modifier := safe_decode_text(modifier_child):
-                            modifiers.append(modifier)
-                    case cs.TS_ANNOTATION:
-                        if annotation := safe_decode_text(modifier_child):
-                            annotations.append(annotation)
+    mods_and_annots = _extract_from_modifiers_node(field_node, cs.JAVA_FIELD_MODIFIERS)
 
     return JavaFieldInfo(
         name=name,
         type=field_type,
-        modifiers=modifiers,
-        annotations=annotations,
+        modifiers=mods_and_annots.modifiers,
+        annotations=mods_and_annots.annotations,
     )
 
 

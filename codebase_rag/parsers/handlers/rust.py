@@ -36,7 +36,7 @@ class RustHandler(BaseLanguageHandler):
                     if attr_text := safe_decode_text(child):
                         decorators.append(attr_text)
 
-        return list(dict.fromkeys(decorators))
+        return decorators
 
     def build_function_qualified_name(
         self,
