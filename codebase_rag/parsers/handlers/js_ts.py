@@ -13,14 +13,12 @@ if TYPE_CHECKING:
 
 class JsTsHandler(BaseLanguageHandler):
     def extract_decorators(self, node: ASTNode) -> list[str]:
-        decorators: list[str] = []
-
-        for child in node.children:
-            if child.type == cs.TS_DECORATOR:
-                if decorator_name := self._get_ts_decorator_name(child):
-                    decorators.append(decorator_name)
-
-        return decorators
+        return [
+            decorator_name
+            for child in node.children
+            if child.type == cs.TS_DECORATOR
+            if (decorator_name := self._get_ts_decorator_name(child))
+        ]
 
     def _get_ts_decorator_name(self, decorator_node: ASTNode) -> str | None:
         for child in decorator_node.children:

@@ -12,19 +12,14 @@ if TYPE_CHECKING:
 
 class PythonHandler(BaseLanguageHandler):
     def extract_decorators(self, node: ASTNode) -> list[str]:
-        decorators: list[str] = []
-
-        current = node.parent
-        while current:
-            if current.type == cs.TS_PY_DECORATED_DEFINITION:
-                for child in current.children:
-                    if child.type == cs.TS_PY_DECORATOR:
-                        if decorator_name := self._get_decorator_name(child):
-                            decorators.append(decorator_name)
-                break
-            current = current.parent
-
-        return decorators
+        if not node.parent or node.parent.type != cs.TS_PY_DECORATED_DEFINITION:
+            return []
+        return [
+            decorator_name
+            for child in node.parent.children
+            if child.type == cs.TS_PY_DECORATOR
+            if (decorator_name := self._get_decorator_name(child))
+        ]
 
     def _get_decorator_name(self, decorator_node: ASTNode) -> str | None:
         for child in decorator_node.children:
