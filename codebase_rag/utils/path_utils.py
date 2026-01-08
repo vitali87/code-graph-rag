@@ -12,14 +12,14 @@ def should_skip_path(
     if path.is_file() and path.suffix in cs.IGNORE_SUFFIXES:
         return True
     rel_path = path.relative_to(repo_path)
+    rel_path_str = str(rel_path)
     dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
-    if exclude_paths and not exclude_paths.isdisjoint(dir_parts):
+    if exclude_paths and (
+        not exclude_paths.isdisjoint(dir_parts) or rel_path_str in exclude_paths
+    ):
         return True
-    if unignore_paths:
-        rel_path_str = str(rel_path)
-        if any(
-            rel_path_str == p or rel_path_str.startswith(f"{p}/")
-            for p in unignore_paths
-        ):
-            return False
+    if unignore_paths and any(
+        rel_path_str == p or rel_path_str.startswith(f"{p}/") for p in unignore_paths
+    ):
+        return False
     return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)

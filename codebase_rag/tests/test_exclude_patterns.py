@@ -556,6 +556,29 @@ class TestExcludePathsEdgeCases:
 
         assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
 
+    def test_exclude_specific_file_by_path(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "src" / "config.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"src/config.py"})
+
+        assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_exclude_specific_file_does_not_affect_siblings(
+        self, tmp_path: Path
+    ) -> None:
+        excluded_file = tmp_path / "src" / "secret.key"
+        sibling_file = tmp_path / "src" / "main.py"
+        excluded_file.parent.mkdir(parents=True)
+        excluded_file.touch()
+        sibling_file.touch()
+
+        exclude_paths = frozenset({"src/secret.key"})
+
+        assert should_skip_path(excluded_file, tmp_path, exclude_paths=exclude_paths)
+        assert not should_skip_path(sibling_file, tmp_path, exclude_paths=exclude_paths)
+
 
 class TestIgnoreSuffixesInteraction:
     def test_suffix_checked_before_include(self, tmp_path: Path) -> None:
