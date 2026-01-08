@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.main import (
     detect_excludable_directories,
@@ -425,79 +427,57 @@ class TestShouldSkipPath:
 
 
 class TestIncludeExcludeInteraction:
-    def test_exclude_within_included_directory(self, tmp_path: Path) -> None:
-        file_path = tmp_path / "src" / "__pycache__" / "mod.py"
+    @pytest.mark.parametrize(
+        ("path_str", "include_paths", "exclude_paths"),
+        [
+            pytest.param(
+                "src/__pycache__/mod.py",
+                {"src"},
+                {"__pycache__"},
+                id="exclude_pycache_in_src",
+            ),
+            pytest.param(
+                "vendor/lib/cache/data.py",
+                {"vendor"},
+                {"cache"},
+                id="exclude_nested_cache_in_vendor",
+            ),
+            pytest.param(
+                "submodule/.git/config",
+                {"submodule"},
+                {".git"},
+                id="exclude_dotgit_in_submodule",
+            ),
+            pytest.param(
+                "project/.venv/lib/site.py",
+                {"project"},
+                {".venv"},
+                id="exclude_venv_in_project",
+            ),
+            pytest.param(
+                "app/node_modules/pkg/index.js",
+                {"app"},
+                {"node_modules"},
+                id="exclude_node_modules_in_app",
+            ),
+        ],
+    )
+    def test_exclude_takes_precedence_over_include(
+        self,
+        tmp_path: Path,
+        path_str: str,
+        include_paths: set[str],
+        exclude_paths: set[str],
+    ) -> None:
+        file_path = tmp_path / path_str
         file_path.parent.mkdir(parents=True)
         file_path.touch()
-
-        include_paths = frozenset({"src"})
-        exclude_paths = frozenset({"__pycache__"})
 
         assert should_skip_path(
             file_path,
             tmp_path,
-            exclude_paths=exclude_paths,
-            include_paths=include_paths,
-        )
-
-    def test_exclude_nested_in_included_parent(self, tmp_path: Path) -> None:
-        file_path = tmp_path / "vendor" / "lib" / "cache" / "data.py"
-        file_path.parent.mkdir(parents=True)
-        file_path.touch()
-
-        include_paths = frozenset({"vendor"})
-        exclude_paths = frozenset({"cache"})
-
-        assert should_skip_path(
-            file_path,
-            tmp_path,
-            exclude_paths=exclude_paths,
-            include_paths=include_paths,
-        )
-
-    def test_exclude_dotgit_within_included_submodule(self, tmp_path: Path) -> None:
-        file_path = tmp_path / "submodule" / ".git" / "config"
-        file_path.parent.mkdir(parents=True)
-        file_path.touch()
-
-        include_paths = frozenset({"submodule"})
-        exclude_paths = frozenset({".git"})
-
-        assert should_skip_path(
-            file_path,
-            tmp_path,
-            exclude_paths=exclude_paths,
-            include_paths=include_paths,
-        )
-
-    def test_exclude_venv_within_included_src(self, tmp_path: Path) -> None:
-        file_path = tmp_path / "project" / ".venv" / "lib" / "site.py"
-        file_path.parent.mkdir(parents=True)
-        file_path.touch()
-
-        include_paths = frozenset({"project"})
-        exclude_paths = frozenset({".venv"})
-
-        assert should_skip_path(
-            file_path,
-            tmp_path,
-            exclude_paths=exclude_paths,
-            include_paths=include_paths,
-        )
-
-    def test_exclude_node_modules_within_included_app(self, tmp_path: Path) -> None:
-        file_path = tmp_path / "app" / "node_modules" / "pkg" / "index.js"
-        file_path.parent.mkdir(parents=True)
-        file_path.touch()
-
-        include_paths = frozenset({"app"})
-        exclude_paths = frozenset({"node_modules"})
-
-        assert should_skip_path(
-            file_path,
-            tmp_path,
-            exclude_paths=exclude_paths,
-            include_paths=include_paths,
+            exclude_paths=frozenset(exclude_paths),
+            include_paths=frozenset(include_paths),
         )
 
 
@@ -567,7 +547,7 @@ class TestExcludePathsEdgeCases:
 
         assert not should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
 
-    def test_custom_exclude_merged_with_ignore_patterns(self, tmp_path: Path) -> None:
+    def test_custom_exclude_pattern_is_applied(self, tmp_path: Path) -> None:
         file_path = tmp_path / "custom" / "file.py"
         file_path.parent.mkdir(parents=True)
         file_path.touch()
