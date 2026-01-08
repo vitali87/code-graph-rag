@@ -7,7 +7,7 @@ from loguru import logger
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
-from .config import settings
+from .config import load_cgrignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
     app_context,
@@ -15,7 +15,7 @@ from .main import (
     export_graph_to_file,
     main_async,
     main_optimize_async,
-    prompt_for_included_directories,
+    prompt_for_unignored_directories,
     style,
     update_model_settings,
 )
@@ -104,12 +104,15 @@ def start(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
         )
 
-        exclude_paths = frozenset(exclude) if exclude else None
-        include_paths: frozenset[str] | None = None
+        cgrignore = load_cgrignore_patterns(repo_to_update)
+        cli_excludes = frozenset(exclude) if exclude else frozenset()
+        exclude_paths = cli_excludes | cgrignore.exclude or None
+        unignore_paths: frozenset[str] | None = None
         if interactive_setup:
-            include_paths = prompt_for_included_directories(repo_to_update, exclude)
+            unignore_paths = prompt_for_unignored_directories(repo_to_update, exclude)
         else:
             app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
+            unignore_paths = cgrignore.unignore or None
 
         with connect_memgraph(effective_batch_size) as ingestor:
             if clean:
@@ -126,7 +129,7 @@ def start(
                 repo_to_update,
                 parsers,
                 queries,
-                include_paths,
+                unignore_paths,
                 exclude_paths,
             )
             updater.run()
@@ -188,12 +191,15 @@ def index(
         style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN)
     )
 
-    exclude_paths = frozenset(exclude) if exclude else None
-    include_paths: frozenset[str] | None = None
+    cgrignore = load_cgrignore_patterns(repo_to_index)
+    cli_excludes = frozenset(exclude) if exclude else frozenset()
+    exclude_paths = cli_excludes | cgrignore.exclude or None
+    unignore_paths: frozenset[str] | None = None
     if interactive_setup:
-        include_paths = prompt_for_included_directories(repo_to_index, exclude)
+        unignore_paths = prompt_for_unignored_directories(repo_to_index, exclude)
     else:
         app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
+        unignore_paths = cgrignore.unignore or None
 
     try:
         ingestor = ProtobufFileIngestor(
@@ -201,7 +207,7 @@ def index(
         )
         parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor, repo_to_index, parsers, queries, include_paths, exclude_paths
+            ingestor, repo_to_index, parsers, queries, unignore_paths, exclude_paths
         )
 
         updater.run()

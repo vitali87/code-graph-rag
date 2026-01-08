@@ -1,10 +1,12 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.main import (
     detect_excludable_directories,
-    prompt_for_included_directories,
+    prompt_for_unignored_directories,
 )
 from codebase_rag.utils.path_utils import should_skip_path
 
@@ -275,7 +277,7 @@ class TestPromptExcludeDirectories:
     def test_empty_repo_returns_empty(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
-        result = prompt_for_included_directories(tmp_path)
+        result = prompt_for_unignored_directories(tmp_path)
         assert result == frozenset()
         mock_ask.assert_not_called()
 
@@ -288,7 +290,7 @@ class TestPromptExcludeDirectories:
         (tmp_path / "node_modules").mkdir()
         mock_ask.return_value = "all"
 
-        result = prompt_for_included_directories(tmp_path)
+        result = prompt_for_unignored_directories(tmp_path)
 
         assert ".git" in result
         assert "node_modules" in result
@@ -302,7 +304,7 @@ class TestPromptExcludeDirectories:
         (tmp_path / "node_modules").mkdir()
         mock_ask.return_value = "none"
 
-        result = prompt_for_included_directories(tmp_path)
+        result = prompt_for_unignored_directories(tmp_path)
 
         assert result == frozenset()
 
@@ -315,7 +317,7 @@ class TestPromptExcludeDirectories:
         (tmp_path / ".venv").mkdir()
         mock_ask.return_value = "2"
 
-        result = prompt_for_included_directories(tmp_path)
+        result = prompt_for_unignored_directories(tmp_path)
 
         assert ".venv" in result
         assert ".git" not in result
@@ -330,7 +332,7 @@ class TestPromptExcludeDirectories:
         (tmp_path / "lib" / "__pycache__").mkdir(parents=True)
         mock_ask.side_effect = ["1e", "2"]
 
-        result = prompt_for_included_directories(tmp_path)
+        result = prompt_for_unignored_directories(tmp_path)
 
         assert len(result) == 1
         assert "src/__pycache__" in result
@@ -346,7 +348,7 @@ class TestPromptExcludeDirectories:
         cli_excludes = ["custom"]
         mock_ask.return_value = "all"
 
-        result = prompt_for_included_directories(tmp_path, cli_excludes=cli_excludes)
+        result = prompt_for_unignored_directories(tmp_path, cli_excludes=cli_excludes)
 
         assert ".git" in result
         assert "custom" in result
@@ -390,7 +392,7 @@ class TestShouldSkipPath:
 
         assert not should_skip_path(file_path, tmp_path)
 
-    def test_include_paths_overrides_default_skip(self, tmp_path: Path) -> None:
+    def test_unignore_paths_overrides_default_skip(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
         (tmp_path / "submodule1" / ".git").mkdir(parents=True)
 
@@ -399,11 +401,11 @@ class TestShouldSkipPath:
         for f in [file_in_root_git, file_in_sub1_git]:
             f.touch()
 
-        include_paths = frozenset({"submodule1/.git"})
+        unignore_paths = frozenset({"submodule1/.git"})
 
         assert should_skip_path(file_in_root_git, tmp_path)
         assert not should_skip_path(
-            file_in_sub1_git, tmp_path, include_paths=include_paths
+            file_in_sub1_git, tmp_path, unignore_paths=unignore_paths
         )
 
     def test_exclude_paths_adds_to_default_skip(self, tmp_path: Path) -> None:
@@ -419,6 +421,228 @@ class TestShouldSkipPath:
     def test_does_not_match_partial_directory_names(self, tmp_path: Path) -> None:
         file_path = tmp_path / "my-venv-backup" / "file.py"
         file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        assert not should_skip_path(file_path, tmp_path)
+
+
+class TestUnignoreExcludeInteraction:
+    @pytest.mark.parametrize(
+        ("path_str", "unignore_paths", "exclude_paths"),
+        [
+            pytest.param(
+                "src/__pycache__/mod.py",
+                {"src"},
+                {"__pycache__"},
+                id="exclude_pycache_in_src",
+            ),
+            pytest.param(
+                "vendor/lib/cache/data.py",
+                {"vendor"},
+                {"cache"},
+                id="exclude_nested_cache_in_vendor",
+            ),
+            pytest.param(
+                "submodule/.git/config",
+                {"submodule"},
+                {".git"},
+                id="exclude_dotgit_in_submodule",
+            ),
+            pytest.param(
+                "project/.venv/lib/site.py",
+                {"project"},
+                {".venv"},
+                id="exclude_venv_in_project",
+            ),
+            pytest.param(
+                "app/node_modules/pkg/index.js",
+                {"app"},
+                {"node_modules"},
+                id="exclude_node_modules_in_app",
+            ),
+        ],
+    )
+    def test_exclude_takes_precedence_over_unignore(
+        self,
+        tmp_path: Path,
+        path_str: str,
+        unignore_paths: set[str],
+        exclude_paths: set[str],
+    ) -> None:
+        file_path = tmp_path / path_str
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        assert should_skip_path(
+            file_path,
+            tmp_path,
+            exclude_paths=frozenset(exclude_paths),
+            unignore_paths=frozenset(unignore_paths),
+        )
+
+
+class TestUnignorePathsEdgeCases:
+    def test_unignore_exact_file_path(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "src" / "main.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        unignore_paths = frozenset({"src/main.py"})
+
+        assert not should_skip_path(file_path, tmp_path, unignore_paths=unignore_paths)
+
+    def test_unignore_parent_unignores_children(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "src" / "sub" / "deep" / "file.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        unignore_paths = frozenset({"src"})
+
+        assert not should_skip_path(file_path, tmp_path, unignore_paths=unignore_paths)
+
+    def test_multiple_unignore_paths(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "tests" / "test_main.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        unignore_paths = frozenset({"src", "tests"})
+
+        assert not should_skip_path(file_path, tmp_path, unignore_paths=unignore_paths)
+
+    def test_empty_unignore_paths_does_not_skip(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "src" / "file.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        unignore_paths: frozenset[str] = frozenset()
+
+        assert not should_skip_path(file_path, tmp_path, unignore_paths=unignore_paths)
+
+
+class TestExcludePathsEdgeCases:
+    def test_exclude_nested_path_pattern(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "lib" / "vendor" / "pkg" / "file.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"vendor"})
+
+        assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_exclude_multiple_patterns(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "build" / "tmp" / "out.txt"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"cache", "tmp"})
+
+        assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_exclude_does_not_match_partial_name(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "testing" / "file.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"test"})
+
+        assert not should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_custom_exclude_pattern_is_applied(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "custom" / "file.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"custom"})
+
+        assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_exclude_specific_file_by_path(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "src" / "config.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"src/config.py"})
+
+        assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_exclude_specific_file_does_not_affect_siblings(
+        self, tmp_path: Path
+    ) -> None:
+        excluded_file = tmp_path / "src" / "secret.key"
+        sibling_file = tmp_path / "src" / "main.py"
+        excluded_file.parent.mkdir(parents=True)
+        excluded_file.touch()
+        sibling_file.touch()
+
+        exclude_paths = frozenset({"src/secret.key"})
+
+        assert should_skip_path(excluded_file, tmp_path, exclude_paths=exclude_paths)
+        assert not should_skip_path(sibling_file, tmp_path, exclude_paths=exclude_paths)
+
+    def test_exclude_path_based_pattern(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "src" / "vendor" / "lib.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"src/vendor"})
+
+        assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_exclude_path_pattern_does_not_affect_other_paths(
+        self, tmp_path: Path
+    ) -> None:
+        excluded_file = tmp_path / "src" / "legacy" / "lib.py"
+        other_file = tmp_path / "lib" / "code" / "other.py"
+        excluded_file.parent.mkdir(parents=True)
+        other_file.parent.mkdir(parents=True)
+        excluded_file.touch()
+        other_file.touch()
+
+        exclude_paths = frozenset({"src/legacy"})
+
+        assert should_skip_path(excluded_file, tmp_path, exclude_paths=exclude_paths)
+        assert not should_skip_path(other_file, tmp_path, exclude_paths=exclude_paths)
+
+
+class TestIgnoreSuffixesInteraction:
+    def test_suffix_checked_before_include(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "build" / "out.pyc"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        unignore_paths = frozenset({"build"})
+
+        assert should_skip_path(file_path, tmp_path, unignore_paths=unignore_paths)
+
+    def test_suffix_checked_before_exclude(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "src" / "mod.pyc"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        exclude_paths = frozenset({"src"})
+
+        assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
+
+
+class TestDirectoryVsFileBehavior:
+    def test_skip_directory_in_exclude(self, tmp_path: Path) -> None:
+        dir_path = tmp_path / "src" / "__pycache__"
+        dir_path.mkdir(parents=True)
+
+        exclude_paths = frozenset({"__pycache__"})
+
+        assert should_skip_path(dir_path, tmp_path, exclude_paths=exclude_paths)
+
+    def test_unignore_directory_path(self, tmp_path: Path) -> None:
+        dir_path = tmp_path / "src"
+        dir_path.mkdir(parents=True)
+
+        unignore_paths = frozenset({"src"})
+
+        assert not should_skip_path(dir_path, tmp_path, unignore_paths=unignore_paths)
+
+    def test_root_level_file(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "README.md"
         file_path.touch()
 
         assert not should_skip_path(file_path, tmp_path)

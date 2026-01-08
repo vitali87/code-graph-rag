@@ -783,17 +783,17 @@ def _prompt_nested_selection(pattern: str, paths: list[str]) -> set[str]:
     return selected
 
 
-def prompt_for_included_directories(
+def prompt_for_unignored_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
 ) -> frozenset[str]:
     detected = detect_excludable_directories(repo_path)
-    cgrignore_patterns = load_cgrignore_patterns(repo_path)
+    cgrignore = load_cgrignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
-    pre_excluded = cli_patterns | cgrignore_patterns
+    pre_excluded = cli_patterns | cgrignore.exclude
 
     if not detected and not pre_excluded:
-        return frozenset()
+        return cgrignore.unignore
 
     all_candidates = detected | pre_excluded
     groups = _group_paths_by_pattern(all_candidates)
@@ -805,10 +805,10 @@ def prompt_for_included_directories(
     )
 
     if response.lower() == cs.INTERACTIVE_KEEP_ALL:
-        return frozenset(all_candidates)
+        return frozenset(all_candidates) | cgrignore.unignore
 
     if response.lower() == cs.INTERACTIVE_KEEP_NONE:
-        return frozenset()
+        return cgrignore.unignore
 
     selected: set[str] = set()
     expand_requests: list[int] = []
@@ -841,7 +841,7 @@ def prompt_for_included_directories(
         else:
             logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
 
-    return frozenset(selected)
+    return frozenset(selected) | cgrignore.unignore
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:

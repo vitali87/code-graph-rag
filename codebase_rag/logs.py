@@ -90,7 +90,9 @@ GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 INITIALIZED_PARSERS = "Initialized parsers for: {languages}"
 
 # (H) Ignore pattern logs
-CGRIGNORE_LOADED = "Loaded {count} patterns from {path}"
+CGRIGNORE_LOADED = (
+    "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
+)
 CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
 # (H) File watcher logs

@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from . import constants as cs
 from . import exceptions as ex
 from . import logs
-from .types_defs import ModelConfigKwargs
+from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 load_dotenv()
 
@@ -234,24 +234,38 @@ settings = AppConfig()
 CGRIGNORE_FILENAME = ".cgrignore"
 
 
-def load_cgrignore_patterns(repo_path: Path) -> frozenset[str]:
+EMPTY_CGRIGNORE = CgrignorePatterns(exclude=frozenset(), unignore=frozenset())
+
+
+def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
     ignore_file = repo_path / CGRIGNORE_FILENAME
     if not ignore_file.is_file():
-        return frozenset()
+        return EMPTY_CGRIGNORE
 
-    patterns: set[str] = set()
+    exclude: set[str] = set()
+    unignore: set[str] = set()
     try:
         with ignore_file.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                patterns.add(line)
-        if patterns:
+                if line.startswith("!"):
+                    unignore.add(line[1:].strip())
+                else:
+                    exclude.add(line)
+        if exclude or unignore:
             logger.info(
-                logs.CGRIGNORE_LOADED.format(count=len(patterns), path=ignore_file)
+                logs.CGRIGNORE_LOADED.format(
+                    exclude_count=len(exclude),
+                    unignore_count=len(unignore),
+                    path=ignore_file,
+                )
             )
-        return frozenset(patterns)
+        return CgrignorePatterns(
+            exclude=frozenset(exclude),
+            unignore=frozenset(unignore),
+        )
     except OSError as e:
         logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
-        return frozenset()
+        return EMPTY_CGRIGNORE
