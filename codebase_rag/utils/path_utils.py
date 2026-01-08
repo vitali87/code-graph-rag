@@ -17,8 +17,9 @@ def should_skip_path(
         return True
     if unignore_paths:
         rel_path_str = str(rel_path)
-        if rel_path_str in unignore_paths or any(
-            str(p) in unignore_paths for p in rel_path.parents
+        if any(
+            rel_path_str == p or rel_path_str.startswith(f"{p}/")
+            for p in unignore_paths
         ):
             return False
     return any(part in cs.IGNORE_PATTERNS for part in dir_parts)
