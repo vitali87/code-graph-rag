@@ -239,6 +239,11 @@ class CancelledResult(NamedTuple):
     cancelled: bool
 
 
+class CgrignorePatterns(NamedTuple):
+    exclude: frozenset[str]
+    unignore: frozenset[str]
+
+
 class AgentLoopUI(NamedTuple):
     status_message: str
     cancelled_log: str
