@@ -364,6 +364,8 @@ DEPENDENCY_FILES = frozenset(
 CSPROJ_SUFFIX = ".csproj"
 
 # (H) Cypher queries
+CYPHER_DEFAULT_LIMIT = 50
+
 CYPHER_QUERY_EMBEDDINGS = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE n:Function OR n:Method
