@@ -4,8 +4,10 @@ CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
 
 CYPHER_DELETE_PROJECT = """
 MATCH (n)
-WHERE n.qualified_name STARTS WITH $prefix
+WHERE (n.qualified_name IS NOT NULL AND n.qualified_name STARTS WITH $prefix)
+   OR (n.path IS NOT NULL AND n.path STARTS WITH $prefix)
    OR (n:Project AND n.name = $project_name)
+   OR (n:ExternalPackage AND n.name STARTS WITH $prefix)
 DETACH DELETE n
 """
 
@@ -27,13 +29,25 @@ LIMIT 50"""
 CYPHER_EXAMPLE_FIND_FILE = """MATCH (f:File) WHERE toLower(f.name) = 'readme.md' AND f.path = 'README.md'
 RETURN f.path as path, f.name as name, labels(f) as type"""
 
-CYPHER_EXAMPLE_README = """MATCH (f:File) WHERE toLower(f.name) CONTAINS 'readme' RETURN f.path AS path, f.name AS name, labels(f) AS type LIMIT 50"""
+CYPHER_EXAMPLE_README = """MATCH (f:File)
+WHERE toLower(f.name) CONTAINS 'readme'
+RETURN f.path AS path, f.name AS name, labels(f) AS type
+LIMIT 50"""
 
-CYPHER_EXAMPLE_PYTHON_FILES = """MATCH (f:File) WHERE f.extension = '.py' RETURN f.path AS path, f.name AS name, labels(f) AS type LIMIT 50"""
+CYPHER_EXAMPLE_PYTHON_FILES = """MATCH (f:File)
+WHERE f.extension = '.py'
+RETURN f.path AS path, f.name AS name, labels(f) AS type
+LIMIT 50"""
 
-CYPHER_EXAMPLE_TASKS = """MATCH (n:Function|Method) WHERE 'task' IN n.decorators RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type LIMIT 50"""
+CYPHER_EXAMPLE_TASKS = """MATCH (n:Function|Method)
+WHERE 'task' IN n.decorators
+RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type
+LIMIT 50"""
 
-CYPHER_EXAMPLE_FILES_IN_FOLDER = """MATCH (f:File) WHERE f.path STARTS WITH 'services' RETURN f.path AS path, f.name AS name, labels(f) AS type LIMIT 50"""
+CYPHER_EXAMPLE_FILES_IN_FOLDER = """MATCH (f:File)
+WHERE f.path STARTS WITH 'services'
+RETURN f.path AS path, f.name AS name, labels(f) AS type
+LIMIT 50"""
 
 CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
 

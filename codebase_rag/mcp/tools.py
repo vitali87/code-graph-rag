@@ -23,8 +23,12 @@ from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.types_defs import (
     CodeSnippetResultDict,
+    DeleteProjectErrorResult,
     DeleteProjectResult,
+    DeleteProjectSuccessResult,
+    ListProjectsErrorResult,
     ListProjectsResult,
+    ListProjectsSuccessResult,
     MCPHandlerType,
     MCPInputSchema,
     MCPInputSchemaProperty,
@@ -248,31 +252,31 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
             projects = self.ingestor.list_projects()
-            return ListProjectsResult(projects=projects, count=len(projects))
+            return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
-            return ListProjectsResult(error=str(e), projects=[], count=0)
+            return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
         logger.info(lg.MCP_DELETING_PROJECT.format(project_name=project_name))
         try:
             projects = self.ingestor.list_projects()
             if project_name not in projects:
-                return DeleteProjectResult(
+                return DeleteProjectErrorResult(
                     success=False,
                     error=te.MCP_PROJECT_NOT_FOUND.format(
                         project_name=project_name, projects=projects
                     ),
                 )
             self.ingestor.delete_project(project_name)
-            return DeleteProjectResult(
+            return DeleteProjectSuccessResult(
                 success=True,
                 project=project_name,
                 message=cs.MCP_PROJECT_DELETED.format(project_name=project_name),
             )
         except Exception as e:
             logger.error(lg.MCP_ERROR_DELETE_PROJECT.format(error=e))
-            return DeleteProjectResult(success=False, error=str(e))
+            return DeleteProjectErrorResult(success=False, error=str(e))
 
     async def wipe_database(self, confirm: bool) -> str:
         if not confirm:

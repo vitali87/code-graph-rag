@@ -420,3 +420,89 @@ class TestQueryAndIndexIntegration:
             )
             result = await mcp_registry.query_code_graph("Find all classes")
             assert len(result["results"]) == 1
+
+
+class TestListProjects:
+    async def test_list_projects_success(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["project1", "project2"]  # type: ignore[attr-defined]
+
+        result = await mcp_registry.list_projects()
+
+        assert result["projects"] == ["project1", "project2"]
+        assert result["count"] == 2
+        assert "error" not in result
+
+    async def test_list_projects_empty(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = []  # type: ignore[attr-defined]
+
+        result = await mcp_registry.list_projects()
+
+        assert result["projects"] == []
+        assert result["count"] == 0
+
+    async def test_list_projects_error(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.side_effect = Exception("DB error")  # type: ignore[attr-defined]
+
+        result = await mcp_registry.list_projects()
+
+        assert "error" in result
+        assert result["projects"] == []
+        assert result["count"] == 0
+
+
+class TestDeleteProject:
+    async def test_delete_project_success(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["my-project", "other"]  # type: ignore[attr-defined]
+
+        result = await mcp_registry.delete_project("my-project")
+
+        assert result["success"] is True
+        assert result["project"] == "my-project"
+        assert "message" in result
+        mcp_registry.ingestor.delete_project.assert_called_once_with("my-project")  # type: ignore[attr-defined]
+
+    async def test_delete_project_not_found(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["other-project"]  # type: ignore[attr-defined]
+
+        result = await mcp_registry.delete_project("nonexistent")
+
+        assert result["success"] is False
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+        mcp_registry.ingestor.delete_project.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_delete_project_error(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["my-project"]  # type: ignore[attr-defined]
+        mcp_registry.ingestor.delete_project.side_effect = Exception("Delete failed")  # type: ignore[attr-defined]
+
+        result = await mcp_registry.delete_project("my-project")
+
+        assert result["success"] is False
+        assert "error" in result
+
+
+class TestWipeDatabase:
+    async def test_wipe_database_confirmed(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        result = await mcp_registry.wipe_database(confirm=True)
+
+        assert "wiped" in result.lower()
+        mcp_registry.ingestor.clean_database.assert_called_once()  # type: ignore[attr-defined]
+
+    async def test_wipe_database_not_confirmed(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        result = await mcp_registry.wipe_database(confirm=False)
+
+        assert "cancelled" in result.lower()
+        mcp_registry.ingestor.clean_database.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_wipe_database_error(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.clean_database.side_effect = Exception("Wipe failed")  # type: ignore[attr-defined]
+
+        result = await mcp_registry.wipe_database(confirm=True)
+
+        assert "error" in result.lower()

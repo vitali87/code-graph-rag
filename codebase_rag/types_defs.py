@@ -383,17 +383,32 @@ class CodeSnippetResultDict(TypedDict, total=False):
     error: str
 
 
-class ListProjectsResult(TypedDict, total=False):
+class ListProjectsSuccessResult(TypedDict):
+    projects: list[str]
+    count: int
+
+
+class ListProjectsErrorResult(TypedDict):
     projects: list[str]
     count: int
     error: str
 
 
-class DeleteProjectResult(TypedDict, total=False):
+ListProjectsResult = ListProjectsSuccessResult | ListProjectsErrorResult
+
+
+class DeleteProjectSuccessResult(TypedDict):
     success: bool
     project: str
     message: str
+
+
+class DeleteProjectErrorResult(TypedDict):
+    success: bool
     error: str
+
+
+DeleteProjectResult = DeleteProjectSuccessResult | DeleteProjectErrorResult
 
 
 MCPResultType = (
