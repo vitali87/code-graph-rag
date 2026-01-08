@@ -50,6 +50,19 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 - Update documentation when necessary
 - Be responsive to feedback during code review
 
+### Automated Code Review
+
+This project uses automated code review bots (**Greptile** and **Gemini Code Assist**) to provide initial feedback on PRs. Before requesting a human review:
+
+1. **Address all bot comments**: Every comment from Greptile and Gemini Code Assist must be resolved
+2. **Accept or push back**: For each bot suggestion, either:
+   - **Accept**: Implement the suggestion and resolve the comment
+   - **Push back**: Reply inline with a clear justification for why the suggestion doesn't apply
+3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved
+4. **Then request human review**: Only after all bot comments are cleared, assign the PR to core maintainers for human review
+
+This process ensures that human reviewers focus on high-level design and logic rather than style and common issues that bots can catch.
+
 ## Technical Requirements
 
 ### Agentic Framework

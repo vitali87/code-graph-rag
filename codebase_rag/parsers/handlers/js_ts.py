@@ -12,6 +12,14 @@ if TYPE_CHECKING:
 
 
 class JsTsHandler(BaseLanguageHandler):
+    def extract_decorators(self, node: ASTNode) -> list[str]:
+        return [
+            decorator_text
+            for child in node.children
+            if child.type == cs.TS_DECORATOR
+            if (decorator_text := safe_decode_text(child))
+        ]
+
     def is_inside_method_with_object_literals(self, node: ASTNode) -> bool:
         current = node.parent
         found_object = False

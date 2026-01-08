@@ -7,7 +7,6 @@ from tree_sitter import Language, Parser
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import create_mock_node
 
 try:
     import tree_sitter_python as tspython
@@ -182,11 +181,11 @@ def my_func():
                 func_node = child
                 break
 
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
+        from codebase_rag.parsers.handlers.python import PythonHandler
 
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._extract_decorators(func_node)
-        assert "decorator" in result
+        handler = PythonHandler()
+        result = handler.extract_decorators(func_node)
+        assert result == ["@decorator"]
 
     def test_multiple_decorators(self, py_parser: Parser) -> None:
         code = b"""
@@ -204,13 +203,13 @@ def my_func():
                 func_node = child
                 break
 
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
+        from codebase_rag.parsers.handlers.python import PythonHandler
 
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._extract_decorators(func_node)
-        assert "first_decorator" in result
-        assert "second_decorator" in result
-        assert "third_decorator" in result
+        handler = PythonHandler()
+        result = handler.extract_decorators(func_node)
+        assert "@first_decorator" in result
+        assert "@second_decorator" in result
+        assert "@third_decorator" in result
 
     def test_decorator_with_arguments(self, py_parser: Parser) -> None:
         code = b"""
@@ -226,11 +225,11 @@ def my_func():
                 func_node = child
                 break
 
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
+        from codebase_rag.parsers.handlers.python import PythonHandler
 
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._extract_decorators(func_node)
-        assert "decorator_with_args" in result
+        handler = PythonHandler()
+        result = handler.extract_decorators(func_node)
+        assert result == ["@decorator_with_args(arg1, arg2)"]
 
     def test_dotted_decorator(self, py_parser: Parser) -> None:
         code = b"""
@@ -246,11 +245,11 @@ def my_func():
                 func_node = child
                 break
 
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
+        from codebase_rag.parsers.handlers.python import PythonHandler
 
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._extract_decorators(func_node)
-        assert any("module.submodule.decorator" in d for d in result)
+        handler = PythonHandler()
+        result = handler.extract_decorators(func_node)
+        assert result == ["@module.submodule.decorator"]
 
     def test_no_decorators(self, py_parser: Parser) -> None:
         code = b"""
@@ -260,10 +259,10 @@ def my_func():
         tree = py_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
+        from codebase_rag.parsers.handlers.python import PythonHandler
 
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._extract_decorators(func_node)
+        handler = PythonHandler()
+        result = handler.extract_decorators(func_node)
         assert result == []
 
     def test_class_decorator(self, py_parser: Parser) -> None:
@@ -280,11 +279,11 @@ class MyClass:
                 class_node = child
                 break
 
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
+        from codebase_rag.parsers.handlers.python import PythonHandler
 
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._extract_decorators(class_node)
-        assert "dataclass" in result
+        handler = PythonHandler()
+        result = handler.extract_decorators(class_node)
+        assert result == ["@dataclass"]
 
     def test_builtin_decorators(self, py_parser: Parser) -> None:
         code = b"""
@@ -306,82 +305,16 @@ class MyClass:
         class_body = class_node.child_by_field_name("body")
         assert class_body is not None
 
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
+        from codebase_rag.parsers.handlers.python import PythonHandler
 
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
+        handler = PythonHandler()
 
         for child in class_body.children:
             if child.type == "decorated_definition":
                 for sub in child.children:
                     if sub.type == "function_definition":
-                        result = processor._extract_decorators(sub)
+                        result = handler.extract_decorators(sub)
                         assert len(result) >= 1
-
-
-@pytest.mark.skipif(not PY_AVAILABLE, reason="tree-sitter-python not available")
-class TestGetDecoratorName:
-    def test_simple_identifier_decorator(self) -> None:
-        node = create_mock_node(
-            "decorator",
-            children=[
-                create_mock_node("@", text="@"),
-                create_mock_node("identifier", text="my_decorator"),
-            ],
-        )
-
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
-
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_decorator_name(node)
-        assert result == "my_decorator"
-
-    def test_call_decorator(self) -> None:
-        func_node = create_mock_node("identifier", text="decorator_factory")
-        call_node = create_mock_node(
-            "call",
-            fields={"function": func_node},
-            children=[func_node],
-        )
-        node = create_mock_node(
-            "decorator",
-            children=[
-                create_mock_node("@", text="@"),
-                call_node,
-            ],
-        )
-
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
-
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_decorator_name(node)
-        assert result == "decorator_factory"
-
-    def test_attribute_decorator(self) -> None:
-        node = create_mock_node(
-            "decorator",
-            children=[
-                create_mock_node("@", text="@"),
-                create_mock_node("attribute", text="module.decorator"),
-            ],
-        )
-
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
-
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_decorator_name(node)
-        assert result == "module.decorator"
-
-    def test_empty_decorator_returns_none(self) -> None:
-        node = create_mock_node(
-            "decorator",
-            children=[create_mock_node("@", text="@")],
-        )
-
-        from codebase_rag.parsers.definition_processor import DefinitionProcessor
-
-        processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_decorator_name(node)
-        assert result is None
 
 
 class TestProcessDependencies:
