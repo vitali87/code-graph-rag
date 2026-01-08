@@ -1,32 +1,24 @@
 ---
-name: TODO/Task
+name: Task/Enhancement
 about: Track development tasks and improvements
-title: '[TODO] '
-labels: 'enhancement, todo'
+title: ''
+labels: 'enhancement'
 assignees: ''
 ---
 
-## 📋 Task Description
+## Description
+
 Brief description of what needs to be done
 
-## 🎯 Acceptance Criteria
+## Acceptance Criteria
+
 - [ ] Criterion 1
 - [ ] Criterion 2
-- [ ] Criterion 3
 
-## 🔗 Related Files/Components
-- File: `path/to/file.py`
-- Component: Service/Tool name
+## Related Files
 
-## 📝 Additional Context
-Any additional information, screenshots, or context
+- `path/to/file.py`
 
-## 🚦 Priority
-- [ ] High
-- [ ] Medium
-- [ ] Low
+## Additional Context
 
-## 📊 Estimated Effort
-- [ ] Small (< 2 hours)
-- [ ] Medium (2-8 hours)
-- [ ] Large (> 8 hours)
+Any additional information or context
