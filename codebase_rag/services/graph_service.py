@@ -16,7 +16,6 @@ from ..constants import (
     KEY_CREATED,
     KEY_FROM_VAL,
     KEY_NAME,
-    KEY_PREFIX,
     KEY_PROJECT_NAME,
     KEY_PROPS,
     KEY_TO_VAL,
@@ -175,10 +174,7 @@ class MemgraphIngestor:
 
     def delete_project(self, project_name: str) -> None:
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
-        self._execute_query(
-            CYPHER_DELETE_PROJECT,
-            {KEY_PREFIX: f"{project_name}.", KEY_PROJECT_NAME: project_name},
-        )
+        self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 
     def ensure_constraints(self) -> None:

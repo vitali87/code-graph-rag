@@ -3,12 +3,9 @@ CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
 
 CYPHER_DELETE_PROJECT = """
-MATCH (n)
-WHERE (n.qualified_name IS NOT NULL AND n.qualified_name STARTS WITH $prefix)
-   OR (n.path IS NOT NULL AND n.path STARTS WITH $prefix)
-   OR (n:Project AND n.name = $project_name)
-   OR (n:ExternalPackage AND n.name STARTS WITH $prefix)
-DETACH DELETE n
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[*]-(connected)
+DETACH DELETE p, connected
 """
 
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = """MATCH (n:Function|Method)
