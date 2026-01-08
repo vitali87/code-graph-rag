@@ -169,6 +169,8 @@ KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
 KEY_VERSION_SPEC = "version_spec"
+KEY_PREFIX = "prefix"
+KEY_PROJECT_NAME = "project_name"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
@@ -362,6 +364,8 @@ DEPENDENCY_FILES = frozenset(
 CSPROJ_SUFFIX = ".csproj"
 
 # (H) Cypher queries
+CYPHER_DEFAULT_LIMIT = 50
+
 CYPHER_QUERY_EMBEDDINGS = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE n:Function OR n:Method
@@ -2298,6 +2302,9 @@ RS_FIELD_ARGUMENT = "argument"
 
 # (H) MCP tool names
 class MCPToolName(StrEnum):
+    LIST_PROJECTS = "list_projects"
+    DELETE_PROJECT = "delete_project"
+    WIPE_DATABASE = "wipe_database"
     INDEX_REPOSITORY = "index_repository"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
@@ -2319,6 +2326,7 @@ class MCPSchemaType(StrEnum):
     OBJECT = "object"
     STRING = "string"
     INTEGER = "integer"
+    BOOLEAN = "boolean"
 
 
 # (H) MCP schema fields
@@ -2332,6 +2340,8 @@ class MCPSchemaField(StrEnum):
 
 # (H) MCP parameter names
 class MCPParamName(StrEnum):
+    PROJECT_NAME = "project_name"
+    CONFIRM = "confirm"
     NATURAL_LANGUAGE_QUERY = "natural_language_query"
     QUALIFIED_NAME = "qualified_name"
     FILE_PATH = "file_path"
@@ -2354,10 +2364,15 @@ MCP_PAGINATION_HEADER = "# Lines {start}-{end} of {total}\n"
 
 # (H) MCP response messages
 MCP_INDEX_SUCCESS = "Successfully indexed repository at {path}. Knowledge graph has been updated (previous data cleared)."
+MCP_INDEX_SUCCESS_PROJECT = "Successfully indexed repository at {path}. Project '{project_name}' has been updated."
 MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
+MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
+MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."
+MCP_WIPE_ERROR = "Error wiping database: {error}"
 
 # (H) MCP dict keys and values
 MCP_KEY_RESULTS = "results"

@@ -71,9 +71,26 @@ FILE_EDITOR = (
 )
 
 # (H) MCP tool descriptions
+MCP_LIST_PROJECTS = (
+    "List all indexed projects in the knowledge graph database. "
+    "Returns a list of project names that have been indexed."
+)
+
+MCP_DELETE_PROJECT = (
+    "Delete a specific project from the knowledge graph database. "
+    "This removes all nodes associated with the project while preserving other projects. "
+    "Use list_projects first to see available projects."
+)
+
+MCP_WIPE_DATABASE = (
+    "WARNING: Completely wipe the entire database, removing ALL indexed projects. "
+    "This cannot be undone. Use delete_project for removing individual projects."
+)
+
 MCP_INDEX_REPOSITORY = (
     "Parse and ingest the repository into the Memgraph knowledge graph. "
-    "This builds a comprehensive graph of functions, classes, dependencies, and relationships."
+    "This builds a comprehensive graph of functions, classes, dependencies, and relationships. "
+    "Note: This preserves other projects - only the current project is re-indexed."
 )
 
 MCP_QUERY_CODE_GRAPH = (
@@ -100,6 +117,8 @@ MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
 
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
 
+MCP_PARAM_PROJECT_NAME = "Name of the project to delete (e.g., 'my-project')"
+MCP_PARAM_CONFIRM = "Must be true to confirm the wipe operation"
 MCP_PARAM_NATURAL_LANGUAGE_QUERY = "Your question in plain English about the codebase"
 MCP_PARAM_QUALIFIED_NAME = (
     "Fully qualified name (e.g., 'app.services.UserService.create_user')"
@@ -114,6 +133,9 @@ MCP_PARAM_DIRECTORY_PATH = "Relative path to directory from project root (defaul
 
 
 MCP_TOOLS: dict[MCPToolName, str] = {
+    MCPToolName.LIST_PROJECTS: MCP_LIST_PROJECTS,
+    MCPToolName.DELETE_PROJECT: MCP_DELETE_PROJECT,
+    MCPToolName.WIPE_DATABASE: MCP_WIPE_DATABASE,
     MCPToolName.INDEX_REPOSITORY: MCP_INDEX_REPOSITORY,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,

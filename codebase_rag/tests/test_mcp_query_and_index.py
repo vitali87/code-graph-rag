@@ -290,10 +290,10 @@ class TestIndexRepository:
 
             assert mock_updater.run.call_count == 2
 
-    async def test_index_repository_clears_database_first(
+    async def test_index_repository_clears_project_data_first(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that database is cleared before indexing."""
+        """Test that project data is cleared before indexing."""
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
             mock_updater = MagicMock()
             mock_updater.run.return_value = None
@@ -301,23 +301,23 @@ class TestIndexRepository:
 
             result = await mcp_registry.index_repository()
 
-            mcp_registry.ingestor.clean_database.assert_called_once()  # type: ignore[attr-defined]
+            project_name = temp_project_root.resolve().name
+            mcp_registry.ingestor.delete_project.assert_called_once_with(project_name)  # type: ignore[attr-defined]
             assert "Error:" not in result
-            assert "cleared" in result.lower() or "previous data" in result.lower()
 
-    async def test_index_repository_clears_before_updater_runs(
+    async def test_index_repository_deletes_project_before_updater_runs(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
-        """Test that database clearing happens before GraphUpdater runs."""
+        """Test that project deletion happens before GraphUpdater runs."""
         call_order: list[str] = []
 
-        def mock_clean() -> None:
-            call_order.append("clean")
+        def mock_delete(project_name: str) -> None:
+            call_order.append("delete")
 
         def mock_run() -> None:
             call_order.append("run")
 
-        mcp_registry.ingestor.clean_database = MagicMock(side_effect=mock_clean)  # type: ignore[method-assign]
+        mcp_registry.ingestor.delete_project = MagicMock(side_effect=mock_delete)  # type: ignore[method-assign]
 
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -326,12 +326,11 @@ class TestIndexRepository:
 
             await mcp_registry.index_repository()
 
-            assert call_order == ["clean", "run"]
+            assert call_order == ["delete", "run"]
 
-    async def test_sequential_index_clears_previous_repo_data(
+    async def test_sequential_index_only_clears_own_project_data(
         self, tmp_path: Path
     ) -> None:
-        """Test that indexing a second repository clears the first repository's data."""
         mock_ingestor = MagicMock()
         mock_cypher = MagicMock()
 
@@ -357,10 +356,12 @@ class TestIndexRepository:
             mock_updater_class.return_value = mock_updater
 
             await registry1.index_repository()
-            assert mock_ingestor.clean_database.call_count == 1
+            mock_ingestor.delete_project.assert_called_with("project1")
 
             await registry2.index_repository()
-            assert mock_ingestor.clean_database.call_count == 2
+            mock_ingestor.delete_project.assert_called_with("project2")
+
+            assert mock_ingestor.delete_project.call_count == 2
 
 
 class TestQueryAndIndexIntegration:
@@ -419,3 +420,89 @@ class TestQueryAndIndexIntegration:
             )
             result = await mcp_registry.query_code_graph("Find all classes")
             assert len(result["results"]) == 1
+
+
+class TestListProjects:
+    async def test_list_projects_success(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["project1", "project2"]  # type: ignore[attr-defined]
+
+        result = await mcp_registry.list_projects()
+
+        assert result["projects"] == ["project1", "project2"]
+        assert result["count"] == 2
+        assert "error" not in result
+
+    async def test_list_projects_empty(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = []  # type: ignore[attr-defined]
+
+        result = await mcp_registry.list_projects()
+
+        assert result["projects"] == []
+        assert result["count"] == 0
+
+    async def test_list_projects_error(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.side_effect = Exception("DB error")  # type: ignore[attr-defined]
+
+        result = await mcp_registry.list_projects()
+
+        assert "error" in result
+        assert result["projects"] == []
+        assert result["count"] == 0
+
+
+class TestDeleteProject:
+    async def test_delete_project_success(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["my-project", "other"]  # type: ignore[attr-defined]
+
+        result = await mcp_registry.delete_project("my-project")
+
+        assert result["success"] is True
+        assert result["project"] == "my-project"
+        assert "message" in result
+        mcp_registry.ingestor.delete_project.assert_called_once_with("my-project")  # type: ignore[attr-defined]
+
+    async def test_delete_project_not_found(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["other-project"]  # type: ignore[attr-defined]
+
+        result = await mcp_registry.delete_project("nonexistent")
+
+        assert result["success"] is False
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+        mcp_registry.ingestor.delete_project.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_delete_project_error(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.list_projects.return_value = ["my-project"]  # type: ignore[attr-defined]
+        mcp_registry.ingestor.delete_project.side_effect = Exception("Delete failed")  # type: ignore[attr-defined]
+
+        result = await mcp_registry.delete_project("my-project")
+
+        assert result["success"] is False
+        assert "error" in result
+
+
+class TestWipeDatabase:
+    async def test_wipe_database_confirmed(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        result = await mcp_registry.wipe_database(confirm=True)
+
+        assert "wiped" in result.lower()
+        mcp_registry.ingestor.clean_database.assert_called_once()  # type: ignore[attr-defined]
+
+    async def test_wipe_database_not_confirmed(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        result = await mcp_registry.wipe_database(confirm=False)
+
+        assert "cancelled" in result.lower()
+        mcp_registry.ingestor.clean_database.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_wipe_database_error(self, mcp_registry: MCPToolsRegistry) -> None:
+        mcp_registry.ingestor.clean_database.side_effect = Exception("Wipe failed")  # type: ignore[attr-defined]
+
+        result = await mcp_registry.wipe_database(confirm=True)
+
+        assert "error" in result.lower()

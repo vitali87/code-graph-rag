@@ -1,27 +1,53 @@
+from .constants import CYPHER_DEFAULT_LIMIT
+
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
-CYPHER_EXAMPLE_DECORATED_FUNCTIONS = """MATCH (n:Function|Method)
+CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
+
+CYPHER_DELETE_PROJECT = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD*]->(defined)
+DETACH DELETE p, container, defined
+"""
+
+CYPHER_EXAMPLE_DECORATED_FUNCTIONS = f"""MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type"""
+RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-CYPHER_EXAMPLE_CONTENT_BY_PATH = """MATCH (n)
+CYPHER_EXAMPLE_CONTENT_BY_PATH = f"""MATCH (n)
 WHERE n.path IS NOT NULL AND n.path STARTS WITH 'workflows'
-RETURN n.name AS name, n.path AS path, labels(n) AS type"""
+RETURN n.name AS name, n.path AS path, labels(n) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-CYPHER_EXAMPLE_KEYWORD_SEARCH = """MATCH (n)
+CYPHER_EXAMPLE_KEYWORD_SEARCH = f"""MATCH (n)
 WHERE toLower(n.name) CONTAINS 'database' OR (n.qualified_name IS NOT NULL AND toLower(n.qualified_name) CONTAINS 'database')
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type"""
+RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_FIND_FILE = """MATCH (f:File) WHERE toLower(f.name) = 'readme.md' AND f.path = 'README.md'
 RETURN f.path as path, f.name as name, labels(f) as type"""
 
-CYPHER_EXAMPLE_README = """MATCH (f:File) WHERE toLower(f.name) CONTAINS 'readme' RETURN f.path AS path, f.name AS name, labels(f) AS type"""
+CYPHER_EXAMPLE_README = f"""MATCH (f:File)
+WHERE toLower(f.name) CONTAINS 'readme'
+RETURN f.path AS path, f.name AS name, labels(f) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-CYPHER_EXAMPLE_PYTHON_FILES = """MATCH (f:File) WHERE f.extension = '.py' RETURN f.path AS path, f.name AS name, labels(f) AS type"""
+CYPHER_EXAMPLE_PYTHON_FILES = f"""MATCH (f:File)
+WHERE f.extension = '.py'
+RETURN f.path AS path, f.name AS name, labels(f) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-CYPHER_EXAMPLE_TASKS = """MATCH (n:Function|Method) WHERE 'task' IN n.decorators RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type"""
+CYPHER_EXAMPLE_TASKS = f"""MATCH (n:Function|Method)
+WHERE 'task' IN n.decorators
+RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-CYPHER_EXAMPLE_FILES_IN_FOLDER = """MATCH (f:File) WHERE f.path STARTS WITH 'services' RETURN f.path AS path, f.name AS name, labels(f) AS type"""
+CYPHER_EXAMPLE_FILES_IN_FOLDER = f"""MATCH (f:File)
+WHERE f.path STARTS WITH 'services'
+RETURN f.path AS path, f.name AS name, labels(f) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
 
