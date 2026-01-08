@@ -12,12 +12,13 @@ def should_skip_path(
     if path.is_file() and path.suffix in cs.IGNORE_SUFFIXES:
         return True
     rel_path = path.relative_to(repo_path)
+    dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
+    if exclude_paths and any(part in exclude_paths for part in dir_parts):
+        return True
     if include_paths:
         rel_path_str = str(rel_path)
         if rel_path_str in include_paths or any(
             str(p) in include_paths for p in rel_path.parents
         ):
             return False
-    dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
-    all_excludes = cs.IGNORE_PATTERNS | (exclude_paths or frozenset())
-    return any(part in all_excludes for part in dir_parts)
+    return any(part in cs.IGNORE_PATTERNS for part in dir_parts)

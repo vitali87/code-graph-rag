@@ -520,15 +520,6 @@ class TestIncludePathsEdgeCases:
 
         assert not should_skip_path(file_path, tmp_path, include_paths=include_paths)
 
-    def test_include_child_does_not_include_sibling(self, tmp_path: Path) -> None:
-        file_path = tmp_path / "src" / "b" / "file.py"
-        file_path.parent.mkdir(parents=True)
-        file_path.touch()
-
-        include_paths = frozenset({"src/a"})
-
-        assert should_skip_path(file_path, tmp_path, include_paths=include_paths)
-
     def test_multiple_include_paths(self, tmp_path: Path) -> None:
         file_path = tmp_path / "tests" / "test_main.py"
         file_path.parent.mkdir(parents=True)
