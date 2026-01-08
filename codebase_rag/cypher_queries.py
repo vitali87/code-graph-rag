@@ -4,8 +4,9 @@ CYPHER_LIST_PROJECTS = "MATCH (p:Project) RETURN p.name AS name ORDER BY p.name"
 
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
-OPTIONAL MATCH (p)-[*]-(connected)
-DETACH DELETE p, connected
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD*]->(defined)
+DETACH DELETE p, container, defined
 """
 
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = """MATCH (n:Function|Method)
