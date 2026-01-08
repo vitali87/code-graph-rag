@@ -474,11 +474,18 @@ FUNCTION_NODES_TEMPLATE = (
     "function_signature_item",
     "function_signature",
 )
-FUNCTION_NODES_GENERATOR = ("generator_function_declaration", "function_expression")
+FUNCTION_NODES_GENERATOR = (
+    "generator_function_declaration",
+    "function_expression",
+)
 
 CLASS_NODES_BASIC = ("class_declaration", "class_definition")
 CLASS_NODES_STRUCT = ("struct_declaration", "struct_specifier", "struct_item")
-CLASS_NODES_INTERFACE = ("interface_declaration", "trait_declaration", "trait_item")
+CLASS_NODES_INTERFACE = (
+    "interface_declaration",
+    "trait_declaration",
+    "trait_item",
+)
 CLASS_NODES_ENUM = ("enum_declaration", "enum_item", "enum_specifier")
 CLASS_NODES_TYPE_ALIAS = ("type_alias_declaration", "type_item")
 CLASS_NODES_UNION = ("union_specifier", "union_item")
@@ -489,8 +496,16 @@ CALL_NODES_METHOD = (
     "member_call_expression",
     "field_expression",
 )
-CALL_NODES_OPERATOR = ("binary_expression", "unary_expression", "update_expression")
-CALL_NODES_SPECIAL = ("new_expression", "delete_expression", "macro_invocation")
+CALL_NODES_OPERATOR = (
+    "binary_expression",
+    "unary_expression",
+    "update_expression",
+)
+CALL_NODES_SPECIAL = (
+    "new_expression",
+    "delete_expression",
+    "macro_invocation",
+)
 
 IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
 IMPORT_NODES_FROM = ("import_from_statement",)
@@ -507,7 +522,11 @@ JS_TS_FUNCTION_NODES = (
     "method_definition",
 )
 JS_TS_CLASS_NODES = ("class_declaration", "class")
-JS_TS_IMPORT_NODES = ("import_statement", "lexical_declaration", "export_statement")
+JS_TS_IMPORT_NODES = (
+    "import_statement",
+    "lexical_declaration",
+    "export_statement",
+)
 JS_TS_LANGUAGES = frozenset({SupportedLanguage.JS, SupportedLanguage.TS})
 
 # (H) C++ import node types
@@ -876,7 +895,11 @@ MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"
 
-SEMANTIC_DEPENDENCIES = (MODULE_QDRANT_CLIENT, MODULE_TORCH, MODULE_TRANSFORMERS)
+SEMANTIC_DEPENDENCIES = (
+    MODULE_QDRANT_CLIENT,
+    MODULE_TORCH,
+    MODULE_TRANSFORMERS,
+)
 ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
 
 
@@ -2299,12 +2322,14 @@ RS_FIELD_ARGUMENT = "argument"
 # (H) MCP tool names
 class MCPToolName(StrEnum):
     INDEX_REPOSITORY = "index_repository"
+    UPDATE_REPOSITORY = "update_repository"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
+    SEMANTIC_SEARCH = "semantic_search"
 
 
 # (H) MCP environment variables
@@ -2341,6 +2366,7 @@ class MCPParamName(StrEnum):
     LIMIT = "limit"
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
+    TOP_K = "top_k"
 
 
 # (H) MCP server constants
@@ -2358,6 +2384,12 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
+MCP_UPDATE_ERROR = "Error updating repository: {error}"
+MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
+    "Semantic search is not available. Install with: uv sync --extra semantic"
+)
+
 
 # (H) MCP dict keys and values
 MCP_KEY_RESULTS = "results"
@@ -2690,7 +2722,10 @@ SPEC_PHP_CALL_TYPES = (
 )
 
 # (H) LANGUAGE_SPECS node type tuples for Lua
-SPEC_LUA_FUNCTION_TYPES = (TS_LUA_FUNCTION_DECLARATION, TS_LUA_FUNCTION_DEFINITION)
+SPEC_LUA_FUNCTION_TYPES = (
+    TS_LUA_FUNCTION_DECLARATION,
+    TS_LUA_FUNCTION_DEFINITION,
+)
 SPEC_LUA_CLASS_TYPES: tuple[str, ...] = ()
 SPEC_LUA_MODULE_TYPES = (TS_LUA_CHUNK,)
 SPEC_LUA_CALL_TYPES = (TS_LUA_FUNCTION_CALL,)
