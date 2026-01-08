@@ -16,7 +16,7 @@ class StructureProcessor:
         repo_path: Path,
         project_name: str,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
-        include_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
     ):
         self.ingestor = ingestor
@@ -24,7 +24,7 @@ class StructureProcessor:
         self.project_name = project_name
         self.queries = queries
         self.structural_elements: dict[Path, str | None] = {}
-        self.include_paths = include_paths
+        self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
 
     def _get_parent_identifier(
@@ -43,7 +43,7 @@ class StructureProcessor:
                 path,
                 self.repo_path,
                 exclude_paths=self.exclude_paths,
-                include_paths=self.include_paths,
+                unignore_paths=self.unignore_paths,
             ):
                 directories.add(path)
 

@@ -15,7 +15,7 @@ from .main import (
     export_graph_to_file,
     main_async,
     main_optimize_async,
-    prompt_for_included_directories,
+    prompt_for_unignored_directories,
     style,
     update_model_settings,
 )
@@ -105,9 +105,9 @@ def start(
         )
 
         exclude_paths = frozenset(exclude) if exclude else None
-        include_paths: frozenset[str] | None = None
+        unignore_paths: frozenset[str] | None = None
         if interactive_setup:
-            include_paths = prompt_for_included_directories(repo_to_update, exclude)
+            unignore_paths = prompt_for_unignored_directories(repo_to_update, exclude)
         else:
             app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
 
@@ -126,7 +126,7 @@ def start(
                 repo_to_update,
                 parsers,
                 queries,
-                include_paths,
+                unignore_paths,
                 exclude_paths,
             )
             updater.run()
@@ -189,9 +189,9 @@ def index(
     )
 
     exclude_paths = frozenset(exclude) if exclude else None
-    include_paths: frozenset[str] | None = None
+    unignore_paths: frozenset[str] | None = None
     if interactive_setup:
-        include_paths = prompt_for_included_directories(repo_to_index, exclude)
+        unignore_paths = prompt_for_unignored_directories(repo_to_index, exclude)
     else:
         app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
 
@@ -201,7 +201,7 @@ def index(
         )
         parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor, repo_to_index, parsers, queries, include_paths, exclude_paths
+            ingestor, repo_to_index, parsers, queries, unignore_paths, exclude_paths
         )
 
         updater.run()

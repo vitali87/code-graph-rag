@@ -227,7 +227,7 @@ class GraphUpdater:
         repo_path: Path,
         parsers: dict[cs.SupportedLanguage, Parser],
         queries: dict[cs.SupportedLanguage, LanguageQueries],
-        include_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
     ):
         self.ingestor = ingestor
@@ -240,7 +240,7 @@ class GraphUpdater:
             simple_name_lookup=self.simple_name_lookup
         )
         self.ast_cache = BoundedASTCache()
-        self.include_paths = include_paths
+        self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
 
         self.factory = ProcessorFactory(
@@ -251,7 +251,7 @@ class GraphUpdater:
             function_registry=self.function_registry,
             simple_name_lookup=self.simple_name_lookup,
             ast_cache=self.ast_cache,
-            include_paths=self.include_paths,
+            unignore_paths=self.unignore_paths,
             exclude_paths=self.exclude_paths,
         )
 
@@ -322,7 +322,7 @@ class GraphUpdater:
                 filepath,
                 self.repo_path,
                 exclude_paths=self.exclude_paths,
-                include_paths=self.include_paths,
+                unignore_paths=self.unignore_paths,
             ):
                 lang_config = get_language_spec(filepath.suffix)
                 if (

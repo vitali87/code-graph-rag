@@ -783,7 +783,7 @@ def _prompt_nested_selection(pattern: str, paths: list[str]) -> set[str]:
     return selected
 
 
-def prompt_for_included_directories(
+def prompt_for_unignored_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
 ) -> frozenset[str]:
