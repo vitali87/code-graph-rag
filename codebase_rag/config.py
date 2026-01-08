@@ -251,7 +251,7 @@ def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
                 if not line or line.startswith("#"):
                     continue
                 if line.startswith("!"):
-                    unignore.add(line[1:])
+                    unignore.add(line[1:].strip())
                 else:
                     exclude.add(line)
         if exclude or unignore:

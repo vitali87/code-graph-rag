@@ -15,7 +15,9 @@ def should_skip_path(
     rel_path_str = str(rel_path)
     dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
     if exclude_paths and (
-        not exclude_paths.isdisjoint(dir_parts) or rel_path_str in exclude_paths
+        not exclude_paths.isdisjoint(dir_parts)
+        or rel_path_str in exclude_paths
+        or any(rel_path_str.startswith(f"{p}/") for p in exclude_paths)
     ):
         return True
     if unignore_paths and any(

@@ -107,13 +107,23 @@ class TestNegationSyntax:
         assert result.exclude == frozenset({"custom_build", "temp_data"})
         assert result.unignore == frozenset({"vendor", "node_modules"})
 
-    def test_negation_strips_whitespace(self, temp_repo: Path) -> None:
+    def test_negation_strips_leading_whitespace(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
         cgrignore.write_text("  !vendor  \n")
 
         result = load_cgrignore_patterns(temp_repo)
 
         assert result.unignore == frozenset({"vendor"})
+
+    def test_negation_strips_whitespace_after_exclamation(
+        self, temp_repo: Path
+    ) -> None:
+        cgrignore = temp_repo / CGRIGNORE_FILENAME
+        cgrignore.write_text("!  foo\n!   bar  \n")
+
+        result = load_cgrignore_patterns(temp_repo)
+
+        assert result.unignore == frozenset({"foo", "bar"})
 
     def test_returns_cgrignore_patterns_type(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
