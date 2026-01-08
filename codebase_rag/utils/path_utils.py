@@ -13,7 +13,7 @@ def should_skip_path(
         return True
     rel_path = path.relative_to(repo_path)
     dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
-    if exclude_paths and any(part in exclude_paths for part in dir_parts):
+    if exclude_paths and not exclude_paths.isdisjoint(dir_parts):
         return True
     if unignore_paths:
         rel_path_str = str(rel_path)
@@ -22,4 +22,4 @@ def should_skip_path(
             for p in unignore_paths
         ):
             return False
-    return any(part in cs.IGNORE_PATTERNS for part in dir_parts)
+    return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
