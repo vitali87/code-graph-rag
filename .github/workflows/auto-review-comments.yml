@@ -1,0 +1,33 @@
+name: Auto Review Comments
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  post-review-comments:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post Gemini review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: '/gemini review'
+            });
+
+      - name: Post Greptile comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: '@greptile'
+            });
