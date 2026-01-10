@@ -18,10 +18,14 @@ jobs:
         with:
           script: |
             const query = `
-              query($owner: String!, $repo: String!, $number: Int!) {
+              query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
                 repository(owner: $owner, name: $repo) {
                   pullRequest(number: $number) {
-                    reviewThreads(first: 100) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
                       nodes {
                         isResolved
                       }
@@ -31,74 +35,82 @@ jobs:
               }
             `;
             try {
-              const result = await github.graphql(query, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                number: context.payload.pull_request.number
-              });
-              const threads = result.repository.pullRequest.reviewThreads.nodes;
-              const unresolvedCount = threads.filter(t => !t.isResolved).length;
-              console.log(`Found ${threads.length} review threads, ${unresolvedCount} unresolved`);
+              let hasNextPage = true;
+              let cursor = null;
+              let unresolvedCount = 0;
+              let totalThreads = 0;
+
+              while (hasNextPage) {
+                const result = await github.graphql(query, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  number: context.payload.pull_request.number,
+                  cursor: cursor
+                });
+                const threads = result.repository.pullRequest.reviewThreads;
+                totalThreads += threads.nodes.length;
+                unresolvedCount += threads.nodes.filter(t => !t.isResolved).length;
+                hasNextPage = threads.pageInfo.hasNextPage;
+                cursor = threads.pageInfo.endCursor;
+              }
+
+              console.log(`Found ${totalThreads} review threads, ${unresolvedCount} unresolved`);
               core.setOutput('has_unresolved', unresolvedCount > 0);
             } catch (error) {
               console.error(`Failed to check review threads: ${error.message}`);
               core.setOutput('has_unresolved', true);
             }
 
-      - name: Check for existing review trigger comments
-        id: check-duplicates
+      - name: Delete old trigger comments and post new ones
         if: github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false'
         uses: actions/github-script@v7
         with:
           script: |
-            try {
-              const comments = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                per_page: 100
-              });
-              const hasGemini = comments.data.some(c => c.body.trim() === '/gemini review');
-              const hasGreptile = comments.data.some(c => c.body.trim() === '@greptile');
-              console.log(`Existing comments - Gemini: ${hasGemini}, Greptile: ${hasGreptile}`);
-              core.setOutput('has_gemini', hasGemini);
-              core.setOutput('has_greptile', hasGreptile);
-            } catch (error) {
-              console.error(`Failed to check existing comments: ${error.message}`);
-              core.setOutput('has_gemini', false);
-              core.setOutput('has_greptile', false);
-            }
+            const prNumber = context.payload.pull_request.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const triggers = ['/gemini review', '@greptile'];
 
-      - name: Post Gemini review comment
-        if: (github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false') && steps.check-duplicates.outputs.has_gemini != 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
             try {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                body: '/gemini review'
-              });
-              console.log('Posted /gemini review comment');
-            } catch (error) {
-              core.setFailed(`Failed to post Gemini comment: ${error.message}`);
-            }
+              let page = 1;
+              let allComments = [];
 
-      - name: Post Greptile comment
-        if: (github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false') && steps.check-duplicates.outputs.has_greptile != 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                body: '@greptile'
-              });
-              console.log('Posted @greptile comment');
+              while (true) {
+                const response = await github.rest.issues.listComments({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  per_page: 100,
+                  page: page
+                });
+                allComments = allComments.concat(response.data);
+                if (response.data.length < 100) break;
+                page++;
+              }
+
+              for (const comment of allComments) {
+                const body = comment.body.trim();
+                if (triggers.includes(body) && comment.user.login === 'github-actions[bot]') {
+                  console.log(`Deleting old trigger comment: ${body} (id: ${comment.id})`);
+                  await github.rest.issues.deleteComment({
+                    owner,
+                    repo,
+                    comment_id: comment.id
+                  });
+                }
+              }
+
+              for (const trigger of triggers) {
+                console.log(`Posting: ${trigger}`);
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body: trigger
+                });
+              }
+
+              console.log('Successfully posted review trigger comments');
             } catch (error) {
-              core.setFailed(`Failed to post Greptile comment: ${error.message}`);
+              core.setFailed(`Failed to manage comments: ${error.message}`);
             }
