@@ -45,6 +45,46 @@ API_KEY_INFO: dict[str, dict[str, str]] = {
     }
 }
 
+def format_missing_api_key_errors(provider: str, role: str = "model") -> str:
+    provider_lower = provider.lower()
+
+    if provider_lower in API_KEY_INFO:
+        info = API_KEY_INFO[provider_lower]
+        env_var = info["env_var"]
+        url = info["url"]
+        name = info["name"]
+    else:
+        env_var = f"{provider.upper()}_API_KEY"
+        url = f"your {provider} provider's website"
+        name = provider.capitalize()
+
+    role_msg = f" for {role}" if role != "model" else ""
+
+    error_msg = f"""
+╭─── API Key Missing ───────────────────────────────────────────────╮
+│                                                                   │
+│  Error: {env_var} environment variable is not set.                │
+│         This is required to use {name}{role_msg}.                 │
+│                                                                   │
+│  To fix this:                                                      │
+│                                                                   │
+│  1. Get your API key from:                                        │
+│     {url}                                                         │
+│                                                                   │
+│  2. Set it in your environment:                                   │
+│     export {env_var}='your-key-here'                              │
+│                                                                   │
+│     Or add it to your .env file in the project root:               │
+│     {env_var}=your-key-here                                       │
+│                                                                   │
+│  3. Alternatively, you can use a local model with Ollama:         │
+│     (No API key required)                                         │
+│                                                                   │
+╰───────────────────────────────────────────────────────────────────╯
+""".strip()
+    return error_msg
+
+
 @dataclass
 class ModelConfig:
     provider: str
