@@ -16,6 +16,34 @@ from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 load_dotenv()
 
+# API key configuration mapping
+API_KEY_INFO: dict[str, dict[str, str]] = {
+       "openai": {
+        "env_var": "OPENAI_API_KEY",
+        "url": "https://platform.openai.com/api-keys",
+        "name": "OpenAI"
+    },
+    "anthropic": {
+        "env_var": "ANTHROPIC_API_KEY",
+        "url": "https://console.anthropic.com/settings/keys",
+        "name": "Anthropic"
+    },
+    "google": {
+        "env_var": "GOOGLE_API_KEY",
+        "url": "https://console.cloud.google.com/apis/credentials",
+        "name": "Google AI"
+    },
+    "azure": {
+        "env_var": "AZURE_API_KEY",
+        "url": "https://portal.azure.com/",
+        "name": "Azure OpenAI"
+    },
+    "cohere": {
+        "env_var": "COHERE_API_KEY",
+        "url": "https://dashboard.cohere.com/api-keys",
+        "name": "Cohere"
+    }
+}
 
 @dataclass
 class ModelConfig:
