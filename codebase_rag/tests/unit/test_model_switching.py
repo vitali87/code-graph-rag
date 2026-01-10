@@ -96,7 +96,7 @@ class TestHandleModelCommand:
         assert new_model == mock_new_model
         assert new_string == "anthropic:claude-3-opus"
 
-    def test_empty_model_argument_shows_usage(
+    def test_show_current_model_with_trailing_space(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         new_model, new_string = _handle_model_command("/model ", None, None)

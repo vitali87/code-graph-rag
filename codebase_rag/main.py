@@ -620,14 +620,16 @@ async def _run_interactive_loop(
             is_command = False
             if not stripped_question:
                 is_command = True
-            elif stripped_lower.startswith(cs.MODEL_COMMAND_PREFIX):
-                model_override, model_override_string = _handle_model_command(
-                    stripped_question, model_override, model_override_string
-                )
-                is_command = True
-            elif stripped_lower == cs.HELP_COMMAND:
-                app_context.console.print(cs.UI_HELP_COMMANDS)
-                is_command = True
+            else:
+                command_parts = stripped_lower.split(maxsplit=1)
+                if command_parts[0] == cs.MODEL_COMMAND_PREFIX:
+                    model_override, model_override_string = _handle_model_command(
+                        stripped_question, model_override, model_override_string
+                    )
+                    is_command = True
+                elif command_parts[0] == cs.HELP_COMMAND:
+                    app_context.console.print(cs.UI_HELP_COMMANDS)
+                    is_command = True
 
             if is_command:
                 initial_question = None
