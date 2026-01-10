@@ -103,6 +103,9 @@ class TestHandleModelCommand:
 
         assert new_model is None
         assert new_string is None
+        mock_console.print.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "google:gemini-2.0-flash" in call_arg
 
     def test_preserves_previous_model_on_show(
         self, mock_console: MagicMock, mock_settings: MagicMock
