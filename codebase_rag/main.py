@@ -563,7 +563,9 @@ def _handle_model_command(
     command: str, current_model: Model | None, current_model_string: str | None
 ) -> tuple[Model | None, str | None]:
     parts = command.strip().split(maxsplit=1)
-    if len(parts) == 1:
+    arg = parts[1].strip() if len(parts) > 1 else None
+
+    if not arg:
         if current_model_string:
             display_model = current_model_string
         else:
@@ -572,10 +574,11 @@ def _handle_model_command(
         app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
         return current_model, current_model_string
 
-    new_model_string_arg = parts[1].strip()
-    if not new_model_string_arg or new_model_string_arg.lower() == cs.HELP_ARG:
+    if arg.lower() == cs.HELP_ARG:
         app_context.console.print(cs.UI_MODEL_USAGE)
         return current_model, current_model_string
+
+    new_model_string_arg = arg
 
     try:
         new_model, canonical_model_string = _create_model_from_string(
