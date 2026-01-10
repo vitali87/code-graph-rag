@@ -300,14 +300,12 @@ class AppConfig(BaseSettings):
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
         config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
-        self.validate_model_config(config, cs.ModelRole.ORCHESTRATOR)
         self._active_orchestrator = config
 
     def set_cypher(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
         config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
-        self.validate_model_config(config, cs.ModelRole.CYPHER)
         self._active_cypher = config
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
