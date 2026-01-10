@@ -9,6 +9,7 @@ import sys
 import uuid
 from collections import deque
 from collections.abc import Coroutine
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,9 +28,10 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import load_cgrignore_patterns, settings
+from .config import ModelConfig, load_cgrignore_patterns, settings
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
+from .providers.base import get_provider_from_config
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -65,8 +67,6 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import Model
-
-    from .config import ModelConfig
 
 
 def style(
@@ -533,9 +533,6 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
 
 
 def _create_model_from_string(model_string: str) -> Model:
-    from .config import ModelConfig
-    from .providers.base import get_provider_from_config
-
     current_config = settings.active_orchestrator_config
 
     if ":" in model_string:
@@ -546,17 +543,7 @@ def _create_model_from_string(model_string: str) -> Model:
         model_id = model_string.strip()
 
     if provider_name == current_config.provider:
-        config = ModelConfig(
-            provider=provider_name,
-            model_id=model_id,
-            api_key=current_config.api_key,
-            endpoint=current_config.endpoint,
-            project_id=current_config.project_id,
-            region=current_config.region,
-            provider_type=current_config.provider_type,
-            thinking_budget=current_config.thinking_budget,
-            service_account_file=current_config.service_account_file,
-        )
+        config = replace(current_config, model_id=model_id)
     elif provider_name == cs.Provider.OLLAMA:
         config = ModelConfig(
             provider=provider_name,
@@ -569,12 +556,6 @@ def _create_model_from_string(model_string: str) -> Model:
 
     provider = get_provider_from_config(config)
     return provider.create_model(model_id)
-
-
-def _get_model_display_name(model: Model | None) -> str:
-    if model is None:
-        return settings.active_orchestrator_config.model_id
-    return getattr(model, "model_name", str(model))
 
 
 def _handle_model_command(
@@ -598,7 +579,7 @@ def _handle_model_command(
         logger.info(ls.MODEL_SWITCHED.format(model=new_model_string))
         app_context.console.print(cs.UI_MODEL_SWITCHED.format(model=new_model_string))
         return new_model, new_model_string, True
-    except Exception as e:
+    except (ValueError, KeyError, ImportError, TypeError) as e:
         logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
         app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
         return current_model, current_model_string, True
@@ -623,20 +604,23 @@ async def _run_interactive_loop(
             if not initial_question or question != initial_question:
                 question = await asyncio.to_thread(get_multiline_input, input_prompt)
 
-            if question.lower() in cs.EXIT_COMMANDS:
+            stripped_question = question.strip()
+            stripped_lower = stripped_question.lower()
+
+            if stripped_lower in cs.EXIT_COMMANDS:
                 break
-            if not question.strip():
+            if not stripped_question:
                 initial_question = None
                 continue
 
-            if question.strip().lower().startswith(cs.MODEL_COMMAND_PREFIX):
+            if stripped_lower.startswith(cs.MODEL_COMMAND_PREFIX):
                 model_override, model_override_string, _ = _handle_model_command(
-                    question.strip(), model_override, model_override_string
+                    stripped_question, model_override, model_override_string
                 )
                 initial_question = None
                 continue
 
-            if question.strip().lower() == cs.MODEL_COMMAND_HELP:
+            if stripped_lower == cs.MODEL_COMMAND_HELP:
                 app_context.console.print(cs.UI_HELP_COMMANDS)
                 initial_question = None
                 continue

@@ -162,15 +162,11 @@ class TestModelOverrideInAgentLoop:
 
         with (
             patch("codebase_rag.main.app_context") as mock_ctx,
-            patch(
-                "codebase_rag.main.run_with_cancellation", new_callable=AsyncMock
-            ) as mock_cancel,
             patch("codebase_rag.main.log_session_event"),
         ):
             mock_ctx.console.status.return_value.__enter__ = MagicMock()
             mock_ctx.console.status.return_value.__exit__ = MagicMock()
             mock_ctx.console.print = MagicMock()
-            mock_cancel.return_value = mock_response
 
             await _run_agent_response_loop(
                 mock_agent,
@@ -181,9 +177,9 @@ class TestModelOverrideInAgentLoop:
                 model_override=mock_model,
             )
 
-            mock_cancel.assert_called_once()
-            call_args = mock_cancel.call_args[0][0]
-            assert call_args is not None
+            mock_agent.run.assert_called_once()
+            _, kwargs = mock_agent.run.call_args
+            assert kwargs.get("model") is mock_model
 
     @pytest.mark.asyncio
     async def test_model_override_none_by_default(self) -> None:
@@ -202,15 +198,11 @@ class TestModelOverrideInAgentLoop:
 
         with (
             patch("codebase_rag.main.app_context") as mock_ctx,
-            patch(
-                "codebase_rag.main.run_with_cancellation", new_callable=AsyncMock
-            ) as mock_cancel,
             patch("codebase_rag.main.log_session_event"),
         ):
             mock_ctx.console.status.return_value.__enter__ = MagicMock()
             mock_ctx.console.status.return_value.__exit__ = MagicMock()
             mock_ctx.console.print = MagicMock()
-            mock_cancel.return_value = mock_response
 
             await _run_agent_response_loop(
                 mock_agent,
@@ -220,7 +212,9 @@ class TestModelOverrideInAgentLoop:
                 tool_names,
             )
 
-            mock_cancel.assert_called_once()
+            mock_agent.run.assert_called_once()
+            _, kwargs = mock_agent.run.call_args
+            assert kwargs.get("model") is None
 
 
 class TestCommandConstants:
