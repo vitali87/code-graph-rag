@@ -57,7 +57,7 @@ jobs:
               console.log(`Found ${totalThreads} review threads, ${unresolvedCount} unresolved`);
               core.setOutput('has_unresolved', unresolvedCount > 0);
             } catch (error) {
-              console.error(`Failed to check review threads: ${error.message}`);
+              core.warning(`Failed to check review threads: ${error.message}. Skipping review triggers.`);
               core.setOutput('has_unresolved', true);
             }
 
