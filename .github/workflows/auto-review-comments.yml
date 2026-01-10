@@ -4,6 +4,10 @@ on:
   pull_request_target:
     types: [opened, synchronize]
 
+concurrency:
+  group: auto-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   post-review-comments:
     runs-on: ubuntu-latest
