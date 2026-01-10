@@ -542,6 +542,8 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
     )
     if not model_id:
         raise ValueError(ex.MODEL_ID_EMPTY)
+    if not provider_name:
+        raise ValueError(ex.PROVIDER_EMPTY)
 
     if provider_name == current_config.provider:
         config = replace(current_config, model_id=model_id)

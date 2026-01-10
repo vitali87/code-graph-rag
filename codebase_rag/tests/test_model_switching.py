@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.main import _handle_model_command
+from codebase_rag import exceptions as ex
+from codebase_rag.config import ModelConfig
+from codebase_rag.main import _create_model_from_string, _handle_model_command
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -22,8 +25,9 @@ def mock_console() -> Generator[MagicMock]:
 @pytest.fixture
 def mock_settings() -> Generator[MagicMock]:
     with patch("codebase_rag.main.settings") as mock_s:
-        mock_s.active_orchestrator_config.model_id = "gemini-2.0-flash"
-        mock_s.active_orchestrator_config.provider = "google"
+        mock_s.active_orchestrator_config = ModelConfig(
+            provider="google", model_id="gemini-2.0-flash"
+        )
         mock_s.parse_model_string.side_effect = lambda x: (
             x.split(":") if ":" in x else ("ollama", x)
         )
@@ -292,3 +296,140 @@ class TestMultipleModelSwitches:
             assert model_str == "openai:gpt-4"
             call_arg = mock_console.print.call_args[0][0]
             assert "openai:gpt-4" in call_arg
+
+
+class TestModelHelpCommand:
+    def test_model_help_shows_usage(
+        self, mock_console: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        new_model, new_string = _handle_model_command("/model help", None, None)
+
+        assert new_model is None
+        assert new_string is None
+        mock_console.print.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "Usage:" in call_arg or "provider:model" in call_arg
+
+    def test_model_help_case_insensitive(
+        self, mock_console: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        new_model, new_string = _handle_model_command("/model HELP", None, None)
+
+        assert new_model is None
+        assert new_string is None
+        mock_console.print.assert_called_once()
+
+    def test_model_help_preserves_current_model(
+        self, mock_console: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        mock_model = MagicMock()
+        new_model, new_string = _handle_model_command(
+            "/model help", mock_model, "current:model"
+        )
+
+        assert new_model == mock_model
+        assert new_string == "current:model"
+
+
+class TestCreateModelFromString:
+    def test_missing_colon_raises_format_error(self, mock_settings: MagicMock) -> None:
+        with pytest.raises(ValueError, match=re.escape(ex.MODEL_FORMAT_INVALID)):
+            _create_model_from_string("modelwithoutcolon")
+
+    def test_empty_model_id_raises_error(self, mock_settings: MagicMock) -> None:
+        with pytest.raises(ValueError, match=ex.MODEL_ID_EMPTY):
+            _create_model_from_string("openai:")
+
+    def test_empty_provider_raises_error(self, mock_settings: MagicMock) -> None:
+        with pytest.raises(ValueError, match=ex.PROVIDER_EMPTY):
+            _create_model_from_string(":gpt-4o")
+
+    def test_whitespace_around_colon_is_stripped(
+        self, mock_settings: MagicMock
+    ) -> None:
+        mock_model = MagicMock()
+        with patch("codebase_rag.main.get_provider_from_config") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.create_model.return_value = mock_model
+            mock_get_provider.return_value = mock_provider
+
+            model, canonical = _create_model_from_string("openai : gpt-4o")
+
+            assert canonical == "openai:gpt-4o"
+            mock_provider.create_model.assert_called_once_with("gpt-4o")
+
+    def test_invalid_provider_raises_error(self, mock_settings: MagicMock) -> None:
+        with patch(
+            "codebase_rag.main.get_provider_from_config",
+            side_effect=ValueError("Unknown provider"),
+        ):
+            with pytest.raises(ValueError, match="Unknown provider"):
+                _create_model_from_string("invalid:model")
+
+    def test_same_provider_uses_current_config(self, mock_settings: MagicMock) -> None:
+        mock_model = MagicMock()
+        with patch("codebase_rag.main.get_provider_from_config") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.create_model.return_value = mock_model
+            mock_get_provider.return_value = mock_provider
+
+            model, canonical = _create_model_from_string("google:gemini-pro")
+
+            assert canonical == "google:gemini-pro"
+
+    def test_ollama_provider_uses_local_endpoint(
+        self, mock_settings: MagicMock
+    ) -> None:
+        mock_model = MagicMock()
+        mock_settings.LOCAL_MODEL_ENDPOINT = "http://localhost:11434/v1"
+
+        with patch("codebase_rag.main.get_provider_from_config") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.create_model.return_value = mock_model
+            mock_get_provider.return_value = mock_provider
+
+            model, canonical = _create_model_from_string("ollama:llama3")
+
+            assert canonical == "ollama:llama3"
+
+
+class TestModelCommandEdgeCases:
+    def test_assertion_error_is_caught(
+        self, mock_console: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        with (
+            patch("codebase_rag.main.logger") as mock_logger,
+            patch(
+                "codebase_rag.main._create_model_from_string",
+                side_effect=AssertionError("Missing API key"),
+            ),
+        ):
+            new_model, new_string = _handle_model_command(
+                "/model openai:gpt-4o", None, None
+            )
+
+        assert new_model is None
+        assert new_string is None
+        mock_logger.error.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "Missing API key" in call_arg
+
+    def test_value_error_is_caught(
+        self, mock_console: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        with (
+            patch("codebase_rag.main.logger") as mock_logger,
+            patch(
+                "codebase_rag.main._create_model_from_string",
+                side_effect=ValueError("Invalid configuration"),
+            ),
+        ):
+            new_model, new_string = _handle_model_command(
+                "/model bad:config", None, None
+            )
+
+        assert new_model is None
+        assert new_string is None
+        mock_logger.error.assert_called_once()
+        call_arg = mock_console.print.call_args[0][0]
+        assert "Invalid configuration" in call_arg
