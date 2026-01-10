@@ -581,12 +581,8 @@ def _handle_model_command(
         app_context.console.print(cs.UI_MODEL_USAGE)
         return current_model, current_model_string
 
-    new_model_string_arg = arg
-
     try:
-        new_model, canonical_model_string = _create_model_from_string(
-            new_model_string_arg
-        )
+        new_model, canonical_model_string = _create_model_from_string(arg)
         logger.info(ls.MODEL_SWITCHED.format(model=canonical_model_string))
         app_context.console.print(
             cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
