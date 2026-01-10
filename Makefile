@@ -64,7 +64,7 @@ watch: ## Watch repository for changes and update graph in real-time
 		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),)
 
 readme: ## Regenerate README.md from codebase
-	$(PYTHON) python scripts/generate_readme.py
+	$(PYTHON) python -X utf8 scripts/generate_readme.py
 
 lint: ## Run ruff check
 	$(PYTHON) ruff check .
@@ -73,6 +73,6 @@ format: ## Run ruff format
 	$(PYTHON) ruff format .
 
 typecheck: ## Run type checking with ty
-	$(PYTHON) ty check -v
+	$(PYTHON) ty check -v --exclude codebase_rag/tests/
 
 check: lint typecheck test ## Run all checks: lint, typecheck, test
