@@ -221,22 +221,26 @@ docker-compose up -d
 Use the Makefile for common development tasks:
 
 <!-- SECTION:makefile_commands -->
-| Command | Description |
-|-------|-----------|
-| `make help` | Show this help message |
-| `make all` | Install everything for full development environment (deps, grammars, hooks, tests) |
-| `make install` | Install project dependencies with full language support |
-| `make python` | Install project dependencies for Python only |
-| `make dev` | Setup development environment (install deps + pre-commit hooks) |
-| `make test` | Run unit tests only (fast, no Docker) |
-| `make test-parallel` | Run unit tests in parallel (fast, no Docker) |
-| `make test-integration` | Run integration tests (requires Docker) |
-| `make test-all` | Run all tests including integration and e2e (requires Docker) |
-| `make test-parallel-all` | Run all tests in parallel including integration and e2e (requires Docker) |
-| `make clean` | Clean up build artifacts and cache |
-| `make build-grammars` | Build grammar submodules |
-| `make watch` | Watch repository for changes and update graph in real-time |
-| `make readme` | Regenerate README.md from codebase |
+| Command                  | Description                                                                        |
+|--------------------------|------------------------------------------------------------------------------------|
+| `make help`              | Show this help message                                                             |
+| `make all`               | Install everything for full development environment (deps, grammars, hooks, tests) |
+| `make install`           | Install project dependencies with full language support                            |
+| `make python`            | Install project dependencies for Python only                                       |
+| `make dev`               | Setup development environment (install deps + pre-commit hooks)                    |
+| `make test`              | Run unit tests only (fast, no Docker)                                              |
+| `make test-parallel`     | Run unit tests in parallel (fast, no Docker)                                       |
+| `make test-integration`  | Run integration tests (requires Docker)                                            |
+| `make test-all`          | Run all tests including integration and e2e (requires Docker)                      |
+| `make test-parallel-all` | Run all tests in parallel including integration and e2e (requires Docker)          |
+| `make clean`             | Clean up build artifacts and cache                                                 |
+| `make build-grammars`    | Build grammar submodules                                                           |
+| `make watch`             | Watch repository for changes and update graph in real-time                         |
+| `make readme`            | Regenerate README.md from codebase                                                 |
+| `make lint`              | Run ruff check (need depends for dev)                                              |
+| `make format`            | Run ruff format (need depends for dev)                                             |
+| `make typecheck`         | Run type checking with ty (need depends for dev)                                   |
+| `make check`             | Run all checks: lint, typecheck, test (need depends for dev)                       |
 <!-- /SECTION:makefile_commands -->
 
 ## 🎯 Usage

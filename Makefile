@@ -1,4 +1,6 @@
-.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme
+.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check
+
+PYTHON := uv run
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -8,10 +10,10 @@ all: ## Install everything for full development environment (deps, grammars, hoo
 	@echo "🚀 Setting up complete development environment..."
 	uv sync --all-extras
 	git submodule update --init --recursive --depth 1
-	uv run pre-commit install
-	uv run pre-commit install --hook-type commit-msg
+	$(PYTHON) pre-commit install
+	$(PYTHON) pre-commit install --hook-type commit-msg
 	@echo "🧪 Running tests in parallel to verify installation..."
-	uv run pytest -n auto
+	$(PYTHON) pytest -n auto
 	@echo "✅ Full development environment ready!"
 	@echo "📦 Installed: All dependencies, grammars, pre-commit hooks"
 	@echo "✓ Tests passed successfully"
@@ -24,24 +26,24 @@ python: ## Install project dependencies for Python only
 
 dev: ## Setup development environment (install deps + pre-commit hooks)
 	uv sync --extra treesitter-full --extra test --extra semantic --group dev
-	uv run pre-commit install
-	uv run pre-commit install --hook-type commit-msg
+	$(PYTHON) pre-commit install
+	$(PYTHON) pre-commit install --hook-type commit-msg
 	@echo "✅ Development environment ready!"
 
 test: ## Run unit tests only (fast, no Docker)
-	uv run pytest -m "not integration"
+	$(PYTHON) pytest -m "not integration"
 
 test-parallel: ## Run unit tests in parallel (fast, no Docker)
-	uv run pytest -n auto -m "not integration"
+	$(PYTHON) pytest -n auto -m "not integration"
 
 test-integration: ## Run integration tests (requires Docker)
-	uv run pytest -m "integration" -v
+	$(PYTHON) pytest -m "integration" -v
 
 test-all: ## Run all tests including integration and e2e (requires Docker)
-	uv run pytest -v
+	$(PYTHON) pytest -v
 
 test-parallel-all: ## Run all tests in parallel including integration and e2e (requires Docker)
-	uv run pytest -n auto
+	$(PYTHON) pytest -n auto
 
 clean: ## Clean up build artifacts and cache
 	rm -rf .pytest_cache/ .ty/ .ruff_cache/
@@ -62,4 +64,15 @@ watch: ## Watch repository for changes and update graph in real-time
 		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),)
 
 readme: ## Regenerate README.md from codebase
-	uv run python scripts/generate_readme.py
+	$(PYTHON) python scripts/generate_readme.py
+
+lint: ## Run ruff check
+	$(PYTHON) ruff check .
+
+format: ## Run ruff format
+	$(PYTHON) ruff format .
+
+typecheck: ## Run type checking with ty
+	$(PYTHON) ty check -v
+
+check: lint typecheck test ## Run all checks: lint, typecheck, test
