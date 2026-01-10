@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models import Model
 
     from .config import ModelConfig
 
@@ -389,6 +390,7 @@ async def _run_agent_response_loop(
     question_with_context: str,
     config: AgentLoopUI,
     tool_names: ConfirmationToolNames,
+    model_override: Model | None = None,
 ) -> None:
     deferred_results: DeferredToolResults | None = None
 
@@ -399,6 +401,7 @@ async def _run_agent_response_loop(
                     question_with_context,
                     message_history=message_history,
                     deferred_tool_results=deferred_results,
+                    model=model_override,
                 ),
             )
 
@@ -529,6 +532,78 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     return stripped
 
 
+def _create_model_from_string(model_string: str) -> Model:
+    from .config import ModelConfig
+    from .providers.base import get_provider_from_config
+
+    current_config = settings.active_orchestrator_config
+
+    if ":" in model_string:
+        provider_name, model_id = settings.parse_model_string(model_string)
+        model_id = model_id.strip()
+    else:
+        provider_name = current_config.provider
+        model_id = model_string.strip()
+
+    if provider_name == current_config.provider:
+        config = ModelConfig(
+            provider=provider_name,
+            model_id=model_id,
+            api_key=current_config.api_key,
+            endpoint=current_config.endpoint,
+            project_id=current_config.project_id,
+            region=current_config.region,
+            provider_type=current_config.provider_type,
+            thinking_budget=current_config.thinking_budget,
+            service_account_file=current_config.service_account_file,
+        )
+    elif provider_name == cs.Provider.OLLAMA:
+        config = ModelConfig(
+            provider=provider_name,
+            model_id=model_id,
+            endpoint=str(settings.LOCAL_MODEL_ENDPOINT),
+            api_key=cs.Provider.OLLAMA,
+        )
+    else:
+        config = ModelConfig(provider=provider_name, model_id=model_id)
+
+    provider = get_provider_from_config(config)
+    return provider.create_model(model_id)
+
+
+def _get_model_display_name(model: Model | None) -> str:
+    if model is None:
+        return settings.active_orchestrator_config.model_id
+    return getattr(model, "model_name", str(model))
+
+
+def _handle_model_command(
+    command: str, current_model: Model | None, current_model_string: str | None
+) -> tuple[Model | None, str | None, bool]:
+    parts = command.strip().split(maxsplit=1)
+    if len(parts) == 1:
+        display_model = (
+            current_model_string or settings.active_orchestrator_config.model_id
+        )
+        app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
+        return current_model, current_model_string, True
+
+    new_model_string = parts[1].strip()
+    if not new_model_string:
+        app_context.console.print(cs.UI_MODEL_USAGE)
+        return current_model, current_model_string, True
+
+    try:
+        new_model = _create_model_from_string(new_model_string)
+        logger.info(ls.MODEL_SWITCHED.format(model=new_model_string))
+        app_context.console.print(cs.UI_MODEL_SWITCHED.format(model=new_model_string))
+        return new_model, new_model_string, True
+    except Exception as e:
+        logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
+        app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
+        return current_model, current_model_string, True
+
+
 async def _run_interactive_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -540,6 +615,8 @@ async def _run_interactive_loop(
 ) -> None:
     init_session_log(project_root)
     question = initial_question or ""
+    model_override: Model | None = None
+    model_override_string: str | None = None
 
     while True:
         try:
@@ -549,6 +626,18 @@ async def _run_interactive_loop(
             if question.lower() in cs.EXIT_COMMANDS:
                 break
             if not question.strip():
+                initial_question = None
+                continue
+
+            if question.strip().lower().startswith(cs.MODEL_COMMAND_PREFIX):
+                model_override, model_override_string, _ = _handle_model_command(
+                    question.strip(), model_override, model_override_string
+                )
+                initial_question = None
+                continue
+
+            if question.strip().lower() == cs.MODEL_COMMAND_HELP:
+                app_context.console.print(cs.UI_HELP_COMMANDS)
                 initial_question = None
                 continue
 
@@ -565,7 +654,12 @@ async def _run_interactive_loop(
             )
 
             await _run_agent_response_loop(
-                rag_agent, message_history, question_with_context, config, tool_names
+                rag_agent,
+                message_history,
+                question_with_context,
+                config,
+                tool_names,
+                model_override,
             )
 
             initial_question = None

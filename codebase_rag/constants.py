@@ -254,6 +254,15 @@ UI_GRAPH_EXPORT_SUCCESS = (
 UI_GRAPH_EXPORT_STATS = "[bold cyan]Export contains {nodes} nodes and {relationships} relationships[/bold cyan]"
 UI_ERR_UNEXPECTED = "[bold red]An unexpected error occurred: {error}[/bold red]"
 UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
+UI_MODEL_SWITCHED = "[bold green]Model switched to: {model}[/bold green]"
+UI_MODEL_CURRENT = "[bold cyan]Current model: {model}[/bold cyan]"
+UI_MODEL_SWITCH_ERROR = "[bold red]Failed to switch model: {error}[/bold red]"
+UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model gemini:gemini-2.0-flash)[/bold yellow]"
+UI_HELP_COMMANDS = """[bold cyan]Available commands:[/bold cyan]
+  /model <provider:model> - Switch to a different model
+  /model                  - Show current model
+  /help                   - Show this help
+  exit, quit              - Exit the session"""
 UI_TOOL_ARGS_FORMAT = "    Arguments: {args}"
 UI_REFERENCE_DOC_INFO = " using the reference document: {reference_document}"
 UI_INPUT_PROMPT_HTML = (
@@ -554,6 +563,10 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
 
 # (H) CLI exit commands
 EXIT_COMMANDS = frozenset({"exit", "quit"})
+
+# (H) CLI model switching command
+MODEL_COMMAND_PREFIX = "/model"
+MODEL_COMMAND_HELP = "/help"
 
 # (H) UI separators and formatting
 HORIZONTAL_SEPARATOR = "─" * 60
