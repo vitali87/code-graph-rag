@@ -76,3 +76,4 @@ typecheck: ## Run type checking with ty
 	$(PYTHON) ty check -v --exclude codebase_rag/tests/
 
 check: lint typecheck test ## Run all checks: lint, typecheck, test
+
