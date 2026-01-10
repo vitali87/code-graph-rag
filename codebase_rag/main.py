@@ -561,7 +561,7 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
 
 def _handle_model_command(
     command: str, current_model: Model | None, current_model_string: str | None
-) -> tuple[Model | None, str | None, bool]:
+) -> tuple[Model | None, str | None]:
     parts = command.strip().split(maxsplit=1)
     if len(parts) == 1:
         if current_model_string:
@@ -570,12 +570,12 @@ def _handle_model_command(
             config = settings.active_orchestrator_config
             display_model = f"{config.provider}:{config.model_id}"
         app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
-        return current_model, current_model_string, True
+        return current_model, current_model_string
 
     new_model_string_arg = parts[1].strip()
     if not new_model_string_arg:
         app_context.console.print(cs.UI_MODEL_USAGE)
-        return current_model, current_model_string, True
+        return current_model, current_model_string
 
     try:
         new_model, canonical_model_string = _create_model_from_string(
@@ -585,11 +585,11 @@ def _handle_model_command(
         app_context.console.print(
             cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
         )
-        return new_model, canonical_model_string, True
+        return new_model, canonical_model_string
     except (ValueError, KeyError, ImportError, TypeError) as e:
         logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
         app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
-        return current_model, current_model_string, True
+        return current_model, current_model_string
 
 
 async def _run_interactive_loop(
@@ -621,7 +621,7 @@ async def _run_interactive_loop(
                 continue
 
             if stripped_lower.startswith(cs.MODEL_COMMAND_PREFIX):
-                model_override, model_override_string, _ = _handle_model_command(
+                model_override, model_override_string = _handle_model_command(
                     stripped_question, model_override, model_override_string
                 )
                 initial_question = None

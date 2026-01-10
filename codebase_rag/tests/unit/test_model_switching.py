@@ -35,13 +35,12 @@ class TestHandleModelCommand:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
-        new_model, new_string, handled = _handle_model_command(
+        new_model, new_string = _handle_model_command(
             "/model", mock_model, "custom-model"
         )
 
         assert new_model == mock_model
         assert new_string == "custom-model"
-        assert handled is True
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "custom-model" in call_arg
@@ -49,11 +48,10 @@ class TestHandleModelCommand:
     def test_show_default_model_when_no_override(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
-        new_model, new_string, handled = _handle_model_command("/model", None, None)
+        new_model, new_string = _handle_model_command("/model", None, None)
 
         assert new_model is None
         assert new_string is None
-        assert handled is True
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "google:gemini-2.0-flash" in call_arg
@@ -69,13 +67,12 @@ class TestHandleModelCommand:
                 return_value=(mock_new_model, "openai:gpt-4o"),
             ),
         ):
-            new_model, new_string, handled = _handle_model_command(
+            new_model, new_string = _handle_model_command(
                 "/model openai:gpt-4o", None, None
             )
 
         assert new_model == mock_new_model
         assert new_string == "openai:gpt-4o"
-        assert handled is True
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "openai:gpt-4o" in call_arg
@@ -92,34 +89,31 @@ class TestHandleModelCommand:
                 return_value=(mock_new_model, "anthropic:claude-3-opus"),
             ),
         ):
-            new_model, new_string, handled = _handle_model_command(
+            new_model, new_string = _handle_model_command(
                 "/model   anthropic:claude-3-opus  ", None, None
             )
 
         assert new_model == mock_new_model
         assert new_string == "anthropic:claude-3-opus"
-        assert handled is True
 
     def test_empty_model_argument_shows_usage(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
-        new_model, new_string, handled = _handle_model_command("/model ", None, None)
+        new_model, new_string = _handle_model_command("/model ", None, None)
 
         assert new_model is None
         assert new_string is None
-        assert handled is True
 
     def test_preserves_previous_model_on_show(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
-        new_model, new_string, handled = _handle_model_command(
+        new_model, new_string = _handle_model_command(
             "/model", mock_model, "previous:model"
         )
 
         assert new_model == mock_model
         assert new_string == "previous:model"
-        assert handled is True
 
     def test_model_creation_error_shows_error_message(
         self, mock_console: MagicMock, mock_settings: MagicMock
@@ -131,13 +125,12 @@ class TestHandleModelCommand:
                 side_effect=ValueError("Invalid model"),
             ),
         ):
-            new_model, new_string, handled = _handle_model_command(
+            new_model, new_string = _handle_model_command(
                 "/model invalid:model", None, None
             )
 
         assert new_model is None
         assert new_string is None
-        assert handled is True
         mock_logger.error.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "Invalid model" in call_arg
@@ -252,25 +245,21 @@ class TestMultipleModelSwitches:
             patch("codebase_rag.main._create_model_from_string") as mock_create,
         ):
             mock_create.return_value = (mock_model_a, "ollama:model-a")
-            model, model_str, _ = _handle_model_command("/model model-a", None, None)
+            model, model_str = _handle_model_command("/model model-a", None, None)
             assert model == mock_model_a
             assert model_str == "ollama:model-a"
 
             mock_create.return_value = (mock_model_b, "ollama:model-b")
-            model, model_str, _ = _handle_model_command(
-                "/model model-b", model, model_str
-            )
+            model, model_str = _handle_model_command("/model model-b", model, model_str)
             assert model == mock_model_b
             assert model_str == "ollama:model-b"
 
             mock_create.return_value = (mock_model_c, "ollama:model-c")
-            model, model_str, _ = _handle_model_command(
-                "/model model-c", model, model_str
-            )
+            model, model_str = _handle_model_command("/model model-c", model, model_str)
             assert model == mock_model_c
             assert model_str == "ollama:model-c"
 
-            model, model_str, _ = _handle_model_command("/model", model, model_str)
+            model, model_str = _handle_model_command("/model", model, model_str)
             assert model == mock_model_c
             assert model_str == "ollama:model-c"
 
@@ -285,13 +274,11 @@ class TestMultipleModelSwitches:
                 return_value=(mock_model, "openai:gpt-4"),
             ),
         ):
-            model, model_str, _ = _handle_model_command(
-                "/model openai:gpt-4", None, None
-            )
+            model, model_str = _handle_model_command("/model openai:gpt-4", None, None)
             assert model == mock_model
             assert model_str == "openai:gpt-4"
 
-            model, model_str, _ = _handle_model_command("/model", model, model_str)
+            model, model_str = _handle_model_command("/model", model, model_str)
             assert model == mock_model
             assert model_str == "openai:gpt-4"
             call_arg = mock_console.print.call_args[0][0]
