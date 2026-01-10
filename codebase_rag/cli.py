@@ -103,7 +103,11 @@ def start(
         )
         raise typer.Exit(1)
 
-    update_model_settings(orchestrator, cypher)
+    try:
+        update_model_settings(orchestrator, cypher)
+    except ValueError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from None
 
     validate_models_early()
 
@@ -306,6 +310,12 @@ def optimize(
     app_context.session.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
+
+    try:
+        update_model_settings(orchestrator, cypher)
+    except ValueError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from None
 
     validate_models_early()
 

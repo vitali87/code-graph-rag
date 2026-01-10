@@ -61,27 +61,27 @@ def format_missing_api_key_errors(provider: str, role: str = "model") -> str:
     role_msg = f" for {role}" if role != "model" else ""
 
     error_msg = f"""
-╭─── API Key Missing ───────────────────────────────────────────────╮
-│                                                                   │
-│  Error: {env_var} environment variable is not set.                │
-│         This is required to use {name}{role_msg}.                 │
-│                                                                   │
-│  To fix this:                                                      │
-│                                                                   │
-│  1. Get your API key from:                                        │
-│     {url}                                                         │
-│                                                                   │
-│  2. Set it in your environment:                                   │
-│     export {env_var}='your-key-here'                              │
-│                                                                   │
-│     Or add it to your .env file in the project root:               │
-│     {env_var}=your-key-here                                       │
-│                                                                   │
-│  3. Alternatively, you can use a local model with Ollama:         │
-│     (No API key required)                                         │
-│                                                                   │
-╰───────────────────────────────────────────────────────────────────╯
-""".strip()
+─── API Key Missing ───────────────────────────────────────────────
+
+  Error: {env_var} environment variable is not set.
+         This is required to use {name}{role_msg}.
+
+  To fix this:
+
+  1. Get your API key from:
+     {url}
+
+  2. Set it in your environment:
+     export {env_var}='your-key-here'
+
+     Or add it to your .env file in the project root:
+     {env_var}=your-key-here
+
+  3. Alternatively, you can use a local model with Ollama:
+     (No API key required)
+
+───────────────────────────────────────────────────────────────────
+""".strip()  # noqa: W293
     return error_msg
 
 
@@ -106,7 +106,7 @@ class ModelConfig:
     def validate_api_key(self, role: str = "model") -> None:
         if self.provider.lower() in [cs.Provider.OLLAMA, "local", "vllm"]:
             return
-        if not self.api_key or self.api_key.strip() == "":
+        if not self.api_key or self.api_key.strip() == "" or self.api_key == "ollama":
             error_msg = format_missing_api_key_errors(self.provider, role)
             raise ValueError(error_msg)
 
@@ -275,25 +275,29 @@ class AppConfig(BaseSettings):
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:
-        return self._active_orchestrator or self._get_default_orchestrator_config()
+        config = self._active_orchestrator or self._get_default_orchestrator_config()
+        self.validate_model_config(config, cs.ModelRole.ORCHESTRATOR)
+        return config
 
     @property
     def active_cypher_config(self) -> ModelConfig:
-        return self._active_cypher or self._get_default_cypher_config()
+        config = self._active_cypher or self._get_default_cypher_config()
+        self.validate_model_config(config, cs.ModelRole.CYPHER)
+        return config
 
     def set_orchestrator(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
-        self._active_orchestrator = ModelConfig(
-            provider=provider.lower(), model_id=model, **kwargs
-        )
+        config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
+        self.validate_model_config(config, cs.ModelRole.ORCHESTRATOR)
+        self._active_orchestrator = config
 
     def set_cypher(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
-        self._active_cypher = ModelConfig(
-            provider=provider.lower(), model_id=model, **kwargs
-        )
+        config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
+        self.validate_model_config(config, cs.ModelRole.CYPHER)
+        self._active_cypher = config
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
         if ":" not in model_string:
