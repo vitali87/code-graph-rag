@@ -535,7 +535,7 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
 def _create_model_from_string(model_string: str) -> tuple[Model, str]:
     current_config = settings.active_orchestrator_config
 
-    if ":" not in model_string:
+    if cs.CHAR_COLON not in model_string:
         raise ValueError(ex.MODEL_FORMAT_INVALID)
     provider_name, model_id = settings.parse_model_string(model_string)
     model_id = model_id.strip()
@@ -554,7 +554,7 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
     else:
         config = ModelConfig(provider=provider_name, model_id=model_id)
 
-    canonical_string = f"{provider_name}:{model_id}"
+    canonical_string = f"{provider_name}{cs.CHAR_COLON}{model_id}"
     provider = get_provider_from_config(config)
     return provider.create_model(model_id), canonical_string
 
@@ -568,7 +568,7 @@ def _handle_model_command(
             display_model = current_model_string
         else:
             config = settings.active_orchestrator_config
-            display_model = f"{config.provider}:{config.model_id}"
+            display_model = f"{config.provider}{cs.CHAR_COLON}{config.model_id}"
         app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
         return current_model, current_model_string
 
