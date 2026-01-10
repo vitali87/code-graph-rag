@@ -22,6 +22,7 @@ SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra sem
 
 # (H) Configuration errors
 PROVIDER_EMPTY = "Provider name cannot be empty in 'provider:model' format."
+MODEL_ID_EMPTY = "Model ID cannot be empty."
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
 CONFIG = "{role} configuration error: {error}"
 

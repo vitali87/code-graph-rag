@@ -537,10 +537,11 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
 
     if ":" in model_string:
         provider_name, model_id = settings.parse_model_string(model_string)
-        model_id = model_id.strip()
     else:
-        provider_name = current_config.provider
-        model_id = model_string.strip()
+        provider_name, model_id = current_config.provider, model_string
+    model_id = model_id.strip()
+    if not model_id:
+        raise ValueError(ex.MODEL_ID_EMPTY)
 
     if provider_name == current_config.provider:
         config = replace(current_config, model_id=model_id)
