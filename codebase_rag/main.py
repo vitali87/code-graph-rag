@@ -535,10 +535,9 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
 def _create_model_from_string(model_string: str) -> tuple[Model, str]:
     current_config = settings.active_orchestrator_config
 
-    if ":" in model_string:
-        provider_name, model_id = settings.parse_model_string(model_string)
-    else:
-        provider_name, model_id = current_config.provider, model_string
+    if ":" not in model_string:
+        raise ValueError(ex.MODEL_FORMAT_INVALID)
+    provider_name, model_id = settings.parse_model_string(model_string)
     model_id = model_id.strip()
     if not model_id:
         raise ValueError(ex.MODEL_ID_EMPTY)

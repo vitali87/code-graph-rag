@@ -245,17 +245,23 @@ class TestMultipleModelSwitches:
             patch("codebase_rag.main._create_model_from_string") as mock_create,
         ):
             mock_create.return_value = (mock_model_a, "ollama:model-a")
-            model, model_str = _handle_model_command("/model model-a", None, None)
+            model, model_str = _handle_model_command(
+                "/model ollama:model-a", None, None
+            )
             assert model == mock_model_a
             assert model_str == "ollama:model-a"
 
             mock_create.return_value = (mock_model_b, "ollama:model-b")
-            model, model_str = _handle_model_command("/model model-b", model, model_str)
+            model, model_str = _handle_model_command(
+                "/model ollama:model-b", model, model_str
+            )
             assert model == mock_model_b
             assert model_str == "ollama:model-b"
 
             mock_create.return_value = (mock_model_c, "ollama:model-c")
-            model, model_str = _handle_model_command("/model model-c", model, model_str)
+            model, model_str = _handle_model_command(
+                "/model ollama:model-c", model, model_str
+            )
             assert model == mock_model_c
             assert model_str == "ollama:model-c"
 
