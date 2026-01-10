@@ -92,6 +92,7 @@ python-version = "3.12"
 exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py"]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
 python_files = ["test_*.py", "*_test.py"]
