@@ -1,0 +1,68 @@
+name: Version Bump
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  bump-version:
+    if: "!contains(github.event.head_commit.message, 'chore: bump version')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if version was manually changed
+        id: check_manual
+        run: |
+          OLD_VERSION=$(git show HEAD^:pyproject.toml | grep -E '^version\s*=' | sed 's/version = "\(.*\)"/\1/')
+          NEW_VERSION=$(grep -E '^version\s*=' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Version was manually changed from $OLD_VERSION to $NEW_VERSION, skipping auto-bump"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get current version
+        if: steps.check_manual.outputs.skip == 'false'
+        id: get_version
+        run: |
+          CURRENT_VERSION=$(grep -E '^version\s*=' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Bump patch version
+        if: steps.check_manual.outputs.skip == 'false'
+        id: bump_version
+        run: |
+          CURRENT="${{ steps.get_version.outputs.current }}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+          echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update pyproject.toml
+        if: steps.check_manual.outputs.skip == 'false'
+        run: |
+          sed -i 's/^version = ".*"/version = "${{ steps.bump_version.outputs.new }}"/' pyproject.toml
+
+      - name: Commit version bump
+        if: steps.check_manual.outputs.skip == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new }}"
+          git push
+
+      - name: Create git tag
+        if: steps.check_manual.outputs.skip == 'false'
+        run: |
+          git tag "v${{ steps.bump_version.outputs.new }}"
+          git push origin "v${{ steps.bump_version.outputs.new }}"
