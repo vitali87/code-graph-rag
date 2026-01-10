@@ -19,6 +19,10 @@ from .main import (
     style,
     update_model_settings,
 )
+from .cypher_queries import (
+    CYPHER_STATS_NODE_COUNTS,
+    CYPHER_STATS_RELATIONSHIP_COUNTS,
+)
 from .parser_loader import load_parsers
 from .services.protobuf_service import ProtobufFileIngestor
 from .tools.language import cli as language_cli
@@ -395,19 +399,12 @@ def stats(
 
     try:
         with connect_memgraph(effective_batch_size) as ingestor:
-            # Query node counts by label
-            node_results = ingestor._execute_query(
-                "MATCH (n) RETURN labels(n)[0] as label, count(*) as count ORDER BY count DESC"
-            )
-            # Query relationship counts by type
-            rel_results = ingestor._execute_query(
-                "MATCH ()-[r]->() RETURN type(r) as type, count(*) as count ORDER BY count DESC"
-            )
+            node_results = ingestor.fetch_all(CYPHER_STATS_NODE_COUNTS)
+            rel_results = ingestor.fetch_all(CYPHER_STATS_RELATIONSHIP_COUNTS)
 
             total_nodes = sum(int(row.get("count", 0)) for row in node_results)
             total_rels = sum(int(row.get("count", 0)) for row in rel_results)
 
-            # Node statistics table
             node_table = Table(
                 title=style(cs.CLI_STATS_NODE_TITLE, cs.Color.GREEN),
                 show_header=True,
@@ -417,7 +414,8 @@ def stats(
             node_table.add_column(cs.CLI_STATS_COL_COUNT, style=cs.Color.YELLOW, justify="right")
 
             for row in node_results:
-                label = str(row.get("label", "Unknown"))
+                labels = row.get("labels", [])
+                label = ":".join(labels) if labels else "Unknown"
                 count = str(row.get("count", 0))
                 node_table.add_row(label, f"{int(count):,}")
 
