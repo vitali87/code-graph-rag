@@ -9,6 +9,7 @@ class CLICommandName(StrEnum):
     MCP_SERVER = "mcp-server"
     GRAPH_LOADER = "graph-loader"
     LANGUAGE = "language"
+    STATS = "stats"
 
 
 APP_DESCRIPTION = (
@@ -24,6 +25,7 @@ CMD_OPTIMIZE = "AI-guided codebase optimization session"
 CMD_MCP_SERVER = "Start the MCP server for Claude Code integration"
 CMD_GRAPH_LOADER = "Load and display summary of exported graph JSON"
 CMD_LANGUAGE = "Manage language grammars (add, remove, list)"
+CMD_STATS = "Display statistics about the indexed codebase graph"
 
 CMD_LANGUAGE_GROUP = "CLI for managing language grammars"
 CMD_LANGUAGE_ADD = "Add a new language grammar to the project."
@@ -87,4 +89,5 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.MCP_SERVER: CMD_MCP_SERVER,
     CLICommandName.GRAPH_LOADER: CMD_GRAPH_LOADER,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
+    CLICommandName.STATS: CMD_STATS,
 }
