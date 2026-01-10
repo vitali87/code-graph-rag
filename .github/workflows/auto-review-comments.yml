@@ -7,10 +7,41 @@ on:
 jobs:
   post-review-comments:
     runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]' && github.actor != 'github-actions[bot]'
     permissions:
       pull-requests: write
     steps:
+      - name: Check for unresolved review threads
+        id: check-threads
+        if: github.event.action == 'synchronize'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const query = `
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    reviewThreads(first: 100) {
+                      nodes {
+                        isResolved
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            const result = await github.graphql(query, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: context.payload.pull_request.number
+            });
+            const threads = result.repository.pullRequest.reviewThreads.nodes;
+            const unresolvedCount = threads.filter(t => !t.isResolved).length;
+            console.log(`Found ${threads.length} review threads, ${unresolvedCount} unresolved`);
+            core.setOutput('has_unresolved', unresolvedCount > 0);
+
       - name: Post Gemini review comment
+        if: github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false'
         uses: actions/github-script@v7
         with:
           script: |
@@ -22,6 +53,7 @@ jobs:
             });
 
       - name: Post Greptile comment
+        if: github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false'
         uses: actions/github-script@v7
         with:
           script: |
