@@ -39,12 +39,14 @@ class TestHandleModelCommand:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
-        new_model, new_string = _handle_model_command(
-            "/model", mock_model, "custom-model"
+        mock_config = MagicMock()
+        new_model, new_string, new_config = _handle_model_command(
+            "/model", mock_model, "custom-model", mock_config
         )
 
         assert new_model == mock_model
         assert new_string == "custom-model"
+        assert new_config == mock_config
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "custom-model" in call_arg
@@ -52,10 +54,13 @@ class TestHandleModelCommand:
     def test_show_default_model_when_no_override(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
-        new_model, new_string = _handle_model_command("/model", None, None)
+        new_model, new_string, new_config = _handle_model_command(
+            "/model", None, None, None
+        )
 
         assert new_model is None
         assert new_string is None
+        assert new_config is None
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "google:gemini-2.0-flash" in call_arg
@@ -64,19 +69,21 @@ class TestHandleModelCommand:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_new_model = MagicMock()
+        mock_new_config = MagicMock()
         with (
             patch("codebase_rag.main.logger") as mock_logger,
             patch(
                 "codebase_rag.main._create_model_from_string",
-                return_value=(mock_new_model, "openai:gpt-4o"),
+                return_value=(mock_new_model, "openai:gpt-4o", mock_new_config),
             ),
         ):
-            new_model, new_string = _handle_model_command(
-                "/model openai:gpt-4o", None, None
+            new_model, new_string, new_config = _handle_model_command(
+                "/model openai:gpt-4o", None, None, None
             )
 
         assert new_model == mock_new_model
         assert new_string == "openai:gpt-4o"
+        assert new_config == mock_new_config
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "openai:gpt-4o" in call_arg
@@ -86,15 +93,20 @@ class TestHandleModelCommand:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_new_model = MagicMock()
+        mock_new_config = MagicMock()
         with (
             patch("codebase_rag.main.logger"),
             patch(
                 "codebase_rag.main._create_model_from_string",
-                return_value=(mock_new_model, "anthropic:claude-3-opus"),
+                return_value=(
+                    mock_new_model,
+                    "anthropic:claude-3-opus",
+                    mock_new_config,
+                ),
             ),
         ):
-            new_model, new_string = _handle_model_command(
-                "/model   anthropic:claude-3-opus  ", None, None
+            new_model, new_string, new_config = _handle_model_command(
+                "/model   anthropic:claude-3-opus  ", None, None, None
             )
 
         assert new_model == mock_new_model
@@ -103,10 +115,13 @@ class TestHandleModelCommand:
     def test_show_current_model_with_trailing_space(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
-        new_model, new_string = _handle_model_command("/model ", None, None)
+        new_model, new_string, new_config = _handle_model_command(
+            "/model ", None, None, None
+        )
 
         assert new_model is None
         assert new_string is None
+        assert new_config is None
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "google:gemini-2.0-flash" in call_arg
@@ -115,12 +130,14 @@ class TestHandleModelCommand:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
-        new_model, new_string = _handle_model_command(
-            "/model", mock_model, "previous:model"
+        mock_config = MagicMock()
+        new_model, new_string, new_config = _handle_model_command(
+            "/model", mock_model, "previous:model", mock_config
         )
 
         assert new_model == mock_model
         assert new_string == "previous:model"
+        assert new_config == mock_config
 
     def test_model_creation_error_shows_error_message(
         self, mock_console: MagicMock, mock_settings: MagicMock
@@ -132,12 +149,13 @@ class TestHandleModelCommand:
                 side_effect=ValueError("Invalid model"),
             ),
         ):
-            new_model, new_string = _handle_model_command(
-                "/model invalid:model", None, None
+            new_model, new_string, new_config = _handle_model_command(
+                "/model invalid:model", None, None, None
             )
 
         assert new_model is None
         assert new_string is None
+        assert new_config is None
         mock_logger.error.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "Invalid model" in call_arg
@@ -246,33 +264,38 @@ class TestMultipleModelSwitches:
         mock_model_a = MagicMock(name="model-a")
         mock_model_b = MagicMock(name="model-b")
         mock_model_c = MagicMock(name="model-c")
+        mock_config_a = MagicMock(name="config-a")
+        mock_config_b = MagicMock(name="config-b")
+        mock_config_c = MagicMock(name="config-c")
 
         with (
             patch("codebase_rag.main.logger"),
             patch("codebase_rag.main._create_model_from_string") as mock_create,
         ):
-            mock_create.return_value = (mock_model_a, "ollama:model-a")
-            model, model_str = _handle_model_command(
-                "/model ollama:model-a", None, None
+            mock_create.return_value = (mock_model_a, "ollama:model-a", mock_config_a)
+            model, model_str, config = _handle_model_command(
+                "/model ollama:model-a", None, None, None
             )
             assert model == mock_model_a
             assert model_str == "ollama:model-a"
 
-            mock_create.return_value = (mock_model_b, "ollama:model-b")
-            model, model_str = _handle_model_command(
-                "/model ollama:model-b", model, model_str
+            mock_create.return_value = (mock_model_b, "ollama:model-b", mock_config_b)
+            model, model_str, config = _handle_model_command(
+                "/model ollama:model-b", model, model_str, config
             )
             assert model == mock_model_b
             assert model_str == "ollama:model-b"
 
-            mock_create.return_value = (mock_model_c, "ollama:model-c")
-            model, model_str = _handle_model_command(
-                "/model ollama:model-c", model, model_str
+            mock_create.return_value = (mock_model_c, "ollama:model-c", mock_config_c)
+            model, model_str, config = _handle_model_command(
+                "/model ollama:model-c", model, model_str, config
             )
             assert model == mock_model_c
             assert model_str == "ollama:model-c"
 
-            model, model_str = _handle_model_command("/model", model, model_str)
+            model, model_str, config = _handle_model_command(
+                "/model", model, model_str, config
+            )
             assert model == mock_model_c
             assert model_str == "ollama:model-c"
 
@@ -280,18 +303,23 @@ class TestMultipleModelSwitches:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
+        mock_config = MagicMock()
         with (
             patch("codebase_rag.main.logger"),
             patch(
                 "codebase_rag.main._create_model_from_string",
-                return_value=(mock_model, "openai:gpt-4"),
+                return_value=(mock_model, "openai:gpt-4", mock_config),
             ),
         ):
-            model, model_str = _handle_model_command("/model openai:gpt-4", None, None)
+            model, model_str, config = _handle_model_command(
+                "/model openai:gpt-4", None, None, None
+            )
             assert model == mock_model
             assert model_str == "openai:gpt-4"
 
-            model, model_str = _handle_model_command("/model", model, model_str)
+            model, model_str, config = _handle_model_command(
+                "/model", model, model_str, config
+            )
             assert model == mock_model
             assert model_str == "openai:gpt-4"
             call_arg = mock_console.print.call_args[0][0]
@@ -302,10 +330,13 @@ class TestModelHelpCommand:
     def test_model_help_shows_usage(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
-        new_model, new_string = _handle_model_command("/model help", None, None)
+        new_model, new_string, new_config = _handle_model_command(
+            "/model help", None, None, None
+        )
 
         assert new_model is None
         assert new_string is None
+        assert new_config is None
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "Usage:" in call_arg or "provider:model" in call_arg
@@ -313,22 +344,27 @@ class TestModelHelpCommand:
     def test_model_help_case_insensitive(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
-        new_model, new_string = _handle_model_command("/model HELP", None, None)
+        new_model, new_string, new_config = _handle_model_command(
+            "/model HELP", None, None, None
+        )
 
         assert new_model is None
         assert new_string is None
+        assert new_config is None
         mock_console.print.assert_called_once()
 
     def test_model_help_preserves_current_model(
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
-        new_model, new_string = _handle_model_command(
-            "/model help", mock_model, "current:model"
+        mock_config = MagicMock()
+        new_model, new_string, new_config = _handle_model_command(
+            "/model help", mock_model, "current:model", mock_config
         )
 
         assert new_model == mock_model
         assert new_string == "current:model"
+        assert new_config == mock_config
 
 
 class TestCreateModelFromString:
@@ -353,7 +389,7 @@ class TestCreateModelFromString:
             mock_provider.create_model.return_value = mock_model
             mock_get_provider.return_value = mock_provider
 
-            model, canonical = _create_model_from_string("openai : gpt-4o")
+            model, canonical, config = _create_model_from_string("openai : gpt-4o")
 
             assert canonical == "openai:gpt-4o"
             mock_provider.create_model.assert_called_once_with("gpt-4o")
@@ -373,7 +409,7 @@ class TestCreateModelFromString:
             mock_provider.create_model.return_value = mock_model
             mock_get_provider.return_value = mock_provider
 
-            model, canonical = _create_model_from_string("google:gemini-pro")
+            model, canonical, config = _create_model_from_string("google:gemini-pro")
 
             assert canonical == "google:gemini-pro"
 
@@ -388,7 +424,7 @@ class TestCreateModelFromString:
             mock_provider.create_model.return_value = mock_model
             mock_get_provider.return_value = mock_provider
 
-            model, canonical = _create_model_from_string("ollama:llama3")
+            model, canonical, config = _create_model_from_string("ollama:llama3")
 
             assert canonical == "ollama:llama3"
 
@@ -404,12 +440,13 @@ class TestModelCommandEdgeCases:
                 side_effect=AssertionError("Missing API key"),
             ),
         ):
-            new_model, new_string = _handle_model_command(
-                "/model openai:gpt-4o", None, None
+            new_model, new_string, new_config = _handle_model_command(
+                "/model openai:gpt-4o", None, None, None
             )
 
         assert new_model is None
         assert new_string is None
+        assert new_config is None
         mock_logger.error.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "Missing API key" in call_arg
@@ -424,12 +461,13 @@ class TestModelCommandEdgeCases:
                 side_effect=ValueError("Invalid configuration"),
             ),
         ):
-            new_model, new_string = _handle_model_command(
-                "/model bad:config", None, None
+            new_model, new_string, new_config = _handle_model_command(
+                "/model bad:config", None, None, None
             )
 
         assert new_model is None
         assert new_string is None
+        assert new_config is None
         mock_logger.error.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
         assert "Invalid configuration" in call_arg

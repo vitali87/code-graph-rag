@@ -532,8 +532,10 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     return stripped
 
 
-def _create_model_from_string(model_string: str) -> tuple[Model, str]:
-    current_config = settings.active_orchestrator_config
+def _create_model_from_string(
+    model_string: str, current_override_config: ModelConfig | None = None
+) -> tuple[Model, str, ModelConfig]:
+    base_config = current_override_config or settings.active_orchestrator_config
 
     if cs.CHAR_COLON not in model_string:
         raise ValueError(ex.MODEL_FORMAT_INVALID)
@@ -545,8 +547,8 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
     if not provider_name:
         raise ValueError(ex.PROVIDER_EMPTY)
 
-    if provider_name == current_config.provider:
-        config = replace(current_config, model_id=model_id)
+    if provider_name == base_config.provider:
+        config = replace(base_config, model_id=model_id)
     elif provider_name == cs.Provider.OLLAMA:
         config = ModelConfig(
             provider=provider_name,
@@ -559,12 +561,15 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
 
     canonical_string = f"{provider_name}{cs.CHAR_COLON}{model_id}"
     provider = get_provider_from_config(config)
-    return provider.create_model(model_id), canonical_string
+    return provider.create_model(model_id), canonical_string, config
 
 
 def _handle_model_command(
-    command: str, current_model: Model | None, current_model_string: str | None
-) -> tuple[Model | None, str | None]:
+    command: str,
+    current_model: Model | None,
+    current_model_string: str | None,
+    current_config: ModelConfig | None,
+) -> tuple[Model | None, str | None, ModelConfig | None]:
     parts = command.strip().split(maxsplit=1)
     arg = parts[1].strip() if len(parts) > 1 else None
 
@@ -575,23 +580,25 @@ def _handle_model_command(
             config = settings.active_orchestrator_config
             display_model = f"{config.provider}{cs.CHAR_COLON}{config.model_id}"
         app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
-        return current_model, current_model_string
+        return current_model, current_model_string, current_config
 
     if arg.lower() == cs.HELP_ARG:
         app_context.console.print(cs.UI_MODEL_USAGE)
-        return current_model, current_model_string
+        return current_model, current_model_string, current_config
 
     try:
-        new_model, canonical_model_string = _create_model_from_string(arg)
+        new_model, canonical_model_string, new_config = _create_model_from_string(
+            arg, current_config
+        )
         logger.info(ls.MODEL_SWITCHED.format(model=canonical_model_string))
         app_context.console.print(
             cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
         )
-        return new_model, canonical_model_string
+        return new_model, canonical_model_string, new_config
     except (ValueError, AssertionError) as e:
         logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
         app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
-        return current_model, current_model_string
+        return current_model, current_model_string, current_config
 
 
 async def _run_interactive_loop(
@@ -607,6 +614,7 @@ async def _run_interactive_loop(
     question = initial_question or ""
     model_override: Model | None = None
     model_override_string: str | None = None
+    model_override_config: ModelConfig | None = None
 
     while True:
         try:
@@ -625,8 +633,13 @@ async def _run_interactive_loop(
 
             command_parts = stripped_lower.split(maxsplit=1)
             if command_parts[0] == cs.MODEL_COMMAND_PREFIX:
-                model_override, model_override_string = _handle_model_command(
-                    stripped_question, model_override, model_override_string
+                model_override, model_override_string, model_override_config = (
+                    _handle_model_command(
+                        stripped_question,
+                        model_override,
+                        model_override_string,
+                        model_override_config,
+                    )
                 )
                 initial_question = None
                 continue
