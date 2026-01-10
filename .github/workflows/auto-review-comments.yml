@@ -68,7 +68,7 @@ jobs:
             }
 
       - name: Delete old trigger comments and post new ones
-        if: github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false'
+        if: github.event.action == 'opened' || (github.event.action == 'synchronize' && steps.check-threads.outputs.has_unresolved == 'false')
         uses: actions/github-script@v7
         with:
           script: |
