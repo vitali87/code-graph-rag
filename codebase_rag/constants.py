@@ -569,9 +569,9 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
 # (H) CLI exit commands
 EXIT_COMMANDS = frozenset({"exit", "quit"})
 
-# (H) CLI model switching command
+# (H) CLI commands
 MODEL_COMMAND_PREFIX = "/model"
-MODEL_COMMAND_HELP = "/help"
+HELP_COMMAND = "/help"
 
 # (H) UI separators and formatting
 HORIZONTAL_SEPARATOR = "─" * 60

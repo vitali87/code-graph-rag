@@ -215,7 +215,7 @@ class TestCommandConstants:
         assert cs.MODEL_COMMAND_PREFIX == "/model"
 
     def test_help_command(self) -> None:
-        assert cs.MODEL_COMMAND_HELP == "/help"
+        assert cs.HELP_COMMAND == "/help"
 
     def test_ui_messages_exist(self) -> None:
         assert hasattr(cs, "UI_MODEL_SWITCHED")

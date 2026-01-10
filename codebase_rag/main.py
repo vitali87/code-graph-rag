@@ -628,7 +628,7 @@ async def _run_interactive_loop(
                 initial_question = None
                 continue
 
-            if stripped_lower == cs.MODEL_COMMAND_HELP:
+            if stripped_lower == cs.HELP_COMMAND:
                 app_context.console.print(cs.UI_HELP_COMMANDS)
                 initial_question = None
                 continue
