@@ -532,7 +532,7 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     return stripped
 
 
-def _create_model_from_string(model_string: str) -> Model:
+def _create_model_from_string(model_string: str) -> tuple[Model, str]:
     current_config = settings.active_orchestrator_config
 
     if ":" in model_string:
@@ -554,8 +554,9 @@ def _create_model_from_string(model_string: str) -> Model:
     else:
         config = ModelConfig(provider=provider_name, model_id=model_id)
 
+    canonical_string = f"{provider_name}:{model_id}"
     provider = get_provider_from_config(config)
-    return provider.create_model(model_id)
+    return provider.create_model(model_id), canonical_string
 
 
 def _handle_model_command(
@@ -563,22 +564,28 @@ def _handle_model_command(
 ) -> tuple[Model | None, str | None, bool]:
     parts = command.strip().split(maxsplit=1)
     if len(parts) == 1:
-        display_model = (
-            current_model_string or settings.active_orchestrator_config.model_id
-        )
+        if current_model_string:
+            display_model = current_model_string
+        else:
+            config = settings.active_orchestrator_config
+            display_model = f"{config.provider}:{config.model_id}"
         app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
         return current_model, current_model_string, True
 
-    new_model_string = parts[1].strip()
-    if not new_model_string:
+    new_model_string_arg = parts[1].strip()
+    if not new_model_string_arg:
         app_context.console.print(cs.UI_MODEL_USAGE)
         return current_model, current_model_string, True
 
     try:
-        new_model = _create_model_from_string(new_model_string)
-        logger.info(ls.MODEL_SWITCHED.format(model=new_model_string))
-        app_context.console.print(cs.UI_MODEL_SWITCHED.format(model=new_model_string))
-        return new_model, new_model_string, True
+        new_model, canonical_model_string = _create_model_from_string(
+            new_model_string_arg
+        )
+        logger.info(ls.MODEL_SWITCHED.format(model=canonical_model_string))
+        app_context.console.print(
+            cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
+        )
+        return new_model, canonical_model_string, True
     except (ValueError, KeyError, ImportError, TypeError) as e:
         logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
         app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))

@@ -56,7 +56,7 @@ class TestHandleModelCommand:
         assert handled is True
         mock_console.print.assert_called_once()
         call_arg = mock_console.print.call_args[0][0]
-        assert "gemini-2.0-flash" in call_arg
+        assert "google:gemini-2.0-flash" in call_arg
 
     def test_switch_to_new_model(
         self, mock_console: MagicMock, mock_settings: MagicMock
@@ -66,7 +66,7 @@ class TestHandleModelCommand:
             patch("codebase_rag.main.logger") as mock_logger,
             patch(
                 "codebase_rag.main._create_model_from_string",
-                return_value=mock_new_model,
+                return_value=(mock_new_model, "openai:gpt-4o"),
             ),
         ):
             new_model, new_string, handled = _handle_model_command(
@@ -89,7 +89,7 @@ class TestHandleModelCommand:
             patch("codebase_rag.main.logger"),
             patch(
                 "codebase_rag.main._create_model_from_string",
-                return_value=mock_new_model,
+                return_value=(mock_new_model, "anthropic:claude-3-opus"),
             ),
         ):
             new_model, new_string, handled = _handle_model_command(
@@ -251,28 +251,28 @@ class TestMultipleModelSwitches:
             patch("codebase_rag.main.logger"),
             patch("codebase_rag.main._create_model_from_string") as mock_create,
         ):
-            mock_create.return_value = mock_model_a
+            mock_create.return_value = (mock_model_a, "ollama:model-a")
             model, model_str, _ = _handle_model_command("/model model-a", None, None)
             assert model == mock_model_a
-            assert model_str == "model-a"
+            assert model_str == "ollama:model-a"
 
-            mock_create.return_value = mock_model_b
+            mock_create.return_value = (mock_model_b, "ollama:model-b")
             model, model_str, _ = _handle_model_command(
                 "/model model-b", model, model_str
             )
             assert model == mock_model_b
-            assert model_str == "model-b"
+            assert model_str == "ollama:model-b"
 
-            mock_create.return_value = mock_model_c
+            mock_create.return_value = (mock_model_c, "ollama:model-c")
             model, model_str, _ = _handle_model_command(
                 "/model model-c", model, model_str
             )
             assert model == mock_model_c
-            assert model_str == "model-c"
+            assert model_str == "ollama:model-c"
 
             model, model_str, _ = _handle_model_command("/model", model, model_str)
             assert model == mock_model_c
-            assert model_str == "model-c"
+            assert model_str == "ollama:model-c"
 
     def test_switch_then_show_preserves_model(
         self, mock_console: MagicMock, mock_settings: MagicMock
@@ -281,7 +281,8 @@ class TestMultipleModelSwitches:
         with (
             patch("codebase_rag.main.logger"),
             patch(
-                "codebase_rag.main._create_model_from_string", return_value=mock_model
+                "codebase_rag.main._create_model_from_string",
+                return_value=(mock_model, "openai:gpt-4"),
             ),
         ):
             model, model_str, _ = _handle_model_command(
