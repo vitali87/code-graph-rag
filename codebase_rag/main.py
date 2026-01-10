@@ -574,7 +574,7 @@ def _handle_model_command(
         return current_model, current_model_string
 
     new_model_string_arg = parts[1].strip()
-    if not new_model_string_arg:
+    if not new_model_string_arg or new_model_string_arg.lower() == cs.HELP_ARG:
         app_context.console.print(cs.UI_MODEL_USAGE)
         return current_model, current_model_string
 
