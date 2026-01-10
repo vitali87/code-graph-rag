@@ -616,19 +616,20 @@ async def _run_interactive_loop(
 
             if stripped_lower in cs.EXIT_COMMANDS:
                 break
-            if not stripped_question:
-                initial_question = None
-                continue
 
-            if stripped_lower.startswith(cs.MODEL_COMMAND_PREFIX):
+            is_command = False
+            if not stripped_question:
+                is_command = True
+            elif stripped_lower.startswith(cs.MODEL_COMMAND_PREFIX):
                 model_override, model_override_string = _handle_model_command(
                     stripped_question, model_override, model_override_string
                 )
-                initial_question = None
-                continue
-
-            if stripped_lower == cs.HELP_COMMAND:
+                is_command = True
+            elif stripped_lower == cs.HELP_COMMAND:
                 app_context.console.print(cs.UI_HELP_COMMANDS)
+                is_command = True
+
+            if is_command:
                 initial_question = None
                 continue
 
