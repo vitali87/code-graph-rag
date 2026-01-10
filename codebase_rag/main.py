@@ -586,7 +586,7 @@ def _handle_model_command(
             cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
         )
         return new_model, canonical_model_string
-    except (ValueError, KeyError, ImportError, TypeError) as e:
+    except Exception as e:
         logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
         app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
         return current_model, current_model_string

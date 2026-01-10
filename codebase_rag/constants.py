@@ -123,6 +123,10 @@ DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_API_KEY = "ollama"
 
+ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
+ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
+ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+
 
 class GoogleProviderType(StrEnum):
     GLA = "gla"
