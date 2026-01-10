@@ -537,8 +537,9 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
 
     if cs.CHAR_COLON not in model_string:
         raise ValueError(ex.MODEL_FORMAT_INVALID)
-    provider_name, model_id = settings.parse_model_string(model_string)
-    model_id = model_id.strip()
+    provider_name, model_id = (
+        p.strip() for p in settings.parse_model_string(model_string)
+    )
     if not model_id:
         raise ValueError(ex.MODEL_ID_EMPTY)
 
