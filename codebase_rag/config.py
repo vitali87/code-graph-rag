@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Unpack
+from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -16,7 +16,14 @@ from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 load_dotenv()
 
-API_KEY_INFO: dict[str, dict[str, str]] = {
+
+class ApiKeyInfoEntry(TypedDict):
+    env_var: str
+    url: str
+    name: str
+
+
+API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
     "openai": {
         "env_var": "OPENAI_API_KEY",
         "url": "https://platform.openai.com/api-keys",
@@ -45,7 +52,9 @@ API_KEY_INFO: dict[str, dict[str, str]] = {
 }
 
 
-def format_missing_api_key_errors(provider: str, role: str = "model") -> str:
+def format_missing_api_key_errors(
+    provider: str, role: cs.ModelRole | str = "model"
+) -> str:
     provider_lower = provider.lower()
 
     if provider_lower in API_KEY_INFO:
@@ -104,9 +113,14 @@ class ModelConfig:
         return ModelConfigKwargs(**result)
 
     def validate_api_key(self, role: str = "model") -> None:
-        if self.provider.lower() in [cs.Provider.OLLAMA, "local", "vllm"]:
+        local_providers = {cs.Provider.OLLAMA, "local", "vllm"}
+        if self.provider.lower() in local_providers:
             return
-        if not self.api_key or self.api_key.strip() == "" or self.api_key == "ollama":
+        if (
+            not self.api_key
+            or self.api_key.strip() == ""
+            or self.api_key == cs.DEFAULT_API_KEY
+        ):
             error_msg = format_missing_api_key_errors(self.provider, role)
             raise ValueError(error_msg)
 
@@ -268,10 +282,7 @@ class AppConfig(BaseSettings):
         return self._get_default_config(cs.ModelRole.CYPHER)
 
     def validate_model_config(self, config: ModelConfig, role: str) -> None:
-        try:
-            config.validate_api_key(role)
-        except ValueError:
-            raise
+        config.validate_api_key(role)
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:
