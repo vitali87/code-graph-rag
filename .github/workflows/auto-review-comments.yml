@@ -90,7 +90,7 @@ jobs:
                   page: page
                 });
                 allComments = allComments.concat(response.data);
-                if (response.data.length < 100) break;
+                if (response.data.length === 0 || response.data.length < 100) break;
                 page++;
               }
 
@@ -114,6 +114,7 @@ jobs:
                   issue_number: prNumber,
                   body: trigger
                 });
+                await new Promise(resolve => setTimeout(resolve, 1000));
               }
 
               console.log('Successfully posted review trigger comments');
