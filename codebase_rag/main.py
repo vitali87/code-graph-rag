@@ -549,7 +549,7 @@ def _create_model_from_string(model_string: str) -> tuple[Model, str]:
             provider=provider_name,
             model_id=model_id,
             endpoint=str(settings.LOCAL_MODEL_ENDPOINT),
-            api_key=cs.Provider.OLLAMA,
+            api_key=cs.DEFAULT_API_KEY,
         )
     else:
         config = ModelConfig(provider=provider_name, model_id=model_id)
@@ -696,7 +696,7 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
 
     if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
         kwargs[cs.FIELD_ENDPOINT] = str(settings.LOCAL_MODEL_ENDPOINT)
-        kwargs[cs.FIELD_API_KEY] = cs.Provider.OLLAMA
+        kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
 
     set_method(provider, model, **kwargs)
 
