@@ -78,6 +78,18 @@ RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
 LIMIT 1
 """
 
+CYPHER_STATS_NODE_COUNTS = """
+MATCH (n)
+RETURN labels(n) as labels, count(*) as count
+ORDER BY count DESC
+"""
+
+CYPHER_STATS_RELATIONSHIP_COUNTS = """
+MATCH ()-[r]->()
+RETURN type(r) as type, count(*) as count
+ORDER BY count DESC
+"""
+
 
 def wrap_with_unwind(query: str) -> str:
     return f"UNWIND $batch AS row\n{query}"
