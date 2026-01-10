@@ -306,6 +306,12 @@ TRIE_QN_KEY = "__qn__"
 TRIE_INTERNAL_PREFIX = "__"
 
 
+class UniqueKeyType(StrEnum):
+    NAME = "name"
+    PATH = "path"
+    QUALIFIED_NAME = "qualified_name"
+
+
 class NodeLabel(StrEnum):
     PROJECT = "Project"
     PACKAGE = "Package"
@@ -322,6 +328,32 @@ class NodeLabel(StrEnum):
     MODULE_INTERFACE = "ModuleInterface"
     MODULE_IMPLEMENTATION = "ModuleImplementation"
     EXTERNAL_PACKAGE = "ExternalPackage"
+
+
+_NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
+    NodeLabel.PROJECT: UniqueKeyType.NAME,
+    NodeLabel.PACKAGE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.FOLDER: UniqueKeyType.PATH,
+    NodeLabel.FILE: UniqueKeyType.PATH,
+    NodeLabel.MODULE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.CLASS: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.FUNCTION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.METHOD: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.INTERFACE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ENUM: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.TYPE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.UNION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.MODULE_INTERFACE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
+}
+
+_missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
+if _missing_keys:
+    raise RuntimeError(
+        f"NodeLabel(s) missing from _NODE_LABEL_UNIQUE_KEYS: {_missing_keys}. "
+        "Every NodeLabel MUST have a unique key defined."
+    )
 
 
 class RelationshipType(StrEnum):
@@ -915,15 +947,7 @@ UNIXCODER_MAX_CONTEXT = 1024
 REL_TYPE_CALLS = "CALLS"
 
 NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
-    "Project": "name",
-    "Package": "qualified_name",
-    "Folder": "path",
-    "Module": "qualified_name",
-    "Class": "qualified_name",
-    "Function": "qualified_name",
-    "Method": "qualified_name",
-    "File": "path",
-    "ExternalPackage": "name",
+    label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
 }
 
 # (H) Cypher response cleaning
