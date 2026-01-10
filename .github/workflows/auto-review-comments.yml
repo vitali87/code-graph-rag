@@ -1,7 +1,7 @@
 name: Auto Review Comments
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize]
 
 jobs:
@@ -30,36 +30,75 @@ jobs:
                 }
               }
             `;
-            const result = await github.graphql(query, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              number: context.payload.pull_request.number
-            });
-            const threads = result.repository.pullRequest.reviewThreads.nodes;
-            const unresolvedCount = threads.filter(t => !t.isResolved).length;
-            console.log(`Found ${threads.length} review threads, ${unresolvedCount} unresolved`);
-            core.setOutput('has_unresolved', unresolvedCount > 0);
+            try {
+              const result = await github.graphql(query, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: context.payload.pull_request.number
+              });
+              const threads = result.repository.pullRequest.reviewThreads.nodes;
+              const unresolvedCount = threads.filter(t => !t.isResolved).length;
+              console.log(`Found ${threads.length} review threads, ${unresolvedCount} unresolved`);
+              core.setOutput('has_unresolved', unresolvedCount > 0);
+            } catch (error) {
+              console.error(`Failed to check review threads: ${error.message}`);
+              core.setOutput('has_unresolved', true);
+            }
+
+      - name: Check for existing review trigger comments
+        id: check-duplicates
+        if: github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                per_page: 100
+              });
+              const hasGemini = comments.data.some(c => c.body.trim() === '/gemini review');
+              const hasGreptile = comments.data.some(c => c.body.trim() === '@greptile');
+              console.log(`Existing comments - Gemini: ${hasGemini}, Greptile: ${hasGreptile}`);
+              core.setOutput('has_gemini', hasGemini);
+              core.setOutput('has_greptile', hasGreptile);
+            } catch (error) {
+              console.error(`Failed to check existing comments: ${error.message}`);
+              core.setOutput('has_gemini', false);
+              core.setOutput('has_greptile', false);
+            }
 
       - name: Post Gemini review comment
-        if: github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false'
+        if: (github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false') && steps.check-duplicates.outputs.has_gemini != 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: '/gemini review'
-            });
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: '/gemini review'
+              });
+              console.log('Posted /gemini review comment');
+            } catch (error) {
+              core.setFailed(`Failed to post Gemini comment: ${error.message}`);
+            }
 
       - name: Post Greptile comment
-        if: github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false'
+        if: (github.event.action == 'opened' || steps.check-threads.outputs.has_unresolved == 'false') && steps.check-duplicates.outputs.has_greptile != 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: '@greptile'
-            });
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: '@greptile'
+              });
+              console.log('Posted @greptile comment');
+            } catch (error) {
+              core.setFailed(`Failed to post Greptile comment: ${error.message}`);
+            }
