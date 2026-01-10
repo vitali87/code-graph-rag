@@ -16,34 +16,34 @@ from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 load_dotenv()
 
-# API key configuration mapping
 API_KEY_INFO: dict[str, dict[str, str]] = {
-       "openai": {
+    "openai": {
         "env_var": "OPENAI_API_KEY",
         "url": "https://platform.openai.com/api-keys",
-        "name": "OpenAI"
+        "name": "OpenAI",
     },
     "anthropic": {
         "env_var": "ANTHROPIC_API_KEY",
         "url": "https://console.anthropic.com/settings/keys",
-        "name": "Anthropic"
+        "name": "Anthropic",
     },
     "google": {
         "env_var": "GOOGLE_API_KEY",
         "url": "https://console.cloud.google.com/apis/credentials",
-        "name": "Google AI"
+        "name": "Google AI",
     },
     "azure": {
         "env_var": "AZURE_API_KEY",
         "url": "https://portal.azure.com/",
-        "name": "Azure OpenAI"
+        "name": "Azure OpenAI",
     },
     "cohere": {
         "env_var": "COHERE_API_KEY",
         "url": "https://dashboard.cohere.com/api-keys",
-        "name": "Cohere"
-    }
+        "name": "Cohere",
+    },
 }
+
 
 def format_missing_api_key_errors(provider: str, role: str = "model") -> str:
     provider_lower = provider.lower()
@@ -102,6 +102,13 @@ class ModelConfig:
         del result[cs.FIELD_PROVIDER]
         del result[cs.FIELD_MODEL_ID]
         return ModelConfigKwargs(**result)
+
+    def validate_api_key(self, role: str = "model") -> None:
+        if self.provider.lower() in [cs.Provider.OLLAMA, "local", "vllm"]:
+            return
+        if not self.api_key or self.api_key.strip() == "":
+            error_msg = format_missing_api_key_errors(self.provider, role)
+            raise ValueError(error_msg)
 
 
 class AppConfig(BaseSettings):
@@ -259,6 +266,12 @@ class AppConfig(BaseSettings):
 
     def _get_default_cypher_config(self) -> ModelConfig:
         return self._get_default_config(cs.ModelRole.CYPHER)
+
+    def validate_model_config(self, config: ModelConfig, role: str) -> None:
+        try:
+            config.validate_api_key(role)
+        except ValueError:
+            raise
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:
