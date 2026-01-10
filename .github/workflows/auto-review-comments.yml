@@ -11,6 +11,8 @@ jobs:
     permissions:
       pull-requests: write
     steps:
+      # (H) Checks ALL unresolved threads (human + bot) to ensure reviews only
+      # trigger after the author has addressed all feedback from any reviewer.
       - name: Check for unresolved review threads
         id: check-threads
         if: github.event.action == 'synchronize'
