@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Unpack
+from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -15,6 +15,83 @@ from . import logs
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 load_dotenv()
+
+
+class ApiKeyInfoEntry(TypedDict):
+    env_var: str
+    url: str
+    name: str
+
+
+API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
+    "openai": {
+        "env_var": "OPENAI_API_KEY",
+        "url": "https://platform.openai.com/api-keys",
+        "name": "OpenAI",
+    },
+    "anthropic": {
+        "env_var": "ANTHROPIC_API_KEY",
+        "url": "https://console.anthropic.com/settings/keys",
+        "name": "Anthropic",
+    },
+    "google": {
+        "env_var": "GOOGLE_API_KEY",
+        "url": "https://console.cloud.google.com/apis/credentials",
+        "name": "Google AI",
+    },
+    "azure": {
+        "env_var": "AZURE_API_KEY",
+        "url": "https://portal.azure.com/",
+        "name": "Azure OpenAI",
+    },
+    "cohere": {
+        "env_var": "COHERE_API_KEY",
+        "url": "https://dashboard.cohere.com/api-keys",
+        "name": "Cohere",
+    },
+}
+
+
+def format_missing_api_key_errors(
+    provider: str, role: cs.ModelRole | str = "model"
+) -> str:
+    provider_lower = provider.lower()
+
+    if provider_lower in API_KEY_INFO:
+        info = API_KEY_INFO[provider_lower]
+        env_var = info["env_var"]
+        url = info["url"]
+        name = info["name"]
+    else:
+        env_var = f"{provider.upper()}_API_KEY"
+        url = f"your {provider} provider's website"
+        name = provider.capitalize()
+
+    role_msg = f" for {role}" if role != "model" else ""
+
+    error_msg = f"""
+─── API Key Missing ───────────────────────────────────────────────
+
+  Error: {env_var} environment variable is not set.
+         This is required to use {name}{role_msg}.
+
+  To fix this:
+
+  1. Get your API key from:
+     {url}
+
+  2. Set it in your environment:
+     export {env_var}='your-key-here'
+
+     Or add it to your .env file in the project root:
+     {env_var}=your-key-here
+
+  3. Alternatively, you can use a local model with Ollama:
+     (No API key required)
+
+───────────────────────────────────────────────────────────────────
+""".strip()  # noqa: W293
+    return error_msg
 
 
 @dataclass
@@ -34,6 +111,18 @@ class ModelConfig:
         del result[cs.FIELD_PROVIDER]
         del result[cs.FIELD_MODEL_ID]
         return ModelConfigKwargs(**result)
+
+    def validate_api_key(self, role: str = "model") -> None:
+        local_providers = {cs.Provider.OLLAMA, "local", "vllm"}
+        if self.provider.lower() in local_providers:
+            return
+        if (
+            not self.api_key
+            or self.api_key.strip() == ""
+            or self.api_key == cs.DEFAULT_API_KEY
+        ):
+            error_msg = format_missing_api_key_errors(self.provider, role)
+            raise ValueError(error_msg)
 
 
 class AppConfig(BaseSettings):
@@ -192,27 +281,32 @@ class AppConfig(BaseSettings):
     def _get_default_cypher_config(self) -> ModelConfig:
         return self._get_default_config(cs.ModelRole.CYPHER)
 
+    def validate_model_config(self, config: ModelConfig, role: str) -> None:
+        config.validate_api_key(role)
+
     @property
     def active_orchestrator_config(self) -> ModelConfig:
-        return self._active_orchestrator or self._get_default_orchestrator_config()
+        config = self._active_orchestrator or self._get_default_orchestrator_config()
+        self.validate_model_config(config, cs.ModelRole.ORCHESTRATOR)
+        return config
 
     @property
     def active_cypher_config(self) -> ModelConfig:
-        return self._active_cypher or self._get_default_cypher_config()
+        config = self._active_cypher or self._get_default_cypher_config()
+        self.validate_model_config(config, cs.ModelRole.CYPHER)
+        return config
 
     def set_orchestrator(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
-        self._active_orchestrator = ModelConfig(
-            provider=provider.lower(), model_id=model, **kwargs
-        )
+        config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
+        self._active_orchestrator = config
 
     def set_cypher(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
-        self._active_cypher = ModelConfig(
-            provider=provider.lower(), model_id=model, **kwargs
-        )
+        config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
+        self._active_cypher = config
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
         if ":" not in model_string:
