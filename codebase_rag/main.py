@@ -9,6 +9,7 @@ import sys
 import uuid
 from collections import deque
 from collections.abc import Coroutine
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,9 +28,10 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import load_cgrignore_patterns, settings
+from .config import ModelConfig, load_cgrignore_patterns, settings
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
+from .providers.base import get_provider_from_config
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
@@ -64,8 +66,7 @@ if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage
-
-    from .config import ModelConfig
+    from pydantic_ai.models import Model
 
 
 def style(
@@ -389,6 +390,7 @@ async def _run_agent_response_loop(
     question_with_context: str,
     config: AgentLoopUI,
     tool_names: ConfirmationToolNames,
+    model_override: Model | None = None,
 ) -> None:
     deferred_results: DeferredToolResults | None = None
 
@@ -399,6 +401,7 @@ async def _run_agent_response_loop(
                     question_with_context,
                     message_history=message_history,
                     deferred_tool_results=deferred_results,
+                    model=model_override,
                 ),
             )
 
@@ -529,6 +532,75 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     return stripped
 
 
+def _create_model_from_string(
+    model_string: str, current_override_config: ModelConfig | None = None
+) -> tuple[Model, str, ModelConfig]:
+    base_config = current_override_config or settings.active_orchestrator_config
+
+    if cs.CHAR_COLON not in model_string:
+        raise ValueError(ex.MODEL_FORMAT_INVALID)
+    provider_name, model_id = (
+        p.strip() for p in settings.parse_model_string(model_string)
+    )
+    if not model_id:
+        raise ValueError(ex.MODEL_ID_EMPTY)
+    if not provider_name:
+        raise ValueError(ex.PROVIDER_EMPTY)
+
+    if provider_name == base_config.provider:
+        config = replace(base_config, model_id=model_id)
+    elif provider_name == cs.Provider.OLLAMA:
+        config = ModelConfig(
+            provider=provider_name,
+            model_id=model_id,
+            endpoint=str(settings.LOCAL_MODEL_ENDPOINT),
+            api_key=cs.DEFAULT_API_KEY,
+        )
+    else:
+        config = ModelConfig(provider=provider_name, model_id=model_id)
+
+    canonical_string = f"{provider_name}{cs.CHAR_COLON}{model_id}"
+    provider = get_provider_from_config(config)
+    return provider.create_model(model_id), canonical_string, config
+
+
+def _handle_model_command(
+    command: str,
+    current_model: Model | None,
+    current_model_string: str | None,
+    current_config: ModelConfig | None,
+) -> tuple[Model | None, str | None, ModelConfig | None]:
+    parts = command.strip().split(maxsplit=1)
+    arg = parts[1].strip() if len(parts) > 1 else None
+
+    if not arg:
+        if current_model_string:
+            display_model = current_model_string
+        else:
+            config = settings.active_orchestrator_config
+            display_model = f"{config.provider}{cs.CHAR_COLON}{config.model_id}"
+        app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
+        return current_model, current_model_string, current_config
+
+    if arg.lower() == cs.HELP_ARG:
+        app_context.console.print(cs.UI_MODEL_USAGE)
+        return current_model, current_model_string, current_config
+
+    try:
+        new_model, canonical_model_string, new_config = _create_model_from_string(
+            arg, current_config
+        )
+        logger.info(ls.MODEL_SWITCHED.format(model=canonical_model_string))
+        app_context.console.print(
+            cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
+        )
+        return new_model, canonical_model_string, new_config
+    except (ValueError, AssertionError) as e:
+        logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
+        app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
+        return current_model, current_model_string, current_config
+
+
 async def _run_interactive_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -540,15 +612,39 @@ async def _run_interactive_loop(
 ) -> None:
     init_session_log(project_root)
     question = initial_question or ""
+    model_override: Model | None = None
+    model_override_string: str | None = None
+    model_override_config: ModelConfig | None = None
 
     while True:
         try:
             if not initial_question or question != initial_question:
                 question = await asyncio.to_thread(get_multiline_input, input_prompt)
 
-            if question.lower() in cs.EXIT_COMMANDS:
+            stripped_question = question.strip()
+            stripped_lower = stripped_question.lower()
+
+            if stripped_lower in cs.EXIT_COMMANDS:
                 break
-            if not question.strip():
+
+            if not stripped_question:
+                initial_question = None
+                continue
+
+            command_parts = stripped_lower.split(maxsplit=1)
+            if command_parts[0] == cs.MODEL_COMMAND_PREFIX:
+                model_override, model_override_string, model_override_config = (
+                    _handle_model_command(
+                        stripped_question,
+                        model_override,
+                        model_override_string,
+                        model_override_config,
+                    )
+                )
+                initial_question = None
+                continue
+            if command_parts[0] == cs.HELP_COMMAND:
+                app_context.console.print(cs.UI_HELP_COMMANDS)
                 initial_question = None
                 continue
 
@@ -565,7 +661,12 @@ async def _run_interactive_loop(
             )
 
             await _run_agent_response_loop(
-                rag_agent, message_history, question_with_context, config, tool_names
+                rag_agent,
+                message_history,
+                question_with_context,
+                config,
+                tool_names,
+                model_override,
             )
 
             initial_question = None
@@ -608,7 +709,7 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
 
     if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
         kwargs[cs.FIELD_ENDPOINT] = str(settings.LOCAL_MODEL_ENDPOINT)
-        kwargs[cs.FIELD_API_KEY] = cs.Provider.OLLAMA
+        kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
 
     set_method(provider, model, **kwargs)
 

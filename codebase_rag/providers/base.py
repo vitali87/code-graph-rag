@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin
 
@@ -48,7 +49,7 @@ class GoogleProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key
+        self.api_key = api_key or os.environ.get(cs.ENV_GOOGLE_API_KEY)
         self.provider_type = provider_type
         self.project_id = project_id
         self.region = region
@@ -104,7 +105,7 @@ class OpenAIProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key
+        self.api_key = api_key or os.environ.get(cs.ENV_OPENAI_API_KEY)
         self.endpoint = endpoint
 
     @property
