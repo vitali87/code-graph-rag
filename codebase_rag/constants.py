@@ -162,6 +162,7 @@ KEY_NODE_LABELS = "node_labels"
 KEY_RELATIONSHIP_TYPES = "relationship_types"
 KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
+KEY_NAME = "name"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
@@ -306,6 +307,12 @@ TRIE_QN_KEY = "__qn__"
 TRIE_INTERNAL_PREFIX = "__"
 
 
+class UniqueKeyType(StrEnum):
+    NAME = KEY_NAME
+    PATH = KEY_PATH
+    QUALIFIED_NAME = KEY_QUALIFIED_NAME
+
+
 class NodeLabel(StrEnum):
     PROJECT = "Project"
     PACKAGE = "Package"
@@ -322,6 +329,32 @@ class NodeLabel(StrEnum):
     MODULE_INTERFACE = "ModuleInterface"
     MODULE_IMPLEMENTATION = "ModuleImplementation"
     EXTERNAL_PACKAGE = "ExternalPackage"
+
+
+_NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
+    NodeLabel.PROJECT: UniqueKeyType.NAME,
+    NodeLabel.PACKAGE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.FOLDER: UniqueKeyType.PATH,
+    NodeLabel.FILE: UniqueKeyType.PATH,
+    NodeLabel.MODULE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.CLASS: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.FUNCTION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.METHOD: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.INTERFACE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ENUM: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.TYPE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.UNION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.MODULE_INTERFACE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
+}
+
+_missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
+if _missing_keys:
+    raise RuntimeError(
+        f"NodeLabel(s) missing from _NODE_LABEL_UNIQUE_KEYS: {_missing_keys}. "
+        "Every NodeLabel MUST have a unique key defined."
+    )
 
 
 class RelationshipType(StrEnum):
@@ -350,7 +383,6 @@ EXCLUDED_DEPENDENCY_NAMES = frozenset({"python", "php"})
 BYTES_PER_MB = 1024 * 1024
 
 # (H) Property keys
-KEY_NAME = "name"
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_DOCSTRING = "docstring"
@@ -915,15 +947,7 @@ UNIXCODER_MAX_CONTEXT = 1024
 REL_TYPE_CALLS = "CALLS"
 
 NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
-    "Project": "name",
-    "Package": "qualified_name",
-    "Folder": "path",
-    "Module": "qualified_name",
-    "Class": "qualified_name",
-    "Function": "qualified_name",
-    "Method": "qualified_name",
-    "File": "path",
-    "ExternalPackage": "name",
+    label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
 }
 
 # (H) Cypher response cleaning
