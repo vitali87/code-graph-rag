@@ -162,6 +162,7 @@ KEY_NODE_LABELS = "node_labels"
 KEY_RELATIONSHIP_TYPES = "relationship_types"
 KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
+KEY_NAME = "name"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
@@ -307,9 +308,9 @@ TRIE_INTERNAL_PREFIX = "__"
 
 
 class UniqueKeyType(StrEnum):
-    NAME = "name"
-    PATH = "path"
-    QUALIFIED_NAME = "qualified_name"
+    NAME = KEY_NAME
+    PATH = KEY_PATH
+    QUALIFIED_NAME = KEY_QUALIFIED_NAME
 
 
 class NodeLabel(StrEnum):
@@ -382,7 +383,6 @@ EXCLUDED_DEPENDENCY_NAMES = frozenset({"python", "php"})
 BYTES_PER_MB = 1024 * 1024
 
 # (H) Property keys
-KEY_NAME = "name"
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_DOCSTRING = "docstring"
