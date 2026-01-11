@@ -104,24 +104,9 @@ class ImportProcessor:
 
             if self.ingestor:
                 for local_name, full_name in self.import_mapping[module_qn].items():
-                    is_internal = full_name.startswith(self.project_name)
-
-                    if is_internal and language == cs.SupportedLanguage.JAVA:
-                        module_path = full_name
-                    else:
-                        module_path = self.stdlib_extractor.extract_module_path(
-                            full_name, language
-                        )
-                        if not module_path.startswith(self.project_name):
-                            self.ingestor.ensure_node_batch(
-                                cs.NodeLabel.MODULE,
-                                {
-                                    cs.KEY_NAME: local_name,
-                                    cs.KEY_QUALIFIED_NAME: module_path,
-                                    cs.KEY_PATH: full_name,
-                                    cs.KEY_IS_EXTERNAL: True,
-                                },
-                            )
+                    module_path = self._resolve_module_path(
+                        full_name, module_qn, language, local_name
+                    )
 
                     self.ingestor.ensure_relationship_batch(
                         (
@@ -207,6 +192,90 @@ class ImportProcessor:
         if self._is_local_java_import(import_path):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{import_path}"
         return import_path
+
+    def _is_local_js_import(self, full_name: str) -> bool:
+        return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
+
+    def _resolve_js_internal_module(self, full_name: str) -> str:
+        if full_name.endswith(cs.IMPORT_DEFAULT_SUFFIX):
+            return full_name[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
+
+        parts = full_name.split(cs.SEPARATOR_DOT)
+        if len(parts) <= 2:
+            return full_name
+
+        potential_module = cs.SEPARATOR_DOT.join(parts[:-1])
+        relative_path = cs.SEPARATOR_SLASH.join(parts[1:-1])
+
+        for ext in (cs.EXT_JS, cs.EXT_TS, cs.EXT_JSX, cs.EXT_TSX):
+            if (self.repo_path / f"{relative_path}{ext}").is_file():
+                return potential_module
+
+        return full_name
+
+    def _is_local_rust_import(self, import_path: str) -> bool:
+        return import_path.startswith(cs.RUST_CRATE_PREFIX)
+
+    def _resolve_rust_import_path(
+        self, import_path: str, module_qn: str, local_name: str | None = None
+    ) -> str:
+        if self._is_local_rust_import(import_path):
+            path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
+            module_parts = module_qn.split(cs.SEPARATOR_DOT)
+            if len(module_parts) >= 2:
+                base_path = cs.SEPARATOR_DOT.join(module_parts[:-1])
+            else:
+                base_path = module_parts[0]
+            entity_parts = path_without_crate.split(cs.RUST_PATH_SEPARATOR)
+            module_part = entity_parts[0] if entity_parts else path_without_crate
+            return f"{base_path}{cs.SEPARATOR_DOT}{module_part}"
+
+        parts = import_path.split(cs.RUST_PATH_SEPARATOR)
+        module_path = (
+            cs.RUST_PATH_SEPARATOR.join(parts[:-1]) if len(parts) > 1 else parts[0]
+        )
+
+        if self.ingestor and local_name:
+            self.ingestor.ensure_node_batch(
+                cs.NodeLabel.MODULE,
+                {
+                    cs.KEY_NAME: local_name,
+                    cs.KEY_QUALIFIED_NAME: module_path,
+                    cs.KEY_PATH: import_path,
+                    cs.KEY_IS_EXTERNAL: True,
+                },
+            )
+        return module_path
+
+    def _resolve_module_path(
+        self,
+        full_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        local_name: str,
+    ) -> str:
+        match language:
+            case cs.SupportedLanguage.JAVA:
+                if full_name.startswith(self.project_name):
+                    return full_name
+            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
+                if self._is_local_js_import(full_name):
+                    return self._resolve_js_internal_module(full_name)
+            case cs.SupportedLanguage.RUST:
+                return self._resolve_rust_import_path(full_name, module_qn, local_name)
+
+        module_path = self.stdlib_extractor.extract_module_path(full_name, language)
+        if not module_path.startswith(self.project_name) and self.ingestor:
+            self.ingestor.ensure_node_batch(
+                cs.NodeLabel.MODULE,
+                {
+                    cs.KEY_NAME: local_name,
+                    cs.KEY_QUALIFIED_NAME: module_path,
+                    cs.KEY_PATH: full_name,
+                    cs.KEY_IS_EXTERNAL: True,
+                },
+            )
+        return module_path
 
     def _handle_python_import_from_statement(
         self, import_node: Node, module_qn: str

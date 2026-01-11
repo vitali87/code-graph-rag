@@ -81,6 +81,83 @@ def main():
     os.getcwd()
 """
 
+JS_UTILS_CODE = """\
+export function capitalize(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+"""
+
+JS_MAIN_CODE = """\
+import { capitalize } from './utils';
+import lodash from 'lodash';
+
+export function run() {
+    const name = capitalize('hello');
+    return lodash.trim(name);
+}
+"""
+
+TS_UTILS_CODE = """\
+export function helper(): number {
+    return 42;
+}
+"""
+
+TS_MAIN_CODE = """\
+import { helper } from './utils';
+import * as fs from 'fs';
+
+export function main(): void {
+    helper();
+    fs.readFileSync('test.txt');
+}
+"""
+
+RUST_LIB_CODE = """\
+pub mod utils;
+
+pub fn lib_function() -> i32 {
+    42
+}
+"""
+
+RUST_UTILS_CODE = """\
+pub fn helper() -> i32 {
+    100
+}
+"""
+
+RUST_MAIN_CODE = """\
+use std::collections::HashMap;
+use crate::utils::helper;
+
+fn main() {
+    let map: HashMap<String, i32> = HashMap::new();
+    helper();
+}
+"""
+
+GO_UTILS_CODE = """\
+package utils
+
+func Helper() int {
+    return 42
+}
+"""
+
+GO_MAIN_CODE = """\
+package main
+
+import (
+    "fmt"
+    "myproject/utils"
+)
+
+func main() {
+    fmt.Println(utils.Helper())
+}
+"""
+
 
 @pytest.fixture
 def java_imports_project(tmp_path: Path) -> Path:
@@ -101,6 +178,44 @@ def python_imports_project(tmp_path: Path) -> Path:
     project.mkdir()
     (project / "utils.py").write_text(PYTHON_UTILS_CODE, encoding="utf-8")
     (project / "main.py").write_text(PYTHON_MAIN_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def js_imports_project(tmp_path: Path) -> Path:
+    project = tmp_path / "js_imports_project"
+    project.mkdir()
+    (project / "utils.js").write_text(JS_UTILS_CODE, encoding="utf-8")
+    (project / "main.js").write_text(JS_MAIN_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def ts_imports_project(tmp_path: Path) -> Path:
+    project = tmp_path / "ts_imports_project"
+    project.mkdir()
+    (project / "utils.ts").write_text(TS_UTILS_CODE, encoding="utf-8")
+    (project / "main.ts").write_text(TS_MAIN_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def rust_imports_project(tmp_path: Path) -> Path:
+    project = tmp_path / "rust_imports_project"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "lib.rs").write_text(RUST_LIB_CODE, encoding="utf-8")
+    (project / "src" / "utils.rs").write_text(RUST_UTILS_CODE, encoding="utf-8")
+    (project / "src" / "main.rs").write_text(RUST_MAIN_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def go_imports_project(tmp_path: Path) -> Path:
+    project = tmp_path / "go_imports_project"
+    project.mkdir()
+    (project / "utils").mkdir()
+    (project / "utils" / "utils.go").write_text(GO_UTILS_CODE, encoding="utf-8")
+    (project / "main.go").write_text(GO_MAIN_CODE, encoding="utf-8")
     return project
 
 
@@ -227,4 +342,176 @@ class TestPythonImportsRelationships:
         assert main_imports_os, (
             f"Expected {main_module} -> os relationship.\n"
             f"Found relationships: {import_pairs}"
+        )
+
+
+class TestJsImportsRelationships:
+    def test_internal_import_creates_relationship(
+        self, memgraph_ingestor: MemgraphIngestor, js_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, js_imports_project)
+
+        imports = get_imports_relationships(memgraph_ingestor)
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        project_name = js_imports_project.name
+        main_module = f"{project_name}.main"
+        utils_module = f"{project_name}.utils"
+
+        assert main_module in modules, f"Main module not found. Modules: {modules}"
+        assert utils_module in modules, f"Utils module not found. Modules: {modules}"
+
+        import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
+        main_imports_utils = any(
+            from_qn == main_module and to_qn == utils_module
+            for from_qn, to_qn in import_pairs
+        )
+
+        assert main_imports_utils, (
+            f"Expected {main_module} -> {utils_module} relationship.\n"
+            f"Found relationships: {import_pairs}\n"
+            f"Available modules: {modules}"
+        )
+
+    def test_external_import_creates_module_node(
+        self, memgraph_ingestor: MemgraphIngestor, js_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, js_imports_project)
+
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        external_modules = ["lodash", "lodash.default"]
+        found_external = any(ext in modules for ext in external_modules)
+
+        assert found_external, (
+            f"Expected external module node for lodash.\nAvailable modules: {modules}"
+        )
+
+
+class TestTsImportsRelationships:
+    def test_internal_import_creates_relationship(
+        self, memgraph_ingestor: MemgraphIngestor, ts_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, ts_imports_project)
+
+        imports = get_imports_relationships(memgraph_ingestor)
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        project_name = ts_imports_project.name
+        main_module = f"{project_name}.main"
+        utils_module = f"{project_name}.utils"
+
+        assert main_module in modules, f"Main module not found. Modules: {modules}"
+        assert utils_module in modules, f"Utils module not found. Modules: {modules}"
+
+        import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
+        main_imports_utils = any(
+            from_qn == main_module and to_qn == utils_module
+            for from_qn, to_qn in import_pairs
+        )
+
+        assert main_imports_utils, (
+            f"Expected {main_module} -> {utils_module} relationship.\n"
+            f"Found relationships: {import_pairs}\n"
+            f"Available modules: {modules}"
+        )
+
+    def test_external_import_creates_module_node(
+        self, memgraph_ingestor: MemgraphIngestor, ts_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, ts_imports_project)
+
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        external_modules = ["fs"]
+        found_external = any(ext in modules for ext in external_modules)
+
+        assert found_external, (
+            f"Expected external module node for fs.\nAvailable modules: {modules}"
+        )
+
+
+class TestRustImportsRelationships:
+    def test_internal_import_creates_relationship(
+        self, memgraph_ingestor: MemgraphIngestor, rust_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, rust_imports_project)
+
+        imports = get_imports_relationships(memgraph_ingestor)
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        project_name = rust_imports_project.name
+        main_module = f"{project_name}.src.main"
+        utils_module = f"{project_name}.src.utils"
+
+        assert main_module in modules, f"Main module not found. Modules: {modules}"
+        assert utils_module in modules, f"Utils module not found. Modules: {modules}"
+
+        import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
+        main_imports_utils = any(
+            from_qn == main_module and (to_qn == utils_module or utils_module in to_qn)
+            for from_qn, to_qn in import_pairs
+        )
+
+        assert main_imports_utils, (
+            f"Expected {main_module} -> {utils_module} relationship.\n"
+            f"Found relationships: {import_pairs}\n"
+            f"Available modules: {modules}"
+        )
+
+    def test_external_import_creates_module_node(
+        self, memgraph_ingestor: MemgraphIngestor, rust_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, rust_imports_project)
+
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        external_modules = ["std", "std::collections", "std::collections::HashMap"]
+        found_external = any(ext in modules for ext in external_modules)
+
+        assert found_external, (
+            f"Expected external module node for std.\nAvailable modules: {modules}"
+        )
+
+
+class TestGoImportsRelationships:
+    def test_internal_import_creates_relationship(
+        self, memgraph_ingestor: MemgraphIngestor, go_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, go_imports_project)
+
+        imports = get_imports_relationships(memgraph_ingestor)
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        project_name = go_imports_project.name
+        main_module = f"{project_name}.main"
+        utils_module = f"{project_name}.utils.utils"
+
+        assert main_module in modules, f"Main module not found. Modules: {modules}"
+        assert utils_module in modules, f"Utils module not found. Modules: {modules}"
+
+        import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
+        main_imports_utils = any(
+            from_qn == main_module and ("utils" in to_qn or "myproject" in to_qn)
+            for from_qn, to_qn in import_pairs
+        )
+
+        assert main_imports_utils, (
+            f"Expected {main_module} -> utils relationship.\n"
+            f"Found relationships: {import_pairs}\n"
+            f"Available modules: {modules}"
+        )
+
+    def test_external_import_creates_module_node(
+        self, memgraph_ingestor: MemgraphIngestor, go_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, go_imports_project)
+
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        external_modules = ["fmt"]
+        found_external = any(ext in modules for ext in external_modules)
+
+        assert found_external, (
+            f"Expected external module node for fmt.\nAvailable modules: {modules}"
         )
