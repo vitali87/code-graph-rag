@@ -104,9 +104,24 @@ class ImportProcessor:
 
             if self.ingestor:
                 for local_name, full_name in self.import_mapping[module_qn].items():
-                    module_path = self.stdlib_extractor.extract_module_path(
-                        full_name, language
-                    )
+                    is_internal = full_name.startswith(self.project_name)
+
+                    if is_internal and language == cs.SupportedLanguage.JAVA:
+                        module_path = full_name
+                    else:
+                        module_path = self.stdlib_extractor.extract_module_path(
+                            full_name, language
+                        )
+                        if not module_path.startswith(self.project_name):
+                            self.ingestor.ensure_node_batch(
+                                cs.NodeLabel.MODULE,
+                                {
+                                    cs.KEY_NAME: local_name,
+                                    cs.KEY_QUALIFIED_NAME: module_path,
+                                    cs.KEY_PATH: full_name,
+                                    cs.KEY_IS_EXTERNAL: True,
+                                },
+                            )
 
                     self.ingestor.ensure_relationship_batch(
                         (
@@ -183,6 +198,15 @@ class ImportProcessor:
         return (self.repo_path / module_name).is_dir() or (
             self.repo_path / f"{module_name}{cs.EXT_PY}"
         ).is_file()
+
+    def _is_local_java_import(self, import_path: str) -> bool:
+        top_level = import_path.split(cs.SEPARATOR_DOT)[0]
+        return (self.repo_path / top_level).is_dir()
+
+    def _resolve_java_import_path(self, import_path: str) -> str:
+        if self._is_local_java_import(import_path):
+            return f"{self.project_name}{cs.SEPARATOR_DOT}{import_path}"
+        return import_path
 
     def _handle_python_import_from_statement(
         self, import_node: Node, module_qn: str
@@ -480,22 +504,24 @@ class ImportProcessor:
                 if not imported_path:
                     continue
 
+                resolved_path = self._resolve_java_import_path(imported_path)
+
                 if is_wildcard:
-                    logger.debug(ls.IMP_JAVA_WILDCARD.format(path=imported_path))
-                    self.import_mapping[module_qn][f"*{imported_path}"] = imported_path
+                    logger.debug(ls.IMP_JAVA_WILDCARD.format(path=resolved_path))
+                    self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
                 elif parts := imported_path.split(cs.SEPARATOR_DOT):
                     imported_name = parts[-1]
-                    self.import_mapping[module_qn][imported_name] = imported_path
+                    self.import_mapping[module_qn][imported_name] = resolved_path
                     if is_static:
                         logger.debug(
                             ls.IMP_JAVA_STATIC.format(
-                                name=imported_name, path=imported_path
+                                name=imported_name, path=resolved_path
                             )
                         )
                     else:
                         logger.debug(
                             ls.IMP_JAVA_IMPORT.format(
-                                name=imported_name, path=imported_path
+                                name=imported_name, path=resolved_path
                             )
                         )
 
