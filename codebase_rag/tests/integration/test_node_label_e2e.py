@@ -200,9 +200,36 @@ enum Status {
     Inactive
 };
 
+union DataUnion {
+    int intValue;
+    float floatValue;
+    char charValue;
+};
+
 void standaloneFunction() {
     MyCppClass obj;
     obj.getValue();
+}
+"""
+
+CPP_MODULE_INTERFACE_CODE = """\
+export module mymodule;
+
+export int add(int a, int b) {
+    return a + b;
+}
+
+export class ExportedClass {
+public:
+    int value;
+};
+"""
+
+CPP_MODULE_IMPL_CODE = """\
+module mymodule;
+
+int multiply(int a, int b) {
+    return a * b;
 }
 """
 
@@ -372,6 +399,22 @@ def cpp_project(tmp_path: Path) -> Path:
     project = tmp_path / "cpp_project"
     project.mkdir()
     (project / "example.cpp").write_text(CPP_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def cpp_module_interface_project(tmp_path: Path) -> Path:
+    project = tmp_path / "cpp_module_interface_project"
+    project.mkdir()
+    (project / "mymodule.cppm").write_text(CPP_MODULE_INTERFACE_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def cpp_module_impl_project(tmp_path: Path) -> Path:
+    project = tmp_path / "cpp_module_impl_project"
+    project.mkdir()
+    (project / "mymodule_impl.cpp").write_text(CPP_MODULE_IMPL_CODE, encoding="utf-8")
     return project
 
 
@@ -740,6 +783,46 @@ class TestCppNodeLabels:
         functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "standaloneFunction" in func_names
+
+    def test_cpp_creates_union_nodes(
+        self, memgraph_ingestor: MemgraphIngestor, cpp_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, cpp_project)
+
+        labels = get_node_labels(memgraph_ingestor)
+        assert NodeLabel.UNION.value in labels
+
+        unions = get_nodes_by_label(memgraph_ingestor, NodeLabel.UNION.value)
+        union_names = {n["name"] for n in unions}
+        assert "DataUnion" in union_names
+
+    def test_cpp_creates_module_interface_nodes(
+        self, memgraph_ingestor: MemgraphIngestor, cpp_module_interface_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, cpp_module_interface_project)
+
+        labels = get_node_labels(memgraph_ingestor)
+        assert NodeLabel.MODULE_INTERFACE.value in labels
+
+        modules = get_nodes_by_label(
+            memgraph_ingestor, NodeLabel.MODULE_INTERFACE.value
+        )
+        module_names = {n["name"] for n in modules}
+        assert "mymodule" in module_names
+
+    def test_cpp_creates_module_implementation_nodes(
+        self, memgraph_ingestor: MemgraphIngestor, cpp_module_impl_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, cpp_module_impl_project)
+
+        labels = get_node_labels(memgraph_ingestor)
+        assert NodeLabel.MODULE_IMPLEMENTATION.value in labels
+
+        modules = get_nodes_by_label(
+            memgraph_ingestor, NodeLabel.MODULE_IMPLEMENTATION.value
+        )
+        module_names = {n["name"] for n in modules}
+        assert "mymodule_impl" in module_names
 
 
 @pytest.mark.skip(reason=SKIP_CSHARP)
