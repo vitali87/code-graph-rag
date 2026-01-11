@@ -33,8 +33,11 @@ app = typer.Typer(
 
 def validate_models_early() -> None:
     try:
-        _ = settings.active_orchestrator_config
-        _ = settings.active_cypher_config
+        orchestrator_config = settings.active_orchestrator_config
+        orchestrator_config.validate_api_key(cs.ModelRole.ORCHESTRATOR)
+
+        cypher_config = settings.active_cypher_config
+        cypher_config.validate_api_key(cs.ModelRole.CYPHER)
     except ValueError as e:
         app_context.console.print(style(str(e), cs.Color.RED))
         raise typer.Exit(1) from None
@@ -343,8 +346,6 @@ def optimize(
 @app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
 def mcp_server() -> None:
     try:
-        validate_models_early()
-
         from codebase_rag.mcp import main as mcp_main
 
         asyncio.run(mcp_main())

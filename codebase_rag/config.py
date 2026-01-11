@@ -24,27 +24,27 @@ class ApiKeyInfoEntry(TypedDict):
 
 
 API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
-    "openai": {
+    cs.Provider.OPENAI: {
         "env_var": "OPENAI_API_KEY",
         "url": "https://platform.openai.com/api-keys",
         "name": "OpenAI",
     },
-    "anthropic": {
+    cs.Provider.ANTHROPIC: {
         "env_var": "ANTHROPIC_API_KEY",
         "url": "https://console.anthropic.com/settings/keys",
         "name": "Anthropic",
     },
-    "google": {
+    cs.Provider.GOOGLE: {
         "env_var": "GOOGLE_API_KEY",
         "url": "https://console.cloud.google.com/apis/credentials",
         "name": "Google AI",
     },
-    "azure": {
+    cs.Provider.AZURE: {
         "env_var": "AZURE_API_KEY",
         "url": "https://portal.azure.com/",
         "name": "Azure OpenAI",
     },
-    "cohere": {
+    cs.Provider.COHERE: {
         "env_var": "COHERE_API_KEY",
         "url": "https://dashboard.cohere.com/api-keys",
         "name": "Cohere",
@@ -53,7 +53,7 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
 
 
 def format_missing_api_key_errors(
-    provider: str, role: cs.ModelRole | str = "model"
+    provider: str, role: str = cs.DEFAULT_MODEL_ROLE
 ) -> str:
     provider_lower = provider.lower()
 
@@ -67,7 +67,7 @@ def format_missing_api_key_errors(
         url = f"your {provider} provider's website"
         name = provider.capitalize()
 
-    role_msg = f" for {role}" if role != "model" else ""
+    role_msg = f" for {role}" if role != cs.DEFAULT_MODEL_ROLE else ""
 
     error_msg = f"""
 ─── API Key Missing ───────────────────────────────────────────────
@@ -112,8 +112,8 @@ class ModelConfig:
         del result[cs.FIELD_MODEL_ID]
         return ModelConfigKwargs(**result)
 
-    def validate_api_key(self, role: str = "model") -> None:
-        local_providers = {cs.Provider.OLLAMA, "local", "vllm"}
+    def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
+        local_providers = {cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM}
         if self.provider.lower() in local_providers:
             return
         if (
@@ -281,20 +281,13 @@ class AppConfig(BaseSettings):
     def _get_default_cypher_config(self) -> ModelConfig:
         return self._get_default_config(cs.ModelRole.CYPHER)
 
-    def validate_model_config(self, config: ModelConfig, role: str) -> None:
-        config.validate_api_key(role)
-
     @property
     def active_orchestrator_config(self) -> ModelConfig:
-        config = self._active_orchestrator or self._get_default_orchestrator_config()
-        self.validate_model_config(config, cs.ModelRole.ORCHESTRATOR)
-        return config
+        return self._active_orchestrator or self._get_default_orchestrator_config()
 
     @property
     def active_cypher_config(self) -> ModelConfig:
-        config = self._active_cypher or self._get_default_cypher_config()
-        self.validate_model_config(config, cs.ModelRole.CYPHER)
-        return config
+        return self._active_cypher or self._get_default_cypher_config()
 
     def set_orchestrator(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
