@@ -158,6 +158,55 @@ func main() {
 }
 """
 
+CPP_UTILS_HEADER = """\
+#pragma once
+
+int helper();
+"""
+
+CPP_UTILS_SOURCE = """\
+#include "utils.h"
+
+int helper() {
+    return 42;
+}
+"""
+
+CPP_MAIN_CODE = """\
+#include <iostream>
+#include <vector>
+#include "utils.h"
+
+int main() {
+    std::vector<int> nums;
+    nums.push_back(helper());
+    std::cout << nums[0] << std::endl;
+    return 0;
+}
+"""
+
+LUA_UTILS_CODE = """\
+local M = {}
+
+function M.helper()
+    return 42
+end
+
+return M
+"""
+
+LUA_MAIN_CODE = """\
+local utils = require("utils")
+local json = require("json")
+
+local function main()
+    local val = utils.helper()
+    print(val)
+end
+
+main()
+"""
+
 
 @pytest.fixture
 def java_imports_project(tmp_path: Path) -> Path:
@@ -216,6 +265,25 @@ def go_imports_project(tmp_path: Path) -> Path:
     (project / "utils").mkdir()
     (project / "utils" / "utils.go").write_text(GO_UTILS_CODE, encoding="utf-8")
     (project / "main.go").write_text(GO_MAIN_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def cpp_imports_project(tmp_path: Path) -> Path:
+    project = tmp_path / "cpp_imports_project"
+    project.mkdir()
+    (project / "utils.h").write_text(CPP_UTILS_HEADER, encoding="utf-8")
+    (project / "utils.cpp").write_text(CPP_UTILS_SOURCE, encoding="utf-8")
+    (project / "main.cpp").write_text(CPP_MAIN_CODE, encoding="utf-8")
+    return project
+
+
+@pytest.fixture
+def lua_imports_project(tmp_path: Path) -> Path:
+    project = tmp_path / "lua_imports_project"
+    project.mkdir()
+    (project / "utils.lua").write_text(LUA_UTILS_CODE, encoding="utf-8")
+    (project / "main.lua").write_text(LUA_MAIN_CODE, encoding="utf-8")
     return project
 
 
@@ -514,4 +582,92 @@ class TestGoImportsRelationships:
 
         assert found_external, (
             f"Expected external module node for fmt.\nAvailable modules: {modules}"
+        )
+
+
+class TestCppImportsRelationships:
+    def test_internal_include_creates_relationship(
+        self, memgraph_ingestor: MemgraphIngestor, cpp_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, cpp_imports_project)
+
+        imports = get_imports_relationships(memgraph_ingestor)
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        project_name = cpp_imports_project.name
+        main_module = f"{project_name}.main"
+        utils_header = f"{project_name}.utils"
+
+        assert main_module in modules, f"Main module not found. Modules: {modules}"
+        assert utils_header in modules, f"Utils header not found. Modules: {modules}"
+
+        import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
+        main_includes_utils = any(
+            from_qn == main_module and to_qn == utils_header
+            for from_qn, to_qn in import_pairs
+        )
+
+        assert main_includes_utils, (
+            f"Expected {main_module} -> {utils_header} relationship.\n"
+            f"Found relationships: {import_pairs}\n"
+            f"Available modules: {modules}"
+        )
+
+    def test_external_include_creates_module_node(
+        self, memgraph_ingestor: MemgraphIngestor, cpp_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, cpp_imports_project)
+
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        external_modules = {"std.iostream", "std.vector"}
+        found_modules = {m for m in external_modules if m in modules}
+
+        assert found_modules == external_modules, (
+            f"Expected external module nodes for {external_modules}.\n"
+            f"Found: {found_modules}\n"
+            f"Missing: {external_modules - found_modules}\n"
+            f"Available modules: {modules}"
+        )
+
+
+class TestLuaImportsRelationships:
+    def test_internal_require_creates_relationship(
+        self, memgraph_ingestor: MemgraphIngestor, lua_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, lua_imports_project)
+
+        imports = get_imports_relationships(memgraph_ingestor)
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        project_name = lua_imports_project.name
+        main_module = f"{project_name}.main"
+        utils_module = f"{project_name}.utils"
+
+        assert main_module in modules, f"Main module not found. Modules: {modules}"
+        assert utils_module in modules, f"Utils module not found. Modules: {modules}"
+
+        import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
+        main_requires_utils = any(
+            from_qn == main_module and to_qn == utils_module
+            for from_qn, to_qn in import_pairs
+        )
+
+        assert main_requires_utils, (
+            f"Expected {main_module} -> {utils_module} relationship.\n"
+            f"Found relationships: {import_pairs}\n"
+            f"Available modules: {modules}"
+        )
+
+    def test_external_require_creates_module_node(
+        self, memgraph_ingestor: MemgraphIngestor, lua_imports_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, lua_imports_project)
+
+        modules = get_module_qualified_names(memgraph_ingestor)
+
+        external_module = "json"
+        assert external_module in modules, (
+            f"Expected external module node for '{external_module}'.\n"
+            f"Available modules: {modules}"
         )
