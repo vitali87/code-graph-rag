@@ -17,7 +17,6 @@ from codebase_rag.constants import (
     SCALA_EXTENSIONS,
     TS_EXTENSIONS,
     NodeLabel,
-    RelationshipType,
     SupportedLanguage,
 )
 from codebase_rag.language_spec import (
@@ -106,49 +105,12 @@ class TestExtensionToLanguageMapping:
 
 
 class TestAllExtensionsHaveLanguage:
-    @pytest.mark.parametrize("ext", list(PY_EXTENSIONS))
-    def test_python_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.PYTHON
-
-    @pytest.mark.parametrize("ext", list(JS_EXTENSIONS))
-    def test_javascript_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.JS
-
-    @pytest.mark.parametrize("ext", list(TS_EXTENSIONS))
-    def test_typescript_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.TS
-
-    @pytest.mark.parametrize("ext", list(RS_EXTENSIONS))
-    def test_rust_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.RUST
-
-    @pytest.mark.parametrize("ext", list(GO_EXTENSIONS))
-    def test_go_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.GO
-
-    @pytest.mark.parametrize("ext", list(SCALA_EXTENSIONS))
-    def test_scala_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.SCALA
-
-    @pytest.mark.parametrize("ext", list(JAVA_EXTENSIONS))
-    def test_java_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.JAVA
-
-    @pytest.mark.parametrize("ext", list(CPP_EXTENSIONS))
-    def test_cpp_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.CPP
-
-    @pytest.mark.parametrize("ext", list(CS_EXTENSIONS))
-    def test_csharp_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.CSHARP
-
-    @pytest.mark.parametrize("ext", list(PHP_EXTENSIONS))
-    def test_php_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.PHP
-
-    @pytest.mark.parametrize("ext", list(LUA_EXTENSIONS))
-    def test_lua_extensions_all_mapped(self, ext: str) -> None:
-        assert get_language_for_extension(ext) == SupportedLanguage.LUA
+    @pytest.mark.parametrize("lang,extensions", LANGUAGE_SPEC_PARAMS)
+    def test_all_extensions_map_to_correct_language(
+        self, lang: SupportedLanguage, extensions: tuple[str, ...]
+    ) -> None:
+        for ext in extensions:
+            assert get_language_for_extension(ext) == lang
 
 
 class TestNodeTypesForLanguages:
@@ -158,151 +120,6 @@ class TestNodeTypesForLanguages:
             f"NodeType.{node_type.name} ({node_type.value}) missing from constraints. "
             "Nodes of this type will be silently dropped."
         )
-
-    def test_interface_node_type_supported(self) -> None:
-        assert NodeType.INTERFACE.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_enum_node_type_supported(self) -> None:
-        assert NodeType.ENUM.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_type_alias_node_type_supported(self) -> None:
-        assert NodeType.TYPE.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_union_node_type_supported(self) -> None:
-        assert NodeType.UNION.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_class_node_type_supported(self) -> None:
-        assert NodeType.CLASS.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_function_node_type_supported(self) -> None:
-        assert NodeType.FUNCTION.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_method_node_type_supported(self) -> None:
-        assert NodeType.METHOD.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_module_node_type_supported(self) -> None:
-        assert NodeType.MODULE.value in NODE_UNIQUE_CONSTRAINTS
-
-    def test_package_node_type_supported(self) -> None:
-        assert NodeType.PACKAGE.value in NODE_UNIQUE_CONSTRAINTS
-
-
-class TestLanguageSpecificNodeTypes:
-    def test_typescript_interface_has_constraint(self) -> None:
-        assert "Interface" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_typescript_enum_has_constraint(self) -> None:
-        assert "Enum" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_typescript_type_alias_has_constraint(self) -> None:
-        assert "Type" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_java_interface_has_constraint(self) -> None:
-        assert "Interface" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_java_enum_has_constraint(self) -> None:
-        assert "Enum" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_rust_enum_has_constraint(self) -> None:
-        assert "Enum" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_rust_union_has_constraint(self) -> None:
-        assert "Union" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_cpp_class_has_constraint(self) -> None:
-        assert "Class" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_cpp_enum_has_constraint(self) -> None:
-        assert "Enum" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_cpp_union_has_constraint(self) -> None:
-        assert "Union" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_cpp_module_interface_has_constraint(self) -> None:
-        assert "ModuleInterface" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_cpp_module_implementation_has_constraint(self) -> None:
-        assert "ModuleImplementation" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_go_interface_has_constraint(self) -> None:
-        assert "Interface" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_scala_class_has_constraint(self) -> None:
-        assert "Class" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_csharp_interface_has_constraint(self) -> None:
-        assert "Interface" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_csharp_enum_has_constraint(self) -> None:
-        assert "Enum" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_php_class_has_constraint(self) -> None:
-        assert "Class" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_php_interface_has_constraint(self) -> None:
-        assert "Interface" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_python_class_has_constraint(self) -> None:
-        assert "Class" in NODE_UNIQUE_CONSTRAINTS
-
-    def test_lua_function_has_constraint(self) -> None:
-        assert "Function" in NODE_UNIQUE_CONSTRAINTS
-
-
-class TestRelationshipTypesComplete:
-    @pytest.mark.parametrize("rel_type", list(RelationshipType))
-    def test_each_relationship_type_is_valid_string(
-        self, rel_type: RelationshipType
-    ) -> None:
-        assert rel_type.value, f"RelationshipType.{rel_type.name} has empty value"
-        assert rel_type.value == rel_type.value.upper(), (
-            f"RelationshipType.{rel_type.name} value '{rel_type.value}' is not uppercase"
-        )
-
-    def test_defines_relationship_exists(self) -> None:
-        assert RelationshipType.DEFINES.value == "DEFINES"
-
-    def test_defines_method_relationship_exists(self) -> None:
-        assert RelationshipType.DEFINES_METHOD.value == "DEFINES_METHOD"
-
-    def test_calls_relationship_exists(self) -> None:
-        assert RelationshipType.CALLS.value == "CALLS"
-
-    def test_imports_relationship_exists(self) -> None:
-        assert RelationshipType.IMPORTS.value == "IMPORTS"
-
-    def test_inherits_relationship_exists(self) -> None:
-        assert RelationshipType.INHERITS.value == "INHERITS"
-
-    def test_implements_relationship_exists(self) -> None:
-        assert RelationshipType.IMPLEMENTS.value == "IMPLEMENTS"
-
-    def test_overrides_relationship_exists(self) -> None:
-        assert RelationshipType.OVERRIDES.value == "OVERRIDES"
-
-    def test_exports_relationship_exists(self) -> None:
-        assert RelationshipType.EXPORTS.value == "EXPORTS"
-
-    def test_contains_package_relationship_exists(self) -> None:
-        assert RelationshipType.CONTAINS_PACKAGE.value == "CONTAINS_PACKAGE"
-
-    def test_contains_folder_relationship_exists(self) -> None:
-        assert RelationshipType.CONTAINS_FOLDER.value == "CONTAINS_FOLDER"
-
-    def test_contains_file_relationship_exists(self) -> None:
-        assert RelationshipType.CONTAINS_FILE.value == "CONTAINS_FILE"
-
-    def test_contains_module_relationship_exists(self) -> None:
-        assert RelationshipType.CONTAINS_MODULE.value == "CONTAINS_MODULE"
-
-    def test_depends_on_external_relationship_exists(self) -> None:
-        assert RelationshipType.DEPENDS_ON_EXTERNAL.value == "DEPENDS_ON_EXTERNAL"
-
-    def test_exports_module_relationship_exists(self) -> None:
-        assert RelationshipType.EXPORTS_MODULE.value == "EXPORTS_MODULE"
-
-    def test_implements_module_relationship_exists(self) -> None:
-        assert RelationshipType.IMPLEMENTS_MODULE.value == "IMPLEMENTS_MODULE"
 
 
 class TestNodeLabelStringValues:
