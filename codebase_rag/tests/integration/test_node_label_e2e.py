@@ -288,15 +288,6 @@ def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
     updater.run()
 
 
-def skip_if_parser_unavailable(language: str) -> None:
-    from codebase_rag.constants import SupportedLanguage
-
-    parsers, _ = load_parsers()
-    lang_enum = SupportedLanguage(language)
-    if lang_enum not in parsers:
-        pytest.skip(f"{language} parser not available")
-
-
 def get_node_labels(ingestor: MemgraphIngestor) -> set[str]:
     result = ingestor.fetch_all("MATCH (n) RETURN DISTINCT labels(n) AS labels")
     labels: set[str] = set()
@@ -643,7 +634,7 @@ class TestScalaNodeLabels:
 
         interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
         interface_names = {n["name"] for n in interfaces}
-        assert "MyTrait" in interface_names or "Status" in interface_names
+        assert {"MyTrait", "Status"}.issubset(interface_names)
 
 
 class TestJavaNodeLabels:
@@ -811,7 +802,7 @@ class TestLuaNodeLabels:
 
         functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
-        assert "new" in func_names or "getValue" in func_names
+        assert {"new", "MyClass:getValue"}.issubset(func_names)
 
 
 DEFINES_TEST_PARAMS = [
