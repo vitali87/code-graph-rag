@@ -18,6 +18,7 @@ from codebase_rag.constants import (
     TS_EXTENSIONS,
     NodeLabel,
     SupportedLanguage,
+    UniqueKeyType,
 )
 from codebase_rag.language_spec import (
     LANGUAGE_SPECS,
@@ -162,7 +163,7 @@ class TestConstraintsKeyFormat:
             assert key[0].isupper(), f"Constraint key '{key}' should be PascalCase"
 
     def test_all_constraint_values_are_valid_property_names(self) -> None:
-        valid_properties = {"name", "path", "qualified_name"}
+        valid_properties = {v.value for v in UniqueKeyType}
         for key, value in NODE_UNIQUE_CONSTRAINTS.items():
             assert value in valid_properties, (
                 f"Constraint for '{key}' has invalid property '{value}'. "

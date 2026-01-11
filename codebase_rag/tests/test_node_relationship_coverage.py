@@ -58,11 +58,7 @@ class TestNodeLabelCoverage:
         )
 
     def test_unique_key_types_are_valid(self) -> None:
-        valid_keys = {
-            UniqueKeyType.NAME,
-            UniqueKeyType.PATH,
-            UniqueKeyType.QUALIFIED_NAME,
-        }
+        valid_keys = set(UniqueKeyType)
 
         for label, key in _NODE_LABEL_UNIQUE_KEYS.items():
             assert key in valid_keys, (
