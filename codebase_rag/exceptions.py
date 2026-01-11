@@ -22,6 +22,10 @@ SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra sem
 
 # (H) Configuration errors
 PROVIDER_EMPTY = "Provider name cannot be empty in 'provider:model' format."
+MODEL_ID_EMPTY = "Model ID cannot be empty."
+MODEL_FORMAT_INVALID = (
+    "Model must be specified as 'provider:model' (e.g., openai:gpt-4o)."
+)
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
 CONFIG = "{role} configuration error: {error}"
 

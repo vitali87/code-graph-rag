@@ -614,3 +614,8 @@ MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 # (H) Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
 EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
+
+# (H) Model switching logs
+MODEL_SWITCHED = "Model switched to: {model}"
+MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
+MODEL_CURRENT = "Current model: {model}"

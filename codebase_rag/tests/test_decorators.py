@@ -349,6 +349,82 @@ class TestRecursionGuard:
         assert result is None
         assert calls == ["a:test", "b:test"]
 
+    def test_handles_keyword_arguments_in_guarded_function(self) -> None:
+        calls: list[tuple[str, str | None]] = []
+
+        class Analyzer:
+            @recursion_guard(
+                key_func=lambda self,
+                method_call,
+                module_qn,
+                *_,
+                **__: f"{module_qn}:{method_call}"
+            )
+            def infer_type(
+                self,
+                method_call: str,
+                module_qn: str,
+                local_var_types: dict[str, str] | None = None,
+            ) -> str | None:
+                calls.append((method_call, module_qn))
+                return f"type_{method_call}"
+
+        analyzer = Analyzer()
+
+        result1 = analyzer.infer_type("method1", "module1", None)
+        result2 = analyzer.infer_type("method2", "module2", local_var_types=None)
+        result3 = analyzer.infer_type(
+            "method3", "module3", local_var_types={"x": "int"}
+        )
+
+        assert result1 == "type_method1"
+        assert result2 == "type_method2"
+        assert result3 == "type_method3"
+        assert len(calls) == 3
+
+    def test_key_func_receives_kwargs_correctly(self) -> None:
+        received_kwargs: list[dict[str, str | None]] = []
+
+        def key_func(self, a: str, b: str, **kwargs) -> str:
+            received_kwargs.append(dict(kwargs))
+            return f"{a}:{b}"
+
+        class Analyzer:
+            @recursion_guard(key_func=key_func)
+            def process(
+                self, a: str, b: str, optional: str | None = None
+            ) -> str | None:
+                return "done"
+
+        analyzer = Analyzer()
+        analyzer.process("x", "y", optional="z")
+
+        assert len(received_kwargs) == 1
+        assert received_kwargs[0] == {"optional": "z"}
+
+    def test_recursion_guard_with_mixed_positional_and_keyword_args(self) -> None:
+        call_count = 0
+
+        class TypeInference:
+            @recursion_guard(key_func=lambda self, call, mod, *_, **__: f"{mod}:{call}")
+            def infer(
+                self,
+                method_call: str,
+                module: str,
+                vars: dict[str, str] | None = None,
+            ) -> str | None:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return self.infer(method_call, module, vars=vars)
+                return "resolved"
+
+        inf = TypeInference()
+        result = inf.infer("foo.bar", "mymod", vars={"x": "int"})
+
+        assert result is None
+        assert call_count == 1
+
 
 class TestLogOperation:
     def test_logs_start_and_end_messages(self) -> None:
