@@ -902,6 +902,18 @@ class TestPhpNodeLabels:
         func_names = {n["name"] for n in functions}
         assert "standaloneFunction" in func_names
 
+    def test_php_creates_enum_nodes(
+        self, memgraph_ingestor: MemgraphIngestor, php_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, php_project)
+
+        labels = get_node_labels(memgraph_ingestor)
+        assert NodeLabel.ENUM.value in labels
+
+        enums = get_nodes_by_label(memgraph_ingestor, NodeLabel.ENUM.value)
+        enum_names = {n["name"] for n in enums}
+        assert "Status" in enum_names
+
 
 class TestLuaNodeLabels:
     def test_lua_creates_function_nodes(
