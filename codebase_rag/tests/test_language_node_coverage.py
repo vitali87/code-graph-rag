@@ -52,111 +52,57 @@ class TestSupportedLanguageCoverage:
         )
 
 
+LANGUAGE_SPEC_PARAMS = [
+    (SupportedLanguage.PYTHON, PY_EXTENSIONS),
+    (SupportedLanguage.JS, JS_EXTENSIONS),
+    (SupportedLanguage.TS, TS_EXTENSIONS),
+    (SupportedLanguage.RUST, RS_EXTENSIONS),
+    (SupportedLanguage.GO, GO_EXTENSIONS),
+    (SupportedLanguage.SCALA, SCALA_EXTENSIONS),
+    (SupportedLanguage.JAVA, JAVA_EXTENSIONS),
+    (SupportedLanguage.CPP, CPP_EXTENSIONS),
+    (SupportedLanguage.CSHARP, CS_EXTENSIONS),
+    (SupportedLanguage.PHP, PHP_EXTENSIONS),
+    (SupportedLanguage.LUA, LUA_EXTENSIONS),
+]
+
+
 class TestLanguageSpecsComplete:
-    def test_python_spec_exists(self) -> None:
-        assert SupportedLanguage.PYTHON in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.PYTHON]
-        assert spec.file_extensions == PY_EXTENSIONS
+    @pytest.mark.parametrize("lang,extensions", LANGUAGE_SPEC_PARAMS)
+    def test_language_spec_has_correct_extensions(
+        self, lang: SupportedLanguage, extensions: tuple[str, ...]
+    ) -> None:
+        assert lang in LANGUAGE_SPECS
+        spec = LANGUAGE_SPECS[lang]
+        assert spec.file_extensions == extensions
 
-    def test_javascript_spec_exists(self) -> None:
-        assert SupportedLanguage.JS in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.JS]
-        assert spec.file_extensions == JS_EXTENSIONS
 
-    def test_typescript_spec_exists(self) -> None:
-        assert SupportedLanguage.TS in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.TS]
-        assert spec.file_extensions == TS_EXTENSIONS
-
-    def test_rust_spec_exists(self) -> None:
-        assert SupportedLanguage.RUST in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.RUST]
-        assert spec.file_extensions == RS_EXTENSIONS
-
-    def test_go_spec_exists(self) -> None:
-        assert SupportedLanguage.GO in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.GO]
-        assert spec.file_extensions == GO_EXTENSIONS
-
-    def test_scala_spec_exists(self) -> None:
-        assert SupportedLanguage.SCALA in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.SCALA]
-        assert spec.file_extensions == SCALA_EXTENSIONS
-
-    def test_java_spec_exists(self) -> None:
-        assert SupportedLanguage.JAVA in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.JAVA]
-        assert spec.file_extensions == JAVA_EXTENSIONS
-
-    def test_cpp_spec_exists(self) -> None:
-        assert SupportedLanguage.CPP in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.CPP]
-        assert spec.file_extensions == CPP_EXTENSIONS
-
-    def test_csharp_spec_exists(self) -> None:
-        assert SupportedLanguage.CSHARP in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.CSHARP]
-        assert spec.file_extensions == CS_EXTENSIONS
-
-    def test_php_spec_exists(self) -> None:
-        assert SupportedLanguage.PHP in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.PHP]
-        assert spec.file_extensions == PHP_EXTENSIONS
-
-    def test_lua_spec_exists(self) -> None:
-        assert SupportedLanguage.LUA in LANGUAGE_SPECS
-        spec = LANGUAGE_SPECS[SupportedLanguage.LUA]
-        assert spec.file_extensions == LUA_EXTENSIONS
+EXTENSION_MAPPING_PARAMS = [
+    (".py", SupportedLanguage.PYTHON),
+    (".js", SupportedLanguage.JS),
+    (".jsx", SupportedLanguage.JS),
+    (".ts", SupportedLanguage.TS),
+    (".tsx", SupportedLanguage.TS),
+    (".rs", SupportedLanguage.RUST),
+    (".go", SupportedLanguage.GO),
+    (".scala", SupportedLanguage.SCALA),
+    (".java", SupportedLanguage.JAVA),
+    (".cpp", SupportedLanguage.CPP),
+    (".h", SupportedLanguage.CPP),
+    (".hpp", SupportedLanguage.CPP),
+    (".cc", SupportedLanguage.CPP),
+    (".cs", SupportedLanguage.CSHARP),
+    (".php", SupportedLanguage.PHP),
+    (".lua", SupportedLanguage.LUA),
+]
 
 
 class TestExtensionToLanguageMapping:
-    def test_py_extension_maps_to_python(self) -> None:
-        assert get_language_for_extension(".py") == SupportedLanguage.PYTHON
-
-    def test_js_extension_maps_to_javascript(self) -> None:
-        assert get_language_for_extension(".js") == SupportedLanguage.JS
-
-    def test_jsx_extension_maps_to_javascript(self) -> None:
-        assert get_language_for_extension(".jsx") == SupportedLanguage.JS
-
-    def test_ts_extension_maps_to_typescript(self) -> None:
-        assert get_language_for_extension(".ts") == SupportedLanguage.TS
-
-    def test_tsx_extension_maps_to_typescript(self) -> None:
-        assert get_language_for_extension(".tsx") == SupportedLanguage.TS
-
-    def test_rs_extension_maps_to_rust(self) -> None:
-        assert get_language_for_extension(".rs") == SupportedLanguage.RUST
-
-    def test_go_extension_maps_to_go(self) -> None:
-        assert get_language_for_extension(".go") == SupportedLanguage.GO
-
-    def test_scala_extension_maps_to_scala(self) -> None:
-        assert get_language_for_extension(".scala") == SupportedLanguage.SCALA
-
-    def test_java_extension_maps_to_java(self) -> None:
-        assert get_language_for_extension(".java") == SupportedLanguage.JAVA
-
-    def test_cpp_extension_maps_to_cpp(self) -> None:
-        assert get_language_for_extension(".cpp") == SupportedLanguage.CPP
-
-    def test_h_extension_maps_to_cpp(self) -> None:
-        assert get_language_for_extension(".h") == SupportedLanguage.CPP
-
-    def test_hpp_extension_maps_to_cpp(self) -> None:
-        assert get_language_for_extension(".hpp") == SupportedLanguage.CPP
-
-    def test_cc_extension_maps_to_cpp(self) -> None:
-        assert get_language_for_extension(".cc") == SupportedLanguage.CPP
-
-    def test_cs_extension_maps_to_csharp(self) -> None:
-        assert get_language_for_extension(".cs") == SupportedLanguage.CSHARP
-
-    def test_php_extension_maps_to_php(self) -> None:
-        assert get_language_for_extension(".php") == SupportedLanguage.PHP
-
-    def test_lua_extension_maps_to_lua(self) -> None:
-        assert get_language_for_extension(".lua") == SupportedLanguage.LUA
+    @pytest.mark.parametrize("ext,expected_lang", EXTENSION_MAPPING_PARAMS)
+    def test_extension_maps_to_language(
+        self, ext: str, expected_lang: SupportedLanguage
+    ) -> None:
+        assert get_language_for_extension(ext) == expected_lang
 
 
 class TestAllExtensionsHaveLanguage:

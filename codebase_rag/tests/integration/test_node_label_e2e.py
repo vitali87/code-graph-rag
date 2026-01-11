@@ -814,84 +814,32 @@ class TestLuaNodeLabels:
         assert "new" in func_names or "getValue" in func_names
 
 
-class TestAllLanguagesDefinesRelationship:
-    def test_python_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, python_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, python_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
+DEFINES_TEST_PARAMS = [
+    ("python_project", None),
+    ("typescript_project", None),
+    ("javascript_project", None),
+    ("rust_project", None),
+    ("go_project", "Go is in development status"),
+    ("scala_project", "Scala is in development status"),
+    ("java_project", None),
+    ("cpp_project", None),
+    ("csharp_project", "C# is in development status"),
+    ("php_project", "PHP is in development status"),
+    ("lua_project", None),
+]
 
-    def test_typescript_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, typescript_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, typescript_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
 
-    def test_javascript_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, javascript_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, javascript_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
+@pytest.mark.parametrize("project_fixture,skip_reason", DEFINES_TEST_PARAMS)
+def test_language_has_defines(
+    project_fixture: str,
+    skip_reason: str | None,
+    request: pytest.FixtureRequest,
+    memgraph_ingestor: MemgraphIngestor,
+) -> None:
+    if skip_reason:
+        pytest.skip(skip_reason)
 
-    def test_rust_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, rust_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
-
-    @pytest.mark.skip(reason="Go is in development status")
-    def test_go_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, go_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, go_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
-
-    @pytest.mark.skip(reason="Scala is in development status")
-    def test_scala_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, scala_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, scala_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
-
-    def test_java_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, java_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, java_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
-
-    def test_cpp_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, cpp_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
-
-    @pytest.mark.skip(reason="C# is in development status")
-    def test_csharp_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, csharp_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, csharp_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
-
-    @pytest.mark.skip(reason="PHP is in development status")
-    def test_php_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, php_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, php_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
-
-    def test_lua_has_defines(
-        self, memgraph_ingestor: MemgraphIngestor, lua_project: Path
-    ) -> None:
-        index_project(memgraph_ingestor, lua_project)
-        rel_types = get_relationship_types(memgraph_ingestor)
-        assert "DEFINES" in rel_types
+    project_path = request.getfixturevalue(project_fixture)
+    index_project(memgraph_ingestor, project_path)
+    rel_types = get_relationship_types(memgraph_ingestor)
+    assert "DEFINES" in rel_types
