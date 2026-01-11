@@ -253,11 +253,9 @@ class TestJavaImportsRelationships:
 
         modules = get_module_qualified_names(memgraph_ingestor)
 
-        external_modules = ["java.util.List", "java.util.ArrayList", "java.util"]
-        found_external = any(ext in modules for ext in external_modules)
-
-        assert found_external, (
-            f"Expected external module node for java.util imports.\n"
+        external_module = "java.util"
+        assert external_module in modules, (
+            f"Expected external module node for '{external_module}'.\n"
             f"Available modules: {modules}"
         )
 
@@ -317,11 +315,13 @@ class TestPythonImportsRelationships:
 
         modules = get_module_qualified_names(memgraph_ingestor)
 
-        stdlib_modules = ["os", "json", "pathlib"]
-        found_stdlib = [m for m in stdlib_modules if m in modules]
+        stdlib_modules = {"os", "json", "pathlib"}
+        found_modules = {m for m in stdlib_modules if m in modules}
 
-        assert found_stdlib, (
+        assert found_modules == stdlib_modules, (
             f"Expected stdlib module nodes for {stdlib_modules}.\n"
+            f"Found: {found_modules}\n"
+            f"Missing: {stdlib_modules - found_modules}\n"
             f"Available modules: {modules}"
         )
 

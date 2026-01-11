@@ -578,7 +578,7 @@ class ImportProcessor:
                 if is_wildcard:
                     logger.debug(ls.IMP_JAVA_WILDCARD.format(path=resolved_path))
                     self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
-                elif parts := imported_path.split(cs.SEPARATOR_DOT):
+                elif parts := resolved_path.split(cs.SEPARATOR_DOT):
                     imported_name = parts[-1]
                     self.import_mapping[module_qn][imported_name] = resolved_path
                     if is_static:
