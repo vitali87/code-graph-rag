@@ -381,7 +381,6 @@ def language_command(ctx: typer.Context) -> None:
 
 @app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)
 def doctor() -> None:
-    """Run health checks to verify all dependencies and configurations."""
     from rich.table import Table
 
     checker = HealthChecker()

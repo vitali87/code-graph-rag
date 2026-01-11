@@ -1,24 +1,16 @@
+from __future__ import annotations
+
 import os
 import subprocess
-from dataclasses import dataclass
 
-import mgclient  # type: ignore
+import mgclient
 
+from .. import constants as cs
 from ..config import settings
-
-
-@dataclass
-class HealthCheckResult:
-    """Result of a single health check."""
-
-    name: str
-    passed: bool
-    message: str
-    error: str | None = None
+from ..schemas import HealthCheckResult
 
 
 class HealthChecker:
-    """Verifies all critical dependencies and configurations."""
 
     def __init__(self):
         self.results: list[HealthCheckResult] = []
@@ -35,34 +27,40 @@ class HealthChecker:
             if result.returncode == 0:
                 version = result.stdout.strip()
                 return HealthCheckResult(
-                    name="Docker daemon is running",
+                    name=cs.HEALTH_CHECK_DOCKER_RUNNING,
                     passed=True,
-                    message=f"Running (version {version})",
+                    message=cs.HEALTH_CHECK_DOCKER_RUNNING_MSG.format(version=version),
                 )
             else:
                 return HealthCheckResult(
-                    name="Docker daemon is not running",
+                    name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                     passed=False,
-                    message="Not responding",
-                    error=result.stderr.strip() or "Non-zero exit code",
+                    message=cs.HEALTH_CHECK_DOCKER_NOT_RESPONDING_MSG,
+                    error=result.stderr.strip() or cs.HEALTH_CHECK_DOCKER_EXIT_CODE,
                 )
         except FileNotFoundError:
             return HealthCheckResult(
-                name="Docker daemon is not running",
+                name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                 passed=False,
-                message="Not installed",
-                error="docker command not found in PATH",
+                message=cs.HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG,
+                error=cs.HEALTH_CHECK_DOCKER_NOT_IN_PATH,
+            )
+        except subprocess.TimeoutExpired:
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
+                passed=False,
+                message=cs.HEALTH_CHECK_DOCKER_TIMEOUT_MSG,
+                error=cs.HEALTH_CHECK_DOCKER_TIMEOUT_ERROR,
             )
         except Exception as e:
             return HealthCheckResult(
-                name="Docker daemon is not running",
+                name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                 passed=False,
-                message="Check failed",
+                message=cs.HEALTH_CHECK_DOCKER_FAILED_MSG,
                 error=str(e),
             )
 
     def check_memgraph_connection(self) -> HealthCheckResult:
-        """Check if Memgraph is accessible and can execute a simple query."""
         conn = None
         cursor = None
         try:
@@ -72,27 +70,30 @@ class HealthChecker:
             )
 
             cursor = conn.cursor()
-            cursor.execute("RETURN 1 AS test;")
+            cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
             list(cursor.fetchall())
 
             return HealthCheckResult(
-                name="Memgraph connection successful",
+                name=cs.HEALTH_CHECK_MEMGRAPH_SUCCESSFUL,
                 passed=True,
-                message=f"Connected and responsive at {settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}",
+                message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG.format(
+                    host=settings.MEMGRAPH_HOST,
+                    port=settings.MEMGRAPH_PORT,
+                ),
             )
 
         except mgclient.MemgraphError as e:
             return HealthCheckResult(
-                name="Memgraph connection failed",
+                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
                 passed=False,
-                message="Connection or query failed",
-                error=f"Memgraph error: {str(e)}",
+                message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG,
+                error=cs.HEALTH_CHECK_MEMGRAPH_ERROR.format(error=str(e)),
             )
         except Exception as e:
             return HealthCheckResult(
-                name="Memgraph connection failed",
+                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
                 passed=False,
-                message="Unexpected failure",
+                message=cs.HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG,
                 error=str(e),
             )
         finally:
@@ -108,31 +109,38 @@ class HealthChecker:
                     pass
 
     def check_api_key(self, env_name: str, display_name: str) -> HealthCheckResult:
-        value = os.getenv(env_name) or getattr(
-            settings, env_name.replace("_API_KEY", "_API_KEY"), None
-        )
+        value = os.getenv(env_name) or getattr(settings, env_name, None)
         passed = bool(value)
-        return HealthCheckResult(
-            name=f"{display_name} API key is set"
+        error_msg = (
+            None
             if passed
-            else f"{display_name} API key is not set",
+            else cs.HEALTH_CHECK_API_KEY_MISSING_MSG.format(env_name=env_name)
+        )
+        return HealthCheckResult(
+            name=(
+                cs.HEALTH_CHECK_API_KEY_SET.format(display_name=display_name)
+                if passed
+                else cs.HEALTH_CHECK_API_KEY_NOT_SET.format(display_name=display_name)
+            ),
             passed=passed,
-            message="Configured" if passed else "Not set",
+            message=cs.HEALTH_CHECK_API_KEY_CONFIGURED if passed else cs.HEALTH_CHECK_API_KEY_NOT_CONFIGURED,
+            error=error_msg,
         )
 
     def check_api_keys(self) -> list[HealthCheckResult]:
         return [
-            self.check_api_key("GEMINI_API_KEY", "Gemini"),
-            self.check_api_key("OPENAI_API_KEY", "OpenAI"),
-            self.check_api_key("ORCHESTRATOR_API_KEY", "Orchestrator"),
-            self.check_api_key("CYPHER_API_KEY", "Cypher"),
+            self.check_api_key(env_name, display_name)
+            for env_name, display_name in cs.HEALTH_CHECK_TOOLS
         ]
 
     def check_external_tool(
         self, tool_name: str, command: str | None = None
     ) -> HealthCheckResult:
         cmd = command or tool_name
-        check_cmd = ["where" if os.name == "nt" else "which", cmd]
+        check_cmd = [
+            cs.SHELL_CMD_WHERE if os.name == "nt" else cs.SHELL_CMD_WHICH,
+            cmd,
+        ]
 
         try:
             result = subprocess.run(
@@ -144,22 +152,29 @@ class HealthChecker:
             if result.returncode == 0:
                 path = result.stdout.decode().strip().splitlines()[0]
                 return HealthCheckResult(
-                    name=f"{tool_name} is installed",
+                    name=cs.HEALTH_CHECK_TOOL_INSTALLED.format(tool_name=tool_name),
                     passed=True,
-                    message=f"Installed ({path})",
+                    message=cs.HEALTH_CHECK_TOOL_INSTALLED_MSG.format(path=path),
                 )
             else:
                 return HealthCheckResult(
-                    name=f"{tool_name} is not installed",
+                    name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
                     passed=False,
-                    message="Not installed",
-                    error=f"'{cmd}' not found in PATH",
+                    message=cs.HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG.format(cmd=cmd),
+                    error=cs.HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG.format(cmd=cmd),
                 )
+        except subprocess.TimeoutExpired:
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
+                passed=False,
+                message=cs.HEALTH_CHECK_TOOL_TIMEOUT_MSG,
+                error=cs.HEALTH_CHECK_TOOL_TIMEOUT_ERROR.format(cmd=cmd),
+            )
         except Exception as e:
             return HealthCheckResult(
-                name=f"{tool_name} is not installed",
+                name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
                 passed=False,
-                message="Check failed",
+                message=cs.HEALTH_CHECK_TOOL_FAILED_MSG,
                 error=str(e),
             )
 
@@ -168,8 +183,8 @@ class HealthChecker:
         self.results.append(self.check_docker())
         self.results.append(self.check_memgraph_connection())
         self.results.extend(self.check_api_keys())
-        self.results.append(self.check_external_tool("ripgrep", "rg"))
-        self.results.append(self.check_external_tool("cmake"))
+        for tool_name, cmd in cs.HEALTH_CHECK_EXTERNAL_TOOLS:
+            self.results.append(self.check_external_tool(tool_name, cmd))
         return self.results
 
     def get_summary(self) -> tuple[int, int]:
