@@ -79,3 +79,10 @@ class FileCreationResult(BaseModel):
         if self.error_message is not None:
             self.success = False
         return self
+
+
+class HealthCheckResult(BaseModel):
+    name: str
+    passed: bool
+    message: str
+    error: str | None = None
