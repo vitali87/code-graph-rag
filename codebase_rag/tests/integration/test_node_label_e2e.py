@@ -14,6 +14,11 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
+SKIP_GO = "Go is in development status"
+SKIP_SCALA = "Scala is in development status"
+SKIP_CSHARP = "C# is in development status"
+SKIP_PHP = "PHP is in development status"
+
 
 PYTHON_CODE = """\
 class MyClass:
@@ -569,8 +574,32 @@ class TestRustNodeLabels:
         func_names = {n["name"] for n in functions}
         assert "standalone_fn" in func_names
 
+    def test_rust_creates_class_nodes_for_enums(
+        self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, rust_project)
 
-@pytest.mark.skip(reason="Go is in development status")
+        labels = get_node_labels(memgraph_ingestor)
+        assert NodeLabel.CLASS.value in labels
+
+        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        class_names = {n["name"] for n in classes}
+        assert "Status" in class_names
+
+    def test_rust_creates_class_nodes_for_traits(
+        self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
+    ) -> None:
+        index_project(memgraph_ingestor, rust_project)
+
+        labels = get_node_labels(memgraph_ingestor)
+        assert NodeLabel.CLASS.value in labels
+
+        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        class_names = {n["name"] for n in classes}
+        assert "MyTrait" in class_names
+
+
+@pytest.mark.skip(reason=SKIP_GO)
 class TestGoNodeLabels:
     def test_go_creates_class_nodes_for_structs(
         self, memgraph_ingestor: MemgraphIngestor, go_project: Path
@@ -610,7 +639,7 @@ class TestGoNodeLabels:
         assert "main" in func_names
 
 
-@pytest.mark.skip(reason="Scala is in development status")
+@pytest.mark.skip(reason=SKIP_SCALA)
 class TestScalaNodeLabels:
     def test_scala_creates_class_nodes(
         self, memgraph_ingestor: MemgraphIngestor, scala_project: Path
@@ -713,7 +742,7 @@ class TestCppNodeLabels:
         assert "standaloneFunction" in func_names
 
 
-@pytest.mark.skip(reason="C# is in development status and parser not available")
+@pytest.mark.skip(reason=SKIP_CSHARP)
 class TestCSharpNodeLabels:
     def test_csharp_creates_class_nodes(
         self, memgraph_ingestor: MemgraphIngestor, csharp_project: Path
@@ -752,7 +781,7 @@ class TestCSharpNodeLabels:
         assert "Status" in enum_names
 
 
-@pytest.mark.skip(reason="PHP is in development status and parser not available")
+@pytest.mark.skip(reason=SKIP_PHP)
 class TestPhpNodeLabels:
     def test_php_creates_class_nodes(
         self, memgraph_ingestor: MemgraphIngestor, php_project: Path
@@ -810,12 +839,12 @@ DEFINES_TEST_PARAMS = [
     ("typescript_project", None),
     ("javascript_project", None),
     ("rust_project", None),
-    ("go_project", "Go is in development status"),
-    ("scala_project", "Scala is in development status"),
+    ("go_project", SKIP_GO),
+    ("scala_project", SKIP_SCALA),
     ("java_project", None),
     ("cpp_project", None),
-    ("csharp_project", "C# is in development status"),
-    ("php_project", "PHP is in development status"),
+    ("csharp_project", SKIP_CSHARP),
+    ("php_project", SKIP_PHP),
     ("lua_project", None),
 ]
 
