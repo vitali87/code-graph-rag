@@ -341,3 +341,58 @@ class TestExternalModuleNodeCreation:
         assert len(mock_ingestor.nodes_created) == 1
         label, props = mock_ingestor.nodes_created[0]
         assert props[cs.KEY_NAME] == "collections"
+
+
+class TestJsInternalModuleResolution:
+    def test_resolves_file_with_extension(self, tmp_path: Path) -> None:
+        (tmp_path / "components").mkdir()
+        (tmp_path / "components" / "Button.ts").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.components.Button.x")
+        assert result == "myproject.components.Button"
+
+    def test_resolves_directory_with_index_file(self, tmp_path: Path) -> None:
+        (tmp_path / "components").mkdir()
+        (tmp_path / "components" / "index.ts").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.components.Button")
+        assert result == "myproject.components"
+
+    def test_resolves_directory_with_index_js(self, tmp_path: Path) -> None:
+        (tmp_path / "utils").mkdir()
+        (tmp_path / "utils" / "index.js").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.utils.helper")
+        assert result == "myproject.utils"
+
+    def test_returns_full_name_when_no_match(self, tmp_path: Path) -> None:
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.nonexistent.thing")
+        assert result == "myproject.nonexistent.thing"
