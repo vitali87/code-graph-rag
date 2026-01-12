@@ -264,6 +264,11 @@ class ImportProcessor:
     ) -> str:
         project_prefix = self.project_name + cs.SEPARATOR_DOT
         match language:
+            # (H) Java MODULE semantics: Internal imports point to file-level MODULE
+            # (H) nodes (e.g., project.utils.StringUtils) because Java files are named
+            # (H) after their primary class. External imports point to package-level
+            # (H) (e.g., java.util) because we lack source code to create file-level
+            # (H) nodes. This asymmetry is intentional.
             case cs.SupportedLanguage.JAVA:
                 if full_name.startswith(project_prefix):
                     return full_name
