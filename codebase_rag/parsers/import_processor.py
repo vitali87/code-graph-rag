@@ -103,9 +103,9 @@ class ImportProcessor:
             )
 
             if self.ingestor:
-                for local_name, full_name in self.import_mapping[module_qn].items():
+                for full_name in self.import_mapping[module_qn].values():
                     module_path = self._resolve_module_path(
-                        full_name, module_qn, language, local_name
+                        full_name, module_qn, language
                     )
 
                     self.ingestor.ensure_relationship_batch(
@@ -220,7 +220,7 @@ class ImportProcessor:
         return import_path.startswith(cs.RUST_CRATE_PREFIX)
 
     def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
-        if not self.ingestor:
+        if not self.ingestor or not module_path:
             return
         name = module_path.split(cs.SEPARATOR_DOT)[-1]
         if not name or name == module_path:
@@ -239,10 +239,11 @@ class ImportProcessor:
         if self._is_local_rust_import(import_path):
             path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
             module_parts = module_qn.split(cs.SEPARATOR_DOT)
-            if len(module_parts) >= 2:
-                base_path = cs.SEPARATOR_DOT.join(module_parts[:-1])
-            else:
-                base_path = module_parts[0]
+            base_path = (
+                cs.SEPARATOR_DOT.join(module_parts[:-1])
+                if len(module_parts) > 1
+                else module_parts[0]
+            )
             entity_parts = path_without_crate.split(cs.SEPARATOR_DOUBLE_COLON)
             module_part = entity_parts[0] if entity_parts else path_without_crate
             return f"{base_path}{cs.SEPARATOR_DOT}{module_part}"
@@ -260,7 +261,6 @@ class ImportProcessor:
         full_name: str,
         module_qn: str,
         language: cs.SupportedLanguage,
-        local_name: str,
     ) -> str:
         project_prefix = self.project_name + cs.SEPARATOR_DOT
         match language:

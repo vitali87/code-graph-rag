@@ -12,6 +12,19 @@ from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.types_defs import NodeType
 
 
+@pytest.fixture
+def mock_ingestor() -> MagicMock:
+    ingestor = MagicMock()
+    ingestor.nodes_created: list[tuple] = []
+
+    def capture_node(label, props):
+        ingestor.nodes_created.append((label, dict(props)))
+
+    ingestor.ensure_node_batch = MagicMock(side_effect=capture_node)
+    ingestor.ensure_relationship_batch = MagicMock()
+    return ingestor
+
+
 class TestImportParsing:
     """Test import parsing functionality across different languages."""
 
@@ -258,18 +271,6 @@ class TestImportProcessorCacheUtilities:
 
 
 class TestExternalModuleNodeCreation:
-    @pytest.fixture
-    def mock_ingestor(self) -> MagicMock:
-        ingestor = MagicMock()
-        ingestor.nodes_created: list[tuple] = []
-
-        def capture_node(label, props):
-            ingestor.nodes_created.append((label, dict(props)))
-
-        ingestor.ensure_node_batch = MagicMock(side_effect=capture_node)
-        ingestor.ensure_relationship_batch = MagicMock()
-        return ingestor
-
     def test_external_module_name_uses_module_path_not_local_alias(
         self, mock_ingestor: MagicMock
     ) -> None:
@@ -286,7 +287,6 @@ class TestExternalModuleNodeCreation:
             full_name="java.util.List",
             module_qn="test_project.main.Main",
             language=cs.SupportedLanguage.JAVA,
-            local_name="List",
         )
 
         assert module_path == "java.util"
@@ -415,7 +415,6 @@ class TestProjectPrefixMatching:
             full_name="myapp_v2.utils.Helper",
             module_qn="myapp.main.Main",
             language=cs.SupportedLanguage.JAVA,
-            local_name="Helper",
         )
 
         assert result == "myapp_v2.utils"
@@ -437,19 +436,7 @@ class TestProjectPrefixMatching:
             full_name="myapp.utils.Helper",
             module_qn="myapp.main.Main",
             language=cs.SupportedLanguage.JAVA,
-            local_name="Helper",
         )
 
         assert result == "myapp.utils.Helper"
         assert len(mock_ingestor.nodes_created) == 0
-
-    @pytest.fixture
-    def mock_ingestor(self) -> MagicMock:
-        ingestor = MagicMock()
-        ingestor.nodes_created: list[tuple] = []
-
-        def capture_node(label, props):
-            ingestor.nodes_created.append((label, dict(props)))
-
-        ingestor.ensure_node_batch = MagicMock(side_effect=capture_node)
-        return ingestor
