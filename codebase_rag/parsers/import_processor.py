@@ -216,6 +216,22 @@ class ImportProcessor:
     def _is_local_rust_import(self, import_path: str) -> bool:
         return import_path.startswith(cs.RUST_CRATE_PREFIX)
 
+    def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
+        if not self.ingestor:
+            return
+        name = module_path.split(cs.SEPARATOR_DOT)[-1]
+        if not name or name == module_path:
+            name = module_path.split(cs.RUST_PATH_SEPARATOR)[-1]
+        self.ingestor.ensure_node_batch(
+            cs.NodeLabel.MODULE,
+            {
+                cs.KEY_NAME: name,
+                cs.KEY_QUALIFIED_NAME: module_path,
+                cs.KEY_PATH: full_name,
+                cs.KEY_IS_EXTERNAL: True,
+            },
+        )
+
     def _resolve_rust_import_path(
         self, import_path: str, module_qn: str, local_name: str | None = None
     ) -> str:
@@ -235,16 +251,7 @@ class ImportProcessor:
             cs.RUST_PATH_SEPARATOR.join(parts[:-1]) if len(parts) > 1 else parts[0]
         )
 
-        if self.ingestor and local_name:
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.MODULE,
-                {
-                    cs.KEY_NAME: local_name,
-                    cs.KEY_QUALIFIED_NAME: module_path,
-                    cs.KEY_PATH: import_path,
-                    cs.KEY_IS_EXTERNAL: True,
-                },
-            )
+        self._ensure_external_module_node(module_path, import_path)
         return module_path
 
     def _resolve_module_path(
@@ -265,16 +272,8 @@ class ImportProcessor:
                 return self._resolve_rust_import_path(full_name, module_qn, local_name)
 
         module_path = self.stdlib_extractor.extract_module_path(full_name, language)
-        if not module_path.startswith(self.project_name) and self.ingestor:
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.MODULE,
-                {
-                    cs.KEY_NAME: local_name,
-                    cs.KEY_QUALIFIED_NAME: module_path,
-                    cs.KEY_PATH: full_name,
-                    cs.KEY_IS_EXTERNAL: True,
-                },
-            )
+        if not module_path.startswith(self.project_name):
+            self._ensure_external_module_node(module_path, full_name)
         return module_path
 
     def _handle_python_import_from_statement(

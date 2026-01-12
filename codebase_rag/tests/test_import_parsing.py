@@ -255,3 +255,99 @@ class TestImportProcessorCacheUtilities:
 
         stats = ImportProcessor.get_stdlib_cache_stats()
         assert isinstance(stats, dict), "Cache stats should return a dictionary"
+
+
+class TestExternalModuleNodeCreation:
+    @pytest.fixture
+    def mock_ingestor(self) -> MagicMock:
+        ingestor = MagicMock()
+        ingestor.nodes_created: list[tuple] = []
+
+        def capture_node(label, props):
+            ingestor.nodes_created.append((label, dict(props)))
+
+        ingestor.ensure_node_batch = MagicMock(side_effect=capture_node)
+        ingestor.ensure_relationship_batch = MagicMock()
+        return ingestor
+
+    def test_external_module_name_uses_module_path_not_local_alias(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        module_path = processor._resolve_module_path(
+            full_name="java.util.List",
+            module_qn="test_project.main.Main",
+            language=cs.SupportedLanguage.JAVA,
+            local_name="List",
+        )
+
+        assert module_path == "java.util"
+
+        assert len(mock_ingestor.nodes_created) == 1
+        label, props = mock_ingestor.nodes_created[0]
+        assert label == cs.NodeLabel.MODULE
+        assert props[cs.KEY_QUALIFIED_NAME] == "java.util"
+        assert props[cs.KEY_NAME] == "util", (
+            f"Expected name='util' (last part of module_path), got name='{props[cs.KEY_NAME]}'"
+        )
+
+    def test_rust_external_module_node_created_without_local_name(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        module_path = processor._resolve_rust_import_path(
+            import_path="std::collections::HashMap",
+            module_qn="test_project.src.main",
+            local_name=None,
+        )
+
+        assert module_path == "std::collections"
+
+        assert len(mock_ingestor.nodes_created) == 1, (
+            "External module node should be created even when local_name is None"
+        )
+        label, props = mock_ingestor.nodes_created[0]
+        assert label == cs.NodeLabel.MODULE
+        assert props[cs.KEY_QUALIFIED_NAME] == "std::collections"
+
+    def test_rust_external_module_name_uses_module_path_not_local_alias(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        module_path = processor._resolve_rust_import_path(
+            import_path="std::collections::HashMap",
+            module_qn="test_project.src.main",
+            local_name="HashMap",
+        )
+
+        assert module_path == "std::collections"
+
+        assert len(mock_ingestor.nodes_created) == 1
+        label, props = mock_ingestor.nodes_created[0]
+        assert props[cs.KEY_NAME] == "collections", (
+            f"Expected name='collections' (last part of module_path), got name='{props[cs.KEY_NAME]}'"
+        )
