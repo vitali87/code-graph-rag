@@ -299,9 +299,7 @@ class TestExternalModuleNodeCreation:
             f"Expected name='util' (last part of module_path), got name='{props[cs.KEY_NAME]}'"
         )
 
-    def test_rust_external_module_node_created_without_local_name(
-        self, mock_ingestor: MagicMock
-    ) -> None:
+    def test_rust_external_module_node_created(self, mock_ingestor: MagicMock) -> None:
         from codebase_rag import constants as cs
 
         processor = ImportProcessor(
@@ -314,19 +312,15 @@ class TestExternalModuleNodeCreation:
         module_path = processor._resolve_rust_import_path(
             import_path="std::collections::HashMap",
             module_qn="test_project.src.main",
-            local_name=None,
         )
 
         assert module_path == "std::collections"
-
-        assert len(mock_ingestor.nodes_created) == 1, (
-            "External module node should be created even when local_name is None"
-        )
+        assert len(mock_ingestor.nodes_created) == 1
         label, props = mock_ingestor.nodes_created[0]
         assert label == cs.NodeLabel.MODULE
         assert props[cs.KEY_QUALIFIED_NAME] == "std::collections"
 
-    def test_rust_external_module_name_uses_module_path_not_local_alias(
+    def test_rust_external_module_name_uses_module_path(
         self, mock_ingestor: MagicMock
     ) -> None:
         from codebase_rag import constants as cs
@@ -341,13 +335,9 @@ class TestExternalModuleNodeCreation:
         module_path = processor._resolve_rust_import_path(
             import_path="std::collections::HashMap",
             module_qn="test_project.src.main",
-            local_name="HashMap",
         )
 
         assert module_path == "std::collections"
-
         assert len(mock_ingestor.nodes_created) == 1
         label, props = mock_ingestor.nodes_created[0]
-        assert props[cs.KEY_NAME] == "collections", (
-            f"Expected name='collections' (last part of module_path), got name='{props[cs.KEY_NAME]}'"
-        )
+        assert props[cs.KEY_NAME] == "collections"

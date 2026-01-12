@@ -210,6 +210,9 @@ class ImportProcessor:
         for ext in (cs.EXT_JS, cs.EXT_TS, cs.EXT_JSX, cs.EXT_TSX):
             if (self.repo_path / f"{relative_path}{ext}").is_file():
                 return potential_module
+            index_path = self.repo_path / relative_path / f"{cs.INDEX_INDEX}{ext}"
+            if index_path.is_file():
+                return potential_module
 
         return full_name
 
@@ -232,9 +235,7 @@ class ImportProcessor:
             },
         )
 
-    def _resolve_rust_import_path(
-        self, import_path: str, module_qn: str, local_name: str | None = None
-    ) -> str:
+    def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:
         if self._is_local_rust_import(import_path):
             path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
             module_parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -269,7 +270,7 @@ class ImportProcessor:
                 if self._is_local_js_import(full_name):
                     return self._resolve_js_internal_module(full_name)
             case cs.SupportedLanguage.RUST:
-                return self._resolve_rust_import_path(full_name, module_qn, local_name)
+                return self._resolve_rust_import_path(full_name, module_qn)
 
         module_path = self.stdlib_extractor.extract_module_path(full_name, language)
         if not module_path.startswith(self.project_name):
