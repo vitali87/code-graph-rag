@@ -517,7 +517,7 @@ class TestRustImportsRelationships:
 
         import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
         main_imports_utils = any(
-            from_qn == main_module and (to_qn == utils_module or utils_module in to_qn)
+            from_qn == main_module and to_qn == utils_module
             for from_qn, to_qn in import_pairs
         )
 
@@ -560,12 +560,12 @@ class TestGoImportsRelationships:
 
         import_pairs = [(i["from_qn"], i["to_qn"]) for i in imports]
         main_imports_utils = any(
-            from_qn == main_module and ("utils" in to_qn or "myproject" in to_qn)
+            from_qn == main_module and to_qn in {utils_module, "myproject/utils"}
             for from_qn, to_qn in import_pairs
         )
 
         assert main_imports_utils, (
-            f"Expected {main_module} -> utils relationship.\n"
+            f"Expected {main_module} -> {utils_module} relationship.\n"
             f"Found relationships: {import_pairs}\n"
             f"Available modules: {modules}"
         )
