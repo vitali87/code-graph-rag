@@ -396,3 +396,60 @@ class TestJsInternalModuleResolution:
 
         result = processor._resolve_js_internal_module("myproject.nonexistent.thing")
         assert result == "myproject.nonexistent.thing"
+
+
+class TestProjectPrefixMatching:
+    def test_similar_prefix_not_matched_without_dot(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/myapp"),
+            project_name="myapp",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        result = processor._resolve_module_path(
+            full_name="myapp_v2.utils.Helper",
+            module_qn="myapp.main.Main",
+            language=cs.SupportedLanguage.JAVA,
+            local_name="Helper",
+        )
+
+        assert result == "myapp_v2.utils"
+        assert len(mock_ingestor.nodes_created) == 1
+
+    def test_internal_import_matched_with_dot_separator(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/myapp"),
+            project_name="myapp",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        result = processor._resolve_module_path(
+            full_name="myapp.utils.Helper",
+            module_qn="myapp.main.Main",
+            language=cs.SupportedLanguage.JAVA,
+            local_name="Helper",
+        )
+
+        assert result == "myapp.utils.Helper"
+        assert len(mock_ingestor.nodes_created) == 0
+
+    @pytest.fixture
+    def mock_ingestor(self) -> MagicMock:
+        ingestor = MagicMock()
+        ingestor.nodes_created: list[tuple] = []
+
+        def capture_node(label, props):
+            ingestor.nodes_created.append((label, dict(props)))
+
+        ingestor.ensure_node_batch = MagicMock(side_effect=capture_node)
+        return ingestor

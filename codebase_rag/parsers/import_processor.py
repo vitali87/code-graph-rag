@@ -262,9 +262,10 @@ class ImportProcessor:
         language: cs.SupportedLanguage,
         local_name: str,
     ) -> str:
+        project_prefix = self.project_name + cs.SEPARATOR_DOT
         match language:
             case cs.SupportedLanguage.JAVA:
-                if full_name.startswith(self.project_name):
+                if full_name.startswith(project_prefix):
                     return full_name
             case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 if self._is_local_js_import(full_name):
@@ -273,7 +274,7 @@ class ImportProcessor:
                 return self._resolve_rust_import_path(full_name, module_qn)
 
         module_path = self.stdlib_extractor.extract_module_path(full_name, language)
-        if not module_path.startswith(self.project_name):
+        if not module_path.startswith(project_prefix):
             self._ensure_external_module_node(module_path, full_name)
         return module_path
 
