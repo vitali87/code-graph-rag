@@ -257,3 +257,99 @@ def extract_function_name(func_node: Node) -> str | None:
             return _extract_name_from_template_declaration(func_node)
         case _:
             return None
+
+
+def _get_inner_function_node(node: Node) -> Node:
+    if node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
+        for child in node.children:
+            if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
+                return child
+    return node
+
+
+def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
+    inner_node = _get_inner_function_node(func_node)
+
+    declarator = inner_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    if not declarator:
+        return None
+
+    if declarator.type == cs.CppNodeType.FUNCTION_DECLARATOR:
+        for child in declarator.children:
+            if child.type == cs.CppNodeType.QUALIFIED_IDENTIFIER:
+                return child
+    return None
+
+
+def is_out_of_class_method_definition(func_node: Node) -> bool:
+    if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
+        inner = _get_inner_function_node(func_node)
+        if inner.type != cs.CppNodeType.FUNCTION_DEFINITION:
+            return False
+    elif func_node.type not in (
+        cs.CppNodeType.FUNCTION_DEFINITION,
+        cs.CppNodeType.CONSTRUCTOR_OR_DESTRUCTOR_DEFINITION,
+    ):
+        return False
+
+    return _find_qualified_identifier_in_declarator(func_node) is not None
+
+
+def _extract_class_name_from_template_type(template_type_node: Node) -> str | None:
+    for child in template_type_node.children:
+        if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
+            return safe_decode_text(child)
+    return None
+
+
+def extract_class_name_from_out_of_class_method(func_node: Node) -> str | None:
+    qualified_id = _find_qualified_identifier_in_declarator(func_node)
+    if not qualified_id:
+        return None
+
+    has_nested_qualified = any(
+        child.type == cs.CppNodeType.QUALIFIED_IDENTIFIER
+        for child in qualified_id.children
+    )
+
+    if has_nested_qualified:
+        return extract_class_name_from_out_of_class_method_qualified(qualified_id)
+
+    for child in qualified_id.children:
+        if child.type == cs.TS_TEMPLATE_TYPE:
+            return _extract_class_name_from_template_type(child)
+        if child.type in (
+            cs.CppNodeType.NAMESPACE_IDENTIFIER,
+            cs.CppNodeType.IDENTIFIER,
+            cs.TS_TYPE_IDENTIFIER,
+        ):
+            if child.text:
+                return safe_decode_text(child)
+
+    return None
+
+
+def _collect_all_names_from_qualified_id(node: Node) -> list[str]:
+    names: list[str] = []
+    for child in node.children:
+        if child.type in (
+            cs.CppNodeType.NAMESPACE_IDENTIFIER,
+            cs.CppNodeType.IDENTIFIER,
+            cs.TS_TYPE_IDENTIFIER,
+        ):
+            if child.text and (name := safe_decode_text(child)):
+                names.append(name)
+        elif child.type == cs.CppNodeType.QUALIFIED_IDENTIFIER:
+            names.extend(_collect_all_names_from_qualified_id(child))
+    return names
+
+
+def extract_class_name_from_out_of_class_method_qualified(
+    qualified_id: Node,
+) -> str | None:
+    names = _collect_all_names_from_qualified_id(qualified_id)
+    if len(names) >= 2:
+        return cs.SEPARATOR_DOUBLE_COLON.join(names[:-1])
+    if names:
+        return names[0]
+    return None

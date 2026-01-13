@@ -75,6 +75,10 @@ class FunctionIngestMixin:
             if self._is_method(func_node, lang_config):
                 continue
 
+            if language == cs.SupportedLanguage.CPP:
+                if self._handle_cpp_out_of_class_method(func_node, module_qn):
+                    continue
+
             resolution = self._resolve_function_identity(
                 func_node, module_qn, language, lang_config, file_path
             )
@@ -137,6 +141,46 @@ class FunctionIngestMixin:
         return self._resolve_generic_function(
             func_node, module_qn, language, lang_config
         )
+
+    def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:
+        if not cpp_utils.is_out_of_class_method_definition(func_node):
+            return False
+
+        class_name = cpp_utils.extract_class_name_from_out_of_class_method(func_node)
+        if not class_name:
+            return False
+
+        method_name = cpp_utils.extract_function_name(func_node)
+        if not method_name:
+            return False
+
+        class_name_normalized = class_name.replace(
+            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+        )
+        class_qn = f"{module_qn}.{class_name_normalized}"
+        method_qn = f"{class_qn}.{method_name}"
+
+        method_props: PropertyDict = {
+            cs.KEY_QUALIFIED_NAME: method_qn,
+            cs.KEY_NAME: method_name,
+            cs.KEY_DECORATORS: self._extract_decorators(func_node),
+            cs.KEY_START_LINE: func_node.start_point[0] + 1,
+            cs.KEY_END_LINE: func_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(func_node),
+        }
+
+        logger.info(ls.METHOD_FOUND.format(name=method_name, qn=method_qn))
+        self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
+        self.function_registry[method_qn] = NodeType.METHOD
+        self.simple_name_lookup[method_name].add(method_qn)
+
+        self.ingestor.ensure_relationship_batch(
+            (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
+            cs.RelationshipType.DEFINES_METHOD,
+            (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+        )
+
+        return True
 
     def _resolve_cpp_function(
         self, func_node: Node, module_qn: str
