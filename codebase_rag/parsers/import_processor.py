@@ -222,9 +222,10 @@ class ImportProcessor:
     def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
         if not self.ingestor or not module_path:
             return
-        name = module_path.split(cs.SEPARATOR_DOT)[-1]
-        if not name or name == module_path:
-            name = module_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1]
+        if cs.SEPARATOR_DOUBLE_COLON in module_path:
+            name = module_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+        else:
+            name = module_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.MODULE,
             {
@@ -244,8 +245,7 @@ class ImportProcessor:
                 if len(module_parts) > 1
                 else module_parts[0]
             )
-            entity_parts = path_without_crate.split(cs.SEPARATOR_DOUBLE_COLON)
-            module_part = entity_parts[0] if entity_parts else path_without_crate
+            module_part = path_without_crate.split(cs.SEPARATOR_DOUBLE_COLON)[0]
             return f"{base_path}{cs.SEPARATOR_DOT}{module_part}"
 
         parts = import_path.split(cs.SEPARATOR_DOUBLE_COLON)
