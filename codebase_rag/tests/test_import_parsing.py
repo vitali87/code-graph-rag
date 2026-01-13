@@ -12,6 +12,19 @@ from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.types_defs import NodeType
 
 
+@pytest.fixture
+def mock_ingestor() -> MagicMock:
+    ingestor = MagicMock()
+    ingestor.nodes_created: list[tuple] = []
+
+    def capture_node(label, props):
+        ingestor.nodes_created.append((label, dict(props)))
+
+    ingestor.ensure_node_batch = MagicMock(side_effect=capture_node)
+    ingestor.ensure_relationship_batch = MagicMock()
+    return ingestor
+
+
 class TestImportParsing:
     """Test import parsing functionality across different languages."""
 
@@ -255,3 +268,210 @@ class TestImportProcessorCacheUtilities:
 
         stats = ImportProcessor.get_stdlib_cache_stats()
         assert isinstance(stats, dict), "Cache stats should return a dictionary"
+
+
+class TestExternalModuleNodeCreation:
+    def test_external_module_name_uses_module_path_not_local_alias(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        module_path = processor._resolve_module_path(
+            full_name="java.util.List",
+            module_qn="test_project.main.Main",
+            language=cs.SupportedLanguage.JAVA,
+        )
+
+        assert module_path == "java.util"
+
+        assert len(mock_ingestor.nodes_created) == 1
+        label, props = mock_ingestor.nodes_created[0]
+        assert label == cs.NodeLabel.MODULE
+        assert props[cs.KEY_QUALIFIED_NAME] == "java.util"
+        assert props[cs.KEY_NAME] == "util", (
+            f"Expected name='util' (last part of module_path), got name='{props[cs.KEY_NAME]}'"
+        )
+
+    def test_rust_external_module_node_created(self, mock_ingestor: MagicMock) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        module_path = processor._resolve_rust_import_path(
+            import_path="std::collections::HashMap",
+            module_qn="test_project.src.main",
+        )
+
+        assert module_path == "std::collections"
+        assert len(mock_ingestor.nodes_created) == 1
+        label, props = mock_ingestor.nodes_created[0]
+        assert label == cs.NodeLabel.MODULE
+        assert props[cs.KEY_QUALIFIED_NAME] == "std::collections"
+
+    def test_rust_external_module_name_uses_module_path(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        module_path = processor._resolve_rust_import_path(
+            import_path="std::collections::HashMap",
+            module_qn="test_project.src.main",
+        )
+
+        assert module_path == "std::collections"
+        assert len(mock_ingestor.nodes_created) == 1
+        label, props = mock_ingestor.nodes_created[0]
+        assert props[cs.KEY_NAME] == "collections"
+
+
+class TestRustCrateResolution:
+    def test_crate_import_from_nested_module_resolves_to_crate_root(self) -> None:
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_rust_import_path(
+            import_path="crate::utils::helper",
+            module_qn="test_project.src.subdir.nested",
+        )
+
+        assert result == "test_project.src.utils", (
+            f"crate:: should resolve relative to crate root (src), not parent module. "
+            f"Got {result}, expected test_project.src.utils"
+        )
+
+    def test_crate_import_from_flat_module_resolves_correctly(self) -> None:
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_rust_import_path(
+            import_path="crate::utils::helper",
+            module_qn="test_project.src.main",
+        )
+
+        assert result == "test_project.src.utils"
+
+
+class TestJsInternalModuleResolution:
+    def test_resolves_file_with_extension(self, tmp_path: Path) -> None:
+        (tmp_path / "components").mkdir()
+        (tmp_path / "components" / "Button.ts").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.components.Button.x")
+        assert result == "myproject.components.Button"
+
+    def test_resolves_directory_with_index_file(self, tmp_path: Path) -> None:
+        (tmp_path / "components").mkdir()
+        (tmp_path / "components" / "index.ts").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.components.Button")
+        assert result == "myproject.components"
+
+    def test_resolves_directory_with_index_js(self, tmp_path: Path) -> None:
+        (tmp_path / "utils").mkdir()
+        (tmp_path / "utils" / "index.js").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.utils.helper")
+        assert result == "myproject.utils"
+
+    def test_returns_full_name_when_no_match(self, tmp_path: Path) -> None:
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_js_internal_module("myproject.nonexistent.thing")
+        assert result == "myproject.nonexistent.thing"
+
+
+class TestProjectPrefixMatching:
+    def test_similar_prefix_not_matched_without_dot(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/myapp"),
+            project_name="myapp",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        result = processor._resolve_module_path(
+            full_name="myapp_v2.utils.Helper",
+            module_qn="myapp.main.Main",
+            language=cs.SupportedLanguage.JAVA,
+        )
+
+        assert result == "myapp_v2.utils"
+        assert len(mock_ingestor.nodes_created) == 1
+
+    def test_internal_import_matched_with_dot_separator(
+        self, mock_ingestor: MagicMock
+    ) -> None:
+        from codebase_rag import constants as cs
+
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/myapp"),
+            project_name="myapp",
+            ingestor=mock_ingestor,
+            function_registry=None,
+        )
+
+        result = processor._resolve_module_path(
+            full_name="myapp.utils.Helper",
+            module_qn="myapp.main.Main",
+            language=cs.SupportedLanguage.JAVA,
+        )
+
+        assert result == "myapp.utils.Helper"
+        assert len(mock_ingestor.nodes_created) == 0
