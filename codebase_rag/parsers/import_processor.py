@@ -237,16 +237,18 @@ class ImportProcessor:
         )
 
     def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:
+        # (H) crate:: is always relative to the crate root, not the current module.
+        # (H) We find the src directory in the qualified name to identify the crate root.
         if self._is_local_rust_import(import_path):
             path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
             module_parts = module_qn.split(cs.SEPARATOR_DOT)
-            base_path = (
-                cs.SEPARATOR_DOT.join(module_parts[:-1])
-                if len(module_parts) > 1
-                else module_parts[0]
-            )
+            try:
+                src_index = module_parts.index(cs.LANG_SRC_DIR)
+                crate_root_qn = cs.SEPARATOR_DOT.join(module_parts[: src_index + 1])
+            except ValueError:
+                crate_root_qn = self.project_name
             module_part = path_without_crate.split(cs.SEPARATOR_DOUBLE_COLON)[0]
-            return f"{base_path}{cs.SEPARATOR_DOT}{module_part}"
+            return f"{crate_root_qn}{cs.SEPARATOR_DOT}{module_part}"
 
         parts = import_path.split(cs.SEPARATOR_DOUBLE_COLON)
         module_path = (

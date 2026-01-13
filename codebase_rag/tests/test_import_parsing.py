@@ -343,6 +343,41 @@ class TestExternalModuleNodeCreation:
         assert props[cs.KEY_NAME] == "collections"
 
 
+class TestRustCrateResolution:
+    def test_crate_import_from_nested_module_resolves_to_crate_root(self) -> None:
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_rust_import_path(
+            import_path="crate::utils::helper",
+            module_qn="test_project.src.subdir.nested",
+        )
+
+        assert result == "test_project.src.utils", (
+            f"crate:: should resolve relative to crate root (src), not parent module. "
+            f"Got {result}, expected test_project.src.utils"
+        )
+
+    def test_crate_import_from_flat_module_resolves_correctly(self) -> None:
+        processor = ImportProcessor(
+            repo_path=Path("/tmp/test_project"),
+            project_name="test_project",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        result = processor._resolve_rust_import_path(
+            import_path="crate::utils::helper",
+            module_qn="test_project.src.main",
+        )
+
+        assert result == "test_project.src.utils"
+
+
 class TestJsInternalModuleResolution:
     def test_resolves_file_with_extension(self, tmp_path: Path) -> None:
         (tmp_path / "components").mkdir()
