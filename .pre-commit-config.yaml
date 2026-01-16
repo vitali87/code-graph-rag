@@ -51,3 +51,10 @@ repos:
     hooks:
     -   id: conventional-pre-commit
         stages: [commit-msg]
+-   repo: local
+    hooks:
+    -   id: single-line-commit
+        name: single-line commit message
+        entry: scripts/hooks/check-single-line-commit.sh
+        language: script
+        stages: [commit-msg]
