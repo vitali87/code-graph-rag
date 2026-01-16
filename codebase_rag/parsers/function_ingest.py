@@ -21,7 +21,12 @@ from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
-from .utils import get_function_captures, is_method_node, safe_decode_text
+from .utils import (
+    get_function_captures,
+    ingest_method,
+    is_method_node,
+    safe_decode_text,
+)
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -150,34 +155,21 @@ class FunctionIngestMixin:
         if not class_name:
             return False
 
-        method_name = cpp_utils.extract_function_name(func_node)
-        if not method_name:
-            return False
-
         class_name_normalized = class_name.replace(
             cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
         )
         class_qn = f"{module_qn}.{class_name_normalized}"
-        method_qn = f"{class_qn}.{method_name}"
 
-        method_props: PropertyDict = {
-            cs.KEY_QUALIFIED_NAME: method_qn,
-            cs.KEY_NAME: method_name,
-            cs.KEY_DECORATORS: self._extract_decorators(func_node),
-            cs.KEY_START_LINE: func_node.start_point[0] + 1,
-            cs.KEY_END_LINE: func_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(func_node),
-        }
-
-        logger.info(ls.METHOD_FOUND.format(name=method_name, qn=method_qn))
-        self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
-        self.function_registry[method_qn] = NodeType.METHOD
-        self.simple_name_lookup[method_name].add(method_qn)
-
-        self.ingestor.ensure_relationship_batch(
-            (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
-            cs.RelationshipType.DEFINES_METHOD,
-            (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+        ingest_method(
+            method_node=func_node,
+            container_qn=class_qn,
+            container_type=cs.NodeLabel.CLASS,
+            ingestor=self.ingestor,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            get_docstring_func=self._get_docstring,
+            language=cs.SupportedLanguage.CPP,
+            extract_decorators_func=self._extract_decorators,
         )
 
         return True
