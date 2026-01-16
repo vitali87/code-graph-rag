@@ -1,49 +1,77 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING
 
 import pytest
 
 from codebase_rag.constants import SEPARATOR_DOT
 from codebase_rag.tests.conftest import get_nodes, run_updater
 
+if TYPE_CHECKING:
+    from unittest.mock import MagicMock
+
+    from codebase_rag.types_defs import PropertyDict
+
+
+def _get_line_span(props: PropertyDict) -> int:
+    start = props.get("start_line", 0)
+    end = props.get("end_line", 0)
+    if not isinstance(start, int) or not isinstance(end, int):
+        return 0
+    return end - start
+
+
+def _get_method_name(props: PropertyDict) -> str:
+    name = props.get("name", "")
+    return name if isinstance(name, str) else ""
+
+
+def _get_start_line(props: PropertyDict) -> int:
+    start = props.get("start_line", 0)
+    return start if isinstance(start, int) else 0
+
+
+def _select_definition_props(candidates: list[PropertyDict]) -> PropertyDict | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    return max(candidates, key=_get_line_span)
+
 
 def _get_method_props(
     mock_ingestor: MagicMock, class_name: str, method_name: str
-) -> dict | None:
+) -> PropertyDict | None:
     method_calls = get_nodes(mock_ingestor, "Method")
-    result = None
+    candidates: list[PropertyDict] = []
     for call in method_calls:
         props = call[0][1]
         qn = props.get("qualified_name", "")
+        if not isinstance(qn, str):
+            continue
         parts = qn.split(SEPARATOR_DOT)
         if class_name in parts and parts[-1] == method_name:
-            if result is None:
-                result = props
-            else:
-                existing_span = result.get("end_line", 0) - result.get("start_line", 0)
-                new_span = props.get("end_line", 0) - props.get("start_line", 0)
-                if new_span > existing_span:
-                    result = props
-    return result
+            candidates.append(props)
+    return _select_definition_props(candidates)
 
 
-def _get_all_methods(mock_ingestor: MagicMock) -> list[dict]:
+def _get_all_methods(mock_ingestor: MagicMock) -> list[PropertyDict]:
     method_calls = get_nodes(mock_ingestor, "Method")
-    methods_by_qn: dict[str, dict] = {}
+    methods_by_qn: dict[str, list[PropertyDict]] = {}
     for call in method_calls:
         props = call[0][1]
         qn = props.get("qualified_name", "")
+        if not isinstance(qn, str):
+            continue
         if qn not in methods_by_qn:
-            methods_by_qn[qn] = props
-        else:
-            existing = methods_by_qn[qn]
-            existing_span = existing.get("end_line", 0) - existing.get("start_line", 0)
-            new_span = props.get("end_line", 0) - props.get("start_line", 0)
-            if new_span > existing_span:
-                methods_by_qn[qn] = props
-    return list(methods_by_qn.values())
+            methods_by_qn[qn] = []
+        methods_by_qn[qn].append(props)
+    return [
+        selected
+        for candidates in methods_by_qn.values()
+        if (selected := _select_definition_props(candidates))
+    ]
 
 
 @pytest.fixture
@@ -498,7 +526,7 @@ bool Vector::operator==(const Vector& other) const {
 
         methods = _get_all_methods(mock_ingestor)
         operator_methods = [
-            m for m in methods if "operator" in m.get("name", "").lower()
+            m for m in methods if "operator" in _get_method_name(m).lower()
         ]
 
         assert len(operator_methods) >= 3, (
@@ -506,9 +534,9 @@ bool Vector::operator==(const Vector& other) const {
         )
 
         for method in operator_methods:
-            assert method["start_line"] >= 8, (
-                f"Operator method should have definition line >= 8, "
-                f"got {method['start_line']}"
+            start_line = _get_start_line(method)
+            assert start_line >= 8, (
+                f"Operator method should have definition line >= 8, got {start_line}"
             )
 
 

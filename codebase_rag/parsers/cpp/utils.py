@@ -337,7 +337,7 @@ def _collect_all_names_from_qualified_id(node: Node) -> list[str]:
             cs.CppNodeType.IDENTIFIER,
             cs.TS_TYPE_IDENTIFIER,
         ):
-            if child.text and (name := safe_decode_text(child)):
+            if name := safe_decode_text(child):
                 names.append(name)
         elif child.type == cs.CppNodeType.QUALIFIED_IDENTIFIER:
             names.extend(_collect_all_names_from_qualified_id(child))
