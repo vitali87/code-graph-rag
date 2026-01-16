@@ -350,6 +350,4 @@ def extract_class_name_from_out_of_class_method_qualified(
     names = _collect_all_names_from_qualified_id(qualified_id)
     if len(names) >= 2:
         return cs.SEPARATOR_DOUBLE_COLON.join(names[:-1])
-    if names:
-        return names[0]
     return None
