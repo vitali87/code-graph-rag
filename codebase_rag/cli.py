@@ -383,22 +383,13 @@ def language_command(ctx: typer.Context) -> None:
 
 
 @app.command(name=ch.CLICommandName.STATS, help=ch.CMD_STATS)
-def stats(
-    batch_size: int | None = typer.Option(
-        None,
-        "--batch-size",
-        min=1,
-        help=ch.HELP_BATCH_SIZE,
-    ),
-) -> None:
+def stats() -> None:
     from rich.table import Table
 
     app_context.console.print(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
 
-    effective_batch_size = settings.resolve_batch_size(batch_size)
-
     try:
-        with connect_memgraph(effective_batch_size) as ingestor:
+        with connect_memgraph(batch_size=1) as ingestor:
             node_results = ingestor.fetch_all(CYPHER_STATS_NODE_COUNTS)
             rel_results = ingestor.fetch_all(CYPHER_STATS_RELATIONSHIP_COUNTS)
 
@@ -428,7 +419,6 @@ def stats(
             app_context.console.print(node_table)
             app_context.console.print()
 
-            # Relationship statistics table
             rel_table = Table(
                 title=style(cs.CLI_STATS_REL_TITLE, cs.Color.GREEN),
                 show_header=True,
