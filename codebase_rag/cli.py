@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+import mgclient  # ty: ignore[unresolved-import]
 import typer
 from loguru import logger
 
@@ -407,8 +408,8 @@ def stats() -> None:
             for row in node_results:
                 labels = row.get("labels", [])
                 label = ":".join(labels) if labels else "Unknown"
-                count = str(row.get("count", 0))
-                node_table.add_row(label, f"{int(count):,}")
+                count = row.get("count", 0)
+                node_table.add_row(label, f"{count:,}")
 
             node_table.add_section()
             node_table.add_row(
@@ -428,9 +429,9 @@ def stats() -> None:
             rel_table.add_column(cs.CLI_STATS_COL_COUNT, style=cs.Color.YELLOW, justify="right")
 
             for row in rel_results:
-                rel_type = str(row.get("type", "Unknown"))
-                count = str(row.get("count", 0))
-                rel_table.add_row(rel_type, f"{int(count):,}")
+                rel_type = row.get("type", "Unknown")
+                count = row.get("count", 0)
+                rel_table.add_row(str(rel_type), f"{count:,}")
 
             rel_table.add_section()
             rel_table.add_row(
@@ -440,7 +441,7 @@ def stats() -> None:
 
             app_context.console.print(rel_table)
 
-    except Exception as e:
+    except mgclient.DatabaseError as e:
         app_context.console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
         )
