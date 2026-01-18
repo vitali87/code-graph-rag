@@ -52,10 +52,6 @@ def _info(msg: str) -> None:
         app_context.console.print(msg)
 
 
-def _error(message: str) -> None:
-    app_context.console.print(message)
-
-
 @app.command(help=ch.CMD_START)
 def start(
     repo_path: str | None = typer.Option(
