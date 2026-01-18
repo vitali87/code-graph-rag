@@ -164,7 +164,7 @@ def start(
     try:
         asyncio.run(main_async(target_repo_path, effective_batch_size))
     except KeyboardInterrupt:
-        _info(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
         app_context.console.print(
             style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
@@ -322,7 +322,7 @@ def optimize(
             )
         )
     except KeyboardInterrupt:
-        _info(style(cs.CLI_MSG_OPTIMIZATION_TERMINATED, cs.Color.RED))
+        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
         app_context.console.print(
             style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
@@ -336,7 +336,7 @@ def mcp_server() -> None:
 
         asyncio.run(mcp_main())
     except KeyboardInterrupt:
-        _info(style(cs.CLI_MSG_MCP_TERMINATED, cs.Color.RED))
+        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
         app_context.console.print(
             style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
