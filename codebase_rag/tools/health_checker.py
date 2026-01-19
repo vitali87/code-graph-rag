@@ -4,6 +4,7 @@ import os
 import subprocess
 
 import mgclient
+from loguru import logger
 
 from .. import constants as cs
 from ..config import settings
@@ -11,7 +12,6 @@ from ..schemas import HealthCheckResult
 
 
 class HealthChecker:
-
     def __init__(self):
         self.results: list[HealthCheckResult] = []
 
@@ -100,13 +100,13 @@ class HealthChecker:
             if cursor is not None:
                 try:
                     cursor.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to close Memgraph cursor: {e}")
             if conn is not None:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to close Memgraph connection: {e}")
 
     def check_api_key(self, env_name: str, display_name: str) -> HealthCheckResult:
         value = os.getenv(env_name) or getattr(settings, env_name, None)
@@ -123,7 +123,9 @@ class HealthChecker:
                 else cs.HEALTH_CHECK_API_KEY_NOT_SET.format(display_name=display_name)
             ),
             passed=passed,
-            message=cs.HEALTH_CHECK_API_KEY_CONFIGURED if passed else cs.HEALTH_CHECK_API_KEY_NOT_CONFIGURED,
+            message=cs.HEALTH_CHECK_API_KEY_CONFIGURED
+            if passed
+            else cs.HEALTH_CHECK_API_KEY_NOT_CONFIGURED,
             error=error_msg,
         )
 
@@ -146,11 +148,12 @@ class HealthChecker:
             result = subprocess.run(
                 check_cmd,
                 capture_output=True,
+                text=True,
                 timeout=4,
                 check=False,
             )
             if result.returncode == 0:
-                path = result.stdout.decode().strip().splitlines()[0]
+                path = result.stdout.strip().splitlines()[0]
                 return HealthCheckResult(
                     name=cs.HEALTH_CHECK_TOOL_INSTALLED.format(tool_name=tool_name),
                     passed=True,

@@ -4,6 +4,7 @@ from pathlib import Path
 import typer
 from loguru import logger
 from rich.panel import Panel
+from rich.table import Table
 
 from . import cli_help as ch
 from . import constants as cs
@@ -381,8 +382,6 @@ def language_command(ctx: typer.Context) -> None:
 
 @app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)
 def doctor() -> None:
-    from rich.table import Table
-
     checker = HealthChecker()
     results = checker.run_all_checks()
 

@@ -2736,7 +2736,9 @@ HEALTH_CHECK_DOCKER_NOT_RESPONDING_MSG = "Not responding"
 HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG = "Not installed"
 HEALTH_CHECK_DOCKER_NOT_IN_PATH = "docker command not found in PATH"
 HEALTH_CHECK_DOCKER_TIMEOUT_MSG = "Check timed out"
-HEALTH_CHECK_DOCKER_TIMEOUT_ERROR = "The 'docker info' command took more than 5 seconds to respond."
+HEALTH_CHECK_DOCKER_TIMEOUT_ERROR = (
+    "The 'docker info' command took more than 5 seconds to respond."
+)
 HEALTH_CHECK_DOCKER_FAILED_MSG = "Check failed"
 HEALTH_CHECK_DOCKER_EXIT_CODE = "Non-zero exit code"
 
@@ -2752,14 +2754,18 @@ HEALTH_CHECK_API_KEY_SET = "{display_name} API key is set"
 HEALTH_CHECK_API_KEY_NOT_SET = "{display_name} API key is not set"
 HEALTH_CHECK_API_KEY_CONFIGURED = "Configured"
 HEALTH_CHECK_API_KEY_NOT_CONFIGURED = "Not set"
-HEALTH_CHECK_API_KEY_MISSING_MSG = "Set the {env_name} environment variable or configure it in your settings."
+HEALTH_CHECK_API_KEY_MISSING_MSG = (
+    "Set the {env_name} environment variable or configure it in your settings."
+)
 
 HEALTH_CHECK_TOOL_INSTALLED = "{tool_name} is installed"
 HEALTH_CHECK_TOOL_NOT_INSTALLED = "{tool_name} is not installed"
 HEALTH_CHECK_TOOL_INSTALLED_MSG = "Installed ({path})"
 HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG = "'{cmd}' not found in PATH"
 HEALTH_CHECK_TOOL_TIMEOUT_MSG = "Check timed out"
-HEALTH_CHECK_TOOL_TIMEOUT_ERROR = "The command to find '{cmd}' took more than 4 seconds to respond."
+HEALTH_CHECK_TOOL_TIMEOUT_ERROR = (
+    "The command to find '{cmd}' took more than 4 seconds to respond."
+)
 HEALTH_CHECK_TOOL_FAILED_MSG = "Check failed"
 
 HEALTH_CHECK_TOOLS = [
