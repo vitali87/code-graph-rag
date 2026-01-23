@@ -40,7 +40,7 @@ def validate_models_early() -> None:
         cypher_config.validate_api_key(cs.ModelRole.CYPHER)
     except ValueError as e:
         app_context.console.print(style(str(e), cs.Color.RED))
-        raise typer.Exit(1) from None
+        raise typer.Exit(1) from e
 
 
 def _update_and_validate_models(orchestrator: str | None, cypher: str | None) -> None:
