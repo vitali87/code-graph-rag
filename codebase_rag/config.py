@@ -117,8 +117,7 @@ class ModelConfig:
         if self.provider.lower() in local_providers:
             return
         if (
-            not self.api_key
-            or self.api_key.strip() == ""
+            not (self.api_key and self.api_key.strip())
             or self.api_key == cs.DEFAULT_API_KEY
         ):
             error_msg = format_missing_api_key_errors(self.provider, role)

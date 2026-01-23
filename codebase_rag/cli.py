@@ -43,6 +43,16 @@ def validate_models_early() -> None:
         raise typer.Exit(1) from None
 
 
+def _update_and_validate_models(orchestrator: str | None, cypher: str | None) -> None:
+    try:
+        update_model_settings(orchestrator, cypher)
+    except ValueError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from None
+
+    validate_models_early()
+
+
 @app.command(help=ch.CMD_START)
 def start(
     repo_path: str | None = typer.Option(
@@ -106,13 +116,7 @@ def start(
         )
         raise typer.Exit(1)
 
-    try:
-        update_model_settings(orchestrator, cypher)
-    except ValueError as e:
-        app_context.console.print(style(str(e), cs.Color.RED))
-        raise typer.Exit(1) from None
-
-    validate_models_early()
+    _update_and_validate_models(orchestrator, cypher)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -314,13 +318,7 @@ def optimize(
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
-    try:
-        update_model_settings(orchestrator, cypher)
-    except ValueError as e:
-        app_context.console.print(style(str(e), cs.Color.RED))
-        raise typer.Exit(1) from None
-
-    validate_models_early()
+    _update_and_validate_models(orchestrator, cypher)
 
     try:
         asyncio.run(
