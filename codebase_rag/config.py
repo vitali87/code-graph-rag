@@ -6,7 +6,7 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -245,6 +245,8 @@ class AppConfig(BaseSettings):
 
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
+
+    QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()

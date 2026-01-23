@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Test script to verify import parsing works for all supported languages.
-"""
+
 
 import tempfile
 from pathlib import Path

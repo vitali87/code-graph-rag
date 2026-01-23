@@ -237,6 +237,10 @@ Use the Makefile for common development tasks:
 | `make build-grammars` | Build grammar submodules |
 | `make watch` | Watch repository for changes and update graph in real-time |
 | `make readme` | Regenerate README.md from codebase |
+| `make lint` | Run ruff check |
+| `make format` | Run ruff format |
+| `make typecheck` | Run type checking with ty |
+| `make check` | Run all checks: lint, typecheck, test |
 <!-- /SECTION:makefile_commands -->
 
 ## 🎯 Usage
