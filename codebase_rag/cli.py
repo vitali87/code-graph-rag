@@ -48,7 +48,7 @@ def _update_and_validate_models(orchestrator: str | None, cypher: str | None) ->
         update_model_settings(orchestrator, cypher)
     except ValueError as e:
         app_context.console.print(style(str(e), cs.Color.RED))
-        raise typer.Exit(1) from None
+        raise typer.Exit(1) from e
 
     validate_models_early()
 
