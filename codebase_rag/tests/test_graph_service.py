@@ -285,7 +285,10 @@ class TestEnsureConstraints:
         with patch.object(ingestor, "_execute_query", side_effect=fail_then_succeed):
             ingestor.ensure_constraints()
 
-        assert call_count == len(NODE_UNIQUE_CONSTRAINTS)
+        # ensure_constraints creates both constraints AND indexes for each label
+        # (constraints for uniqueness, indexes for MERGE performance)
+        expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2
+        assert call_count == expected_queries
 
 
 class TestFlushNodesEdgeCases:

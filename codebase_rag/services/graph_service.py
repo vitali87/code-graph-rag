@@ -29,6 +29,7 @@ from ..cypher_queries import (
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
     build_constraint_query,
+    build_index_query,
     build_merge_node_query,
     build_merge_relationship_query,
     wrap_with_unwind,
@@ -185,6 +186,24 @@ class MemgraphIngestor:
             except Exception:
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
+        self._ensure_indexes()
+
+    def _ensure_indexes(self) -> None:
+        """Create label-property indexes for efficient MERGE operations.
+
+        In Memgraph, uniqueness constraints do NOT automatically create indexes.
+        Without explicit indexes, MERGE operations perform full table scans,
+        causing exponential slowdown as the dataset grows (O(n) per MERGE).
+        With indexes, MERGE operations are O(log n).
+        """
+        logger.info(ls.MG_ENSURING_INDEXES)
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
+            try:
+                self._execute_query(build_index_query(label, prop))
+            except Exception:
+                # Index may already exist
+                pass
+        logger.info(ls.MG_INDEXES_DONE)
 
     def ensure_node_batch(
         self, label: str, properties: dict[str, PropertyValue]
