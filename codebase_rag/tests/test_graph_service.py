@@ -285,8 +285,8 @@ class TestEnsureConstraints:
         with patch.object(ingestor, "_execute_query", side_effect=fail_then_succeed):
             ingestor.ensure_constraints()
 
-        # ensure_constraints creates both constraints AND indexes for each label
-        # (constraints for uniqueness, indexes for MERGE performance)
+        # (H) ensure_constraints creates both constraints AND indexes for each label
+        # (H) (constraints for uniqueness, indexes for MERGE performance)
         expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2
         assert call_count == expected_queries
 

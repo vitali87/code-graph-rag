@@ -199,7 +199,7 @@ class MemgraphIngestor:
             try:
                 self._execute_query(build_index_query(label, prop))
             except Exception:
-                # Index may already exist
+                # (H) Index may already exist
                 pass
         logger.info(ls.MG_INDEXES_DONE)
 

@@ -99,8 +99,7 @@ def build_constraint_query(label: str, prop: str) -> str:
 
 
 def build_index_query(label: str, prop: str) -> str:
-    """Build a label-property index query for efficient MERGE operations.
-    """
+    """Build a label-property index query for efficient MERGE operations."""
     return f"CREATE INDEX ON :{label}({prop});"
 
 

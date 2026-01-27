@@ -246,8 +246,7 @@ class TestEnsureConstraintsForAllLabels:
             )
 
     def test_ensure_constraints_creates_all_indexes(self) -> None:
-        """Verify that label-property indexes are created for MERGE performance.
-        """
+        """Verify that label-property indexes are created for MERGE performance."""
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
