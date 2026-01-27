@@ -192,9 +192,7 @@ class MemgraphIngestor:
         """Create label-property indexes for efficient MERGE operations.
 
         In Memgraph, uniqueness constraints do NOT automatically create indexes.
-        Without explicit indexes, MERGE operations perform full table scans,
-        causing exponential slowdown as the dataset grows (O(n) per MERGE).
-        With indexes, MERGE operations are O(log n).
+        Without explicit indexes, MERGE operations perform full scan operations.
         """
         logger.info(ls.MG_ENSURING_INDEXES)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
