@@ -98,6 +98,10 @@ def build_constraint_query(label: str, prop: str) -> str:
     return f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
 
 
+def build_index_query(label: str, prop: str) -> str:
+    return f"CREATE INDEX ON :{label}({prop});"
+
+
 def build_merge_node_query(label: str, id_key: str) -> str:
     return f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
 
