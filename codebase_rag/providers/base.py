@@ -6,8 +6,12 @@ from urllib.parse import urljoin
 
 import httpx
 from loguru import logger
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.providers.anthropic import (
+    AnthropicProvider as PydanticAnthropicProvider,
+)
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
@@ -15,16 +19,17 @@ from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, settings
+from ..utils.claude_settings import get_anthropic_config_from_claude_settings
 
 
 class ModelProvider(ABC):
-    def __init__(self, **config: str | int | None) -> None:
+    def __init__(self, **config: str | int | dict[str, str] | None) -> None:
         self.config = config
 
     @abstractmethod
     def create_model(
         self, model_id: str, **kwargs: str | int | None
-    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel:
+    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel | AnthropicModel:
         pass
 
     @abstractmethod
@@ -72,7 +77,6 @@ class GoogleProvider(ModelProvider):
         if self.provider_type == cs.GoogleProviderType.VERTEX:
             credentials = None
             if self.service_account_file:
-                # (H) Convert service account file to credentials object for pydantic-ai
                 from google.oauth2 import service_account
 
                 credentials = service_account.Credentials.from_service_account_file(
@@ -85,7 +89,6 @@ class GoogleProvider(ModelProvider):
                 credentials=credentials,
             )
         else:
-            # (H) api_key is guaranteed to be set by validate_config for gla type
             assert self.api_key is not None
             provider = PydanticGoogleProvider(api_key=self.api_key)
 
@@ -155,15 +158,94 @@ class OllamaProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class AnthropicProvider(ModelProvider):
+    """Provider for Anthropic Claude models.
+
+    Supports multiple authentication modes:
+    1. Direct API key + optional custom endpoint
+    2. Claude Code settings (~/.claude/settings.json)
+    3. Portkey proxy via custom headers
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        custom_headers: dict[str, str] | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = api_key
+        self.endpoint = endpoint
+        self.custom_headers = custom_headers or {}
+
+        if not self.api_key and not self.custom_headers and not self.endpoint:
+            self._load_from_claude_settings()
+
+    def _load_from_claude_settings(self) -> None:
+        """Load configuration from Claude Code settings if available."""
+        try:
+            base_url, headers = get_anthropic_config_from_claude_settings()
+
+            if base_url:
+                self.endpoint = base_url
+
+            if headers:
+                self.custom_headers = headers
+        except Exception as e:
+            logger.debug(f"Could not load Anthropic config from Claude settings: {e}")
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.ANTHROPIC
+
+    def validate_config(self) -> None:
+        """Validate configuration.
+
+        Either API key OR custom headers (for proxy) must be provided.
+        """
+        has_api_key = bool(self.api_key)
+        has_custom_headers = bool(self.custom_headers)
+
+        if not has_api_key and not has_custom_headers:
+            raise ValueError(ex.ANTHROPIC_NO_AUTH)
+
+    def create_model(self, model_id: str, **kwargs: str | int | None) -> AnthropicModel:
+        """Create an Anthropic model instance."""
+        self.validate_config()
+
+        base_url = self.endpoint or cs.ANTHROPIC_DEFAULT_ENDPOINT
+        api_key = self.api_key or "proxy-auth-via-headers"
+        http_client = None
+        if self.custom_headers:
+            http_client = httpx.AsyncClient(
+                headers=self.custom_headers,
+                timeout=30.0,
+            )
+
+        provider = PydanticAnthropicProvider(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=http_client,
+        )
+
+        return AnthropicModel(
+            model_name=model_id,
+            provider=provider,
+        )
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
     cs.Provider.OLLAMA: OllamaProvider,
+    cs.Provider.ANTHROPIC: AnthropicProvider,
 }
 
 
 def get_provider(
-    provider_name: str | cs.Provider, **config: str | int | None
+    provider_name: str | cs.Provider,
+    **config: str | int | dict[str, str] | None,
 ) -> ModelProvider:
     provider_key = str(provider_name)
     if provider_key not in PROVIDER_REGISTRY:
@@ -186,6 +268,7 @@ def get_provider_from_config(config: ModelConfig) -> ModelProvider:
         provider_type=config.provider_type,
         thinking_budget=config.thinking_budget,
         service_account_file=config.service_account_file,
+        custom_headers=config.custom_headers,
     )
 
 

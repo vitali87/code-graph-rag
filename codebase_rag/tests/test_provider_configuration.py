@@ -229,3 +229,60 @@ class TestProviderConfiguration:
             assert orch_config.model_id == "gpt-4o"
             assert orch_config.api_key == "sk-test-key"
             assert orch_config.endpoint == "https://api.custom-openai.com/v1"
+
+    def test_anthropic_config_from_env(self) -> None:
+        """Test loading Anthropic configuration from environment."""
+        with patch.dict(
+            os.environ,
+            {
+                "ORCHESTRATOR_PROVIDER": "anthropic",
+                "ORCHESTRATOR_MODEL": "claude-sonnet-4.5-20250929",
+                "ORCHESTRATOR_API_KEY": "sk-ant-test-key",
+            },
+        ):
+            config = AppConfig()
+
+            orch_config = config.active_orchestrator_config
+            assert orch_config.provider == "anthropic"
+            assert orch_config.model_id == "claude-sonnet-4.5-20250929"
+            assert orch_config.api_key == "sk-ant-test-key"
+
+    def test_anthropic_config_with_custom_endpoint(self) -> None:
+        """Test loading Anthropic config with custom endpoint."""
+        with patch.dict(
+            os.environ,
+            {
+                "ORCHESTRATOR_PROVIDER": "anthropic",
+                "ORCHESTRATOR_MODEL": "claude-sonnet-4.5-20250929",
+                "ORCHESTRATOR_API_KEY": "sk-ant-test-key",
+                "ORCHESTRATOR_ENDPOINT": "https://custom-anthropic.example.com/v1",
+            },
+        ):
+            config = AppConfig()
+
+            orch_config = config.active_orchestrator_config
+            assert orch_config.provider == "anthropic"
+            assert orch_config.endpoint == "https://custom-anthropic.example.com/v1"
+
+    def test_anthropic_mixed_roles(self) -> None:
+        """Test using Anthropic for orchestrator and another provider for cypher."""
+        with patch.dict(
+            os.environ,
+            {
+                "ORCHESTRATOR_PROVIDER": "anthropic",
+                "ORCHESTRATOR_MODEL": "claude-sonnet-4.5-20250929",
+                "ORCHESTRATOR_API_KEY": "sk-ant-test",
+                "CYPHER_PROVIDER": "ollama",
+                "CYPHER_MODEL": "codellama",
+                "CYPHER_ENDPOINT": "http://localhost:11434/v1",
+            },
+        ):
+            config = AppConfig()
+
+            orch_config = config.active_orchestrator_config
+            assert orch_config.provider == "anthropic"
+            assert orch_config.model_id == "claude-sonnet-4.5-20250929"
+
+            cypher_config = config.active_cypher_config
+            assert cypher_config.provider == "ollama"
+            assert cypher_config.model_id == "codellama"
