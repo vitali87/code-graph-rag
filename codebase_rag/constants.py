@@ -234,6 +234,16 @@ CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
 CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
+
+# Stats command constants
+CLI_STATS_NODE_TITLE = "Node Statistics"
+CLI_STATS_REL_TITLE = "Relationship Statistics"
+CLI_STATS_COL_NODE_TYPE = "Node Type"
+CLI_STATS_COL_REL_TYPE = "Relationship Type"
+CLI_STATS_COL_COUNT = "Count"
+CLI_STATS_TOTAL_NODES = "Total Nodes"
+CLI_STATS_TOTAL_RELS = "Total Relationships"
+CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "
     "Use --interactive-setup to customize."

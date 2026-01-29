@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+import mgclient  # ty: ignore[unresolved-import]
 import typer
 from loguru import logger
 
@@ -18,6 +19,10 @@ from .main import (
     prompt_for_unignored_directories,
     style,
     update_model_settings,
+)
+from .cypher_queries import (
+    CYPHER_STATS_NODE_COUNTS,
+    CYPHER_STATS_RELATIONSHIP_COUNTS,
 )
 from .parser_loader import load_parsers
 from .services.protobuf_service import ProtobufFileIngestor
@@ -388,6 +393,73 @@ def graph_loader_command(
 )
 def language_command(ctx: typer.Context) -> None:
     language_cli(ctx.args, standalone_mode=False)
+
+
+
+@app.command(name=ch.CLICommandName.STATS, help=ch.CMD_STATS)
+def stats() -> None:
+    from rich.table import Table
+
+    app_context.console.print(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
+
+    try:
+        with connect_memgraph(batch_size=1) as ingestor:
+            node_results = ingestor.fetch_all(CYPHER_STATS_NODE_COUNTS)
+            rel_results = ingestor.fetch_all(CYPHER_STATS_RELATIONSHIP_COUNTS)
+
+            total_nodes = sum(int(row.get("count", 0)) for row in node_results)
+            total_rels = sum(int(row.get("count", 0)) for row in rel_results)
+
+            node_table = Table(
+                title=style(cs.CLI_STATS_NODE_TITLE, cs.Color.GREEN),
+                show_header=True,
+                header_style=f"bold {cs.Color.MAGENTA}",
+            )
+            node_table.add_column(cs.CLI_STATS_COL_NODE_TYPE, style=cs.Color.CYAN)
+            node_table.add_column(cs.CLI_STATS_COL_COUNT, style=cs.Color.YELLOW, justify="right")
+
+            for row in node_results:
+                labels = row.get("labels", [])
+                label = ":".join(labels) if labels else "Unknown"
+                count = row.get("count", 0)
+                node_table.add_row(label, f"{count:,}")
+
+            node_table.add_section()
+            node_table.add_row(
+                style(cs.CLI_STATS_TOTAL_NODES, cs.Color.GREEN),
+                style(f"{total_nodes:,}", cs.Color.GREEN),
+            )
+
+            app_context.console.print(node_table)
+            app_context.console.print()
+
+            rel_table = Table(
+                title=style(cs.CLI_STATS_REL_TITLE, cs.Color.GREEN),
+                show_header=True,
+                header_style=f"bold {cs.Color.MAGENTA}",
+            )
+            rel_table.add_column(cs.CLI_STATS_COL_REL_TYPE, style=cs.Color.CYAN)
+            rel_table.add_column(cs.CLI_STATS_COL_COUNT, style=cs.Color.YELLOW, justify="right")
+
+            for row in rel_results:
+                rel_type = row.get("type", "Unknown")
+                count = row.get("count", 0)
+                rel_table.add_row(str(rel_type), f"{count:,}")
+
+            rel_table.add_section()
+            rel_table.add_row(
+                style(cs.CLI_STATS_TOTAL_RELS, cs.Color.GREEN),
+                style(f"{total_rels:,}", cs.Color.GREEN),
+            )
+
+            app_context.console.print(rel_table)
+
+    except mgclient.DatabaseError as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(ls.STATS_ERROR.format(error=e))
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":
