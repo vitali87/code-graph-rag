@@ -189,17 +189,11 @@ class MemgraphIngestor:
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
-        """Create label-property indexes for efficient MERGE operations.
-
-        In Memgraph, uniqueness constraints do NOT automatically create indexes.
-        Without explicit indexes, MERGE operations perform full scan operations.
-        """
         logger.info(ls.MG_ENSURING_INDEXES)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(build_index_query(label, prop))
             except Exception:
-                # (H) Index may already exist
                 pass
         logger.info(ls.MG_INDEXES_DONE)
 
