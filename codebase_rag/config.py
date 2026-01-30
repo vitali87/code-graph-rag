@@ -171,14 +171,7 @@ class AppConfig(BaseSettings):
 
         if provider and model:
             custom_headers_str = getattr(self, f"{role_upper}_CUSTOM_HEADERS", None)
-            custom_headers = None
-            if custom_headers_str:
-                custom_headers = {}
-                for line in custom_headers_str.strip().split("\n"):
-                    line = line.strip()
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        custom_headers[key.strip()] = value.strip()
+            custom_headers = parse_custom_headers(custom_headers_str) if custom_headers_str is not None else None
 
             return ModelConfig(
                 provider=provider.lower(),
