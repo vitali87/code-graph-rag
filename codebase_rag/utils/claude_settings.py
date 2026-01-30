@@ -48,14 +48,7 @@ def get_anthropic_config_from_claude_settings() -> tuple[str | None, dict[str, s
     env = settings["env"]
     base_url = env.get("ANTHROPIC_BASE_URL")
 
-    custom_headers_str = env.get("ANTHROPIC_CUSTOM_HEADERS", "")
-    custom_headers = {}
-
-    if custom_headers_str:
-        for line in custom_headers_str.strip().split("\n"):
-            line = line.strip()
-            if ":" in line:
-                key, value = line.split(":", 1)
-                custom_headers[key.strip()] = value.strip()
+    custom_headers_str = env.get("ANTHROPIC_CUSTOM_HEADERS")
+    custom_headers = parse_custom_headers(custom_headers_str)
 
     return base_url, custom_headers
