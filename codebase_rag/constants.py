@@ -420,7 +420,6 @@ WHERE (n:Function OR n:Method)
 RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
        n.start_line AS start_line, n.end_line AS end_line,
        m.path AS path
-ORDER BY n.qualified_name
 """
 
 
