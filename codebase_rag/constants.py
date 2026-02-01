@@ -781,6 +781,7 @@ IGNORE_PATTERNS = frozenset(
     {
         ".cache",
         ".claude",
+        ".qdrant_code_embeddings",
         ".eclipse",
         ".eggs",
         ".env",
