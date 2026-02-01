@@ -81,20 +81,24 @@ type FunctionRegistry = dict[QualifiedName, NodeType]
 class FunctionRegistryTrieProtocol(Protocol):
     def __contains__(self, qualified_name: QualifiedName) -> bool: ...
     def __getitem__(self, qualified_name: QualifiedName) -> NodeType: ...
+
     def __setitem__(
         self, qualified_name: QualifiedName, func_type: NodeType
     ) -> None: ...
+
     def get(
         self, qualified_name: QualifiedName, default: NodeType | None = None
     ) -> NodeType | None: ...
     def keys(self) -> KeysView[QualifiedName]: ...
     def items(self) -> ItemsView[QualifiedName, NodeType]: ...
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]: ...
+
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
 
 class ASTCacheProtocol(Protocol):
     def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None: ...
+
     def __getitem__(self, key: Path) -> tuple[Node, SupportedLanguage]: ...
     def __delitem__(self, key: Path) -> None: ...
     def __contains__(self, key: Path) -> bool: ...
@@ -340,10 +344,7 @@ class FunctionNodeProps(TypedDict, total=False):
     docstring: str | None
 
 
-class MCPToolArguments(TypedDict, total=False):
-    """Arguments for MCP tool calls with string, int, or None values."""
-
-    pass
+MCPToolArguments = dict[str, str | int | None]
 
 
 class MCPInputSchemaProperty(TypedDict, total=False):
@@ -352,10 +353,7 @@ class MCPInputSchemaProperty(TypedDict, total=False):
     default: str
 
 
-class MCPInputSchemaProperties(TypedDict, total=False):
-    """Property definitions in MCP input schema, keyed by property name."""
-
-    pass
+MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
 
 
 class MCPInputSchema(TypedDict):
