@@ -1054,7 +1054,7 @@ wheels = [
 
 [[package]]
 name = "graph-code"
-version = "0.0.36"
+version = "0.0.40"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
