@@ -130,7 +130,8 @@ class DefinitionProcessor(
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
             self._ingest_object_literal_methods(root_node, module_qn, language, queries)
             self._ingest_commonjs_exports(root_node, module_qn, language, queries)
-            self._ingest_es6_exports(root_node, module_qn, language, queries)
+            if language in {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}:
+                self._ingest_es6_exports(root_node, module_qn, language, queries)
             self._ingest_assignment_arrow_functions(
                 root_node, module_qn, language, queries
             )

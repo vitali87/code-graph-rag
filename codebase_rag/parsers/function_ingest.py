@@ -21,7 +21,12 @@ from ..utils.fqn_resolver import resolve_fqn_from_ast
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
-from .utils import get_function_captures, is_method_node, safe_decode_text
+from .utils import (
+    get_function_captures,
+    ingest_method,
+    is_method_node,
+    safe_decode_text,
+)
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -74,6 +79,10 @@ class FunctionIngestMixin:
                 continue
             if self._is_method(func_node, lang_config):
                 continue
+
+            if language == cs.SupportedLanguage.CPP:
+                if self._handle_cpp_out_of_class_method(func_node, module_qn):
+                    continue
 
             resolution = self._resolve_function_identity(
                 func_node, module_qn, language, lang_config, file_path
@@ -137,6 +146,33 @@ class FunctionIngestMixin:
         return self._resolve_generic_function(
             func_node, module_qn, language, lang_config
         )
+
+    def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:
+        if not cpp_utils.is_out_of_class_method_definition(func_node):
+            return False
+
+        class_name = cpp_utils.extract_class_name_from_out_of_class_method(func_node)
+        if not class_name:
+            return False
+
+        class_name_normalized = class_name.replace(
+            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+        )
+        class_qn = f"{module_qn}.{class_name_normalized}"
+
+        ingest_method(
+            method_node=func_node,
+            container_qn=class_qn,
+            container_type=cs.NodeLabel.CLASS,
+            ingestor=self.ingestor,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            get_docstring_func=self._get_docstring,
+            language=cs.SupportedLanguage.CPP,
+            extract_decorators_func=self._extract_decorators,
+        )
+
+        return True
 
     def _resolve_cpp_function(
         self, func_node: Node, module_qn: str

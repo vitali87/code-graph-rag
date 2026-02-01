@@ -352,11 +352,11 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         import_from_node_types=cs.CPP_IMPORT_NODES,
         package_indicators=cs.SPEC_CPP_PACKAGE_INDICATORS,
         function_query="""
+    (field_declaration) @function
+    (declaration) @function
     (function_definition) @function
     (template_declaration (function_definition)) @function
     (lambda_expression) @function
-    (field_declaration) @function
-    (declaration) @function
     """,
         class_query="""
     (class_specifier) @class

@@ -34,6 +34,27 @@ app = typer.Typer(
 )
 
 
+@app.callback()
+def _global_options(
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress non-essential output (progress messages, banners, informational logs).",
+        is_eager=True,
+    ),
+) -> None:
+    settings.QUIET = quiet
+    if quiet:
+        logger.remove()
+        logger.add(lambda msg: app_context.console.print(msg, end=""), level="ERROR")
+
+
+def _info(msg: str) -> None:
+    if not settings.QUIET:
+        app_context.console.print(msg)
+
+
 @app.command(help=ch.CMD_START)
 def start(
     repo_path: str | None = typer.Option(
@@ -103,7 +124,7 @@ def start(
 
     if update_graph:
         repo_to_update = Path(target_repo_path)
-        app_context.console.print(
+        _info(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)
         )
 
@@ -114,14 +135,12 @@ def start(
         if interactive_setup:
             unignore_paths = prompt_for_unignored_directories(repo_to_update, exclude)
         else:
-            app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
+            _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
             unignore_paths = cgrignore.unignore or None
 
         with connect_memgraph(effective_batch_size) as ingestor:
             if clean:
-                app_context.console.print(
-                    style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW)
-                )
+                _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
                 ingestor.clean_database()
             ingestor.ensure_constraints()
 
@@ -138,13 +157,11 @@ def start(
             updater.run()
 
             if output:
-                app_context.console.print(
-                    style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN)
-                )
+                _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
                 if not export_graph_to_file(ingestor, output):
                     raise typer.Exit(1)
 
-        app_context.console.print(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+        _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
 
     try:
@@ -186,13 +203,9 @@ def index(
 ) -> None:
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     repo_to_index = Path(target_repo_path)
+    _info(style(cs.CLI_MSG_INDEXING_AT.format(path=repo_to_index), cs.Color.GREEN))
 
-    app_context.console.print(
-        style(cs.CLI_MSG_INDEXING_AT.format(path=repo_to_index), cs.Color.GREEN)
-    )
-    app_context.console.print(
-        style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN)
-    )
+    _info(style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN))
 
     cgrignore = load_cgrignore_patterns(repo_to_index)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
@@ -201,7 +214,7 @@ def index(
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo_to_index, exclude)
     else:
-        app_context.console.print(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
+        _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
         unignore_paths = cgrignore.unignore or None
 
     try:
@@ -214,8 +227,8 @@ def index(
         )
 
         updater.run()
+        _info(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
 
-        app_context.console.print(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_INDEXING.format(error=e), cs.Color.RED)
@@ -241,13 +254,14 @@ def export(
         app_context.console.print(style(cs.CLI_ERR_ONLY_JSON, cs.Color.RED))
         raise typer.Exit(1)
 
-    app_context.console.print(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
+    _info(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     try:
         with connect_memgraph(effective_batch_size) as ingestor:
-            app_context.console.print(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
+            _info(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
+
             if not export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
 
@@ -311,9 +325,7 @@ def optimize(
             )
         )
     except KeyboardInterrupt:
-        app_context.console.print(
-            style(cs.CLI_MSG_OPTIMIZATION_TERMINATED, cs.Color.RED)
-        )
+        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
         app_context.console.print(
             style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
@@ -327,12 +339,13 @@ def mcp_server() -> None:
 
         asyncio.run(mcp_main())
     except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_MCP_TERMINATED, cs.Color.RED))
+        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
         app_context.console.print(
             style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
         )
-        app_context.console.print(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)

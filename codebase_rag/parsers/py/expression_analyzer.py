@@ -66,7 +66,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 and (method_call_text := self._extract_full_method_call(func_node))
             ):
                 return self._infer_method_call_return_type(
-                    method_call_text, module_qn, local_var_types=None
+                    method_call_text, module_qn, None
                 )
 
         elif node.type == cs.TS_PY_LIST_COMPREHENSION:
@@ -115,7 +115,11 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return safe_decode_text(attr_node) if attr_node.text else None
 
     @recursion_guard(
-        key_func=lambda self, method_call, module_qn, *_: f"{module_qn}:{method_call}",
+        key_func=lambda self,
+        method_call,
+        module_qn,
+        *_,
+        **__: f"{module_qn}:{method_call}",
         guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
     )
     def _infer_method_call_return_type(

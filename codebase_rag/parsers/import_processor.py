@@ -103,9 +103,9 @@ class ImportProcessor:
             )
 
             if self.ingestor:
-                for local_name, full_name in self.import_mapping[module_qn].items():
-                    module_path = self.stdlib_extractor.extract_module_path(
-                        full_name, language
+                for full_name in self.import_mapping[module_qn].values():
+                    module_path = self._resolve_module_path(
+                        full_name, module_qn, language
                     )
 
                     self.ingestor.ensure_relationship_batch(
@@ -183,6 +183,107 @@ class ImportProcessor:
         return (self.repo_path / module_name).is_dir() or (
             self.repo_path / f"{module_name}{cs.EXT_PY}"
         ).is_file()
+
+    def _is_local_java_import(self, import_path: str) -> bool:
+        top_level = import_path.split(cs.SEPARATOR_DOT)[0]
+        return (self.repo_path / top_level).is_dir()
+
+    def _resolve_java_import_path(self, import_path: str) -> str:
+        if self._is_local_java_import(import_path):
+            return f"{self.project_name}{cs.SEPARATOR_DOT}{import_path}"
+        return import_path
+
+    def _is_local_js_import(self, full_name: str) -> bool:
+        return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
+
+    def _resolve_js_internal_module(self, full_name: str) -> str:
+        if full_name.endswith(cs.IMPORT_DEFAULT_SUFFIX):
+            return full_name[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
+
+        parts = full_name.split(cs.SEPARATOR_DOT)
+        if len(parts) <= 2:
+            return full_name
+
+        potential_module = cs.SEPARATOR_DOT.join(parts[:-1])
+        relative_path = cs.SEPARATOR_SLASH.join(parts[1:-1])
+
+        for ext in (cs.EXT_JS, cs.EXT_TS, cs.EXT_JSX, cs.EXT_TSX):
+            if (self.repo_path / f"{relative_path}{ext}").is_file():
+                return potential_module
+            index_path = self.repo_path / relative_path / f"{cs.INDEX_INDEX}{ext}"
+            if index_path.is_file():
+                return potential_module
+
+        return full_name
+
+    def _is_local_rust_import(self, import_path: str) -> bool:
+        return import_path.startswith(cs.RUST_CRATE_PREFIX)
+
+    def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
+        if not self.ingestor or not module_path:
+            return
+        if cs.SEPARATOR_DOUBLE_COLON in module_path:
+            name = module_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
+        else:
+            name = module_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        self.ingestor.ensure_node_batch(
+            cs.NodeLabel.MODULE,
+            {
+                cs.KEY_NAME: name,
+                cs.KEY_QUALIFIED_NAME: module_path,
+                cs.KEY_PATH: full_name,
+                cs.KEY_IS_EXTERNAL: True,
+            },
+        )
+
+    def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:
+        # (H) crate:: is always relative to the crate root, not the current module.
+        # (H) We find the src directory in the qualified name to identify the crate root.
+        if self._is_local_rust_import(import_path):
+            path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
+            module_parts = module_qn.split(cs.SEPARATOR_DOT)
+            try:
+                src_index = module_parts.index(cs.LANG_SRC_DIR)
+                crate_root_qn = cs.SEPARATOR_DOT.join(module_parts[: src_index + 1])
+            except ValueError:
+                crate_root_qn = self.project_name
+            module_part = path_without_crate.split(cs.SEPARATOR_DOUBLE_COLON)[0]
+            return f"{crate_root_qn}{cs.SEPARATOR_DOT}{module_part}"
+
+        parts = import_path.split(cs.SEPARATOR_DOUBLE_COLON)
+        module_path = (
+            cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1]) if len(parts) > 1 else parts[0]
+        )
+
+        self._ensure_external_module_node(module_path, import_path)
+        return module_path
+
+    def _resolve_module_path(
+        self,
+        full_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str:
+        project_prefix = self.project_name + cs.SEPARATOR_DOT
+        match language:
+            # (H) Java MODULE semantics: Internal imports point to file-level MODULE
+            # (H) nodes (e.g., project.utils.StringUtils) because Java files are named
+            # (H) after their primary class. External imports point to package-level
+            # (H) (e.g., java.util) because we lack source code to create file-level
+            # (H) nodes. This asymmetry is intentional.
+            case cs.SupportedLanguage.JAVA:
+                if full_name.startswith(project_prefix):
+                    return full_name
+            case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
+                if self._is_local_js_import(full_name):
+                    return self._resolve_js_internal_module(full_name)
+            case cs.SupportedLanguage.RUST:
+                return self._resolve_rust_import_path(full_name, module_qn)
+
+        module_path = self.stdlib_extractor.extract_module_path(full_name, language)
+        if not module_path.startswith(project_prefix):
+            self._ensure_external_module_node(module_path, full_name)
+        return module_path
 
     def _handle_python_import_from_statement(
         self, import_node: Node, module_qn: str
@@ -480,22 +581,24 @@ class ImportProcessor:
                 if not imported_path:
                     continue
 
+                resolved_path = self._resolve_java_import_path(imported_path)
+
                 if is_wildcard:
-                    logger.debug(ls.IMP_JAVA_WILDCARD.format(path=imported_path))
-                    self.import_mapping[module_qn][f"*{imported_path}"] = imported_path
-                elif parts := imported_path.split(cs.SEPARATOR_DOT):
+                    logger.debug(ls.IMP_JAVA_WILDCARD.format(path=resolved_path))
+                    self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
+                elif parts := resolved_path.split(cs.SEPARATOR_DOT):
                     imported_name = parts[-1]
-                    self.import_mapping[module_qn][imported_name] = imported_path
+                    self.import_mapping[module_qn][imported_name] = resolved_path
                     if is_static:
                         logger.debug(
                             ls.IMP_JAVA_STATIC.format(
-                                name=imported_name, path=imported_path
+                                name=imported_name, path=resolved_path
                             )
                         )
                     else:
                         logger.debug(
                             ls.IMP_JAVA_IMPORT.format(
-                                name=imported_name, path=imported_path
+                                name=imported_name, path=resolved_path
                             )
                         )
 
