@@ -245,6 +245,24 @@ class TestEnsureConstraintsForAllLabels:
                 f"Missing constraint for {label.value}. Expected query: {expected}"
             )
 
+    def test_ensure_constraints_creates_all_indexes(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+
+        def capture_query(query: str) -> None:
+            executed_queries.append(query)
+
+        with patch.object(ingestor, "_execute_query", side_effect=capture_query):
+            ingestor.ensure_constraints()
+
+        for label in NodeLabel:
+            prop = NODE_UNIQUE_CONSTRAINTS[label.value]
+            expected_index = f"CREATE INDEX ON :{label.value}({prop});"
+            assert expected_index in executed_queries, (
+                f"Missing index for {label.value}. Expected query: {expected_index}. "
+                "Indexes are required for efficient MERGE operations in Memgraph."
+            )
+
 
 class TestImportTimeValidation:
     def test_import_time_validation_catches_missing_keys(self) -> None:

@@ -3,6 +3,8 @@ from pathlib import Path
 
 import typer
 from loguru import logger
+from rich.panel import Panel
+from rich.table import Table
 
 from . import cli_help as ch
 from . import constants as cs
@@ -21,6 +23,7 @@ from .main import (
 )
 from .parser_loader import load_parsers
 from .services.protobuf_service import ProtobufFileIngestor
+from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 
 app = typer.Typer(
@@ -412,6 +415,54 @@ def graph_loader_command(
 )
 def language_command(ctx: typer.Context) -> None:
     language_cli(ctx.args, standalone_mode=False)
+
+
+@app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)
+def doctor() -> None:
+    checker = HealthChecker()
+    results = checker.run_all_checks()
+
+    passed, total = checker.get_summary()
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style="cyan", no_wrap=False)
+
+    for result in results:
+        status = "✓" if result.passed else "✗"
+        status_color = cs.Color.GREEN if result.passed else cs.Color.RED
+        status_text = style(status, status_color, cs.StyleModifier.NONE)
+
+        check_name = f"{status_text} {result.name}"
+        table.add_row(check_name)
+
+    panel = Panel(
+        table,
+        title="Health Check",
+        border_style="dim",
+        padding=(1, 2),
+    )
+
+    app_context.console.print(panel)
+
+    app_context.console.print()
+    summary_text = f"{passed}/{total} checks passed"
+    if passed == total:
+        app_context.console.print(style(summary_text, cs.Color.GREEN))
+    else:
+        app_context.console.print(style(summary_text, cs.Color.YELLOW))
+
+    failed_checks = [r for r in results if not r.passed and r.error]
+    if failed_checks:
+        app_context.console.print()
+        app_context.console.print(style("Failed checks details:", cs.Color.YELLOW))
+        for result in failed_checks:
+            error_msg = f"  {result.name}: {result.error}"
+            app_context.console.print(
+                style(error_msg, cs.Color.YELLOW, cs.StyleModifier.NONE)
+            )
+
+    if passed < total:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
