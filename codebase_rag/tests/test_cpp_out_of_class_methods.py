@@ -36,7 +36,8 @@ def test_simple_out_of_class_method_definitions(
 ) -> None:
     test_file = cpp_out_of_class_project / "calculator.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class Calculator {
 public:
     int add(int a, int b);
@@ -69,7 +70,7 @@ void useCalculator() {
     int product = calc.multiply(6, 7);
     double quotient = calc.divide(15, 3);
 }
-"""
+""",
     )
 
     run_updater(cpp_out_of_class_project, mock_ingestor)
@@ -88,7 +89,8 @@ def test_nested_namespace_out_of_class_methods(
 ) -> None:
     test_file = cpp_out_of_class_project / "nested_namespace.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 namespace Outer {
 namespace Inner {
 
@@ -120,7 +122,7 @@ void useNestedClass() {
     int result = obj.method2(42);
     Outer::Inner::MyClass::staticMethod();
 }
-"""
+""",
     )
 
     run_updater(cpp_out_of_class_project, mock_ingestor)
@@ -140,7 +142,8 @@ def test_out_of_class_operator_overloading(
 ) -> None:
     test_file = cpp_out_of_class_project / "operators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class Vector2D {
 public:
     double x, y;
@@ -184,7 +187,7 @@ void useVector() {
     bool equal = v1 == v2;
     double val = v1[0];
 }
-"""
+""",
     )
 
     run_updater(cpp_out_of_class_project, mock_ingestor)
@@ -203,7 +206,8 @@ def test_out_of_class_constructor_destructor(
 ) -> None:
     test_file = cpp_out_of_class_project / "ctor_dtor.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class Resource {
 public:
     Resource();
@@ -255,7 +259,7 @@ void useResource() {
     r1.allocate(50);
     r1.deallocate();
 }
-"""
+""",
     )
 
     run_updater(cpp_out_of_class_project, mock_ingestor)
@@ -278,7 +282,8 @@ def test_deeply_nested_qualified_identifier(
 ) -> None:
     test_file = cpp_out_of_class_project / "deep_nested.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 namespace Level1 {
 namespace Level2 {
 namespace Level3 {
@@ -306,7 +311,7 @@ void useDeepClass() {
     obj.deepMethod();
     int result = obj.anotherDeepMethod(10);
 }
-"""
+""",
     )
 
     run_updater(cpp_out_of_class_project, mock_ingestor)
@@ -323,7 +328,8 @@ def test_template_out_of_class_methods(
 ) -> None:
     test_file = cpp_out_of_class_project / "template_methods.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 template<typename T>
 class Container {
 public:
@@ -361,7 +367,7 @@ void useContainer() {
     Container<double> doubleContainer;
     doubleContainer.add(3.14);
 }
-"""
+""",
     )
 
     run_updater(cpp_out_of_class_project, mock_ingestor)
@@ -377,7 +383,8 @@ def test_mixed_inline_and_out_of_class_methods(
 ) -> None:
     test_file = cpp_out_of_class_project / "mixed_methods.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class MixedClass {
 public:
     // Inline method definitions
@@ -411,7 +418,7 @@ void useMixedClass() {
     int r2 = obj.outOfClassMethod2(5);
     double r3 = obj.outOfClassMethod3(1.0, 2.0);
 }
-"""
+""",
     )
 
     run_updater(cpp_out_of_class_project, mock_ingestor)

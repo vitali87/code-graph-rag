@@ -12,7 +12,9 @@ def rust_concurrency_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_concurrency_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_concurrency_test"
 version = "0.1.0"
@@ -21,10 +23,13 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
-""")
+""",
+    )
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Concurrency test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Concurrency test crate"
+    )
 
     return project_path
 
@@ -36,7 +41,8 @@ def test_basic_threads(
     """Test basic thread creation and management."""
     test_file = rust_concurrency_project / "basic_threads.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::thread;
 use std::time::Duration;
 
@@ -84,7 +90,7 @@ fn scoped_threads() {
 
     assert_eq!(x, a[0] + a[2]);
 }
-"""
+""",
     )
 
     run_updater(rust_concurrency_project, mock_ingestor)
@@ -105,7 +111,8 @@ def test_message_passing_channels(
     """Test message passing with channels."""
     test_file = rust_concurrency_project / "channels.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -194,7 +201,7 @@ fn sync_channel() {
     println!("Received: {}", rx.recv().unwrap());
     println!("Received: {}", rx.recv().unwrap());
 }
-"""
+""",
     )
 
     run_updater(rust_concurrency_project, mock_ingestor)
@@ -215,7 +222,8 @@ def test_shared_state_mutex(
     """Test shared state with Mutex and Arc."""
     test_file = rust_concurrency_project / "shared_state.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
@@ -290,7 +298,7 @@ fn shared_data_structure() {
 
     println!("Final map: {:?}", *data.lock().unwrap());
 }
-"""
+""",
     )
 
     run_updater(rust_concurrency_project, mock_ingestor)
@@ -311,7 +319,8 @@ def test_async_await_basics(
     """Test async/await basic patterns."""
     test_file = rust_concurrency_project / "async_basics.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -387,7 +396,7 @@ impl TimerFuture {
         TimerFuture { shared_state }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_concurrency_project, mock_ingestor)
@@ -408,7 +417,8 @@ def test_tokio_async_runtime(
     """Test Tokio async runtime patterns."""
     test_file = rust_concurrency_project / "tokio_async.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use tokio::time::{sleep, Duration};
 use tokio::task;
 
@@ -507,7 +517,7 @@ async fn oneshot_example() {
         Err(_) => println!("Sender was dropped"),
     }
 }
-"""
+""",
     )
 
     run_updater(rust_concurrency_project, mock_ingestor)
@@ -528,7 +538,8 @@ def test_parallel_computing(
     """Test parallel computing patterns."""
     test_file = rust_concurrency_project / "parallel_computing.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::thread;
 use std::sync::{Arc, Barrier};
 
@@ -638,7 +649,7 @@ fn barrier_synchronization() {
         handle.join().unwrap();
     }
 }
-"""
+""",
     )
 
     run_updater(rust_concurrency_project, mock_ingestor)
@@ -659,7 +670,8 @@ def test_atomic_operations(
     """Test atomic operations and lock-free programming."""
     test_file = rust_concurrency_project / "atomics.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -775,7 +787,7 @@ fn memory_ordering_examples() {
     data.store(42, Ordering::SeqCst);
     let value = data.load(Ordering::SeqCst);
 }
-"""
+""",
     )
 
     run_updater(rust_concurrency_project, mock_ingestor)

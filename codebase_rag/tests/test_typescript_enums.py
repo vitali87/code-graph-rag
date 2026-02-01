@@ -17,13 +17,14 @@ def typescript_enums_project(temp_repo: Path) -> Path:
     (project_path / "constants").mkdir()
 
     (project_path / "types" / "status.ts").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export enum Status {
     Pending,
     Approved,
     Rejected
 }
-"""
+""",
     )
 
     return project_path
@@ -36,7 +37,8 @@ def test_numeric_enums(
     """Test TypeScript numeric enums."""
     test_file = typescript_enums_project / "numeric_enums.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic numeric enums
 
 // Default numeric enum (starts at 0)
@@ -222,7 +224,7 @@ function movePlayer(direction: Direction = Direction.Up): void {
 
 movePlayer(); // Uses default
 movePlayer(Direction.Right);
-"""
+""",
     )
 
     run_updater(typescript_enums_project, mock_ingestor)
@@ -265,7 +267,8 @@ def test_string_enums(
     """Test TypeScript string enums."""
     test_file = typescript_enums_project / "string_enums.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // String enums
 
 // Basic string enum
@@ -487,7 +490,7 @@ function isSameColor(color1: Color, color2: Color): boolean {
 function createMessage(level: LogLevel, text: string): string {
     return `[${level.toUpperCase()}]: ${text}`;
 }
-"""
+""",
     )
 
     run_updater(typescript_enums_project, mock_ingestor)
@@ -532,7 +535,8 @@ def test_const_enums(
     """Test TypeScript const enums."""
     test_file = typescript_enums_project / "const_enums.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Const enums - inlined at compile time
 
 // Basic const enum
@@ -761,7 +765,7 @@ const methodHandlers = {
 
 logRequest(HttpMethod.POST, '/api/users');
 methodHandlers[HttpMethod.GET]('/api/data');
-"""
+""",
     )
 
     run_updater(typescript_enums_project, mock_ingestor)
@@ -800,7 +804,8 @@ def test_enum_comprehensive(
     """Comprehensive test ensuring all TypeScript enum patterns are covered."""
     test_file = typescript_enums_project / "comprehensive_enums.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every TypeScript enum pattern in one file
 
 // Numeric enum
@@ -915,7 +920,7 @@ for (const status of allStatuses) {
 
 console.log(isApproved(item.status));
 console.log(demo.getColor());
-"""
+""",
     )
 
     run_updater(typescript_enums_project, mock_ingestor)

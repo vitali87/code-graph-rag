@@ -39,7 +39,8 @@ def test_basic_java_imports(
         / "BasicImports.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.List;
@@ -62,7 +63,7 @@ public class BasicImports {
         // Method using imported exceptions
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -116,7 +117,8 @@ def test_static_imports(
         / "StaticImports.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import static java.lang.Math.PI;
@@ -142,7 +144,7 @@ public class StaticImports {
         out.println("Sorted: " + names);
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -196,7 +198,8 @@ def test_wildcard_imports(
         / "WildcardImports.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -230,7 +233,7 @@ public class WildcardImports {
         JLabel label = new JLabel("Hello");
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -284,7 +287,8 @@ def test_package_local_imports(
         / "StringUtils.java"
     )
     util_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class StringUtils {
@@ -296,7 +300,7 @@ public class StringUtils {
         return str == null || str.trim().isEmpty();
     }
 }
-"""
+""",
     )
 
     sub_util_file = (
@@ -310,7 +314,8 @@ public class StringUtils {
         / "MathUtils.java"
     )
     sub_util_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.utils;
 
 public class MathUtils {
@@ -327,7 +332,7 @@ public class MathUtils {
         return sum / numbers.length;
     }
 }
-"""
+""",
     )
 
     test_file = (
@@ -340,7 +345,8 @@ public class MathUtils {
         / "LocalImports.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import com.example.utils.MathUtils;
@@ -357,7 +363,7 @@ public class LocalImports {
         double avg = MathUtils.average(1.5, 2.5, 3.5);
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -406,7 +412,8 @@ def test_qualified_names_without_imports(
         / "QualifiedNames.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class QualifiedNames {
@@ -438,7 +445,7 @@ public class QualifiedNames {
         }
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()

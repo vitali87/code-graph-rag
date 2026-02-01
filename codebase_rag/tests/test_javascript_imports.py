@@ -22,30 +22,32 @@ def javascript_imports_project(temp_repo: Path) -> Path:
     (project_path / "node_modules" / "@babel" / "core").mkdir()
 
     (project_path / "src" / "utils" / "helpers.js").write_text(
-        "export const helper = () => {};"
+        encoding="utf-8", data="export const helper = () => {};"
     )
     (project_path / "src" / "utils" / "constants.js").write_text(
-        "export const API_URL = 'https://api.example.com';"
+        encoding="utf-8", data="export const API_URL = 'https://api.example.com';"
     )
     (project_path / "src" / "utils" / "math.js").write_text(
-        "export function add(a, b) { return a + b; }"
+        encoding="utf-8", data="export function add(a, b) { return a + b; }"
     )
     (project_path / "src" / "components" / "Button.js").write_text(
-        "export default class Button {}"
+        encoding="utf-8", data="export default class Button {}"
     )
     (project_path / "lib" / "config.js").write_text(
-        "module.exports = { apiKey: 'secret' };"
+        encoding="utf-8", data="module.exports = { apiKey: 'secret' };"
     )
-    (project_path / "shared.js").write_text("export const shared = 'data';")
+    (project_path / "shared.js").write_text(
+        encoding="utf-8", data="export const shared = 'data';"
+    )
 
     (project_path / "package.json").write_text(
-        '{"name": "test-project", "version": "1.0.0"}'
+        encoding="utf-8", data='{"name": "test-project", "version": "1.0.0"}'
     )
     (project_path / "node_modules" / "react" / "index.js").write_text(
-        "export default {};"
+        encoding="utf-8", data="export default {};"
     )
     (project_path / "node_modules" / "@babel" / "core" / "index.js").write_text(
-        "export const transform = () => {};"
+        encoding="utf-8", data="export const transform = () => {};"
     )
 
     return project_path
@@ -58,7 +60,8 @@ def test_es6_default_imports(
     """Test ES6 default import parsing and relationship creation."""
     test_file = javascript_imports_project / "es6_default_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // ES6 default imports
 import React from 'react';
 import Button from './src/components/Button';
@@ -72,7 +75,7 @@ const btn = new Button();
 const apiKey = config.apiKey;
 const result = utils.helper();
 const data = shared;
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -111,7 +114,8 @@ def test_es6_named_imports(
     """Test ES6 named import parsing and relationship creation."""
     test_file = javascript_imports_project / "es6_named_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // ES6 named imports
 import { helper } from './src/utils/helpers';
 import { API_URL } from './src/utils/constants';
@@ -130,7 +134,7 @@ const url = API_URL;
 const sum = add(1, 2);
 const [count, setCount] = useState(0);
 useEffect(() => {});
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -166,7 +170,8 @@ def test_es6_namespace_imports(
     """Test ES6 namespace (star) import parsing."""
     test_file = javascript_imports_project / "es6_namespace_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // ES6 namespace imports
 import * as React from 'react';
 import * as utils from './src/utils/helpers';
@@ -178,7 +183,7 @@ const element = React.createElement();
 const result = utils.helper();
 const sum = mathUtils.add(1, 2);
 const url = constants.API_URL;
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -216,7 +221,8 @@ def test_commonjs_require_imports(
     """Test CommonJS require() import parsing."""
     test_file = javascript_imports_project / "commonjs_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // CommonJS require imports
 const fs = require('fs');
 const path = require('path');
@@ -249,7 +255,7 @@ const result = helper();
 const utilResult = utilityHelper();
 const endpoint = apiEndpoint;
 const sum = mathAdd(1, 2);
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -286,7 +292,8 @@ def test_commonjs_aliased_destructuring(
     """Test CommonJS aliased destructuring patterns ({ name: alias })."""
     test_file = javascript_imports_project / "commonjs_aliased_destructuring.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // CommonJS aliased destructuring patterns
 const { helper: utilHelper } = require('./src/utils/helpers');
 const { API_URL: endpoint, helper: utilityFunc } = require('./src/utils/constants');
@@ -302,7 +309,7 @@ const sum = mathAdd(1, 2);
 const diff = mathSub(5, 3);
 const result2 = utilityFunc();
 const finalUrl = apiEndpoint;
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -341,7 +348,8 @@ def test_relative_path_resolution(
     nested_dir.mkdir()
     test_file = nested_dir / "Input.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Same directory relative imports
 import Button from './Button';
 import Modal from './Modal';
@@ -362,7 +370,7 @@ import Component from './nested/../Button';
 const btn = new Button();
 const result = utils.helper();
 const url = constants.API_URL;
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -401,7 +409,8 @@ def test_absolute_package_imports(
     """Test absolute package imports from node_modules."""
     test_file = javascript_imports_project / "package_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Standard package imports
 import React from 'react';
 import ReactDOM from 'react-dom';
@@ -426,7 +435,7 @@ import deepModule from '@org/package/dist/deep/module';
 const element = React.createElement();
 const transformed = babelCore.transform();
 const debounced = debounce(() => {});
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -467,7 +476,8 @@ def test_dynamic_imports(
     """Test dynamic import() expressions."""
     test_file = javascript_imports_project / "dynamic_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Dynamic imports with await
 async function loadModules() {
     const utils = await import('./src/utils/helpers');
@@ -504,7 +514,7 @@ const modulePromise = import('./shared');
 modulePromise.then(({ shared }) => {
     console.log(shared);
 });
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -527,7 +537,8 @@ def test_mixed_import_patterns(
     """Test files with mixed import patterns."""
     test_file = javascript_imports_project / "mixed_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Mix of all import types in one file
 import React, { useState, useEffect } from 'react';
 import * as utils from './src/utils/helpers';
@@ -553,7 +564,7 @@ const helper = utils.helper();
 const btn = new Button();
 const content = fs.readFileSync('file.txt');
 const url = API_URL;
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -591,7 +602,8 @@ def test_import_error_handling(
     """Test that import parsing handles syntax errors gracefully."""
     test_file = javascript_imports_project / "error_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Valid imports
 import React from 'react';
 const fs = require('fs');
@@ -608,7 +620,7 @@ const path = require('path');
 // Edge cases
 import './side-effects-only';
 require('./also-side-effects');
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -639,25 +651,28 @@ def test_aliased_re_export_import_mapping(
     """Test that aliased re-exports create correct import mappings (regression test for bug fix)."""
 
     (javascript_imports_project / "math_utils.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export function add(a, b) { return a + b; }
 export function subtract(a, b) { return a - b; }
 export function multiply(a, b) { return a * b; }
 export const PI = 3.14159;
-"""
+""",
     )
 
     (javascript_imports_project / "string_utils.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export function capitalize(str) { return str.charAt(0).toUpperCase() + str.slice(1); }
 export function reverse(str) { return str.split('').reverse().join(''); }
 export const EMPTY_STRING = '';
-"""
+""",
     )
 
     re_export_file = javascript_imports_project / "utils_index.js"
     re_export_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // These aliased re-exports would fail before the bug fix
 export { add as mathAdd, subtract as mathSub } from './math_utils';
 export { multiply as mathMultiply, PI as MATH_PI } from './math_utils';
@@ -667,12 +682,13 @@ export { EMPTY_STRING as EMPTY } from './string_utils';
 // Mixed normal and aliased re-exports
 export { add } from './math_utils';  // normal re-export
 export { capitalize } from './string_utils';  // normal re-export
-"""
+""",
     )
 
     consumer_file = javascript_imports_project / "consumer.js"
     consumer_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Import aliased re-exports - these should map correctly after the fix
 import { mathAdd, mathSub, mathMultiply, MATH_PI } from './utils_index';
 import { toUpperCase, reverseString, EMPTY } from './utils_index';
@@ -696,7 +712,7 @@ function useUtils() {
 }
 
 export { useUtils };
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -738,7 +754,8 @@ def test_import_relationships_comprehensive(
     """Comprehensive test ensuring all import types create proper relationships."""
     test_file = javascript_imports_project / "comprehensive_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript import pattern in one file
 import React, { Component, useState } from 'react';
 import * as utils from './src/utils/helpers';
@@ -766,7 +783,7 @@ const helper = utils.helper();
 const btn = new Button();
 const content = fs.readFileSync();
 const url = API_URL;
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)
@@ -821,7 +838,8 @@ def test_commonjs_multiple_destructured_variables_regression(
     """
     test_file = javascript_imports_project / "regression_multiple_destructured.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // These patterns would trigger the IndexError bug before the fix
 
 // Case 1: Multiple shorthand destructuring from single require
@@ -862,7 +880,7 @@ utilityLib.helper();
 const sum = add(1, 2);
 const diff = subtract(5, 3);
 const area = multiply(PI, 2);
-"""
+""",
     )
 
     run_updater(javascript_imports_project, mock_ingestor)

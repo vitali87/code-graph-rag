@@ -25,15 +25,17 @@ def javascript_modules_project(temp_repo: Path) -> Path:
     (project_path / "node_modules" / "lodash").mkdir()
 
     (project_path / "utils" / "constants.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 module.exports.API_URL = 'https://api.example.com';
 module.exports.TIMEOUT = 5000;
 module.exports.VERSION = '1.0.0';
-"""
+""",
     )
 
     (project_path / "models" / "User.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 class User {
     constructor(name, email) {
         this.name = name;
@@ -42,11 +44,12 @@ class User {
 }
 
 module.exports = User;
-"""
+""",
     )
 
     (project_path / "lib" / "validators.js").write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 export function isEmail(email) {
     return /^[^@]+@[^@]+\.[^@]+$/.test(email);
 }
@@ -62,7 +65,7 @@ export default function validate(type, value) {
         default: return false;
     }
 }
-"""
+""",
     )
 
     return project_path
@@ -75,7 +78,8 @@ def test_commonjs_module_exports(
     """Test CommonJS module.exports patterns."""
     test_file = javascript_modules_project / "commonjs_exports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Single export assignment
 module.exports = function mainFunction() {
     return "main";
@@ -138,12 +142,13 @@ module.exports = Calculator;
 // exports.namedExport1 = function() {};
 // exports.namedExport2 = function() {};
 // module.exports.namedExport3 = function() {};
-"""
+""",
     )
 
     exports_file = javascript_modules_project / "exports_shorthand.js"
     exports_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Using exports shorthand
 exports.utilityA = function utilityA() {
     return "A";
@@ -172,7 +177,7 @@ exports.ExportedClass = class ExportedClass {
         this.value = "exported";
     }
 };
-"""
+""",
     )
 
     run_updater(javascript_modules_project, mock_ingestor)
@@ -215,7 +220,8 @@ def test_es6_export_patterns(
     """Test ES6 export patterns including default and named exports."""
     test_file = javascript_modules_project / "es6_exports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Named exports
 export const API_URL = 'https://api.example.com';
 export const TIMEOUT = 5000;
@@ -308,12 +314,13 @@ export const UserType = {
     USER: 'user',
     GUEST: 'guest'
 };
-"""
+""",
     )
 
     reexport_file = javascript_modules_project / "reexports.js"
     reexport_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Re-export patterns
 export { fetchData, DataService } from './es6_exports';
 export { default } from './es6_exports';
@@ -339,7 +346,7 @@ export function enhancedFetch(url, options) {
     console.log('Fetching:', url);
     return originalFetch(url, options);
 }
-"""
+""",
     )
 
     run_updater(javascript_modules_project, mock_ingestor)
@@ -393,7 +400,8 @@ def test_mixed_module_systems(
     """Test files using both CommonJS and ES6 modules."""
     test_file = javascript_modules_project / "mixed_modules.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Mixed CommonJS and ES6 - This is technically invalid but sometimes seen
 // ES6 imports
 import React from 'react';
@@ -462,12 +470,13 @@ export function hybridFunction() {
         state: state
     };
 }
-"""
+""",
     )
 
     umd_file = javascript_modules_project / "umd_module.js"
     umd_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // UMD (Universal Module Definition) pattern
 (function (root, factory) {
     if (typeof define === 'function' && define.amd) {
@@ -513,7 +522,7 @@ export function hybridFunction() {
         module.exports = exports;
     }
 }));
-"""
+""",
     )
 
     run_updater(javascript_modules_project, mock_ingestor)
@@ -572,7 +581,8 @@ def test_circular_dependencies(
     """Test circular dependency handling in modules."""
     module_a = javascript_modules_project / "circular_a.js"
     module_a.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Circular dependency - A imports B
 const B = require('./circular_b');
 
@@ -605,12 +615,13 @@ if (B) {
     const bInstance = new B();
     console.log("B instance in A:", bInstance.getName());
 }
-"""
+""",
     )
 
     module_b = javascript_modules_project / "circular_b.js"
     module_b.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Circular dependency - B imports A
 const A = require('./circular_a');
 
@@ -643,12 +654,13 @@ if (A) {
     const aInstance = new A();
     console.log("A instance in B:", aInstance.getName());
 }
-"""
+""",
     )
 
     es6_circular_a = javascript_modules_project / "es6_circular_a.js"
     es6_circular_a.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // ES6 Circular dependency - A imports B
 import { B, createB } from './es6_circular_b.js';
 
@@ -676,12 +688,13 @@ export function useB() {
     const b = createB();
     return b.getName();
 }
-"""
+""",
     )
 
     es6_circular_b = javascript_modules_project / "es6_circular_b.js"
     es6_circular_b.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // ES6 Circular dependency - B imports A
 import { A, createA } from './es6_circular_a.js';
 
@@ -709,7 +722,7 @@ export function useA() {
     const a = createA();
     return a.getName();
 }
-"""
+""",
     )
 
     run_updater(javascript_modules_project, mock_ingestor)
@@ -760,7 +773,8 @@ def test_dynamic_exports(
     """Test dynamic and conditional export patterns."""
     test_file = javascript_modules_project / "dynamic_exports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Dynamic property exports
 const methods = ['get', 'post', 'put', 'delete'];
 
@@ -873,12 +887,13 @@ module.exports = new Proxy({
         return "This method exists";
     }
 }, handler);
-"""
+""",
     )
 
     es6_dynamic = javascript_modules_project / "es6_dynamic_exports.js"
     es6_dynamic.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // ES6 dynamic exports using export declarations
 const endpoints = {
     users: '/api/users',
@@ -961,7 +976,7 @@ export const utils = new Proxy({}, {
         };
     }
 });
-"""
+""",
     )
 
     run_updater(javascript_modules_project, mock_ingestor)
@@ -998,7 +1013,8 @@ def test_aliased_re_exports(
     """Test aliased re-export patterns to verify the fix for export { name as alias } from './module'."""
 
     (javascript_modules_project / "source_module.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export const originalName = "original value";
 export const anotherExport = "another value";
 export function originalFunction() {
@@ -1009,22 +1025,24 @@ export class OriginalClass {
         this.name = "original";
     }
 }
-"""
+""",
     )
 
     (javascript_modules_project / "utils_module.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export const utilA = "utility A";
 export const utilB = "utility B";
 export function helperFunc() {
     return "helper";
 }
-"""
+""",
     )
 
     test_file = javascript_modules_project / "aliased_re_exports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic aliased re-export: export { name as alias } from './module'
 export { originalName as aliasedName } from './source_module';
 export { anotherExport as renamedExport } from './source_module';
@@ -1064,7 +1082,7 @@ function useReExports() {
 }
 
 export { useReExports };
-"""
+""",
     )
 
     run_updater(javascript_modules_project, mock_ingestor)
@@ -1104,7 +1122,8 @@ def test_module_comprehensive(
     """Comprehensive test ensuring all module patterns create proper relationships."""
     test_file = javascript_modules_project / "comprehensive_modules.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript module pattern in one file
 
 // CommonJS requires
@@ -1179,7 +1198,7 @@ export function useImports() {
         state
     };
 }
-"""
+""",
     )
 
     run_updater(javascript_modules_project, mock_ingestor)

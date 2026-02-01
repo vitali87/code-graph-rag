@@ -36,7 +36,8 @@ def test_deeply_nested_classes(
         / "DeeplyNested.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -163,7 +164,7 @@ public class OuterClass {
         enumNested.processEnumValue(NestedEnum.VALUE1);
     }
 }
-"""
+""",
     )
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
@@ -196,7 +197,8 @@ def test_anonymous_classes_complex(
         / "AnonymousComplex.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -493,7 +495,7 @@ public class AnonymousComplex {
         complexListener.onEvent(new Event("SYSTEM_ERROR", "Out of memory"));
     }
 }
-"""
+""",
     )
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
@@ -526,7 +528,8 @@ def test_local_classes_in_methods(
         / "LocalClasses.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -803,7 +806,7 @@ public class LocalClasses {
         return processor.process();
     }
 }
-"""
+""",
     )
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
@@ -836,7 +839,8 @@ def test_lambda_edge_cases(
         / "LambdaEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1124,7 +1128,7 @@ public class LambdaEdgeCases {
         });
     }
 }
-"""
+""",
     )
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
@@ -1157,7 +1161,8 @@ def test_builder_pattern_nested(
         / "BuilderPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1471,7 +1476,7 @@ public class ComplexObject {
         return Objects.hash(name, value, tags, configuration, metadata);
     }
 }
-"""
+""",
     )
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")
@@ -1504,7 +1509,8 @@ def test_visitor_pattern_nested(
         / "VisitorPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1928,7 +1934,7 @@ public abstract class Expression {
         return new FunctionExpression(name, Arrays.asList(args));
     }
 }
-"""
+""",
     )
 
     run_updater(java_nested_project, mock_ingestor, skip_if_missing="java")

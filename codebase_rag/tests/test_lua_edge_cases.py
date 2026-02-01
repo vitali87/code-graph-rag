@@ -21,8 +21,8 @@ def test_lua_require_edge_cases(
     """Edge cases: pcall, bare require, comments (should not count)."""
     project = temp_repo / "lua_edge_cases_test"
     project.mkdir()
-    (project / "side.lua").write_text("return {}\n")
-    (project / "main.lua").write_text(f"{snippet}\nreturn 0\n")
+    (project / "side.lua").write_text(encoding="utf-8", data="return {}\n")
+    (project / "main.lua").write_text(encoding="utf-8", data=f"{snippet}\nreturn 0\n")
 
     updater = create_and_run_updater(project, mock_ingestor)
 

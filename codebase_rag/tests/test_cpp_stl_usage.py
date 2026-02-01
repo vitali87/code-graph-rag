@@ -25,7 +25,8 @@ def test_stl_containers(
     """Test STL containers including vector, map, set, deque, list."""
     test_file = cpp_stl_project / "stl_containers.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <map>
@@ -373,7 +374,7 @@ void demonstrateSTLContainers() {
     testSTLContainers();
     testGraphStructure();
 }
-"""
+""",
     )
 
     run_updater(cpp_stl_project, mock_ingestor)
@@ -413,7 +414,8 @@ def test_stl_algorithms(
     """Test STL algorithms including sorting, searching, and transforming."""
     test_file = cpp_stl_project / "stl_algorithms.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -710,7 +712,7 @@ void testSTLAlgorithms() {
 void demonstrateSTLAlgorithms() {
     testSTLAlgorithms();
 }
-"""
+""",
     )
 
     run_updater(cpp_stl_project, mock_ingestor)
@@ -736,7 +738,8 @@ def test_stl_iterators_functors(
     """Test STL iterators and function objects."""
     test_file = cpp_stl_project / "stl_iterators_functors.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <list>
@@ -1067,7 +1070,7 @@ void testSTLIteratorsAndFunctors() {
 void demonstrateSTLIteratorsAndFunctors() {
     testSTLIteratorsAndFunctors();
 }
-"""
+""",
     )
 
     run_updater(cpp_stl_project, mock_ingestor)
@@ -1094,7 +1097,8 @@ def test_cpp_stl_comprehensive(
     """Comprehensive test ensuring all STL features create proper relationships."""
     test_file = cpp_stl_project / "comprehensive_stl.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive STL usage combining containers, algorithms, and iterators
 #include <iostream>
 #include <vector>
@@ -1186,7 +1190,7 @@ void demonstrateComprehensiveSTL() {
     ComprehensiveSTLDemo demo;
     demo.processAllGroups();
 }
-"""
+""",
     )
 
     run_updater(cpp_stl_project, mock_ingestor)

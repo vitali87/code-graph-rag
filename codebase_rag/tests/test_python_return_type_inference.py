@@ -14,11 +14,11 @@ def return_type_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "return_type_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     models_dir = project_path / "models"
     models_dir.mkdir()
-    (models_dir / "__init__.py").write_text("")
+    (models_dir / "__init__.py").write_text(encoding="utf-8", data="")
 
     with open(models_dir / "base.py", "w") as f:
         f.write('''"""Base models with various return type patterns."""
@@ -153,7 +153,7 @@ class UserService:
 
     services_dir = project_path / "services"
     services_dir.mkdir()
-    (services_dir / "__init__.py").write_text("")
+    (services_dir / "__init__.py").write_text(encoding="utf-8", data="")
 
     with open(services_dir / "processor.py", "w") as f:
         f.write('''"""Service that processes users with complex type flows."""

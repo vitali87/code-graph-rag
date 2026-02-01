@@ -1080,12 +1080,17 @@ wheels = [
 
 [[package]]
 name = "graph-code"
+<<<<<<< HEAD
 version = "0.0.46"
+=======
+version = "0.0.40"
+>>>>>>> f71973c (fix(tests,ci): resolve 65 test failures and add cross-platform CI)
 source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "defusedxml" },
     { name = "diff-match-patch" },
+    { name = "huggingface-hub", extra = ["hf-xet"] },
     { name = "loguru" },
     { name = "mcp" },
     { name = "prompt-toolkit" },
@@ -1147,6 +1152,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "diff-match-patch", specifier = ">=20241021" },
+    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.36.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mcp", specifier = ">=1.21.1" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
@@ -1388,6 +1394,9 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+hf-xet = [
+    { name = "hf-xet" },
+]
 inference = [
     { name = "aiohttp" },
 ]

@@ -88,7 +88,7 @@ def save_persistent_cache() -> None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_file = cache_dir / cs.IMPORT_CACHE_FILE
 
-        with cache_file.open("w") as f:
+        with cache_file.open("w", encoding="utf-8") as f:
             json.dump(
                 {
                     cs.IMPORT_CACHE_KEY: _STDLIB_CACHE,
@@ -133,8 +133,12 @@ class StdlibExtractor:
     def __init__(
         self,
         function_registry: FunctionRegistryTrieProtocol | None = None,
+        repo_path: Path | None = None,
+        project_name: str | None = None,
     ) -> None:
         self.function_registry = function_registry
+        self.repo_path = repo_path
+        self.project_name = project_name
 
     def extract_module_path(
         self,
@@ -167,13 +171,16 @@ class StdlibExtractor:
                 return self._extract_generic_stdlib_path(full_qualified_name)
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
+        if len(parts) >= 3:
+            return self._resolve_python_entity_module_path(parts, full_qualified_name)
+
         cached_result = _get_cached_stdlib_result(
             cs.SupportedLanguage.PYTHON, full_qualified_name
         )
         if cached_result is not None:
             return cached_result
 
-        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             return self._resolve_python_entity_module_path(parts, full_qualified_name)
         return full_qualified_name
@@ -183,6 +190,40 @@ class StdlibExtractor:
     ) -> str:
         module_name = parts[0]
         entity_name = parts[-1]
+
+        if len(parts) >= 3 and self.repo_path and self.project_name:
+            try:
+                import importlib
+
+                importlib.import_module(module_name)
+            except ImportError:
+                if (
+                    self.function_registry
+                    and full_qualified_name in self.function_registry
+                ):
+                    module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+                    _cache_stdlib_result(
+                        cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
+                    )
+                    return module_path
+
+                if parts[0] == self.project_name:
+                    relative_parts = parts[1:]
+                    module_file = (
+                        self.repo_path
+                        / Path(*relative_parts[:-1])
+                        / f"{relative_parts[-1]}.py"
+                    )
+                    module_init = self.repo_path / Path(*relative_parts) / "__init__.py"
+
+                    if module_file.exists() or module_init.exists():
+                        return full_qualified_name
+
+                module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
+                )
+                return module_path
 
         try:
             import importlib

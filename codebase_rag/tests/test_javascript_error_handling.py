@@ -22,7 +22,8 @@ def javascript_error_handling_project(temp_repo: Path) -> Path:
     (project_path / "errors").mkdir()
 
     (project_path / "errors" / "custom.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export class CustomError extends Error {
     constructor(message, code) {
         super(message);
@@ -30,7 +31,7 @@ export class CustomError extends Error {
         this.code = code;
     }
 }
-"""
+""",
     )
 
     return project_path
@@ -43,7 +44,8 @@ def test_try_catch_finally_blocks(
     """Test try/catch/finally block patterns."""
     test_file = javascript_error_handling_project / "try_catch_finally.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic try/catch patterns
 
 function basicTryCatch() {
@@ -368,7 +370,7 @@ function performOperation() {
 function cleanup() {
     console.log('Cleanup performed');
 }
-"""
+""",
     )
 
     run_updater(javascript_error_handling_project, mock_ingestor)
@@ -412,7 +414,8 @@ def test_custom_error_classes(
     """Test custom error class definitions and usage."""
     test_file = javascript_error_handling_project / "custom_errors.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Custom error classes
 
 // Basic custom error
@@ -773,7 +776,7 @@ try {
 console.log('Validation errors:', aggregator.getByType('ValidationError').length);
 console.log('Business errors:', aggregator.getByType('BusinessLogicError').length);
 console.log('Recent errors:', aggregator.getRecent(1).length);
-"""
+""",
     )
 
     run_updater(javascript_error_handling_project, mock_ingestor)
@@ -824,7 +827,8 @@ def test_async_error_handling(
     """Test async function error handling patterns."""
     test_file = javascript_error_handling_project / "async_errors.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Async error handling patterns
 
 // Basic async/await error handling
@@ -1255,7 +1259,7 @@ demonstrateAsyncErrors();
 testCircuitBreaker();
 testErrorCollection();
 testGracefulDegradation();
-"""
+""",
     )
 
     run_updater(javascript_error_handling_project, mock_ingestor)
@@ -1300,7 +1304,8 @@ def test_error_handling_comprehensive(
     """Comprehensive test ensuring all error handling patterns are covered."""
     test_file = javascript_error_handling_project / "comprehensive_errors.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript error handling pattern in one file
 
 // Custom error class
@@ -1420,7 +1425,7 @@ async function performAsyncOperation(data) {
         }, 100);
     });
 }
-"""
+""",
     )
 
     run_updater(javascript_error_handling_project, mock_ingestor)

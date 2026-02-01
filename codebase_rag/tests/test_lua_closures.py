@@ -10,7 +10,9 @@ def test_lua_basic_closures(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_basic_closures"
     project.mkdir()
 
-    (project / "closures.lua").write_text("""
+    (project / "closures.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ClosureFactory = {}
 
 function ClosureFactory.create_counter(initial)
@@ -82,9 +84,12 @@ function ClosureFactory.partial(func, ...)
 end
 
 return ClosureFactory
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ClosureFactory = require('closures')
 
 -- Test counter
@@ -112,7 +117,8 @@ print("Compose result:", double_then_add_one(5))  -- (5 * 2) + 1 = 11
 local add = function(a, b, c) return a + b + c end
 local add_5_10 = ClosureFactory.partial(add, 5, 10)
 print("Partial result:", add_5_10(3))  -- 5 + 10 + 3 = 18
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -138,7 +144,9 @@ def test_lua_advanced_closures(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_advanced_closures"
     project.mkdir()
 
-    (project / "decorators.lua").write_text("""
+    (project / "decorators.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Decorators = {}
 
 -- Timing decorator
@@ -220,9 +228,12 @@ function Decorators.logged(func, logger)
 end
 
 return Decorators
-""")
+""",
+    )
 
-    (project / "middleware.lua").write_text("""
+    (project / "middleware.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Middleware = {}
 
 -- Middleware chain
@@ -302,9 +313,12 @@ function Middleware.cache_middleware()
 end
 
 return Middleware
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Decorators = require('decorators')
 local Middleware = require('middleware')
 
@@ -344,7 +358,8 @@ local result = chain:execute(
 )
 
 print("Middleware result:", result)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -376,7 +391,9 @@ def test_lua_event_system_closures(temp_repo: Path, mock_ingestor: MagicMock) ->
     project = temp_repo / "lua_event_closures"
     project.mkdir()
 
-    (project / "events.lua").write_text("""
+    (project / "events.lua").write_text(
+        encoding="utf-8",
+        data="""
 local EventSystem = {}
 EventSystem.__index = EventSystem
 
@@ -509,9 +526,12 @@ function EventSystem.throttle(func, interval)
 end
 
 return EventSystem
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local EventSystem = require('events')
 
 local events = EventSystem:new()
@@ -566,7 +586,8 @@ events:emit("throttled", "Message 2")  -- Should be throttled
 unsubscribe()
 print("=== After unsubscribe ===")
 events:emit("test", "Should not show regular listener")
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -614,7 +635,9 @@ def test_lua_functional_programming(temp_repo: Path, mock_ingestor: MagicMock) -
     project = temp_repo / "lua_functional"
     project.mkdir()
 
-    (project / "functional.lua").write_text("""
+    (project / "functional.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Functional = {}
 
 -- Higher-order functions
@@ -779,9 +802,12 @@ function Functional.not_pred(predicate)
 end
 
 return Functional
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Functional = require('functional')
 
 -- Test map, filter, reduce
@@ -834,7 +860,8 @@ local is_positive_and_even = Functional.all(is_positive, is_even)
 
 print("Is 4 positive and even?", is_positive_and_even(4))
 print("Is -2 positive and even?", is_positive_and_even(-2))
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

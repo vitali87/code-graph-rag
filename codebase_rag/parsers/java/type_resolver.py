@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -18,10 +20,10 @@ if TYPE_CHECKING:
 
 
 class JavaTypeResolverMixin:
-    import_processor: "ImportProcessor"
-    function_registry: "FunctionRegistryTrieProtocol"
-    module_qn_to_file_path: dict[str, "Path"]
-    ast_cache: "ASTCacheProtocol"
+    import_processor: ImportProcessor
+    function_registry: FunctionRegistryTrieProtocol
+    module_qn_to_file_path: dict[str, Path]
+    ast_cache: ASTCacheProtocol
     _fqn_to_module_qn: dict[str, list[str]]
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:

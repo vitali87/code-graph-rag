@@ -13,17 +13,23 @@ def python_imports_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "package").mkdir()
-    (project_path / "package" / "__init__.py").write_text("")
+    (project_path / "package" / "__init__.py").write_text(encoding="utf-8", data="")
     (project_path / "package" / "subpackage").mkdir()
-    (project_path / "package" / "subpackage" / "__init__.py").write_text("")
+    (project_path / "package" / "subpackage" / "__init__.py").write_text(
+        encoding="utf-8", data=""
+    )
     (project_path / "package" / "subpackage" / "deep").mkdir()
-    (project_path / "package" / "subpackage" / "deep" / "__init__.py").write_text("")
+    (project_path / "package" / "subpackage" / "deep" / "__init__.py").write_text(
+        encoding="utf-8", data=""
+    )
 
-    (project_path / "utils.py").write_text("def helper(): pass")
-    (project_path / "models.py").write_text("class User: pass")
-    (project_path / "package" / "module.py").write_text("def func(): pass")
+    (project_path / "utils.py").write_text(encoding="utf-8", data="def helper(): pass")
+    (project_path / "models.py").write_text(encoding="utf-8", data="class User: pass")
+    (project_path / "package" / "module.py").write_text(
+        encoding="utf-8", data="def func(): pass"
+    )
     (project_path / "package" / "subpackage" / "nested.py").write_text(
-        "class Nested: pass"
+        encoding="utf-8", data="class Nested: pass"
     )
 
     return project_path
@@ -36,7 +42,8 @@ def test_standard_library_imports(
     """Test standard library import parsing and relationship creation."""
     test_file = python_imports_project / "stdlib_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Standard library imports - basic
 import os
 import sys
@@ -59,7 +66,7 @@ from collections import defaultdict as ddict
 from email.mime.text import MIMEText
 from xml.etree.ElementTree import Element
 from http.server import HTTPServer
-"""
+""",
     )
 
     run_updater(python_imports_project, mock_ingestor)
@@ -104,19 +111,21 @@ def test_relative_imports(
 
     test_file = python_imports_project / "relative_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Relative imports from current directory
 from . import utils
 from .models import User
 from .package import module
 
 # Cannot test parent relative imports from root level
-"""
+""",
     )
 
     package_test = python_imports_project / "package" / "relative_test.py"
     package_test.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Same level relative imports
 from . import module
 from .subpackage import nested
@@ -127,18 +136,19 @@ from ..models import User
 
 # Deep relative imports
 from .subpackage.deep import something
-"""
+""",
     )
 
     nested_test = python_imports_project / "package" / "subpackage" / "nested_test.py"
     nested_test.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Same level and parent imports
 from . import nested
 from .. import module
 from ...utils import helper
 from ...models import User
-"""
+""",
     )
 
     run_updater(python_imports_project, mock_ingestor)
@@ -181,7 +191,8 @@ def test_complex_import_patterns(
     """Test complex import patterns including wildcards, conditionals, etc."""
     test_file = python_imports_project / "complex_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Wildcard imports
 from os import *
 from typing import *
@@ -231,7 +242,7 @@ class DataProcessor:
     def __init__(self):
         from pandas import DataFrame
         self.df_class = DataFrame
-"""
+""",
     )
 
     run_updater(python_imports_project, mock_ingestor)
@@ -272,7 +283,8 @@ def test_third_party_framework_imports(
     """Test third-party framework import patterns."""
     test_file = python_imports_project / "framework_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Flask imports
 from flask import Flask, request, jsonify, abort, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -312,7 +324,7 @@ from sqlalchemy.orm import sessionmaker, relationship, Session
 
 # Marshmallow imports
 from marshmallow import Schema, fields, validate, post_load, pre_dump
-"""
+""",
     )
 
     run_updater(python_imports_project, mock_ingestor)
@@ -355,7 +367,8 @@ def test_import_aliases_and_renaming(
     """Test import aliases and renaming patterns."""
     test_file = python_imports_project / "alias_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Simple aliases
 import numpy as np
 import pandas as pd
@@ -388,7 +401,7 @@ from os import (
 from json import loads as json_loads
 from pickle import loads as pickle_loads
 from yaml import load as yaml_load
-"""
+""",
     )
 
     run_updater(python_imports_project, mock_ingestor)
@@ -431,7 +444,8 @@ def test_import_error_handling(
     """Test that import parsing handles syntax errors gracefully."""
     test_file = python_imports_project / "error_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Valid imports
 import os
 from pathlib import Path
@@ -454,7 +468,7 @@ from collections import (
 # Edge cases
 from . import  # incomplete relative import
 import sys, json  # trailing comma handled gracefully
-"""
+""",
     )
 
     run_updater(python_imports_project, mock_ingestor)
@@ -485,7 +499,8 @@ def test_import_relationships_comprehensive(
     """Comprehensive test ensuring all import types create proper relationships."""
     test_file = python_imports_project / "comprehensive_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Every Python import pattern in one file
 import os, sys, json
 from pathlib import Path
@@ -513,7 +528,7 @@ except ImportError:
 
 if True:
     from conditional import module
-"""
+""",
     )
 
     run_updater(python_imports_project, mock_ingestor)

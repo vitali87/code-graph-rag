@@ -340,7 +340,10 @@ class FunctionNodeProps(TypedDict, total=False):
     docstring: str | None
 
 
-MCPToolArguments = dict[str, str | int | None]
+class MCPToolArguments(TypedDict, total=False):
+    """Arguments for MCP tool calls with string, int, or None values."""
+
+    pass
 
 
 class MCPInputSchemaProperty(TypedDict, total=False):
@@ -349,7 +352,10 @@ class MCPInputSchemaProperty(TypedDict, total=False):
     default: str
 
 
-MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
+class MCPInputSchemaProperties(TypedDict, total=False):
+    """Property definitions in MCP input schema, keyed by property name."""
+
+    pass
 
 
 class MCPInputSchema(TypedDict):

@@ -21,7 +21,8 @@ def test_basic_lambda_captures(
     """Test basic lambda capture patterns."""
     test_file = cpp_lambda_project / "basic_captures.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <memory>
@@ -65,7 +66,7 @@ void testInitCaptures() {
     auto result1 = lambda1(8);
     auto result2 = lambda2();
 }
-"""
+""",
     )
 
     run_updater(cpp_lambda_project, mock_ingestor)
@@ -91,7 +92,8 @@ def test_generalized_captures(
     """Test C++17/20 generalized capture patterns."""
     test_file = cpp_lambda_project / "generalized_captures.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -162,7 +164,7 @@ void testStateMachine() {
     auto state2 = machine("stop");
     auto state3 = machine("reset");
 }
-"""
+""",
     )
 
     run_updater(cpp_lambda_project, mock_ingestor)
@@ -198,7 +200,8 @@ def test_lambda_validation_complete(
     """Validate comprehensive lambda capture parsing."""
     test_file = cpp_lambda_project / "lambda_validation.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <functional>
 #include <memory>
 #include <vector>
@@ -220,7 +223,7 @@ void validateLambdaCaptures() {
         return squared + vec.size() + *ptr;
     });
 }
-"""
+""",
     )
 
     run_updater(cpp_lambda_project, mock_ingestor)

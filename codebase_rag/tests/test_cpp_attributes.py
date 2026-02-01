@@ -17,7 +17,7 @@ def cpp_attributes_project(temp_repo: Path) -> Path:
     (project_path / "include").mkdir()
 
     (project_path / "include" / "attributes.h").write_text(
-        "#pragma once\nnamespace attr_test {}"
+        encoding="utf-8", data="#pragma once\nnamespace attr_test {}"
     )
 
     return project_path
@@ -30,7 +30,8 @@ def test_standard_attributes(
     """Test standard C++ attributes parsing and relationship tracking."""
     test_file = cpp_attributes_project / "standard_attributes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <memory>
@@ -291,7 +292,7 @@ void testTemplateAttributes() {
     // Test discarding nodiscard return
     multiply<int>(5, 6);  // Warning: discarding nodiscard return
 }
-"""
+""",
     )
 
     run_updater(cpp_attributes_project, mock_ingestor)
@@ -347,7 +348,8 @@ def test_compiler_specific_attributes(
     """Test compiler-specific attributes and non-standard extensions."""
     test_file = cpp_attributes_project / "compiler_attributes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <string>
@@ -666,7 +668,7 @@ void testAttributeInheritance() {
     bool polyResult = base->virtualMethod();  // Virtual dispatch with nodiscard
     base->hotMethod();  // Virtual call to hot method
 }
-"""
+""",
     )
 
     run_updater(cpp_attributes_project, mock_ingestor)
@@ -722,7 +724,8 @@ def test_attribute_combinations_and_edge_cases(
     """Test complex attribute combinations and edge cases."""
     test_file = cpp_attributes_project / "attribute_edge_cases.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <functional>
 #include <memory>
@@ -1017,7 +1020,7 @@ void testUltimateAttributes() {
     // Ignore result - multiple warnings
     ultimateAttributeTest(1, "example");  // Deprecated + nodiscard + warn_unused_result
 }
-"""
+""",
     )
 
     run_updater(cpp_attributes_project, mock_ingestor)
@@ -1062,7 +1065,8 @@ def test_cpp_attributes_comprehensive(
     """Comprehensive test combining all C++ attribute patterns."""
     test_file = cpp_attributes_project / "comprehensive_attributes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive C++ attributes test combining all patterns
 #include <iostream>
 #include <memory>
@@ -1200,7 +1204,7 @@ void testAttributePolymorphism() {
         obj->baseHotMethod();                // Hot method call
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_attributes_project, mock_ingestor)

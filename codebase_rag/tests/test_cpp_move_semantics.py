@@ -26,7 +26,8 @@ def test_basic_move_semantics(
     """Test basic move constructors and move assignment operators."""
     test_file = cpp_move_semantics_project / "basic_move_semantics.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -312,7 +313,7 @@ void demonstrateStringMoveSemantics() {
     final_str = std::move(result);
     std::cout << "Final string: " << final_str.c_str() << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_move_semantics_project, mock_ingestor)
@@ -350,7 +351,8 @@ def test_perfect_forwarding(
     """Test perfect forwarding and universal references."""
     test_file = cpp_move_semantics_project / "perfect_forwarding.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -584,7 +586,7 @@ void testReferenceCollapsing() {
     demonstrateReferenceCollapsing(std::string("RValue"));
     demonstrateReferenceCollapsing(std::move(lvalue));
 }
-"""
+""",
     )
 
     run_updater(cpp_move_semantics_project, mock_ingestor)
@@ -613,7 +615,8 @@ def test_move_optimization_patterns(
     """Test various move optimization patterns and techniques."""
     test_file = cpp_move_semantics_project / "move_optimization.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -985,7 +988,7 @@ void demonstrateAlgorithmOptimizations() {
     optimized_swap(str_a, str_b);
     std::cout << "After swap: a=" << str_a << ", b=" << str_b << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_move_semantics_project, mock_ingestor)
@@ -1014,7 +1017,8 @@ def test_cpp_move_semantics_comprehensive(
     """Comprehensive test ensuring all move semantics patterns create proper relationships."""
     test_file = cpp_move_semantics_project / "comprehensive_move_semantics.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ move semantics pattern in one file
 #include <iostream>
 #include <string>
@@ -1393,7 +1397,7 @@ void comprehensiveMoveDemo() {
     auto final_obj = processor(factory());
     final_obj.print();
 }
-"""
+""",
     )
 
     run_updater(cpp_move_semantics_project, mock_ingestor)

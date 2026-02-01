@@ -13,13 +13,18 @@ def rust_pattern_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Pattern matching test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Pattern matching test crate"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_pattern_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     return project_path
 
@@ -31,7 +36,8 @@ def test_exhaustive_enum_matching(
     """Test exhaustive pattern matching on enums with complex variants."""
     test_file = rust_pattern_project / "enum_matching.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Complex enum for pattern matching
 #[derive(Debug, Clone)]
 enum Message {
@@ -174,7 +180,7 @@ fn tree_depth(node: &TreeNode) -> usize {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_pattern_project, mock_ingestor)
@@ -195,7 +201,8 @@ def test_destructuring_patterns(
     """Test complex destructuring patterns for structs, tuples, and arrays."""
     test_file = rust_pattern_project / "destructuring.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Struct for destructuring
 #[derive(Debug)]
 struct Point {
@@ -450,7 +457,7 @@ fn string_pattern_matching() {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_pattern_project, mock_ingestor)
@@ -471,7 +478,8 @@ def test_pattern_guards_and_ranges(
     """Test pattern guards, range patterns, and conditional matching."""
     test_file = rust_pattern_project / "guards_ranges.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Pattern guards with complex conditions
 fn classify_number_with_guards(n: i32) -> &'static str {
     match n {
@@ -654,7 +662,7 @@ fn classify_float(f: f64) -> &'static str {
         _ => "other",
     }
 }
-"""
+""",
     )
 
     run_updater(rust_pattern_project, mock_ingestor)
@@ -675,7 +683,8 @@ def test_advanced_if_let_while_let(
     """Test if let, while let, and other pattern matching constructs."""
     test_file = rust_pattern_project / "if_while_let.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 
 // if let patterns
@@ -924,7 +933,7 @@ fn process_string_refs() {
         // `s` is String, `maybe_string` is moved
     }
 }
-"""
+""",
     )
 
     run_updater(rust_pattern_project, mock_ingestor)
@@ -945,7 +954,8 @@ def test_macro_pattern_matching(
     """Test pattern matching within macros and macro patterns."""
     test_file = rust_pattern_project / "macro_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Macro with pattern matching
 macro_rules! match_type {
     ($value:expr, i32) => {
@@ -1211,7 +1221,7 @@ fn test_advanced_macro_patterns() {
     let matrix = advanced_patterns!(matrix 1, 2, 3; 4, 5, 6; 7, 8, 9);
     println!("Matrix: {:?}", matrix);
 }
-"""
+""",
     )
 
     run_updater(rust_pattern_project, mock_ingestor)

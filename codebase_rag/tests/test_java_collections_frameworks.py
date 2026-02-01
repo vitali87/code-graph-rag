@@ -37,7 +37,8 @@ def test_basic_collection_implementations(
         / "BasicCollections.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -169,7 +170,7 @@ public class BasicCollections {
         SortedSet<Integer> subSet = sortedNumbers.subSet(2, 7);
     }
 }
-"""
+""",
     )
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
@@ -202,7 +203,8 @@ def test_custom_collection_implementations(
         / "CustomCollections.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -763,7 +765,7 @@ class SimpleHashMap<K, V> implements Map<K, V> {
         return entries;
     }
 }
-"""
+""",
     )
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
@@ -800,7 +802,8 @@ def test_iterator_patterns_enhanced_for(
         / "IteratorPatterns.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1006,7 +1009,7 @@ class FibonacciIterable implements Iterable<Long> {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
@@ -1043,7 +1046,8 @@ def test_map_operations_key_value_handling(
         / "MapOperations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1246,7 +1250,7 @@ class Person implements Comparable<Person> {
         return name + " (" + age + ")";
     }
 }
-"""
+""",
     )
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
@@ -1280,7 +1284,8 @@ def test_set_operations_uniqueness(
         / "SetOperations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1482,7 +1487,7 @@ class Student implements Comparable<Student> {
 enum Priority {
     LOW, MEDIUM, HIGH
 }
-"""
+""",
     )
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
@@ -1530,7 +1535,8 @@ def test_stream_api_integration_collections(
         / "StreamCollections.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1775,7 +1781,7 @@ class Employee {
         return name + " (" + department + ", $" + salary + ")";
     }
 }
-"""
+""",
     )
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
@@ -1810,7 +1816,8 @@ def test_thread_safe_collections(
         / "ThreadSafeCollections.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -2059,7 +2066,7 @@ class DelayedTask implements Delayed {
         return name + " (delay: " + getDelay(TimeUnit.MILLISECONDS) + "ms)";
     }
 }
-"""
+""",
     )
 
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")

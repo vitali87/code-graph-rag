@@ -36,7 +36,8 @@ def test_virtual_threads_basics(
         / "VirtualThreads.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.time.Duration;
@@ -215,7 +216,7 @@ public class VirtualThreadBasics {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_loom_project, mock_ingestor, skip_if_missing="java")
@@ -248,7 +249,8 @@ def test_structured_concurrency(
         / "StructuredConcurrency.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.time.Duration;
@@ -487,7 +489,7 @@ public class StructuredConcurrencyExamples {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_loom_project, mock_ingestor, skip_if_missing="java")
@@ -522,7 +524,8 @@ def test_scoped_values(
         / "ScopedValues.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.concurrent.StructuredTaskScope;
@@ -741,7 +744,7 @@ public class ScopedValuesExamples {
         System.out.println("Risky operation succeeded for user: " + USER_ID.get());
     }
 }
-"""
+""",
     )
 
     run_updater(java_loom_project, mock_ingestor, skip_if_missing="java")

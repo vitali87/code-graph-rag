@@ -25,7 +25,8 @@ def test_function_templates(
     """Test function template parsing and instantiation."""
     test_file = cpp_templates_project / "function_templates.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -220,7 +221,7 @@ void demonstrateTemplateMetaprogramming() {
     TypeInfo<double>::printInfo();
     TypeInfo<std::string>::printInfo();
 }
-"""
+""",
     )
 
     run_updater(cpp_templates_project, mock_ingestor)
@@ -267,7 +268,8 @@ def test_class_templates(
     """Test class template parsing and specialization."""
     test_file = cpp_templates_project / "class_templates.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -630,7 +632,7 @@ void demonstrateTemplateTemplateParameters() {
     // Could also use std::vector if it had the same interface
     // ContainerWrapper<std::vector, std::string> stringWrapper;
 }
-"""
+""",
     )
 
     run_updater(cpp_templates_project, mock_ingestor)
@@ -671,7 +673,8 @@ def test_template_metaprogramming(
     """Test advanced template metaprogramming patterns."""
     test_file = cpp_templates_project / "template_metaprogramming.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <type_traits>
 #include <string>
@@ -973,7 +976,7 @@ void demonstrateConcepts() {
 
     // increment_twice(str);  // Would fail to compile - string doesn't satisfy Incrementable
 }
-"""
+""",
     )
 
     run_updater(cpp_templates_project, mock_ingestor)
@@ -1025,7 +1028,8 @@ def test_cpp_templates_comprehensive(
     """Comprehensive test ensuring all template patterns create proper relationships."""
     test_file = cpp_templates_project / "comprehensive_templates.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ template pattern in one file
 #include <iostream>
 #include <vector>
@@ -1201,7 +1205,7 @@ void demonstrateComprehensiveTemplates() {
     std::cout << "Pair: " << name_age.first << ", " << name_age.second << std::endl;
     std::cout << "2^8 = " << power8 << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_templates_project, mock_ingestor)

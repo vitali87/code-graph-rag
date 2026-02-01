@@ -326,14 +326,17 @@ class TestRustImportsIntegration:
         from codebase_rag.graph_updater import GraphUpdater
 
         test_file = temp_repo / "lib.rs"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
 fn main() {
     let map: HashMap<String, i32> = HashMap::new();
 }
-""")
+""",
+        )
         parsers, queries = load_parsers()
         if "rust" not in parsers:
             pytest.skip("Rust parser not available")
@@ -362,7 +365,9 @@ fn main() {
         from codebase_rag.graph_updater import GraphUpdater
 
         test_file = temp_repo / "complex.rs"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 use std::{
     collections::{HashMap, HashSet, BTreeMap},
     io::{self, Read, Write, BufReader},
@@ -375,7 +380,8 @@ fn process() {
     let file = File::open("test.txt").unwrap();
     let reader = BufReader::new(file);
 }
-""")
+""",
+        )
         parsers, queries = load_parsers()
         if "rust" not in parsers:
             pytest.skip("Rust parser not available")
@@ -415,7 +421,9 @@ fn process() {
         from codebase_rag.graph_updater import GraphUpdater
 
         test_file = temp_repo / "structs.rs"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 pub struct User {
     name: String,
 }
@@ -429,7 +437,8 @@ impl User {
         &self.name
     }
 }
-""")
+""",
+        )
         parsers, queries = load_parsers()
         if "rust" not in parsers:
             pytest.skip("Rust parser not available")
@@ -465,13 +474,16 @@ impl User {
         from codebase_rag.graph_updater import GraphUpdater
 
         test_file = temp_repo / "wildcards.rs"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 use std::prelude::v1::*;
 use crate::utils::*;
 use super::parent::*;
 
 fn use_wildcards() {}
-""")
+""",
+        )
         parsers, queries = load_parsers()
         if "rust" not in parsers:
             pytest.skip("Rust parser not available")
@@ -499,7 +511,9 @@ fn use_wildcards() {}
         from codebase_rag.graph_updater import GraphUpdater
 
         test_file = temp_repo / "aliases.rs"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 use std::collections::HashMap as Map;
 use std::io::{self as io_module, Read as ReadTrait};
 use crate::models::User as UserModel;
@@ -507,7 +521,8 @@ use crate::models::User as UserModel;
 fn use_aliases() {
     let m: Map<String, i32> = Map::new();
 }
-""")
+""",
+        )
         parsers, queries = load_parsers()
         if "rust" not in parsers:
             pytest.skip("Rust parser not available")

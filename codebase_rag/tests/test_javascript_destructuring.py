@@ -16,10 +16,10 @@ def javascript_destructuring_project(temp_repo: Path) -> Path:
     (project_path / "utils").mkdir()
 
     (project_path / "src" / "data.js").write_text(
-        "export const sampleData = { users: [], posts: [] };"
+        encoding="utf-8", data="export const sampleData = { users: [], posts: [] };"
     )
     (project_path / "utils" / "helpers.js").write_text(
-        "export function processArray(arr) { return arr; }"
+        encoding="utf-8", data="export function processArray(arr) { return arr; }"
     )
 
     return project_path
@@ -32,7 +32,8 @@ def test_object_destructuring(
     """Test object destructuring patterns."""
     test_file = javascript_destructuring_project / "object_destructuring.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic object destructuring
 const user = { name: "Alice", age: 30, email: "alice@example.com" };
 const { name, age } = user;
@@ -150,7 +151,7 @@ try {
 } catch ({ message = "Unknown error" }) {
     console.error(message);
 }
-"""
+""",
     )
 
     run_updater(javascript_destructuring_project, mock_ingestor)
@@ -190,7 +191,8 @@ def test_array_destructuring(
     """Test array destructuring patterns."""
     test_file = javascript_destructuring_project / "array_destructuring.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic array destructuring
 const numbers = [1, 2, 3, 4, 5];
 const [first, second] = numbers;
@@ -299,7 +301,7 @@ function processArray(arr) {
 
 const [val1, val2, val3] = getArray();
 const result = processArray([10, 20, 30, 40]);
-"""
+""",
     )
 
     run_updater(javascript_destructuring_project, mock_ingestor)
@@ -342,7 +344,8 @@ def test_parameter_destructuring(
     """Test destructuring in function parameters."""
     test_file = javascript_destructuring_project / "parameter_destructuring.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Object parameter destructuring
 function createUser({ name, email, age = 18, role = "user" }) {
     return { name, email, age, role, id: Math.random() };
@@ -503,7 +506,7 @@ async function getUserPosts(id) { return []; }
 async function getUserComments(id) { return []; }
 async function validateUser(data) { return true; }
 async function updateUser(id, data) { return { id, ...data }; }
-"""
+""",
     )
 
     run_updater(javascript_destructuring_project, mock_ingestor)
@@ -549,7 +552,8 @@ def test_destructuring_with_imports(
     """Test destructuring combined with import statements."""
     test_file = javascript_destructuring_project / "destructuring_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Destructuring imports
 import { useState, useEffect, useCallback } from 'react';
 import { map, filter, reduce } from 'lodash';
@@ -648,7 +652,7 @@ const response = processApiResponse({
     status: 200,
     headers: {}
 });
-"""
+""",
     )
 
     run_updater(javascript_destructuring_project, mock_ingestor)
@@ -685,7 +689,8 @@ def test_destructuring_comprehensive(
     """Comprehensive test ensuring all destructuring patterns create proper relationships."""
     test_file = javascript_destructuring_project / "comprehensive_destructuring.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript destructuring pattern in one file
 
 // Object destructuring
@@ -755,7 +760,7 @@ const formatted = formatData({
     content: "Content",
     meta: { author: "Alice" }
 });
-"""
+""",
     )
 
     run_updater(javascript_destructuring_project, mock_ingestor)

@@ -20,7 +20,8 @@ def cpp_comprehensive_project(temp_repo: Path) -> Path:
     (project_path / "tests").mkdir()
 
     (project_path / "include" / "core" / "base.h").write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 #include <memory>
 
@@ -33,11 +34,12 @@ namespace core {
         virtual std::unique_ptr<T> clone() const = 0;
     };
 }
-"""
+""",
     )
 
     (project_path / "include" / "utils" / "helpers.h").write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 #include <string>
 #include <vector>
@@ -48,7 +50,7 @@ namespace utils {
 
     std::string join(const std::vector<std::string>& strings, const std::string& delimiter);
 }
-"""
+""",
     )
 
     return project_path
@@ -61,7 +63,8 @@ def test_comprehensive_cpp_features(
     """Test comprehensive C++ feature integration."""
     test_file = cpp_comprehensive_project / "comprehensive_example.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive C++ example integrating all major features
 
 // Standard library includes
@@ -584,7 +587,7 @@ void runComprehensiveTest() {
 
     internal_logger("Comprehensive C++ test completed");
 }
-"""
+""",
     )
 
     run_updater(cpp_comprehensive_project, mock_ingestor)
@@ -680,7 +683,8 @@ def test_real_world_cpp_scenario(
 
     header_file = cpp_comprehensive_project / "include" / "engine.h"
     header_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 #include <memory>
 #include <vector>
@@ -721,12 +725,13 @@ namespace engine {
         virtual void process(std::vector<Entity*>& entities) = 0;
     };
 }
-"""
+""",
     )
 
     impl_file = cpp_comprehensive_project / "src" / "engine.cpp"
     impl_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include "../include/engine.h"
 #include <iostream>
 #include <algorithm>
@@ -845,12 +850,13 @@ void runGameEngineExample() {
 
     std::cout << "Game engine example completed" << std::endl;
 }
-"""
+""",
     )
 
     main_file = cpp_comprehensive_project / "src" / "main.cpp"
     main_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include "../include/engine.h"
 #include <iostream>
 #include <memory>
@@ -872,7 +878,7 @@ int main() {
         return 1;
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_comprehensive_project, mock_ingestor)

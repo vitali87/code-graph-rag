@@ -38,7 +38,8 @@ def test_basic_java_classes(
         java_project / "src" / "main" / "java" / "com" / "example" / "BasicClasses.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.List;
@@ -109,7 +110,7 @@ public abstract class Shape {
         return color;
     }
 }
-"""
+""",
     )
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
@@ -181,7 +182,8 @@ def test_java_enums_and_annotations(
         / "EnumsAndAnnotations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Simple enum
@@ -232,7 +234,7 @@ public class AnnotatedClass {
         return "AnnotatedClass";
     }
 }
-"""
+""",
     )
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
@@ -280,7 +282,8 @@ def test_java_generics_and_collections(
         java_project / "src" / "main" / "java" / "com" / "example" / "Generics.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -345,7 +348,7 @@ public class WildcardExample {
         list.add(42);
     }
 }
-"""
+""",
     )
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
@@ -390,7 +393,8 @@ def test_java_static_and_final(
         java_project / "src" / "main" / "java" / "com" / "example" / "Modifiers.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public final class Constants {
@@ -446,7 +450,7 @@ public abstract class AbstractService {
         System.out.println("[" + SERVICE_NAME + "] " + message);
     }
 }
-"""
+""",
     )
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
@@ -475,7 +479,8 @@ def test_java_inner_classes(
         java_project / "src" / "main" / "java" / "com" / "example" / "InnerClasses.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class OuterClass {
@@ -539,7 +544,7 @@ public class OuterClass {
         return outerField;
     }
 }
-"""
+""",
     )
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
@@ -564,7 +569,8 @@ def test_java_lambda_expressions(
         java_project / "src" / "main" / "java" / "com" / "example" / "Lambdas.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -648,7 +654,7 @@ public class LambdaExamples {
         System.out.println(reverse.process(input));
     }
 }
-"""
+""",
     )
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
@@ -691,7 +697,8 @@ def test_java_exception_handling(
         java_project / "src" / "main" / "java" / "com" / "example" / "Exceptions.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.io.*;
@@ -781,7 +788,7 @@ public class ExceptionHandler {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")

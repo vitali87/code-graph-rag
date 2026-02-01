@@ -25,7 +25,8 @@ def test_static_cast_examples(
     """Test static_cast in various scenarios."""
     test_file = cpp_casting_project / "static_cast_examples.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -208,7 +209,7 @@ void testStaticCastExamples() {
 void demonstrateStaticCastExamples() {
     testStaticCastExamples();
 }
-"""
+""",
     )
 
     run_updater(cpp_casting_project, mock_ingestor)
@@ -249,7 +250,8 @@ def test_dynamic_cast_examples(
     """Test dynamic_cast with polymorphic hierarchies."""
     test_file = cpp_casting_project / "dynamic_cast_examples.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -506,7 +508,7 @@ void testDynamicCastExamples() {
 void demonstrateDynamicCastExamples() {
     testDynamicCastExamples();
 }
-"""
+""",
     )
 
     run_updater(cpp_casting_project, mock_ingestor)
@@ -536,7 +538,8 @@ def test_other_cast_operators(
     """Test const_cast, reinterpret_cast and C-style casts."""
     test_file = cpp_casting_project / "other_cast_operators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -718,7 +721,7 @@ void testOtherCastOperators() {
 void demonstrateOtherCastOperators() {
     testOtherCastOperators();
 }
-"""
+""",
     )
 
     run_updater(cpp_casting_project, mock_ingestor)
@@ -744,7 +747,8 @@ def test_cpp_casting_comprehensive(
     """Comprehensive test ensuring all casting patterns create proper relationships."""
     test_file = cpp_casting_project / "comprehensive_casting.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive casting demonstration for graph applications
 #include <iostream>
 #include <memory>
@@ -850,7 +854,7 @@ void demonstrateComprehensiveCasting() {
     ComprehensiveCastingDemo demo;
     demo.demonstrateComprehensiveCasting();
 }
-"""
+""",
     )
 
     run_updater(cpp_casting_project, mock_ingestor)

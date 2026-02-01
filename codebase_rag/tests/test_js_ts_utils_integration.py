@@ -49,7 +49,9 @@ def sample_js_project(tmp_path: Path) -> Path:
     project = tmp_path / "js_project"
     project.mkdir()
 
-    (project / "singleton.js").write_text("""
+    (project / "singleton.js").write_text(
+        encoding="utf-8",
+        data="""
 class DatabaseConnection {
     static instance = null;
 
@@ -91,9 +93,12 @@ class UserRepository {
         return this.db.query('INSERT INTO users VALUES (...)');
     }
 }
-""")
+""",
+    )
 
-    (project / "factory.js").write_text("""
+    (project / "factory.js").write_text(
+        encoding="utf-8",
+        data="""
 class Animal {
     constructor(name) {
         this.name = name;
@@ -143,9 +148,12 @@ class AnimalFactory {
         return new Dog(name, breed);
     }
 }
-""")
+""",
+    )
 
-    (project / "complex_returns.js").write_text("""
+    (project / "complex_returns.js").write_text(
+        encoding="utf-8",
+        data="""
 class Builder {
     constructor() {
         this.options = {};
@@ -217,7 +225,8 @@ class ChainedService {
         return { result: 'success' };
     }
 }
-""")
+""",
+    )
 
     return project
 
@@ -227,7 +236,9 @@ def sample_ts_project(tmp_path: Path) -> Path:
     project = tmp_path / "ts_project"
     project.mkdir()
 
-    (project / "generics.ts").write_text("""
+    (project / "generics.ts").write_text(
+        encoding="utf-8",
+        data="""
 class Container<T> {
     private value: T;
 
@@ -268,9 +279,12 @@ class Repository<T> {
         return [...this.items];
     }
 }
-""")
+""",
+    )
 
-    (project / "nested_classes.ts").write_text("""
+    (project / "nested_classes.ts").write_text(
+        encoding="utf-8",
+        data="""
 class Outer {
     private inner: Inner;
 
@@ -317,7 +331,8 @@ class Result {
         return this.value > 0;
     }
 }
-""")
+""",
+    )
 
     return project
 

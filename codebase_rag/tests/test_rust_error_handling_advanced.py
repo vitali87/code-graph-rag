@@ -12,7 +12,9 @@ def rust_error_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_error_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_error_test"
 version = "0.1.0"
@@ -22,10 +24,13 @@ edition = "2021"
 thiserror = "1.0"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-""")
+""",
+    )
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Error handling test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Error handling test crate"
+    )
 
     return project_path
 
@@ -37,7 +42,8 @@ def test_result_option_basics(
     """Test basic Result and Option handling."""
     test_file = rust_error_project / "result_option.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 fn divide(dividend: f64, divisor: f64) -> Result<f64, String> {
     if divisor == 0.0 {
         Err("Cannot divide by zero".to_string())
@@ -109,7 +115,7 @@ fn result_combinators() -> Result<String, Box<dyn std::error::Error>> {
         .ok_or("Multiplication overflow")?;
     Ok(format!("Result: {}", doubled))
 }
-"""
+""",
     )
 
     run_updater(rust_error_project, mock_ingestor)
@@ -128,7 +134,8 @@ def test_custom_error_types(
     """Test custom error type definitions."""
     test_file = rust_error_project / "custom_errors.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::fmt;
 use std::error::Error;
 
@@ -260,7 +267,7 @@ fn make_api_request(endpoint: &str) -> Result<String, ApiError> {
 
     Ok(format!("Response from {}", endpoint))
 }
-"""
+""",
     )
 
     run_updater(rust_error_project, mock_ingestor)
@@ -279,7 +286,8 @@ def test_error_propagation(
     """Test error propagation with ? operator and error conversion."""
     test_file = rust_error_project / "error_propagation.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::fs::File;
 use std::io::{self, Read};
 use std::num::ParseIntError;
@@ -416,7 +424,7 @@ fn recoverable_errors() -> Result<Vec<i32>, AppError> {
         Err(other) => Err(other),
     }
 }
-"""
+""",
     )
 
     run_updater(rust_error_project, mock_ingestor)
@@ -437,7 +445,8 @@ def test_panic_handling(
     """Test panic handling and recovery."""
     test_file = rust_error_project / "panic_handling.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::panic;
 
 fn might_panic(should_panic: bool) {
@@ -544,7 +553,7 @@ fn graceful_shutdown() {
         Err(_) => println!("Worker thread panicked, but we handled it"),
     }
 }
-"""
+""",
     )
 
     run_updater(rust_error_project, mock_ingestor)
@@ -565,7 +574,8 @@ def test_error_handling_patterns(
     """Test advanced error handling patterns."""
     test_file = rust_error_project / "error_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -800,7 +810,7 @@ fn secondary_data_source() -> Result<String> {
 fn cached_data_source() -> Result<String> {
     Ok("cached_data".to_string())
 }
-"""
+""",
     )
 
     run_updater(rust_error_project, mock_ingestor)
