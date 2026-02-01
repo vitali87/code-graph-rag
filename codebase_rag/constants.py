@@ -801,6 +801,7 @@ IGNORE_PATTERNS = frozenset(
         ".nyc_output",
         ".pnpm-store",
         ".pytest_cache",
+        ".qdrant_code_embeddings",
         ".ruff_cache",
         ".svn",
         ".tmp",

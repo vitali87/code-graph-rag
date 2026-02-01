@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 
-import mgclient
+import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
 from .. import constants as cs
