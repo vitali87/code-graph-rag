@@ -40,7 +40,8 @@ def test_module_info_declarations(
     """Test module-info.java declarations."""
     core_module_info = java_modules_project / "src" / "core.module" / "module-info.java"
     core_module_info.write_text(
-        """
+        encoding="utf-8",
+        data="""
 /**
  * Core module providing fundamental utilities and data structures.
  * This module exports core functionality to other modules.
@@ -75,12 +76,13 @@ module com.example.core {
     opens com.example.core.model to java.base, java.logging;
     opens com.example.core.config; // to all modules
 }
-"""
+""",
     )
 
     api_module_info = java_modules_project / "src" / "api.module" / "module-info.java"
     api_module_info.write_text(
-        """
+        encoding="utf-8",
+        data="""
 /**
  * API module defining interfaces and contracts.
  */
@@ -113,14 +115,15 @@ module com.example.api {
     opens com.example.api.dto to com.fasterxml.jackson.databind;
     opens com.example.api.model;
 }
-"""
+""",
     )
 
     service_module_info = (
         java_modules_project / "src" / "service.module" / "module-info.java"
     )
     service_module_info.write_text(
-        """
+        encoding="utf-8",
+        data="""
 /**
  * Service implementation module.
  */
@@ -166,7 +169,7 @@ module com.example.service {
 
     opens com.example.service.config;
 }
-"""
+""",
     )
 
     run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
@@ -189,7 +192,8 @@ def test_service_provider_interface(
         / "ServiceProviderInterface.java"
     )
     spi_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.core.spi;
 
 import java.util.ServiceLoader;
@@ -291,7 +295,7 @@ public class ServiceRegistry {
                       .map(serviceType::cast);
     }
 }
-"""
+""",
     )
 
     impl_file = (
@@ -304,7 +308,8 @@ public class ServiceRegistry {
         / "ServiceImplementations.java"
     )
     impl_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.core.impl;
 
 import com.example.core.spi.*;
@@ -461,7 +466,7 @@ public class ConsoleLoggingProvider implements LoggingProvider {
             java.time.LocalDateTime.now(), level, message);
     }
 }
-"""
+""",
     )
 
     run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
@@ -518,7 +523,8 @@ def test_module_layer_and_configuration(
         / "ModuleConfiguration.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.core.module;
 
 import java.lang.module.*;
@@ -749,7 +755,7 @@ public class ModuleConfiguration {
         System.out.println("java.logging present: " + loggingModule.isPresent());
     }
 }
-"""
+""",
     )
 
     run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")
@@ -784,7 +790,8 @@ def test_modular_application_structure(
         / "UserAPI.java"
     )
     api_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.api.interfaces;
 
 import com.example.core.spi.DataProcessor;
@@ -943,7 +950,7 @@ public class AuthorizationException extends Exception {
         super(message);
     }
 }
-"""
+""",
     )
 
     service_file = (
@@ -956,7 +963,8 @@ public class AuthorizationException extends Exception {
         / "UserServiceImpl.java"
     )
     service_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.service.impl;
 
 import com.example.api.interfaces.*;
@@ -1298,7 +1306,7 @@ class UserEntity {
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
 }
-"""
+""",
     )
 
     run_updater(java_modules_project, mock_ingestor, skip_if_missing="java")

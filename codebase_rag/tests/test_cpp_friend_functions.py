@@ -25,7 +25,8 @@ def test_friend_functions(
     """Test friend functions and their access privileges."""
     test_file = cpp_friend_project / "friend_functions.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <cmath>
@@ -368,7 +369,7 @@ void demonstrateFriendFunctions() {
     testFriendFunctions();
     testFriendClasses();
 }
-"""
+""",
     )
 
     run_updater(cpp_friend_project, mock_ingestor)
@@ -410,7 +411,8 @@ def test_friend_templates(
     """Test friend templates and template specializations."""
     test_file = cpp_friend_project / "friend_templates.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <string>
@@ -719,7 +721,7 @@ void testTemplateFriends() {
 void demonstrateTemplateFriends() {
     testTemplateFriends();
 }
-"""
+""",
     )
 
     run_updater(cpp_friend_project, mock_ingestor)
@@ -746,7 +748,8 @@ def test_cpp_friend_comprehensive(
     """Comprehensive test ensuring all friend relationship features create proper relationships."""
     test_file = cpp_friend_project / "comprehensive_friends.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive friend relationships example
 #include <iostream>
 #include <string>
@@ -941,7 +944,7 @@ void demonstrateComprehensiveFriends() {
     GraphAnalyzer<double> double_analyzer(3.14159);
     double_analyzer.performAnalysis(node4);
 }
-"""
+""",
     )
 
     run_updater(cpp_friend_project, mock_ingestor)

@@ -27,15 +27,17 @@ def test_lua_imports_paths(
     """Import mapping for relative and dotted require paths."""
     project = temp_repo / "lua_imports_paths_test"
     (project / "lib").mkdir(parents=True)
-    (project / "lib" / "alpha.lua").write_text("return {}\n")
+    (project / "lib" / "alpha.lua").write_text(encoding="utf-8", data="return {}\n")
     (project / "utils.lua").write_text(
-        "local M = {}\nfunction M.func() return 1 end\nreturn M\n"
+        encoding="utf-8",
+        data="local M = {}\nfunction M.func() return 1 end\nreturn M\n",
     )
     (project / "main.lua").write_text(
-        f"""
+        encoding="utf-8",
+        data=f"""
 {req}
 return 0
-"""
+""",
     )
 
     updater = create_and_run_updater(project, mock_ingestor)

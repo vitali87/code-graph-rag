@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
@@ -21,8 +23,8 @@ if TYPE_CHECKING:
 
 
 class JavaVariableAnalyzerMixin:
-    ast_cache: "ASTCacheProtocol"
-    module_qn_to_file_path: dict[str, "Path"]
+    ast_cache: ASTCacheProtocol
+    module_qn_to_file_path: dict[str, Path]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
 

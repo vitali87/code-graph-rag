@@ -1,0 +1,174 @@
+name: Poor Quality PR Management
+
+on:
+  pull_request_target:
+    types: [labeled]
+  schedule:
+    - cron: "0 9 * * *" # Daily at 9 AM UTC
+  workflow_dispatch:
+
+jobs:
+  notify-poor-quality:
+    name: Notify Poor Quality PR
+    if: github.event_name == 'pull_request_target' && github.event.label.name == 'poor-quality'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Add warning comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const message = `⚠️ **This PR has been marked as poor-quality.**
+
+            **Action Required:** This PR will be **automatically closed in 7 days** unless updated to meet our contribution standards.
+
+            ### Required Actions:
+            1. Review our [Contributing Guidelines](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CONTRIBUTING.md)
+            2. Address the quality issues identified by reviewers
+            3. Update this PR with the necessary changes
+            4. Request a re-review once fixed
+
+            ### Common Quality Issues:
+            - ❌ Missing or inadequate tests
+            - ❌ Code quality violations (run \`make lint\` and \`make format\`)
+            - ❌ Type checking errors (run \`make typecheck\`)
+            - ❌ Poor commit messages (must follow Conventional Commits)
+            - ❌ Missing or inadequate documentation
+            - ❌ AI-generated code without proper review
+            - ❌ Does not follow project coding standards
+
+            ### How to Fix:
+            \`\`\`bash
+            # Run these commands locally before pushing:
+            make lint          # Check code quality
+            make format        # Auto-format code
+            make typecheck     # Check types
+            make test-parallel # Run tests
+            \`\`\`
+
+            💡 **Need help?** Please ask questions in the comments, and we'll guide you.
+
+            ---
+            *This PR will be automatically closed on ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString()} if not updated.*`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: message
+            });
+
+  close-stale-poor-quality:
+    name: Close Stale Poor Quality PRs
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Close PRs with poor-quality label older than 7 days
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const LABEL_NAME = 'poor-quality';
+            const DAYS_THRESHOLD = 7;
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - DAYS_THRESHOLD);
+
+            console.log(`Checking for poor-quality PRs labeled before ${cutoffDate.toISOString()}`);
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            let closedCount = 0;
+
+            for (const pr of prs) {
+              const hasLabel = pr.labels.some(label => label.name === LABEL_NAME);
+              if (!hasLabel) continue;
+
+              // Get all events for this PR
+              const { data: events } = await github.rest.issues.listEvents({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                per_page: 100
+              });
+
+              // Find the most recent poor-quality label event
+              const labelEvent = events
+                .filter(e => e.event === 'labeled' && e.label?.name === LABEL_NAME)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+
+              if (!labelEvent) {
+                console.log(`PR #${pr.number}: No label event found, skipping`);
+                continue;
+              }
+
+              const labeledAt = new Date(labelEvent.created_at);
+
+              // Check if PR was updated after being labeled
+              const prUpdatedAt = new Date(pr.updated_at);
+              const wasUpdatedAfterLabel = prUpdatedAt > labeledAt;
+
+              if (wasUpdatedAfterLabel) {
+                console.log(`PR #${pr.number}: Updated after label (${prUpdatedAt.toISOString()}), skipping`);
+                continue;
+              }
+
+              // Check if label is old enough
+              if (labeledAt > cutoffDate) {
+                const daysOld = Math.floor((Date.now() - labeledAt.getTime()) / (1000 * 60 * 60 * 24));
+                console.log(`PR #${pr.number}: Only ${daysOld} days old, needs ${DAYS_THRESHOLD} days`);
+                continue;
+              }
+
+              console.log(`Closing PR #${pr.number} - labeled on ${labeledAt.toISOString()}, last updated ${prUpdatedAt.toISOString()}`);
+
+              // Add closing comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: `🚫 **This PR has been automatically closed.**
+
+                It was marked as \`poor-quality\` more than ${DAYS_THRESHOLD} days ago and has not been updated to meet our contribution standards.
+
+                **What happened:**
+                - Labeled as poor-quality on: ${labeledAt.toLocaleDateString()}
+                - No updates made to address the quality issues
+                - Automatically closed after ${DAYS_THRESHOLD} day grace period
+
+                **Want to revisit this?**
+                - Review our [Contributing Guidelines](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CONTRIBUTING.md)
+                - Address the quality issues that were identified
+                - Open a new PR with the improvements
+
+                Thank you for your interest in contributing! 🙏`
+              });
+
+              // Close the PR
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                state: 'closed'
+              });
+
+              closedCount++;
+            }
+
+            console.log(`✅ Closed ${closedCount} stale poor-quality PR(s)`);
+
+            if (closedCount === 0) {
+              console.log('No stale poor-quality PRs found');
+            }

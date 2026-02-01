@@ -9,7 +9,9 @@ def test_lua_pcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_pcall"
     project.mkdir()
 
-    (project / "error_handler.lua").write_text("""
+    (project / "error_handler.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ErrorHandler = {}
 
 function ErrorHandler.safe_divide(a, b)
@@ -40,7 +42,8 @@ function ErrorHandler.with_retry(func, max_attempts)
 end
 
 return ErrorHandler
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -50,7 +53,9 @@ def test_lua_xpcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_xpcall"
     project.mkdir()
 
-    (project / "error_handler.lua").write_text("""
+    (project / "error_handler.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ErrorHandler = {}
 
 function ErrorHandler.error_handler(err)
@@ -70,7 +75,8 @@ function ErrorHandler.risky_function(x)
 end
 
 return ErrorHandler
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -80,7 +86,9 @@ def test_lua_string_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_strings"
     project.mkdir()
 
-    (project / "string_utils.lua").write_text("""
+    (project / "string_utils.lua").write_text(
+        encoding="utf-8",
+        data="""
 local StringUtils = {}
 
 function StringUtils.extract_emails(text)
@@ -114,7 +122,8 @@ function StringUtils.word_count(text)
 end
 
 return StringUtils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -124,7 +133,9 @@ def test_lua_string_interpolation(temp_repo: Path, mock_ingestor: MagicMock) -> 
     project = temp_repo / "lua_interpolation"
     project.mkdir()
 
-    (project / "formatter.lua").write_text("""
+    (project / "formatter.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Formatter = {}
 
 function Formatter.template(template_str, values)
@@ -152,7 +163,8 @@ function Formatter.pad_right(str, width, char)
 end
 
 return Formatter
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -162,7 +174,9 @@ def test_lua_table_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None
     project = temp_repo / "lua_tables"
     project.mkdir()
 
-    (project / "table_ops.lua").write_text("""
+    (project / "table_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local TableOps = {}
 
 function TableOps.deep_copy(orig)
@@ -213,7 +227,8 @@ function TableOps.find(t, predicate)
 end
 
 return TableOps
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -223,7 +238,9 @@ def test_lua_table_iteration(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_iteration"
     project.mkdir()
 
-    (project / "iterators.lua").write_text("""
+    (project / "iterators.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Iterators = {}
 
 function Iterators.ipairs_reverse(t)
@@ -279,7 +296,8 @@ function Iterators.enumerate(t)
 end
 
 return Iterators
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -289,7 +307,9 @@ def test_lua_environment_management(temp_repo: Path, mock_ingestor: MagicMock) -
     project = temp_repo / "lua_environment"
     project.mkdir()
 
-    (project / "env_manager.lua").write_text("""
+    (project / "env_manager.lua").write_text(
+        encoding="utf-8",
+        data="""
 local EnvManager = {}
 
 function EnvManager.create_sandbox()
@@ -335,7 +355,8 @@ function EnvManager.restore_global(name, value)
 end
 
 return EnvManager
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -345,7 +366,9 @@ def test_lua_module_system(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_modules"
     project.mkdir()
 
-    (project / "module_loader.lua").write_text("""
+    (project / "module_loader.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ModuleLoader = {}
 
 function ModuleLoader.create_module(name, init_func)
@@ -384,7 +407,8 @@ function ModuleLoader.safe_require(module_name)
 end
 
 return ModuleLoader
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -394,7 +418,9 @@ def test_lua_file_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_file_io"
     project.mkdir()
 
-    (project / "file_utils.lua").write_text("""
+    (project / "file_utils.lua").write_text(
+        encoding="utf-8",
+        data="""
 local FileUtils = {}
 
 function FileUtils.read_file(filename)
@@ -449,7 +475,8 @@ function FileUtils.file_exists(filename)
 end
 
 return FileUtils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -459,7 +486,9 @@ def test_lua_json_serialization(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_json"
     project.mkdir()
 
-    (project / "json_utils.lua").write_text("""
+    (project / "json_utils.lua").write_text(
+        encoding="utf-8",
+        data="""
 local JSONUtils = {}
 
 function JSONUtils.encode_value(value)
@@ -524,7 +553,8 @@ function JSONUtils.decode(json_str)
 end
 
 return JSONUtils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -534,7 +564,9 @@ def test_lua_linked_list(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_linked_list"
     project.mkdir()
 
-    (project / "linked_list.lua").write_text("""
+    (project / "linked_list.lua").write_text(
+        encoding="utf-8",
+        data="""
 local LinkedList = {}
 LinkedList.__index = LinkedList
 
@@ -601,7 +633,8 @@ function LinkedList:to_array()
 end
 
 return LinkedList
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -611,7 +644,9 @@ def test_lua_binary_tree(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_binary_tree"
     project.mkdir()
 
-    (project / "binary_tree.lua").write_text("""
+    (project / "binary_tree.lua").write_text(
+        encoding="utf-8",
+        data="""
 local BinaryTree = {}
 BinaryTree.__index = BinaryTree
 
@@ -674,7 +709,8 @@ function BinaryTree:_in_order_traversal(node, result)
 end
 
 return BinaryTree
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -684,7 +720,9 @@ def test_lua_hash_table(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_hash_table"
     project.mkdir()
 
-    (project / "hash_table.lua").write_text("""
+    (project / "hash_table.lua").write_text(
+        encoding="utf-8",
+        data="""
 local HashTable = {}
 HashTable.__index = HashTable
 
@@ -762,7 +800,8 @@ function HashTable:keys()
 end
 
 return HashTable
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -772,7 +811,9 @@ def test_lua_sorting_algorithms(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_sorting"
     project.mkdir()
 
-    (project / "sorting.lua").write_text("""
+    (project / "sorting.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Sorting = {}
 
 function Sorting.bubble_sort(arr)
@@ -864,7 +905,8 @@ function Sorting._merge(left, right)
 end
 
 return Sorting
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -874,7 +916,9 @@ def test_lua_search_algorithms(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_searching"
     project.mkdir()
 
-    (project / "searching.lua").write_text("""
+    (project / "searching.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Searching = {}
 
 function Searching.linear_search(arr, target)
@@ -956,7 +1000,8 @@ function Searching.find_min_max(arr)
 end
 
 return Searching
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -966,7 +1011,9 @@ def test_lua_observer_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None
     project = temp_repo / "lua_observer"
     project.mkdir()
 
-    (project / "observer.lua").write_text("""
+    (project / "observer.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Subject = {}
 Subject.__index = Subject
 
@@ -1009,7 +1056,8 @@ function Observer:update(...)
 end
 
 return {Subject = Subject, Observer = Observer}
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1019,7 +1067,9 @@ def test_lua_factory_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_factory"
     project.mkdir()
 
-    (project / "factory.lua").write_text("""
+    (project / "factory.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ShapeFactory = {}
 
 local Circle = {}
@@ -1077,7 +1127,8 @@ return {
     Rectangle = Rectangle,
     Triangle = Triangle
 }
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1087,7 +1138,9 @@ def test_lua_strategy_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None
     project = temp_repo / "lua_strategy"
     project.mkdir()
 
-    (project / "strategy.lua").write_text("""
+    (project / "strategy.lua").write_text(
+        encoding="utf-8",
+        data="""
 local SortContext = {}
 SortContext.__index = SortContext
 
@@ -1171,7 +1224,8 @@ return {
     BubbleSortStrategy = BubbleSortStrategy,
     QuickSortStrategy = QuickSortStrategy
 }
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1181,7 +1235,9 @@ def test_lua_memory_management(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_memory"
     project.mkdir()
 
-    (project / "memory_manager.lua").write_text("""
+    (project / "memory_manager.lua").write_text(
+        encoding="utf-8",
+        data="""
 local MemoryManager = {}
 
 function MemoryManager.get_memory_usage()
@@ -1240,7 +1296,8 @@ function MemoryManager.profile_memory(func, ...)
 end
 
 return MemoryManager
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1250,7 +1307,9 @@ def test_lua_performance_utils(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_performance"
     project.mkdir()
 
-    (project / "performance.lua").write_text("""
+    (project / "performance.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Performance = {}
 
 function Performance.benchmark(func, iterations, ...)
@@ -1333,7 +1392,8 @@ function Performance.memoize_with_stats(func)
 end
 
 return Performance
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1343,7 +1403,9 @@ def test_lua_web_framework(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_web_framework"
     project.mkdir()
 
-    (project / "web_framework.lua").write_text("""
+    (project / "web_framework.lua").write_text(
+        encoding="utf-8",
+        data="""
 local WebFramework = {}
 
 function WebFramework.create_app()
@@ -1424,7 +1486,8 @@ function WebFramework._encode_json(data)
 end
 
 return WebFramework
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1434,7 +1497,9 @@ def test_lua_database_orm(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_orm"
     project.mkdir()
 
-    (project / "orm.lua").write_text("""
+    (project / "orm.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ORM = {}
 
 function ORM.create_model(table_name, schema)
@@ -1582,7 +1647,8 @@ function ORM.create_query_builder(model)
 end
 
 return ORM
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1592,7 +1658,9 @@ def test_lua_template_engine(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_template"
     project.mkdir()
 
-    (project / "template_engine.lua").write_text("""
+    (project / "template_engine.lua").write_text(
+        encoding="utf-8",
+        data="""
 local TemplateEngine = {}
 
 function TemplateEngine.create_template(template_string)
@@ -1722,7 +1790,8 @@ function TemplateEngine.create_loader(template_dir)
 end
 
 return TemplateEngine
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -1734,7 +1803,9 @@ def test_lua_final_comprehensive_check(
     project = temp_repo / "lua_final_check"
     project.mkdir()
 
-    (project / "comprehensive.lua").write_text("""
+    (project / "comprehensive.lua").write_text(
+        encoding="utf-8",
+        data="""
 -- This file demonstrates comprehensive Lua feature coverage
 local Comprehensive = {}
 
@@ -1803,6 +1874,7 @@ function Comprehensive.safe_operation(x)
 end
 
 return Comprehensive
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)

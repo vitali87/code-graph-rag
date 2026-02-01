@@ -1,4 +1,4 @@
-.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check
+.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit
 
 PYTHON := uv run
 
@@ -77,3 +77,20 @@ typecheck: ## Run type checking with ty
 
 check: lint typecheck test ## Run all checks: lint, typecheck, test
 
+pre-commit: ## Run all pre-commit checks locally (comprehensive test before commit)
+	@echo "Running pre-commit checks..."
+	@echo "1. Formatting code..."
+	$(PYTHON) ruff format .
+	@echo "2. Linting and fixing..."
+	$(PYTHON) ruff check --fix .
+	@echo "3. Type checking..."
+	$(PYTHON) ty check --exclude codebase_rag/tests/
+	@echo "4. Checking for missing docstrings..."
+	$(PYTHON) python scripts/check_no_docs.py
+	@echo "5. Generating README sections..."
+	$(PYTHON) python scripts/hooks/generate_readme.py
+	@echo "6. Running security checks..."
+	$(PYTHON) bandit -c pyproject.toml --severity-level high -r codebase_rag/ --exclude codebase_rag/tests/,scripts/
+	@echo "7. Running unit tests (integration tests skipped - run 'make test-integration' separately)..."
+	$(PYTHON) pytest -n auto -m "not integration"
+	@echo "All pre-commit checks passed!"

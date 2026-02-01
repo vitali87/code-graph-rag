@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,7 +28,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def python_parser() -> "Parser":
+def python_parser() -> Parser:
     parser = Parser(Language(tspython.language()))
     return parser
 
@@ -80,7 +82,7 @@ def engine(
 class TestParameterAnalysisWithRealParsing:
     def test_function_with_typed_parameters(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -98,7 +100,7 @@ def process_user(name: str, age: int, active: bool) -> None:
 
     def test_function_with_default_values(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -116,7 +118,7 @@ def greet(name: str = "World", count: int = 1) -> None:
 
     def test_method_with_self_parameter(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -135,7 +137,7 @@ class UserService:
 
     def test_classmethod_with_cls_parameter(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -153,7 +155,7 @@ class Factory:
 
     def test_function_with_args_kwargs(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -195,7 +197,7 @@ def flexible_func(required: str, *args, **kwargs) -> None:
 class TestForLoopAnalysisWithRealParsing:
     def test_for_loop_with_list_literal(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -212,7 +214,7 @@ def process() -> None:
 
     def test_for_loop_with_range(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -229,7 +231,7 @@ def count_up() -> None:
 
     def test_nested_for_loops(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -248,7 +250,7 @@ def process_matrix() -> None:
 
     def test_for_loop_with_tuple_unpacking(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -281,7 +283,7 @@ def process_pairs() -> None:
 class TestListComprehensionAnalysisWithRealParsing:
     def test_list_comprehension_variable(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -297,7 +299,7 @@ def process() -> None:
 
     def test_nested_list_comprehension(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -329,7 +331,7 @@ def flatten() -> None:
 class TestSelfAssignmentAnalysisWithRealParsing:
     def test_init_with_self_assignments(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -348,7 +350,7 @@ class User:
 
     def test_method_accessing_instance_vars(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -391,7 +393,7 @@ class Calculator:
 class TestComplexScenariosWithRealParsing:
     def test_method_with_all_variable_types(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -417,7 +419,7 @@ class ComplexService:
 
     def test_async_function_parameters(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -434,7 +436,7 @@ async def fetch_user(user_id: int, timeout: float = 30.0) -> None:
 
     def test_decorated_function(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -452,7 +454,7 @@ def decorated_func(value: str) -> None:
 
     def test_function_with_complex_type_hints(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -500,7 +502,7 @@ def process_data(
 class TestEdgeCasesWithRealParsing:
     def test_empty_function_body(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -516,7 +518,7 @@ def empty_func() -> None:
 
     def test_function_with_only_docstring(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b'''
@@ -533,7 +535,7 @@ def documented_func() -> None:
 
     def test_lambda_in_function(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -549,7 +551,7 @@ def use_lambda(items: list) -> None:
 
     def test_function_with_walrus_operator(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""
@@ -566,7 +568,7 @@ def use_walrus(data: list) -> None:
 
     def test_generator_function(
         self,
-        python_parser: "Parser",
+        python_parser: Parser,
         engine: PythonTypeInferenceEngine,
     ) -> None:
         python_code = b"""

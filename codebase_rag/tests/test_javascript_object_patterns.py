@@ -22,7 +22,8 @@ def javascript_object_patterns_project(temp_repo: Path) -> Path:
     (project_path / "factories").mkdir()
 
     (project_path / "patterns" / "basic.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export function createUser(name, email) {
     return {
         name,
@@ -38,7 +39,7 @@ export const userFactory = {
         return createUser(name, email);
     }
 };
-"""
+""",
     )
 
     return project_path
@@ -51,7 +52,8 @@ def test_object_literals(
     """Test object literal patterns and syntax."""
     test_file = javascript_object_patterns_project / "object_literals.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic object literals
 
 // Simple object literal
@@ -325,7 +327,7 @@ for (const num of mathUtils.fibonacci(5)) {
 console.log(secureObject.publicData); // visible
 console.log(secureObject.getSecret()); // hidden
 console.log(secureObject[Symbol.for('public')]); // shared
-"""
+""",
     )
 
     run_updater(javascript_object_patterns_project, mock_ingestor)
@@ -367,7 +369,8 @@ def test_factory_functions(
     """Test factory function patterns."""
     test_file = javascript_object_patterns_project / "factory_functions.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Factory function patterns
 
 // Basic factory function
@@ -749,7 +752,7 @@ const users = userFactory.createBatch([
 ]);
 
 console.log(users.map(u => u.getProfile()));
-"""
+""",
     )
 
     run_updater(javascript_object_patterns_project, mock_ingestor)
@@ -796,7 +799,8 @@ def test_constructor_patterns(
     """Test constructor function patterns."""
     test_file = javascript_object_patterns_project / "constructor_patterns.js"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Constructor function patterns
 
 // Basic constructor
@@ -1128,7 +1132,7 @@ try {
 console.log(Person.isValidAge(25)); // true
 console.log(Person.isValidAge(200)); // false
 console.log(Email.isValid('test@example.com')); // true
-"""
+""",
     )
 
     run_updater(javascript_object_patterns_project, mock_ingestor)
@@ -1175,7 +1179,8 @@ def test_object_composition(
     """Test object composition and mixin patterns."""
     test_file = javascript_object_patterns_project / "object_composition.js"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Object composition and mixin patterns
 
 // Basic composition
@@ -1549,7 +1554,7 @@ console.log(enhancedUser.getProfile());
 const cloned = advancedModel.clone();
 console.log('Original:', advancedModel.toJSON());
 console.log('Cloned:', cloned.toJSON());
-"""
+""",
     )
 
     run_updater(javascript_object_patterns_project, mock_ingestor)
@@ -1600,7 +1605,8 @@ def test_object_patterns_comprehensive(
     """Comprehensive test ensuring all object patterns are covered."""
     test_file = javascript_object_patterns_project / "comprehensive_objects.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript object pattern in one file
 
 // Object literal
@@ -1676,7 +1682,7 @@ const advanced = {
 };
 
 console.log(advanced.process());
-"""
+""",
     )
 
     run_updater(javascript_object_patterns_project, mock_ingestor)

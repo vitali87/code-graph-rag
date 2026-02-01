@@ -1139,7 +1139,7 @@ class TestProcessCallsInFileErrorHandling:
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "test_module.py"
-        test_file.write_text("def foo(): pass")
+        test_file.write_text(encoding="utf-8", data="def foo(): pass")
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -1181,7 +1181,7 @@ class TestProcessCallsInFileErrorHandling:
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "test_module.py"
-        test_file.write_text("def foo(): pass")
+        test_file.write_text(encoding="utf-8", data="def foo(): pass")
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,

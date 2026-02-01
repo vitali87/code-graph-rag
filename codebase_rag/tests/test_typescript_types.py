@@ -17,9 +17,11 @@ def typescript_types_project(temp_repo: Path) -> Path:
     (project_path / "types").mkdir()
     (project_path / "models").mkdir()
 
-    (project_path / "src" / "base.ts").write_text("export interface BaseInterface {}")
+    (project_path / "src" / "base.ts").write_text(
+        encoding="utf-8", data="export interface BaseInterface {}"
+    )
     (project_path / "types" / "common.ts").write_text(
-        "export type ID = string | number;"
+        encoding="utf-8", data="export type ID = string | number;"
     )
 
     return project_path
@@ -32,7 +34,8 @@ def test_basic_type_annotations(
     """Test basic type annotations on variables, parameters, and return types."""
     test_file = typescript_types_project / "basic_types.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic primitive type annotations
 let name: string = "John";
 let age: number = 30;
@@ -104,7 +107,7 @@ const result = add(5, 3);
 const product = multiply(4, 7);
 const newUser = createUser("Charlie", 30, "charlie@example.com");
 const total = sum(1, 2, 3, 4, 5);
-"""
+""",
     )
 
     run_updater(typescript_types_project, mock_ingestor)
@@ -146,7 +149,8 @@ def test_interfaces_and_type_aliases(
     """Test interface definitions and type aliases."""
     test_file = typescript_types_project / "interfaces_types.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic interface definitions
 interface User {
     id: number;
@@ -314,7 +318,7 @@ interface PaymentMethod {
     type: "credit" | "debit" | "paypal";
     details: string;
 }
-"""
+""",
     )
 
     run_updater(typescript_types_project, mock_ingestor)
@@ -369,7 +373,8 @@ def test_generic_types(
     """Test generic types, constraints, and generic functions/classes."""
     test_file = typescript_types_project / "generics.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Generic interfaces
 interface Container<T> {
     value: T;
@@ -584,7 +589,7 @@ const cachedValue = cache.get("key1");
 
 const result = createResult("success");
 const errorResult = createError(new Error("Failed"));
-"""
+""",
     )
 
     run_updater(typescript_types_project, mock_ingestor)
@@ -635,7 +640,8 @@ def test_utility_types(
     """Test TypeScript utility types like Partial, Required, Pick, Omit, etc."""
     test_file = typescript_types_project / "utility_types.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Base interface for utility type testing
 interface User {
     id: number;
@@ -825,7 +831,7 @@ const basicInfo = userService.getBasicInfo(1);
 const picked = pick(requiredUser, "id", "name");
 const omitted = omit(requiredUser, "id");
 const partial = deepPartial(requiredUser);
-"""
+""",
     )
 
     run_updater(typescript_types_project, mock_ingestor)
@@ -873,7 +879,8 @@ def test_type_comprehensive(
     """Comprehensive test ensuring all TypeScript type features create proper relationships."""
     test_file = typescript_types_project / "comprehensive_types.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every TypeScript type pattern in one file
 
 // Basic types
@@ -968,7 +975,7 @@ function addEventListener<K extends keyof EventMap>(
 addEventListener('click', (event) => {
     console.log(event.clientX, event.clientY);
 });
-"""
+""",
     )
 
     run_updater(typescript_types_project, mock_ingestor)

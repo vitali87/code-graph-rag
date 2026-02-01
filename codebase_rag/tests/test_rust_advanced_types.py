@@ -13,13 +13,18 @@ def rust_advanced_types_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Advanced types test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Advanced types test crate"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_advanced_types_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     return project_path
 
@@ -31,7 +36,8 @@ def test_phantom_types_and_markers(
     """Test phantom types and type markers for compile-time guarantees."""
     test_file = rust_advanced_types_project / "phantom_types.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::marker::PhantomData;
 
 // Phantom type for units
@@ -105,7 +111,7 @@ impl<T> Buffer<T> {
         self.data.len()
     }
 }
-"""
+""",
     )
 
     run_updater(rust_advanced_types_project, mock_ingestor)
@@ -126,7 +132,8 @@ def test_higher_ranked_trait_bounds(
     """Test higher-ranked trait bounds (HRTB) and for<> syntax."""
     test_file = rust_advanced_types_project / "hrtb.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Higher-ranked trait bounds
 fn call_with_ref<F>(f: F) -> String
 where
@@ -185,7 +192,7 @@ where
 {
     |s| s.to_string()
 }
-"""
+""",
     )
 
     run_updater(rust_advanced_types_project, mock_ingestor)
@@ -206,7 +213,8 @@ def test_advanced_associated_types(
     """Test complex associated type patterns and projections."""
     test_file = rust_advanced_types_project / "associated_types.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Generic associated types (GATs)
 trait StreamingIterator {
     type Item<'a> where Self: 'a;
@@ -307,7 +315,7 @@ impl DatabaseDriver for PostgresDriver {
         vec![]
     }
 }
-"""
+""",
     )
 
     run_updater(rust_advanced_types_project, mock_ingestor)
@@ -328,7 +336,8 @@ def test_type_level_programming(
     """Test type-level programming and compile-time computation."""
     test_file = rust_advanced_types_project / "type_level.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::marker::PhantomData;
 
 // Type-level numbers
@@ -460,7 +469,7 @@ type FactorialArray<const N: usize> = [u8; factorial(N)];
 fn create_factorial_array<const N: usize>() -> FactorialArray<N> {
     [0; factorial(N)]
 }
-"""
+""",
     )
 
     run_updater(rust_advanced_types_project, mock_ingestor)
@@ -481,7 +490,8 @@ def test_const_generics_advanced(
     """Test advanced const generics patterns and compile-time evaluation."""
     test_file = rust_advanced_types_project / "const_generics.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Advanced const generics with bounds
 trait ArrayOps<T, const N: usize> {
     fn sum(&self) -> T where T: std::ops::Add<Output = T> + Copy + Default;
@@ -659,7 +669,7 @@ impl<T, const N: usize> ConstArrayExt<T, N> for [T; N] {
         self.chunks(CHUNK_SIZE)
     }
 }
-"""
+""",
     )
 
     run_updater(rust_advanced_types_project, mock_ingestor)

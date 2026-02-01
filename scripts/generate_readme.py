@@ -31,12 +31,12 @@ def main() -> None:
     from codebase_rag.readme_sections import generate_all_sections
 
     readme_path = PROJECT_ROOT / "README.md"
-    readme_content = readme_path.read_text()
+    readme_content = readme_path.read_text(encoding="utf-8")
 
     sections = generate_all_sections(PROJECT_ROOT)
     updated_content = replace_sections(readme_content, sections)
 
-    readme_path.write_text(updated_content)
+    readme_path.write_text(updated_content, encoding="utf-8")
     logger.success(f"Updated {readme_path}")
 
 

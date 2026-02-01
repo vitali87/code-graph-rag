@@ -19,7 +19,8 @@ def javascript_prototypes_project(temp_repo: Path) -> Path:
     (project_path / "utils").mkdir()
 
     (project_path / "models" / "base.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 function BaseModel(id) {
     this.id = id;
     this.created = new Date();
@@ -37,7 +38,7 @@ BaseModel.prototype.toJSON = function() {
 };
 
 module.exports = BaseModel;
-"""
+""",
     )
 
     return project_path
@@ -50,7 +51,8 @@ def test_constructor_functions_and_prototypes(
     """Test constructor functions and prototype method definitions."""
     test_file = javascript_prototypes_project / "constructor_prototypes.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic constructor function
 function Person(name, age) {
     this.name = name;
@@ -170,7 +172,7 @@ console.log(employee instanceof Person);   // true
 console.log(manager instanceof Manager);   // true
 console.log(manager instanceof Employee);  // true
 console.log(manager instanceof Person);    // true
-"""
+""",
     )
 
     run_updater(javascript_prototypes_project, mock_ingestor)
@@ -225,7 +227,8 @@ def test_object_create_patterns(
     """Test Object.create() patterns and prototype-based inheritance."""
     test_file = javascript_prototypes_project / "object_create_patterns.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Object.create() patterns
 
 // Base object as prototype
@@ -395,7 +398,7 @@ console.log(car.honk());
 const myTask = Object.create(XYZ);
 myTask.prepareTask(1, "My Task");
 myTask.outputTaskDetails();
-"""
+""",
     )
 
     run_updater(javascript_prototypes_project, mock_ingestor)
@@ -451,7 +454,8 @@ def test_prototype_chain_and_method_resolution(
     """Test prototype chain traversal and method resolution."""
     test_file = javascript_prototypes_project / "prototype_chain.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Deep prototype chain example
 
 // Level 1: Base
@@ -607,7 +611,7 @@ console.log(coloredSquare.toString());  // Uses Shape's toString
 shape.scale(2);
 rect.scale(1.5);
 square.scale(2);
-"""
+""",
     )
 
     run_updater(javascript_prototypes_project, mock_ingestor)
@@ -660,7 +664,8 @@ def test_prototype_mixins_and_composition(
     """Test mixin patterns and prototype composition."""
     test_file = javascript_prototypes_project / "prototype_mixins.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Mixin objects
 const EventEmitterMixin = {
     on: function(event, handler) {
@@ -907,7 +912,7 @@ entity.save();
 
 console.log(model.toJSON());
 console.log(entity.validate());
-"""
+""",
     )
 
     run_updater(javascript_prototypes_project, mock_ingestor)
@@ -966,7 +971,8 @@ def test_prototype_patterns_edge_cases(
     """Test edge cases and unusual prototype patterns."""
     test_file = javascript_prototypes_project / "prototype_edge_cases.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Edge cases and unusual patterns
 
 // Constructor returning different object
@@ -1169,7 +1175,7 @@ const generator = new GeneratorExample(5);
 for (const value of generator) {
     console.log(value);
 }
-"""
+""",
     )
 
     run_updater(javascript_prototypes_project, mock_ingestor)
@@ -1212,7 +1218,8 @@ def test_prototype_comprehensive(
     """Comprehensive test ensuring all prototype patterns create proper relationships."""
     test_file = javascript_prototypes_project / "comprehensive_prototypes.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript prototype pattern in one file
 
 // Constructor function with prototype
@@ -1297,7 +1304,7 @@ Animal.prototype.eat = function(food) {
 };
 
 console.log(dog.eat('bone')); // Works due to prototype chain
-"""
+""",
     )
 
     run_updater(javascript_prototypes_project, mock_ingestor)

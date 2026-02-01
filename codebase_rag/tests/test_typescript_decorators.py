@@ -17,7 +17,8 @@ def typescript_decorators_project(temp_repo: Path) -> Path:
     (project_path / "examples").mkdir()
 
     (project_path / "decorators" / "common.ts").write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Common decorators
 export function log(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value;
@@ -36,7 +37,7 @@ export function readonly(target: any, propertyKey: string) {
         configurable: false
     });
 }
-"""
+""",
     )
 
     return project_path
@@ -49,7 +50,8 @@ def test_class_decorators(
     """Test TypeScript class decorators."""
     test_file = typescript_decorators_project / "class_decorators.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Class decorators
 
 // Simple class decorator
@@ -313,7 +315,7 @@ try {
 // Validation test
 console.log((user as any).validate()); // true
 console.log((user as any).getValidationErrors()); // []
-"""
+""",
     )
 
     run_updater(typescript_decorators_project, mock_ingestor)
@@ -376,7 +378,8 @@ def test_method_decorators(
     """Test TypeScript method decorators."""
     test_file = typescript_decorators_project / "method_decorators.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Method decorators
 
 // Simple method decorator
@@ -708,7 +711,7 @@ console.log(processedData);
 processor.saveToDatabase({ important: 'data' })
     .then(() => console.log('Save successful'))
     .catch(error => console.log('Save failed after retries'));
-"""
+""",
     )
 
     run_updater(typescript_decorators_project, mock_ingestor)
@@ -769,7 +772,8 @@ def test_property_decorators(
     """Test TypeScript property decorators."""
     test_file = typescript_decorators_project / "property_decorators.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Property decorators
 
 // Simple property decorator
@@ -1148,7 +1152,7 @@ console.log(product.totalValue); // Should recalculate
 
 // Lazy timestamps
 console.log(product.timestamps); // Should initialize on first access
-"""
+""",
     )
 
     run_updater(typescript_decorators_project, mock_ingestor)
@@ -1200,7 +1204,8 @@ def test_parameter_decorators(
     """Test TypeScript parameter decorators."""
     test_file = typescript_decorators_project / "parameter_decorators.ts"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Parameter decorators
 
 // Simple parameter decorator
@@ -1522,7 +1527,7 @@ try {
 } catch (error) {
     console.error('Order creation error:', error.message);
 }
-"""
+""",
     )
 
     run_updater(typescript_decorators_project, mock_ingestor)
@@ -1595,7 +1600,8 @@ def test_typescript_decorators_comprehensive(
     """Comprehensive test ensuring all TypeScript decorator patterns are covered."""
     test_file = typescript_decorators_project / "comprehensive_decorators.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every TypeScript decorator pattern in one file
 
 // Class decorator
@@ -1656,7 +1662,7 @@ const example = new ComprehensiveExample('Test Item');
 console.log(example.processItem('item123'));
 example.updateName('Updated Item');
 console.log((example as any).tableName); // 'comprehensive_items'
-"""
+""",
     )
 
     run_updater(typescript_decorators_project, mock_ingestor)

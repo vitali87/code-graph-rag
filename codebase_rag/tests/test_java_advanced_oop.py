@@ -37,7 +37,8 @@ def test_multiple_interface_inheritance(
         / "MultipleInheritance.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 interface Drawable {
@@ -96,7 +97,7 @@ public class Circle implements Shape, Movable {
         return Math.PI * radius * radius;
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -138,7 +139,8 @@ def test_complex_generics_with_wildcards(
         / "ComplexGenerics.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -197,7 +199,7 @@ public class GenericUtility {
         Collections.sort(list);
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -243,7 +245,8 @@ def test_abstract_classes_with_partial_implementation(
         / "AbstractClasses.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public abstract class AbstractShape {
@@ -348,7 +351,7 @@ public class Square extends AbstractRectangle {
         return width;
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -384,7 +387,8 @@ def test_method_overloading_variations(
         / "MethodOverloading.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -461,7 +465,7 @@ public class MethodOverloading {
         System.out.println("Constructor (reversed): " + value + ", " + name);
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -495,7 +499,8 @@ def test_covariant_return_types(
         / "CovariantReturns.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 class Animal {
@@ -587,7 +592,7 @@ class NumberContainer extends Container<Number> {
         return content;
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -625,7 +630,8 @@ def test_diamond_problem_resolution(
         / "DiamondProblem.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 interface A {
@@ -730,7 +736,7 @@ public class Duck implements Amphibious {
         Amphibious.super.move();
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -776,7 +782,8 @@ def test_nested_generic_bounds(
         / "NestedGenericBounds.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -924,7 +931,7 @@ public abstract class AbstractJpaRepository<T, ID extends Serializable>
         return result;
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -958,7 +965,8 @@ def test_method_overriding_edge_cases(
         / "MethodOverridingEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1089,7 +1097,7 @@ class ConflictResolver implements Conflicting1, Conflicting2 {
         return Conflicting1.super.conflictMethod() + " + " + Conflicting2.super.conflictMethod();
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -1126,7 +1134,8 @@ def test_generic_type_erasure_scenarios(
         / "TypeErasure.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1268,7 +1277,7 @@ enum Operation {
         return apply(x.doubleValue(), y.doubleValue());
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -1307,7 +1316,8 @@ def test_annotation_processing_complex(
         / "ComplexAnnotations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.lang.annotation.*;
@@ -1451,7 +1461,7 @@ public class AnnotationProcessor {
               });
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -1484,7 +1494,8 @@ def test_advanced_inner_class_scenarios(
         / "AdvancedInnerClasses.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1656,7 +1667,7 @@ public class DeepNesting {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
@@ -1688,7 +1699,8 @@ def test_complex_static_initialization(
         / "StaticInitialization.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1856,7 +1868,7 @@ public class StaticNestedInitialization {
         System.out.println(NestedClass.getNestedStatic());
     }
 }
-"""
+""",
     )
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")

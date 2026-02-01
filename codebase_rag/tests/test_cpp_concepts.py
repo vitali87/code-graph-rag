@@ -17,7 +17,7 @@ def cpp_concepts_project(temp_repo: Path) -> Path:
     (project_path / "include").mkdir()
 
     (project_path / "include" / "concepts.h").write_text(
-        "#pragma once\n// Concepts header"
+        encoding="utf-8", data="#pragma once\n// Concepts header"
     )
 
     return project_path
@@ -30,7 +30,8 @@ def test_concept_definitions_and_constraints(
     """Test basic concept definitions and template constraints."""
     test_file = cpp_concepts_project / "concept_definitions.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <concepts>
 #include <type_traits>
 #include <vector>
@@ -119,7 +120,7 @@ void demonstrateBasicConcepts() {
     auto doubled = process_integral(42);
     print_addable(3.14);
 }
-"""
+""",
     )
 
     run_updater(cpp_concepts_project, mock_ingestor)
@@ -148,7 +149,8 @@ def test_advanced_concept_patterns(
     """Test advanced concepts usage patterns and custom concept definitions."""
     test_file = cpp_concepts_project / "advanced_concepts.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <concepts>
 #include <type_traits>
 #include <memory>
@@ -262,7 +264,7 @@ void demonstrateAdvancedConcepts() {
     auto str = factory.create();
     factory.destroy(str);
 }
-"""
+""",
     )
 
     run_updater(cpp_concepts_project, mock_ingestor)
@@ -285,7 +287,8 @@ def test_concept_composition_and_specialization(
     """Test concept composition, specialization, and nested concepts."""
     test_file = cpp_concepts_project / "concept_composition.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <concepts>
 #include <type_traits>
 #include <iostream>
@@ -356,7 +359,7 @@ void demonstrateConceptComposition() {
     std::vector<int> vec{1, 2, 3, 4, 5};
     process_elements(vec);
 }
-"""
+""",
     )
 
     run_updater(cpp_concepts_project, mock_ingestor)

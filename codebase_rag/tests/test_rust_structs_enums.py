@@ -13,12 +13,17 @@ def rust_structs_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Library root")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Library root"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_structs_test"
 version = "0.1.0"
-""")
+""",
+    )
 
     return project_path
 
@@ -30,7 +35,8 @@ def test_basic_struct_definitions(
     """Test basic struct definition parsing and field extraction."""
     test_file = rust_structs_project / "basic_structs.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Named struct with fields
 pub struct Person {
     pub name: String,
@@ -80,7 +86,7 @@ impl<T> Point<T> {
         Point { x, y }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_structs_project, mock_ingestor, skip_if_missing="rust")
@@ -105,7 +111,8 @@ def test_enum_definitions_and_variants(
     """Test enum definition parsing and variant extraction."""
     test_file = rust_structs_project / "enums.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Simple enum with unit variants
 #[derive(Debug, Clone, PartialEq)]
 pub enum Direction {
@@ -171,7 +178,7 @@ pub fn process_message(msg: Message) -> String {
         Message::ChangeColor(r, g, b) => format!("Color: RGB({}, {}, {})", r, g, b),
     }
 }
-"""
+""",
     )
 
     run_updater(rust_structs_project, mock_ingestor)
@@ -196,7 +203,8 @@ def test_pattern_matching_destructuring(
     """Test pattern matching and destructuring in various contexts."""
     test_file = rust_structs_project / "patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 pub struct Point {
     pub x: i32,
     pub y: i32,
@@ -289,7 +297,7 @@ fn calculate(x: i32) -> Result<i32, String> {
         Ok(x * 2)
     }
 }
-"""
+""",
     )
 
     run_updater(rust_structs_project, mock_ingestor)
@@ -319,7 +327,8 @@ def test_complex_struct_relationships(
     """Test complex struct relationships and nested types."""
     test_file = rust_structs_project / "complex_structs.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -441,7 +450,7 @@ impl<T> Node<T> {
         self.children.push(child);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_structs_project, mock_ingestor)
@@ -464,7 +473,8 @@ def test_struct_derive_attributes(
     """Test struct definitions with derive attributes and custom implementations."""
     test_file = rust_structs_project / "derives.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Struct with standard derives
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Product {
@@ -558,7 +568,7 @@ impl std::str::FromStr for Email {
 }
 
 use std::collections::HashMap;
-"""
+""",
     )
 
     run_updater(rust_structs_project, mock_ingestor)
@@ -587,7 +597,8 @@ def test_enum_pattern_matching_advanced(
     """Test advanced enum pattern matching and complex enum structures."""
     test_file = rust_structs_project / "advanced_enums.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Complex enum with various data patterns
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -754,7 +765,7 @@ pub fn classify_expression(expr: &Expr) -> &'static str {
         Expr::FunctionCall { .. } => "function_call",
     }
 }
-"""
+""",
     )
 
     run_updater(rust_structs_project, mock_ingestor)

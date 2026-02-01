@@ -25,7 +25,8 @@ def test_basic_metaprogramming(
     """Test basic template metaprogramming techniques."""
     test_file = cpp_metaprogramming_project / "basic_metaprogramming.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <type_traits>
 #include <string>
@@ -320,7 +321,7 @@ void testBasicMetaprogramming() {
 void demonstrateBasicMetaprogramming() {
     testBasicMetaprogramming();
 }
-"""
+""",
     )
 
     run_updater(cpp_metaprogramming_project, mock_ingestor)
@@ -359,7 +360,8 @@ def test_advanced_metaprogramming(
     """Test advanced template metaprogramming patterns."""
     test_file = cpp_metaprogramming_project / "advanced_metaprogramming.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <type_traits>
 #include <tuple>
@@ -683,7 +685,7 @@ void testAdvancedMetaprogramming() {
 void demonstrateAdvancedMetaprogramming() {
     testAdvancedMetaprogramming();
 }
-"""
+""",
     )
 
     run_updater(cpp_metaprogramming_project, mock_ingestor)
@@ -711,7 +713,8 @@ def test_cpp_metaprogramming_comprehensive(
     """Comprehensive test ensuring all metaprogramming patterns create proper relationships."""
     test_file = cpp_metaprogramming_project / "comprehensive_metaprogramming.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive template metaprogramming demonstration
 #include <iostream>
 #include <type_traits>
@@ -776,7 +779,7 @@ void demonstrateComprehensiveMetaprogramming() {
     ComprehensiveMetaprogrammingDemo<SmallGraph> demo;
     demo.demonstrateComprehensiveMetaprogramming();
 }
-"""
+""",
     )
 
     run_updater(cpp_metaprogramming_project, mock_ingestor)

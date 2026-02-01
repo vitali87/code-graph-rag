@@ -10,7 +10,9 @@ def test_lua_class_pattern_basic(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_oop_test"
     project.mkdir()
 
-    (project / "person.lua").write_text("""
+    (project / "person.lua").write_text(
+        encoding="utf-8",
+        data="""
 -- Define a Person "class"
 local Person = {}
 Person.__index = Person
@@ -31,9 +33,12 @@ function Person:getAge()
 end
 
 return Person
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Person = require('person')
 
 local alice = Person:new("Alice", 30)
@@ -42,7 +47,8 @@ local age = alice:getAge()
 
 local bob = Person:new("Bob", 25)
 bob:greet()
-""")
+""",
+    )
 
     updater = create_and_run_updater(project, mock_ingestor)
 
@@ -77,7 +83,9 @@ def test_lua_inheritance_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_inheritance_test"
     project.mkdir()
 
-    (project / "animal.lua").write_text("""
+    (project / "animal.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Animal = {}
 Animal.__index = Animal
 
@@ -96,9 +104,12 @@ function Animal:getName()
 end
 
 return Animal
-""")
+""",
+    )
 
-    (project / "dog.lua").write_text("""
+    (project / "dog.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Animal = require('animal')
 
 local Dog = {}
@@ -121,16 +132,20 @@ function Dog:getBreed()
 end
 
 return Dog
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Dog = require('dog')
 
 local myDog = Dog:new("Buddy", "Golden Retriever")
 myDog:speak()  -- Should call Dog's speak
 local name = myDog:getName()  -- Should call inherited Animal's getName
 local breed = myDog:getBreed()  -- Should call Dog's getBreed
-""")
+""",
+    )
 
     updater = create_and_run_updater(project, mock_ingestor)
 
@@ -170,7 +185,9 @@ def test_lua_module_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_module_test"
     project.mkdir()
 
-    (project / "calculator.lua").write_text("""
+    (project / "calculator.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Calculator = {}
 
 -- Private function (local)
@@ -206,16 +223,20 @@ Calculator.divide = function(x, y)
 end
 
 return Calculator
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local calc = require('calculator')
 
 local sum = calc.add(5, 3)
 local diff = calc.subtract(10, 4)
 local product = calc.multiply(6, 7)
 local quotient = calc.divide(20, 5)
-""")
+""",
+    )
 
     updater = create_and_run_updater(project, mock_ingestor)
 
@@ -245,7 +266,9 @@ def test_lua_prototype_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_prototype_test"
     project.mkdir()
 
-    (project / "shape.lua").write_text("""
+    (project / "shape.lua").write_text(
+        encoding="utf-8",
+        data="""
 -- Prototype object
 local ShapePrototype = {
     x = 0,
@@ -289,9 +312,12 @@ return {
     ShapePrototype = ShapePrototype,
     createCircle = createCircle
 }
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local shapes = require('shape')
 
 local circle1 = shapes.createCircle(10, 20, 5)
@@ -300,7 +326,8 @@ local area = circle1:getArea()
 local x, y = circle1:getPosition()
 
 local circle2 = shapes.createCircle(0, 0, 10)
-""")
+""",
+    )
 
     updater = create_and_run_updater(project, mock_ingestor)
 
@@ -338,7 +365,9 @@ def test_lua_mixin_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_mixin_test"
     project.mkdir()
 
-    (project / "printable.lua").write_text("""
+    (project / "printable.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Printable = {}
 
 function Printable:toString()
@@ -356,9 +385,12 @@ function Printable:print()
 end
 
 return Printable
-""")
+""",
+    )
 
-    (project / "serializable.lua").write_text("""
+    (project / "serializable.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Serializable = {}
 
 function Serializable:serialize()
@@ -379,9 +411,12 @@ function Serializable:deserialize(data)
 end
 
 return Serializable
-""")
+""",
+    )
 
-    (project / "user.lua").write_text("""
+    (project / "user.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Printable = require('printable')
 local Serializable = require('serializable')
 
@@ -412,16 +447,20 @@ function User:getEmail()
 end
 
 return User
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local User = require('user')
 
 local user = User:new("John Doe", "john@example.com")
 user:print()  -- From Printable mixin
 local json = user:serialize()  -- From Serializable mixin
 local name = user:getName()  -- From User itself
-""")
+""",
+    )
 
     updater = create_and_run_updater(project, mock_ingestor)
 
@@ -472,7 +511,9 @@ def test_lua_singleton_pattern(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_singleton_test"
     project.mkdir()
 
-    (project / "config.lua").write_text("""
+    (project / "config.lua").write_text(
+        encoding="utf-8",
+        data="""
 -- Singleton pattern
 local Config = {}
 local instance = nil
@@ -509,9 +550,12 @@ function Config:reset()
 end
 
 return Config
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Config = require('config')
 
 local config1 = Config:getInstance()
@@ -521,7 +565,8 @@ local config2 = Config:getInstance()
 local debug = config2:get("debug")  -- Should be true (same instance)
 
 config2:reset()
-""")
+""",
+    )
 
     updater = create_and_run_updater(project, mock_ingestor)
 

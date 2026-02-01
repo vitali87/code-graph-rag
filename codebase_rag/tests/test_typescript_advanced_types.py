@@ -18,7 +18,8 @@ def typescript_advanced_types_project(temp_repo: Path) -> Path:
     (project_path / "examples").mkdir()
 
     (project_path / "types" / "base.ts").write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Base types for advanced type examples
 export interface BaseEntity {
     id: string;
@@ -33,7 +34,7 @@ export interface User extends BaseEntity {
     email: string;
     role: 'admin' | 'user' | 'guest';
 }
-"""
+""",
     )
 
     return project_path
@@ -46,7 +47,8 @@ def test_generic_types(
     """Test TypeScript generic types and constraints."""
     test_file = typescript_advanced_types_project / "generic_types.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Generic types and constraints
 
 // Basic generic interface
@@ -390,7 +392,7 @@ const container = new StringContainer('Hello');
 console.log(container.getValue());
 container.setValue('World');
 console.log(container.getValue());
-"""
+""",
     )
 
     run_updater(typescript_advanced_types_project, mock_ingestor)
@@ -457,7 +459,8 @@ def test_utility_types(
     """Test TypeScript utility types and mapped types."""
     test_file = typescript_advanced_types_project / "utility_types.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Utility types and mapped types
 
 // Base interface for examples
@@ -803,7 +806,7 @@ const apiRoutes: ApiRoutes[] = [
 ];
 
 console.log('API routes:', apiRoutes);
-"""
+""",
     )
 
     run_updater(typescript_advanced_types_project, mock_ingestor)
@@ -853,7 +856,8 @@ def test_conditional_types(
     """Test TypeScript conditional types and type inference."""
     test_file = typescript_advanced_types_project / "conditional_types.ts"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Conditional types and type inference
 
 // Basic conditional types
@@ -1202,7 +1206,7 @@ type UserRoute = ParseRoute<'/users/:id/posts/:postId'>; // ['users', ':id', 'po
 type UserParams = RouteParams<'/users/:id/posts/:postId'>; // { id: string; postId: string }
 
 console.log('Route parsing and conditional types working correctly');
-"""
+""",
     )
 
     run_updater(typescript_advanced_types_project, mock_ingestor)
@@ -1252,7 +1256,8 @@ def test_template_literal_types(
     """Test TypeScript template literal types and string manipulation."""
     test_file = typescript_advanced_types_project / "template_literal_types.ts"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Template literal types and string manipulation
 
 // Basic template literal types
@@ -1623,7 +1628,7 @@ type SplitString = Split<'hello-world-test', '-'>; // ['hello', 'world', 'test']
 type ReplacedString = Replace<'hello world hello', 'hello', 'hi'>; // 'hi world hi'
 
 console.log('Template literal types are working correctly');
-"""
+""",
     )
 
     run_updater(typescript_advanced_types_project, mock_ingestor)
@@ -1659,7 +1664,8 @@ def test_typescript_advanced_types_comprehensive(
     """Comprehensive test ensuring all TypeScript advanced type patterns are covered."""
     test_file = typescript_advanced_types_project / "comprehensive_advanced_types.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every TypeScript advanced type pattern in one file
 
 // Generic constraint
@@ -1750,7 +1756,7 @@ const partialUser: PartialUser = { name: 'Bob' };
 const requiredUser: RequiredUser = { name: 'Charlie', email: 'charlie@example.com' };
 
 console.log('All advanced type patterns working correctly');
-"""
+""",
     )
 
     run_updater(typescript_advanced_types_project, mock_ingestor)

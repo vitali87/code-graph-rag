@@ -11,7 +11,9 @@ def test_table_construction_and_access(
     project = temp_repo / "lua_table_construction"
     project.mkdir()
 
-    (project / "table_access.lua").write_text("""
+    (project / "table_access.lua").write_text(
+        encoding="utf-8",
+        data="""
 function create_tables()
     local array = {1, 2, 3, 4, 5}
     local hash = {name = "John", age = 30, city = "NYC"}
@@ -42,7 +44,8 @@ local nested = {
 
 local deep_value = nested.level1.level2.value
 nested.level1.level2.new_value = "added"
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -58,7 +61,9 @@ def test_table_iteration_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> 
     project = temp_repo / "lua_table_iteration"
     project.mkdir()
 
-    (project / "iteration.lua").write_text("""
+    (project / "iteration.lua").write_text(
+        encoding="utf-8",
+        data="""
 function iterate_tables(data)
     local results = {}
 
@@ -97,7 +102,8 @@ local numbers = {10, 20, 30}
 for i = 1, #numbers do
     print(numbers[i])
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -115,7 +121,9 @@ def test_table_modification_functions(
     project = temp_repo / "lua_table_modification"
     project.mkdir()
 
-    (project / "table_mod.lua").write_text("""
+    (project / "table_mod.lua").write_text(
+        encoding="utf-8",
+        data="""
 function modify_arrays(arr)
     table.insert(arr, "new_item")
     table.insert(arr, 2, "inserted_at_2")
@@ -154,7 +162,8 @@ end
 local data = {3, 1, 4, 1, 5}
 table.sort(data)
 local text = table.concat(data, "-")
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -170,7 +179,9 @@ def test_table_utility_functions(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_table_utilities"
     project.mkdir()
 
-    (project / "table_utils.lua").write_text("""
+    (project / "table_utils.lua").write_text(
+        encoding="utf-8",
+        data="""
 function table_utilities(tbl)
     local max_n = table.maxn(tbl)
 
@@ -207,7 +218,8 @@ end
 
 local test_table = {a = 1, b = 2, [10] = "ten"}
 local max_numeric = table.maxn(test_table)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -223,7 +235,9 @@ def test_table_metatable_operations(temp_repo: Path, mock_ingestor: MagicMock) -
     project = temp_repo / "lua_metatables"
     project.mkdir()
 
-    (project / "metatables.lua").write_text("""
+    (project / "metatables.lua").write_text(
+        encoding="utf-8",
+        data="""
 function create_vector(x, y)
     local vector = {x = x or 0, y = y or 0}
 
@@ -271,7 +285,8 @@ local magnitude = v1.magnitude
 
 local proxy = table_with_proxy()
 proxy.name = "test"
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -287,7 +302,9 @@ def test_table_serialization(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_serialization"
     project.mkdir()
 
-    (project / "serialization.lua").write_text("""
+    (project / "serialization.lua").write_text(
+        encoding="utf-8",
+        data="""
 function serialize_table(tbl, indent)
     indent = indent or 0
     local spaces = string.rep("  ", indent)
@@ -321,7 +338,8 @@ end
 local data = {name = "John", age = 30, nested = {city = "NYC"}}
 local serialized = serialize_table(data)
 local deserialized = deserialize_from_string(serialized)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

@@ -23,7 +23,7 @@ def test_file_creation_flow(
 ) -> None:
     """Test that creating a new file triggers parsing and ingestion."""
     test_file = temp_repo / "new_file.py"
-    test_file.write_text("def new_func(): pass")
+    test_file.write_text(encoding="utf-8", data="def new_func(): pass")
     event = FileCreatedEvent(str(test_file))
 
     event_handler.dispatch(event)
@@ -108,7 +108,7 @@ def test_unsupported_file_types_are_ignored(
 ) -> None:
     """Test that changing an unsupported file type is ignored after deletion query."""
     unsupported_file = temp_repo / "document.md"
-    unsupported_file.write_text("# Markdown file")
+    unsupported_file.write_text(encoding="utf-8", data="# Markdown file")
     event = FileModifiedEvent(str(unsupported_file))
 
     event_handler.dispatch(event)

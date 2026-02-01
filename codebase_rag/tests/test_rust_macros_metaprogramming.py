@@ -12,7 +12,9 @@ def rust_macros_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_macros_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_macros_test"
 version = "0.1.0"
@@ -26,10 +28,13 @@ proc-macro2 = "1.0"
 
 [lib]
 proc-macro = true
-""")
+""",
+    )
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Macros test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Macros test crate"
+    )
 
     return project_path
 
@@ -41,7 +46,8 @@ def test_declarative_macros_basic(
     """Test basic declarative macro patterns."""
     test_file = rust_macros_project / "declarative_macros.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Simple macro without parameters
 macro_rules! say_hello {
     () => {
@@ -204,7 +210,7 @@ macro_rules! parse_options {
         parse_options!(@collect [] $($input)*)
     };
 }
-"""
+""",
     )
 
     run_updater(rust_macros_project, mock_ingestor)
@@ -223,7 +229,8 @@ def test_procedural_macros(
     """Test procedural macro definitions."""
     test_file = rust_macros_project / "proc_macros.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Fields};
@@ -426,7 +433,7 @@ pub fn auto_debug_derive(input: TokenStream) -> TokenStream {
 
     TokenStream::from(output)
 }
-"""
+""",
     )
 
     run_updater(rust_macros_project, mock_ingestor)
@@ -447,7 +454,8 @@ def test_macro_usage_patterns(
     """Test various macro usage patterns."""
     test_file = rust_macros_project / "macro_usage.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Using standard library macros
 fn standard_macros() {
     let name = "World";
@@ -700,7 +708,7 @@ fn platform_example() {
     let separator = get_path_separator();
     println!("Path separator: '{}'", separator);
 }
-"""
+""",
     )
 
     run_updater(rust_macros_project, mock_ingestor)
@@ -721,7 +729,8 @@ def test_derive_macros_custom(
     """Test custom derive macro implementations."""
     test_file = rust_macros_project / "derive_macros.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #[derive(Builder)]
 struct User {
     name: String,
@@ -919,7 +928,7 @@ fn generated_function_usage() {
 
     hello_world();
 }
-"""
+""",
     )
 
     run_updater(rust_macros_project, mock_ingestor)
@@ -940,7 +949,8 @@ def test_advanced_macro_patterns(
     """Test advanced macro programming patterns."""
     test_file = rust_macros_project / "advanced_macros.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Macro for creating DSLs (Domain Specific Languages)
 macro_rules! html {
     ($tag:ident { $($attr:ident = $value:expr),* } [ $($content:tt)* ]) => {
@@ -1293,7 +1303,7 @@ fn event_system_example() {
     bus.dispatch(order_event);
     bus.dispatch(delete_event);
 }
-"""
+""",
     )
 
     run_updater(rust_macros_project, mock_ingestor)

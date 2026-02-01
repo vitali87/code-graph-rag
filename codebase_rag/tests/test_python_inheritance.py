@@ -13,11 +13,12 @@ def inheritance_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "inheritance_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     inheritance_file = project_path / "inheritance.py"
     inheritance_file.write_text(
-        '''"""Module with various inheritance patterns."""
+        encoding="utf-8",
+        data='''"""Module with various inheritance patterns."""
 
 from abc import ABC, abstractmethod
 from typing import Protocol
@@ -182,7 +183,7 @@ def use_inheritance() -> None:
 
     smart_car = SmartCar("Tesla", 5)
     print(smart_car.start_engine())  # Calls SmartCar.start_engine() with super()
-'''
+''',
     )
 
     return project_path
@@ -515,11 +516,12 @@ def mro_diamond_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "mro_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     diamond_file = project_path / "diamond_mro.py"
     diamond_file.write_text(
-        '''"""Diamond inheritance patterns for MRO testing."""
+        encoding="utf-8",
+        data='''"""Diamond inheritance patterns for MRO testing."""
 
 # Classic Diamond Inheritance Pattern
 class A:
@@ -661,7 +663,7 @@ class P(N, O):
     def asym_final(self) -> str:
         """Final asymmetric method."""
         return "P.asym_final"
-'''
+''',
     )
 
     return project_path

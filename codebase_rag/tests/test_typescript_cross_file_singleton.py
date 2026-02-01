@@ -15,7 +15,9 @@ def ts_singleton_project(temp_repo: Path) -> Path:
     storage_dir = project_path / "storage"
     storage_dir.mkdir()
 
-    (storage_dir / "Storage.ts").write_text("""
+    (storage_dir / "Storage.ts").write_text(
+        encoding="utf-8",
+        data="""
 // Singleton pattern in TypeScript
 export class Storage {
     private static instance: Storage;
@@ -42,12 +44,15 @@ export class Storage {
         return this.data[key];
     }
 }
-""")
+""",
+    )
 
     controllers_dir = project_path / "controllers"
     controllers_dir.mkdir()
 
-    (controllers_dir / "SceneController.ts").write_text("""
+    (controllers_dir / "SceneController.ts").write_text(
+        encoding="utf-8",
+        data="""
 import { Storage } from '../storage/Storage';
 
 export class SceneController {
@@ -67,9 +72,12 @@ export class SceneController {
         return true;
     }
 }
-""")
+""",
+    )
 
-    (project_path / "main.ts").write_text("""
+    (project_path / "main.ts").write_text(
+        encoding="utf-8",
+        data="""
 import { SceneController } from './controllers/SceneController';
 import { Storage } from './storage/Storage';
 
@@ -93,7 +101,8 @@ function main(): string {
 }
 
 export { Application, main };
-""")
+""",
+    )
 
     return project_path
 

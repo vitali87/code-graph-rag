@@ -104,7 +104,7 @@ class TestCachePersistence:
             cache_dir = tmp_path / ".cache" / "codebase_rag"
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_file = cache_dir / "stdlib_cache.json"
-            cache_file.write_text("{}")
+            cache_file.write_text(encoding="utf-8", data="{}")
 
             se._cache_stdlib_result("python", "test.module", "test")
 
@@ -378,7 +378,7 @@ class TestCachePersistenceErrorHandling:
             cache_dir = tmp_path / ".cache" / "codebase_rag"
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_file = cache_dir / "stdlib_cache.json"
-            cache_file.write_text("invalid json {{{")
+            cache_file.write_text(encoding="utf-8", data="invalid json {{{")
 
             se._cache_stdlib_result("python", "existing.module", "existing")
 
@@ -404,7 +404,7 @@ class TestCachePersistenceErrorHandling:
             cache_dir = tmp_path / ".cache" / "codebase_rag"
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_file = cache_dir / "stdlib_cache.json"
-            cache_file.write_text("{}")
+            cache_file.write_text(encoding="utf-8", data="{}")
 
             se._cache_stdlib_result("python", "test.module", "test")
 

@@ -22,9 +22,12 @@ def javascript_functions_project(temp_repo: Path) -> Path:
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    (project_path / "src" / "helpers.js").write_text("export const log = console.log;")
+    (project_path / "src" / "helpers.js").write_text(
+        encoding="utf-8", data="export const log = console.log;"
+    )
     (project_path / "utils" / "common.js").write_text(
-        "export function isString(value) { return typeof value === 'string'; }"
+        encoding="utf-8",
+        data="export function isString(value) { return typeof value === 'string'; }",
     )
 
     return project_path
@@ -37,7 +40,8 @@ def test_function_declarations(
     """Test traditional function declaration parsing."""
     test_file = javascript_functions_project / "function_declarations.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Traditional function declarations
 function greet(name) {
     return `Hello, ${name}!`;
@@ -94,7 +98,7 @@ const greeting = greet("World");
 const result = calculator("add", 5, 3);
 const user = createUser("John", 25);
 const total = sum(1, 2, 3, 4, 5);
-"""
+""",
     )
 
     run_updater(javascript_functions_project, mock_ingestor)
@@ -140,7 +144,8 @@ def test_arrow_functions(
     """Test arrow function parsing and various arrow function patterns."""
     test_file = javascript_functions_project / "arrow_functions.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Simple arrow functions
 const double = x => x * 2;
 const square = x => x * x;
@@ -199,7 +204,7 @@ const calcResult = calculator.add(10, 20);
 const fullName = getFullName({ firstName: "John", lastName: "Doe" });
 const doubler = createMultiplier(2);
 const quadrupled = doubler(8);
-"""
+""",
     )
 
     run_updater(javascript_functions_project, mock_ingestor)
@@ -237,7 +242,8 @@ def test_async_functions(
     """Test async function parsing and async/await patterns."""
     test_file = javascript_functions_project / "async_functions.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Async function declarations
 async function fetchData(url) {
     const response = await fetch(url);
@@ -335,7 +341,7 @@ async function orchestrate() {
     const user = await loadUser(processed.userId);
     return { processed, user };
 }
-"""
+""",
     )
 
     run_updater(javascript_functions_project, mock_ingestor)
@@ -381,7 +387,8 @@ def test_immediately_invoked_function_expressions(
     """Test IIFE (Immediately Invoked Function Expression) parsing."""
     test_file = javascript_functions_project / "iife_patterns.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic IIFE
 (function() {
     console.log('IIFE executed');
@@ -471,7 +478,7 @@ const Utils = (function($, _) {
 // Using IIFE results
 const incrementedValue = modulePattern.increment();
 const configValue = Config.get('apiUrl');
-"""
+""",
     )
 
     run_updater(javascript_functions_project, mock_ingestor)
@@ -506,7 +513,8 @@ def test_higher_order_functions(
     """Test higher-order functions (functions that take or return functions)."""
     test_file = javascript_functions_project / "higher_order_functions.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Functions that return functions
 function createAdder(x) {
     return function(y) {
@@ -611,7 +619,7 @@ const multiply3 = multiply(3);
 
 const partialAdd = partial(add5, 10);
 const memoizedAdd = memoize(add5);
-"""
+""",
     )
 
     run_updater(javascript_functions_project, mock_ingestor)
@@ -659,7 +667,8 @@ def test_method_definitions(
     """Test object method definitions and class method parsing."""
     test_file = javascript_functions_project / "method_definitions.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Object with method definitions
 const calculator = {
     // Regular method
@@ -795,7 +804,7 @@ person.setAge(26);
 
 const adult = Person.createAdult('Bob');
 const isValid = Person.isValidAge(30);
-"""
+""",
     )
 
     run_updater(javascript_functions_project, mock_ingestor)
@@ -833,7 +842,8 @@ def test_function_comprehensive(
     """Comprehensive test ensuring all function types create proper relationships."""
     test_file = javascript_functions_project / "comprehensive_functions.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript function pattern in one file
 
 // Function declaration
@@ -911,7 +921,7 @@ function orchestrator() {
 }
 
 const orchestrated = orchestrator();
-"""
+""",
     )
 
     run_updater(javascript_functions_project, mock_ingestor)

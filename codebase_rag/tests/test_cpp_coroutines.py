@@ -25,7 +25,8 @@ def test_basic_generator_coroutines(
     """Test basic generator coroutines with co_yield."""
     test_file = cpp_coroutines_project / "basic_generators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <coroutine>
 #include <iostream>
 #include <memory>
@@ -230,7 +231,7 @@ void demonstrateBasicGenerators() {
     testBasicGenerators();
     testLazyGenerators();
 }
-"""
+""",
     )
 
     run_updater(cpp_coroutines_project, mock_ingestor)
@@ -271,7 +272,8 @@ def test_async_await_coroutines(
     """Test async/await style coroutines with co_await."""
     test_file = cpp_coroutines_project / "async_await.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <coroutine>
 #include <iostream>
 #include <future>
@@ -525,7 +527,7 @@ void testAsyncAwait() {
 void demonstrateAsyncAwait() {
     testAsyncAwait();
 }
-"""
+""",
     )
 
     run_updater(cpp_coroutines_project, mock_ingestor)
@@ -556,7 +558,8 @@ def test_custom_coroutine_types(
     """Test custom coroutine types and advanced coroutine patterns."""
     test_file = cpp_coroutines_project / "custom_coroutines.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <coroutine>
 #include <iostream>
 #include <memory>
@@ -874,7 +877,7 @@ void testCustomCoroutines() {
 void demonstrateCustomCoroutines() {
     testCustomCoroutines();
 }
-"""
+""",
     )
 
     run_updater(cpp_coroutines_project, mock_ingestor)

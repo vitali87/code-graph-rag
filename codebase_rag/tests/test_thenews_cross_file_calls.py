@@ -36,7 +36,9 @@ def test_thenews_cross_file_method_calls_with_singleton_pattern(
         storage_dir.mkdir()
 
         storage_file = storage_dir / "Storage.java"
-        storage_file.write_text("""package main.Storage;
+        storage_file.write_text(
+            encoding="utf-8",
+            data="""package main.Storage;
 
 public class Storage {
     private static Storage storage = null;
@@ -54,13 +56,16 @@ public class Storage {
         // Clear all data
     }
 }
-""")
+""",
+        )
 
         scene_dir = main_dir / "SceneController"
         scene_dir.mkdir()
 
         scene_file = scene_dir / "SceneHandler.java"
-        scene_file.write_text("""package main.SceneController;
+        scene_file.write_text(
+            encoding="utf-8",
+            data="""package main.SceneController;
 
 import main.Storage.Storage;
 
@@ -71,10 +76,13 @@ public class SceneHandler {
         storage.clearAll();
     }
 }
-""")
+""",
+        )
 
         main_file = main_dir / "Main.java"
-        main_file.write_text("""package main;
+        main_file.write_text(
+            encoding="utf-8",
+            data="""package main;
 
 import main.SceneController.SceneHandler;
 
@@ -84,7 +92,8 @@ public class Main {
         handler.loadMenuScene();
     }
 }
-""")
+""",
+        )
 
         parsers, queries = load_parsers()
         if "java" not in parsers:
