@@ -26,7 +26,7 @@ function main() {
 """
     with tempfile.TemporaryDirectory() as temp_dir:
         test_file = Path(temp_dir) / "test.js"
-        test_file.write_text(test_code)
+        test_file.write_text(encoding="utf-8", data=test_code)
 
         parsers, queries = load_parsers()
         assert "javascript" in parsers, "JavaScript parser not available"
@@ -80,7 +80,7 @@ public class Test {
 """
     with tempfile.TemporaryDirectory() as temp_dir:
         test_file = Path(temp_dir) / "test.java"
-        test_file.write_text(test_code)
+        test_file.write_text(encoding="utf-8", data=test_code)
 
         parsers, queries = load_parsers()
         if "java" not in parsers:
@@ -133,7 +133,7 @@ fn main() {
 """
     with tempfile.TemporaryDirectory() as temp_dir:
         test_file = Path(temp_dir) / "test.rs"
-        test_file.write_text(test_code)
+        test_file.write_text(encoding="utf-8", data=test_code)
 
         parsers, queries = load_parsers()
         if "rust" not in parsers:
@@ -200,7 +200,7 @@ fn main() {
 """
     with tempfile.TemporaryDirectory() as temp_dir:
         test_file = Path(temp_dir) / "test.rs"
-        test_file.write_text(test_code)
+        test_file.write_text(encoding="utf-8", data=test_code)
 
         parsers, queries = load_parsers()
         if "rust" not in parsers:
@@ -265,7 +265,7 @@ func main() {
 """
     with tempfile.TemporaryDirectory() as temp_dir:
         test_file = Path(temp_dir) / "test.go"
-        test_file.write_text(test_code)
+        test_file.write_text(encoding="utf-8", data=test_code)
 
         parsers, queries = load_parsers()
         if "go" not in parsers:

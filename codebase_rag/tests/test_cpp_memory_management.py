@@ -25,7 +25,8 @@ def test_smart_pointers(
     """Test smart pointers: unique_ptr, shared_ptr, weak_ptr."""
     test_file = cpp_memory_project / "smart_pointers.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -454,7 +455,7 @@ void demonstrateSmartPointers() {
     testWeakPtr();
     testCircularReferenceAvoidance();
 }
-"""
+""",
     )
 
     run_updater(cpp_memory_project, mock_ingestor)
@@ -498,7 +499,8 @@ def test_move_semantics(
     """Test move semantics and perfect forwarding."""
     test_file = cpp_memory_project / "move_semantics.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <string>
@@ -825,7 +827,7 @@ void demonstrateMoveSemantics() {
     testPerfectForwarding();
     testSTLMoveSemantics();
 }
-"""
+""",
     )
 
     run_updater(cpp_memory_project, mock_ingestor)
@@ -853,7 +855,8 @@ def test_cpp_memory_management_comprehensive(
     """Comprehensive test ensuring all memory management patterns create proper relationships."""
     test_file = cpp_memory_project / "comprehensive_memory.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive memory management combining smart pointers, RAII, and move semantics
 #include <iostream>
 #include <memory>
@@ -899,7 +902,7 @@ void demonstrateComprehensiveMemoryManagement() {
     ComprehensiveMemoryDemo demo;
     demo.demonstrateMemoryManagement();
 }
-"""
+""",
     )
 
     run_updater(cpp_memory_project, mock_ingestor)

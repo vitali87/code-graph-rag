@@ -13,17 +13,26 @@ def rust_modules_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Module system test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Module system test crate"
+    )
     (project_path / "src" / "utils").mkdir()
-    (project_path / "src" / "utils" / "mod.rs").write_text("// Utils module")
+    (project_path / "src" / "utils" / "mod.rs").write_text(
+        encoding="utf-8", data="// Utils module"
+    )
     (project_path / "src" / "network").mkdir()
-    (project_path / "src" / "network" / "mod.rs").write_text("// Network module")
+    (project_path / "src" / "network" / "mod.rs").write_text(
+        encoding="utf-8", data="// Network module"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_modules_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     return project_path
 
@@ -35,7 +44,8 @@ def test_basic_module_declarations(
     """Test basic module declarations and inline modules."""
     test_file = rust_modules_project / "basic_modules.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Inline module declarations
 mod utilities {
     pub fn helper_function() -> i32 {
@@ -214,7 +224,7 @@ mod windows_specific {
         "Windows-specific functionality"
     }
 }
-"""
+""",
     )
 
     run_updater(rust_modules_project, mock_ingestor)
@@ -237,7 +247,8 @@ def test_complex_use_statements(
     """Test complex use statements and path resolution."""
     test_file = rust_modules_project / "use_statements.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Standard library imports
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::sync::{Arc, Mutex, RwLock};
@@ -504,7 +515,7 @@ mod database {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_modules_project, mock_ingestor)
@@ -527,7 +538,8 @@ def test_module_path_resolution(
     """Test complex module path resolution and relative paths."""
     test_file = rust_modules_project / "path_resolution.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Complex module hierarchy for path testing
 mod level1 {
     pub fn level1_function() -> &'static str {
@@ -785,7 +797,7 @@ mod external_integration {
         println!("External integration placeholder");
     }
 }
-"""
+""",
     )
 
     run_updater(rust_modules_project, mock_ingestor)
@@ -806,7 +818,8 @@ def test_advanced_visibility_patterns(
     """Test advanced visibility patterns and access control."""
     test_file = rust_modules_project / "advanced_visibility.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Complex visibility hierarchy
 pub mod public_api {
     // Public interface
@@ -1134,7 +1147,7 @@ pub fn test_visibility_patterns() {
     // Test macros
     macro_visibility_demo();
 }
-"""
+""",
     )
 
     run_updater(rust_modules_project, mock_ingestor)
@@ -1157,7 +1170,8 @@ def test_module_attributes_and_cfg(
     """Test module attributes and conditional compilation."""
     test_file = rust_modules_project / "module_attributes.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Module with various attributes
 #[cfg(feature = "networking")]
 pub mod networking {
@@ -1466,7 +1480,7 @@ pub fn test_all_attributes() {
     let conditional = conditional_attrs::ConditionalStruct::new(42);
     println!("Conditional value: {}", conditional.value);
 }
-"""
+""",
     )
 
     run_updater(rust_modules_project, mock_ingestor)

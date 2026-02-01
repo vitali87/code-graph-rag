@@ -22,8 +22,12 @@ def cpp_basic_project(temp_repo: Path) -> Path:
     (project_path / "include").mkdir()
     (project_path / "lib").mkdir()
 
-    (project_path / "src" / "main.cpp").write_text("int main() { return 0; }")
-    (project_path / "include" / "base.h").write_text("#pragma once\nclass Base {};")
+    (project_path / "src" / "main.cpp").write_text(
+        encoding="utf-8", data="int main() { return 0; }"
+    )
+    (project_path / "include" / "base.h").write_text(
+        encoding="utf-8", data="#pragma once\nclass Base {};"
+    )
 
     return project_path
 
@@ -35,7 +39,8 @@ def test_basic_class_declarations(
     """Test basic C++ class declaration parsing."""
     test_file = cpp_basic_project / "basic_classes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic class declaration
 class Person {
 private:
@@ -139,7 +144,7 @@ void demonstrateClasses() {
     Color color = Color::RED;
     Status status = ACTIVE;
 }
-"""
+""",
     )
 
     run_updater(cpp_basic_project, mock_ingestor)
@@ -198,7 +203,8 @@ def test_basic_function_declarations(
     """Test basic C++ function declaration parsing."""
     test_file = cpp_basic_project / "basic_functions.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -280,7 +286,7 @@ void demonstrateFunctions() {
     auto minVal = minimum<int>(5, 10);
     std::vector<int> range = createRange(1, 10);
 }
-"""
+""",
     )
 
     run_updater(cpp_basic_project, mock_ingestor)
@@ -329,7 +335,8 @@ def test_basic_namespaces(
     """Test basic C++ namespace parsing and qualified names."""
     test_file = cpp_basic_project / "basic_namespaces.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Global namespace functions
 void globalFunction();
 
@@ -434,7 +441,7 @@ void demonstrateUsingDirectives() {
     Calculator calc;
     calc.reset();
 }
-"""
+""",
     )
 
     run_updater(cpp_basic_project, mock_ingestor)
@@ -492,7 +499,8 @@ def test_basic_member_functions(
     """Test C++ member function calls and method relationships."""
     test_file = cpp_basic_project / "member_functions.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class BankAccount {
 private:
     double balance_;
@@ -598,7 +606,7 @@ void bankingDemo() {
     BankAccount* account = &savings;
     account->printStatement();  // Calls SavingsAccount::printStatement
 }
-"""
+""",
     )
 
     run_updater(cpp_basic_project, mock_ingestor)
@@ -659,7 +667,8 @@ def test_cpp_basic_comprehensive(
     """Comprehensive test ensuring all basic C++ patterns create proper relationships."""
     test_file = cpp_basic_project / "comprehensive_basic.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every basic C++ pattern in one file
 #include <iostream>
 #include <string>
@@ -798,7 +807,7 @@ void demonstrateBasicCpp() {
 void globalUtility() {
     std::cout << "Global utility function called" << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_basic_project, mock_ingestor)

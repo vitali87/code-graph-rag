@@ -93,7 +93,7 @@ def check_inline_comments(filepath: str, lines: list[str]) -> list[str]:
 def check_file(filepath: str) -> list[str]:
     errors = []
 
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         lines = f.readlines()
 
     if docstring_error := check_module_docstring(filepath, lines):

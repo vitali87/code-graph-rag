@@ -35,7 +35,9 @@ class ImportProcessor:
         self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
-        self.stdlib_extractor = StdlibExtractor(function_registry)
+        self.stdlib_extractor = StdlibExtractor(
+            function_registry, repo_path, project_name
+        )
 
         load_persistent_cache()
 
@@ -133,9 +135,10 @@ class ImportProcessor:
             logger.warning(ls.IMP_PARSE_FAILED.format(module=module_qn, error=e))
 
     def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
-        for import_node in captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
+        all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
-        ):
+        )
+        for import_node in all_imports:
             if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
                 self._handle_python_import_statement(import_node, module_qn)
             elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
@@ -180,9 +183,11 @@ class ImportProcessor:
         return module_name
 
     def _is_local_module(self, module_name: str) -> bool:
-        return (self.repo_path / module_name).is_dir() or (
-            self.repo_path / f"{module_name}{cs.EXT_PY}"
-        ).is_file()
+        return (
+            (self.repo_path / module_name).is_dir()
+            or (self.repo_path / f"{module_name}{cs.EXT_PY}").is_file()
+            or (self.repo_path / module_name / cs.INIT_PY).is_file()
+        )
 
     def _is_local_java_import(self, import_path: str) -> bool:
         top_level = import_path.split(cs.SEPARATOR_DOT)[0]

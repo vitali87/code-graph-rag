@@ -5,24 +5,52 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 ## Getting Started
 
 1. **Browse Issues**: Check out our [GitHub Issues](https://github.com/vitali87/code-graph-rag/issues) to find tasks that need work
+   - Look for issues labeled `good first issue` for beginner-friendly tasks
+   - Issues labeled `help wanted` are open for community contributions
 2. **Pick an Issue**: Choose an issue that interests you and matches your skill level
 3. **Comment on the Issue**: Let us know you're working on it to avoid duplicate effort
 4. **Fork the Repository**: Create your own fork to work on
 5. **Create a Branch**: Use a descriptive branch name like `feat/add-feature` or `fix/bug-description`
 
+### Issue Labels
+
+Our repository uses standardized labels to categorize issues and PRs:
+
+| Label              | Purpose                                                           |
+| ------------------ | ----------------------------------------------------------------- |
+| `bug`              | Something isn't working correctly                                 |
+| `enhancement`      | New feature or improvement request                                |
+| `documentation`    | Documentation improvements                                        |
+| `question`         | Questions about usage or functionality                            |
+| `good first issue` | Good for newcomers                                                |
+| `help wanted`      | Extra attention needed from the community                         |
+| `poor-quality`     | PR doesn't meet contribution standards (auto-closed after 7 days) |
+| `language support` | Related to programming language support                           |
+| `performance`      | Performance improvements                                          |
+| `security`         | Security vulnerability or concern                                 |
+| `tests`            | Related to testing                                                |
+| `ci/cd`            | CI/CD improvements                                                |
+
+Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
+
 ## Development Process
 
 1. **Set up Development Environment**:
+
    ```bash
    git clone https://github.com/YOUR-USERNAME/code-graph-rag.git
    cd code-graph-rag
-   uv sync --extra treesitter-full --extra test --extra dev
+   make dev
    ```
 
 2. **Install Pre-commit Hooks** (mandatory):
+   Handled by Makefile in `make dev`, but if needed separately:
+
    ```bash
-   pre-commit install
+    pre-commit install
+    pre-commit autoupdate
    ```
+
    All commits must pass pre-commit checks. Do not skip hooks with `--no-verify`.
 
 3. **Make Your Changes**:
@@ -50,6 +78,58 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 - Update documentation when necessary
 - Be responsive to feedback during code review
 
+### Continuous Integration
+
+All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
+
+1. **Lint & Format** - Code style validation:
+   - `ruff check` with GitHub annotations
+   - `ruff format --check`
+
+2. **Type Check** - Static type analysis:
+   - `ty check` on production code (excludes tests)
+
+3. **Unit Tests** - Fast tests without Docker:
+   - Parallel execution with `pytest-xdist`
+   - Code coverage reporting to Codecov
+
+4. **Integration Tests** - Full stack testing:
+   - Tests with real Memgraph database
+   - Service container orchestration
+   - Code coverage reporting to Codecov
+
+5. **PR Title Validation** - Conventional Commits format check
+
+All checks run in parallel and must pass before a PR can be merged. A summary job verifies all checks succeeded.
+
+**Run checks locally before pushing:**
+
+```bash
+make lint          # Lint check
+make format        # Format check
+make typecheck     # Type check
+make test-parallel # Unit tests in parallel
+make test-integration  # Integration tests (requires Docker)
+```
+
+**Or run all at once:**
+
+```bash
+make check      # Runs lint + typecheck + test
+make pre-commit # Runs ALL pre-commit checks (comprehensive - mirrors CI)
+```
+
+The `make pre-commit` command runs the exact same checks as your pre-commit hooks and CI pipeline, including:
+- Code formatting verification
+- Linting
+- Type checking
+- Documentation checks
+- README generation
+- Security scanning
+- Unit tests
+
+Use this before committing to catch issues early.
+
 ### Automated Code Review
 
 This project uses automated code review bots (**Greptile** and **Gemini Code Assist**) to provide initial feedback on PRs. Before requesting a human review:
@@ -66,15 +146,18 @@ This process ensures that human reviewers focus on high-level design and logic r
 ## Technical Requirements
 
 ### Agentic Framework
+
 - **PydanticAI Only**: This project uses PydanticAI as the official agentic framework. Do not introduce other frameworks like LangChain, CrewAI, or AutoGen.
 
 ### Code Standards
+
 - **Heavy Pydantic Usage**: Use Pydantic models extensively for data validation, serialization, and configuration
 - **Package Management**: Use `uv` for all dependency management and virtual environments
 - **Code Quality**: Use `ruff` for linting and formatting - run `ruff check` and `ruff format` before submitting
 - **Type Safety**: Use type hints everywhere and run `uv run ty check` for type checking
 
 ### Development Tools
+
 - **uv**: Package manager and dependency resolver
 - **ruff**: Code linting and formatting (replaces flake8, black, isort)
 - **ty**: Static type checking (from Astral)
@@ -82,17 +165,23 @@ This process ensures that human reviewers focus on high-level design and logic r
 - **ripgrep** (`rg`): Required for shell command text searching (install via `brew install ripgrep` on macOS or `apt install ripgrep` on Linux)
 
 ### Pre-commit Hooks
+
 This project uses `pre-commit` to automatically run checks before each commit, ensuring code quality and consistency.
 
 To get started, first make sure you have the development dependencies installed:
+
 ```bash
-uv sync --extra treesitter-full --extra test --extra dev
+make dev
 ```
+
 Then, install the git hooks:
+Automatically via Makefile in `make dev`, but if needed separately:
+
 ```bash
 pre-commit install
-pre-commit autoupdate --repo https://github.com/pre-commit/pre-commit-hooks
+pre-commit autoupdate
 ```
+
 Now, `pre-commit` will run automatically on `git commit`.
 
 ## Coding Standards
@@ -101,21 +190,21 @@ Now, `pre-commit` will run automatically on `git commit`.
 
 All tooling is from [Astral](https://astral.sh):
 
-| Tool | Purpose | Command |
-|------|---------|---------|
-| **uv** | Package management | `uv sync`, `uv add`, `uv run` |
-| **ty** | Type checking | `uv run ty check` |
+| Tool     | Purpose                | Command                                   |
+| -------- | ---------------------- | ----------------------------------------- |
+| **uv**   | Package management     | `uv sync`, `uv add`, `uv run`             |
+| **ty**   | Type checking          | `uv run ty check`                         |
 | **ruff** | Linting and formatting | `uv run ruff check`, `uv run ruff format` |
 
 ```bash
 # Sync dependencies
-uv sync --extra dev --extra test
+make python
 
 # Upgrade a package
 uv sync --upgrade-package <pkg>
 
-# Type check
-uv run ty check codebase_rag/
+# Type check (excludes test files)
+uv run ty check codebase_rag --exclude codebase_rag/tests
 
 # Lint and format
 uv run ruff check --fix .
@@ -126,13 +215,13 @@ uv run ruff format .
 
 #### Data Structure Selection
 
-| Structure | Use Case |
-|-----------|----------|
-| **StrEnum** | Constrained string constants used in comparisons, defaults, assignments |
-| **NamedTuple** | Immutable records with named fields (lightweight, hashable) |
-| **TypedDict** | Dict shapes for function return types or JSON-like data |
-| **dataclass** | Mutable class instances with behavior/methods |
-| **Pydantic BaseModel** | Configs needing validation, serialization, or schema generation |
+| Structure              | Use Case                                                                |
+| ---------------------- | ----------------------------------------------------------------------- |
+| **StrEnum**            | Constrained string constants used in comparisons, defaults, assignments |
+| **NamedTuple**         | Immutable records with named fields (lightweight, hashable)             |
+| **TypedDict**          | Dict shapes for function return types or JSON-like data                 |
+| **dataclass**          | Mutable class instances with behavior/methods                           |
+| **Pydantic BaseModel** | Configs needing validation, serialization, or schema generation         |
 
 ```python
 from dataclasses import dataclass
@@ -174,10 +263,12 @@ class User:
 Forward references are type hints wrapped in quotes like `"ASTNode"`. These are NOT allowed.
 
 **How to identify forward references:**
+
 - Type hints with quotes: `def foo(x: "SomeClass") -> "Result"`
 - These appear when a type is used before it's defined or to avoid circular imports
 
 **How to fix forward references:**
+
 - Add `from __future__ import annotations` at the top of the file
 - Remove the quotes from the type hints
 
@@ -686,19 +777,19 @@ Uses Conventional Commits format with this regex pattern:
 
 **Allowed prefixes:**
 
-| Prefix | Purpose |
-|--------|---------|
-| `build` | Build system or external dependencies |
-| `chore` | Routine tasks, maintenance |
-| `ci` | CI configuration changes |
-| `docs` | Documentation only |
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `perf` | Performance improvement |
-| `refactor` or `prefactor` | Code refactoring |
-| `revert` | Reverting changes |
-| `style` | Formatting, whitespace, etc. |
-| `test` | Adding or modifying tests |
+| Prefix                    | Purpose                               |
+| ------------------------- | ------------------------------------- |
+| `build`                   | Build system or external dependencies |
+| `chore`                   | Routine tasks, maintenance            |
+| `ci`                      | CI configuration changes              |
+| `docs`                    | Documentation only                    |
+| `feat`                    | New feature                           |
+| `fix`                     | Bug fix                               |
+| `perf`                    | Performance improvement               |
+| `refactor` or `prefactor` | Code refactoring                      |
+| `revert`                  | Reverting changes                     |
+| `style`                   | Formatting, whitespace, etc.          |
+| `test`                    | Adding or modifying tests             |
 
 **Format:**
 
@@ -727,6 +818,7 @@ The scope (in parentheses) is optional and can contain alphanumeric characters, 
 **Why this rule exists**: AI tools (like code assistants and LLMs) tend to generate redundant, obvious comments that clutter the codebase. Comments like `# Loop through items` or `# Return the result` add no value. This policy prevents AI-generated comment slop from polluting the code.
 
 If you need to add a comment, prefix it with `(H)`:
+
 ```python
 # (H) This algorithm uses memoization because the recursive solution times out on large inputs
 ```
@@ -736,6 +828,7 @@ The pre-commit hook `no-inline-comments` enforces this rule automatically.
 ## Questions?
 
 If you have questions about contributing, feel free to:
+
 - Open a discussion on GitHub
 - Comment on the relevant issue
 - Reach out to the maintainers

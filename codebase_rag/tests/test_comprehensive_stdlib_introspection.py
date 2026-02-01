@@ -11,7 +11,8 @@ def test_python_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) 
 
     test_file = project / "stdlib_imports.py"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # Python standard library imports - these should resolve to module paths
 from collections import defaultdict, Counter, OrderedDict
 from datetime import datetime, timezone, timedelta
@@ -25,7 +26,7 @@ from sys import argv, version, exit
 import sqlite3
 import urllib.parse
 import xml.etree.ElementTree
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -70,7 +71,8 @@ def test_javascript_stdlib_introspection(
 
     test_file = project / "stdlib_imports.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Node.js standard library imports - should resolve to module paths
 const fs = require('fs');
 const { readFile, writeFile, createReadStream } = require('fs');
@@ -100,7 +102,7 @@ import { Worker, isMainThread } from 'worker_threads';
 fs.readFileSync('test.txt');
 path.join('/', 'home');
 http.createServer();
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -143,7 +145,8 @@ def test_typescript_stdlib_introspection(
 
     test_file = project / "stdlib_imports.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // TypeScript standard library imports - should resolve to module paths
 import * as fs from 'fs';
 import { readFile, writeFile, promises as fsPromises } from 'fs';
@@ -180,7 +183,7 @@ const data = fs.readFileSync('test.txt');
 const fullPath = path.join(__dirname, 'test.txt');
 const server = http.createServer();
 const hasher = crypto.createHash('sha256');
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -222,7 +225,8 @@ def test_go_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) -> N
 
     test_file = project / "stdlib_imports.go"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package main
 
 // Go standard library imports - should resolve to package paths
@@ -281,7 +285,7 @@ func main() {
     fmt.Printf("Time: %v, String: %s, Number: %d, Context: %v, Matched: %t\\n",
         now, str, num, ctx, matched)
 }
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -334,7 +338,8 @@ def test_rust_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) ->
 
     test_file = project / "stdlib_imports.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Rust standard library imports - should resolve to module paths
 use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
 use std::io::{self, Read, Write, BufReader, BufWriter, stdin, stdout};
@@ -391,7 +396,7 @@ fn main() {
     println!("Map: {:?}, Set: {:?}, Vec: {:?}", map, set, vec);
     println!("Duration: {:?}, Now: {:?}", duration, now);
 }
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -446,7 +451,8 @@ def test_cpp_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) -> 
 
     test_file = project / "stdlib_imports.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // C++ standard library includes - should be detected with dynamic compilation
 #include <iostream>
 #include <vector>
@@ -496,7 +502,7 @@ int main() {
     std::cout << "Vector size: " << vec.size() << ", Result: " << result << std::endl;
     return 0;
 }
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -544,7 +550,8 @@ def test_java_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) ->
 
     test_file = project / "StdlibImports.java"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Java standard library imports - should resolve to package paths
 import java.util.*;
 import java.util.concurrent.*;
@@ -598,7 +605,7 @@ public class StdlibImports {
         System.out.println("Initialized all stdlib components");
     }
 }
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -642,7 +649,8 @@ def test_lua_stdlib_introspection(temp_repo: Path, mock_ingestor: MagicMock) -> 
 
     test_file = project / "stdlib_usage.lua"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 -- Lua standard library usage - should resolve to module paths
 local upper_str = string.upper("hello")
 local lower_str = string.lower("WORLD")
@@ -697,7 +705,7 @@ return {
     debug_info = debug_info,
     package_path = package_path
 }
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -783,7 +791,7 @@ def test_all_languages_stdlib_consistency(
     }
 
     for filename, content in files_and_content.items():
-        (project / filename).write_text(content)
+        (project / filename).write_text(encoding="utf-8", data=content)
 
     run_updater(project, mock_ingestor)
 

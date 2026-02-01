@@ -25,7 +25,8 @@ def test_arithmetic_operators(
     """Test arithmetic operator overloading."""
     test_file = cpp_operators_project / "arithmetic_operators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 
 // Complex number class with arithmetic operators
@@ -276,7 +277,7 @@ void testArithmeticOperators() {
 void demonstrateArithmeticOperators() {
     testArithmeticOperators();
 }
-"""
+""",
     )
 
     run_updater(cpp_operators_project, mock_ingestor)
@@ -303,7 +304,8 @@ def test_comparison_operators(
     """Test comparison operator overloading."""
     test_file = cpp_operators_project / "comparison_operators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -563,7 +565,7 @@ void demonstrateComparisonOperators() {
     testComparisonOperators();
     testSortingWithComparators();
 }
-"""
+""",
     )
 
     run_updater(cpp_operators_project, mock_ingestor)
@@ -591,7 +593,8 @@ def test_stream_function_call_operators(
     """Test stream operators and function call operators."""
     test_file = cpp_operators_project / "stream_function_operators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -828,7 +831,7 @@ void demonstrateStreamAndFunctionOperators() {
     testStreamOperators();
     testFunctionCallOperators();
 }
-"""
+""",
     )
 
     run_updater(cpp_operators_project, mock_ingestor)
@@ -857,7 +860,8 @@ def test_subscript_increment_operators(
     """Test subscript and increment/decrement operators."""
     test_file = cpp_operators_project / "subscript_increment_operators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <stdexcept>
@@ -1230,7 +1234,7 @@ void demonstrateSubscriptAndIncrementOperators() {
     testSubscriptOperators();
     testIncrementDecrementOperators();
 }
-"""
+""",
     )
 
     run_updater(cpp_operators_project, mock_ingestor)
@@ -1258,7 +1262,8 @@ def test_cpp_operators_comprehensive(
     """Comprehensive test ensuring all operator overloading patterns create proper relationships."""
     test_file = cpp_operators_project / "comprehensive_operators.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every operator overloading pattern in one file
 #include <iostream>
 #include <vector>
@@ -1383,7 +1388,7 @@ void demonstrateAllOperators() {
     std::cout << "Comparison: equal=" << equal << ", less=" << less << std::endl;
     std::cout << "Function call result: " << result << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_operators_project, mock_ingestor)

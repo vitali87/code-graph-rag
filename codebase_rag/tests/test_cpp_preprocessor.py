@@ -25,7 +25,8 @@ def test_define_macros(
     """Test #define macros including object-like and function-like macros."""
     test_file = cpp_preprocessor_project / "define_macros.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 
@@ -230,7 +231,7 @@ void demonstrateDefineMacros() {
     testMacroGeneration();
     testMacroEdgeCases();
 }
-"""
+""",
     )
 
     run_updater(cpp_preprocessor_project, mock_ingestor)
@@ -259,7 +260,8 @@ def test_conditional_compilation(
     """Test conditional compilation directives."""
     test_file = cpp_preprocessor_project / "conditional_compilation.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 
@@ -523,7 +525,7 @@ void demonstrateConditionalCompilation() {
     testConditionalCompilation();
     testComplexConditionals();
 }
-"""
+""",
     )
 
     run_updater(cpp_preprocessor_project, mock_ingestor)
@@ -562,7 +564,8 @@ def test_pragma_directives(
     """Test #pragma directives and include guards."""
     test_file = cpp_preprocessor_project / "pragma_directives.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Include guard using traditional method
 #ifndef PRAGMA_DIRECTIVES_H
 #define PRAGMA_DIRECTIVES_H
@@ -808,7 +811,7 @@ void demonstratePragmaDirectives() {
 #pragma optimize("", on)
 
 #endif // PRAGMA_DIRECTIVES_H
-"""
+""",
     )
 
     run_updater(cpp_preprocessor_project, mock_ingestor)
@@ -847,7 +850,8 @@ def test_cpp_preprocessor_comprehensive(
     """Comprehensive test ensuring all preprocessor features create proper relationships."""
     test_file = cpp_preprocessor_project / "comprehensive_preprocessor.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive preprocessor example combining all features
 #ifndef COMPREHENSIVE_PREPROCESSOR_H
 #define COMPREHENSIVE_PREPROCESSOR_H
@@ -1043,7 +1047,7 @@ void demonstrateComprehensivePreprocessor() {
 }
 
 #endif // COMPREHENSIVE_PREPROCESSOR_H
-"""
+""",
     )
 
     run_updater(cpp_preprocessor_project, mock_ingestor)

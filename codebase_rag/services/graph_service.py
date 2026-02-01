@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import types
 from collections import defaultdict
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
@@ -65,7 +68,7 @@ class MemgraphIngestor:
             ]
         ] = []
 
-    def __enter__(self) -> "MemgraphIngestor":
+    def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
@@ -73,7 +76,10 @@ class MemgraphIngestor:
         return self
 
     def __exit__(
-        self, exc_type: type | None, exc_val: Exception | None, exc_tb: object
+        self,
+        exc_type: type | None,
+        exc_val: Exception | None,
+        exc_tb: types.TracebackType | None,
     ) -> None:
         if exc_type:
             logger.exception(ls.MG_EXCEPTION.format(error=exc_val))

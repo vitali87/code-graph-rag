@@ -25,7 +25,8 @@ def test_basic_constructors_destructors(
     """Test basic constructor and destructor patterns."""
     test_file = cpp_constructor_project / "basic_constructors.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <memory>
@@ -307,7 +308,7 @@ void demonstrateBasicConstructorsDestructors() {
     testInitializationLists();
     testExplicitConstructors();
 }
-"""
+""",
     )
 
     run_updater(cpp_constructor_project, mock_ingestor)
@@ -349,7 +350,8 @@ def test_raii_patterns(
     """Test RAII (Resource Acquisition Is Initialization) patterns."""
     test_file = cpp_constructor_project / "raii_patterns.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <fstream>
@@ -704,7 +706,7 @@ void demonstrateRAIIPatterns() {
     testRAIIPatterns();
     testExceptionSafety();
 }
-"""
+""",
     )
 
     run_updater(cpp_constructor_project, mock_ingestor)
@@ -733,7 +735,8 @@ def test_special_member_functions(
     """Test Rule of Three, Rule of Five, and special member function generation."""
     test_file = cpp_constructor_project / "special_members.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <utility>
 #include <memory>
@@ -1063,7 +1066,7 @@ void demonstrateSpecialMemberFunctions() {
     testRuleOfZero();
     testSpecialMemberVariations();
 }
-"""
+""",
     )
 
     run_updater(cpp_constructor_project, mock_ingestor)
@@ -1093,7 +1096,8 @@ def test_cpp_constructor_destructor_comprehensive(
     """Comprehensive test ensuring all constructor/destructor patterns create proper relationships."""
     test_file = cpp_constructor_project / "comprehensive_constructors.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ constructor/destructor pattern in one file
 #include <iostream>
 #include <memory>
@@ -1253,7 +1257,7 @@ void demonstrateComprehensiveConstructors() {
     std::cout << "Current instance count: " << ComprehensiveClass::getInstanceCount() << std::endl;
     std::cout << "Exiting scope - all objects will be destroyed" << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_constructor_project, mock_ingestor)

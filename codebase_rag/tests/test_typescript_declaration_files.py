@@ -19,7 +19,8 @@ def typescript_declarations_project(temp_repo: Path) -> Path:
     (project_path / "external").mkdir()
 
     (project_path / "types" / "common.d.ts").write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Common type declarations
 declare namespace Common {
     interface BaseEntity {
@@ -36,7 +37,7 @@ declare namespace Common {
 declare module 'common-types' {
     export = Common;
 }
-"""
+""",
     )
 
     return project_path
@@ -49,7 +50,8 @@ def test_ambient_declarations(
     """Test TypeScript ambient declarations."""
     test_file = typescript_declarations_project / "ambient_declarations.d.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Ambient declarations for external libraries and global variables
 
 // Global variables
@@ -357,7 +359,7 @@ declare global {
 
 // Export declarations
 export {};
-"""
+""",
     )
 
     run_updater(typescript_declarations_project, mock_ingestor)
@@ -412,7 +414,8 @@ def test_module_declarations(
     """Test TypeScript module declarations and augmentations."""
     test_file = typescript_declarations_project / "module_declarations.d.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Module declarations and augmentations
 
 // Basic module declaration
@@ -795,7 +798,7 @@ declare module "web-worker" {
 }
 
 export {};
-"""
+""",
     )
 
     run_updater(typescript_declarations_project, mock_ingestor)
@@ -854,7 +857,8 @@ def test_global_augmentations(
     """Test TypeScript global augmentations and extensions."""
     test_file = typescript_declarations_project / "global_augmentations.d.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Global augmentations and extensions
 
 // Augmenting global scope
@@ -1206,7 +1210,7 @@ declare module "*.svg" {
 
 // Export to make this a module
 export {};
-"""
+""",
     )
 
     run_updater(typescript_declarations_project, mock_ingestor)
@@ -1256,7 +1260,8 @@ def test_typescript_declarations_comprehensive(
     """Comprehensive test ensuring all TypeScript declaration file patterns are covered."""
     test_file = typescript_declarations_project / "comprehensive_declarations.d.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every TypeScript declaration file pattern in one file
 
 // Ambient declaration
@@ -1334,7 +1339,7 @@ const config: MyLibrary.Config = { name: 'test', version: '1.0' };
 MyLibrary.init(config);
 
 export {};
-"""
+""",
     )
 
     run_updater(typescript_declarations_project, mock_ingestor)

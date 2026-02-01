@@ -25,7 +25,8 @@ def test_basic_ranges_algorithms(
     """Test basic std::ranges algorithms and concepts."""
     test_file = cpp_ranges_project / "basic_ranges.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <ranges>
 #include <algorithm>
 #include <vector>
@@ -287,7 +288,7 @@ void demonstrateBasicRanges() {
     testRangesProjections();
     testCustomRangeConcepts();
 }
-"""
+""",
     )
 
     run_updater(cpp_ranges_project, mock_ingestor)
@@ -328,7 +329,8 @@ def test_views_and_adaptors(
     """Test ranges views and view adaptors."""
     test_file = cpp_ranges_project / "views_adaptors.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <ranges>
 #include <vector>
 #include <string>
@@ -642,7 +644,7 @@ void demonstrateViewsAndAdaptors() {
     testViewsWithAlgorithms();
     testCustomViewAdaptors();
 }
-"""
+""",
     )
 
     run_updater(cpp_ranges_project, mock_ingestor)
@@ -672,7 +674,8 @@ def test_range_pipelines_graph_processing(
     """Test range pipelines for graph-like data processing scenarios."""
     test_file = cpp_ranges_project / "range_graph_processing.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <ranges>
 #include <vector>
 #include <map>
@@ -974,7 +977,7 @@ void demonstrateRangeGraphProcessing() {
     testRangeBasedGraphAlgorithms();
     testComplexRangePipelines();
 }
-"""
+""",
     )
 
     run_updater(cpp_ranges_project, mock_ingestor)

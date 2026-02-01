@@ -36,7 +36,8 @@ def test_synchronized_methods_blocks(
         / "SynchronizedExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class SynchronizedExample {
@@ -139,7 +140,7 @@ public class SynchronizedExample {
         return result;
     }
 }
-"""
+""",
     )
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
@@ -172,7 +173,8 @@ def test_volatile_fields(
         / "VolatileExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class VolatileExample {
@@ -298,7 +300,7 @@ public class VolatileExample {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
@@ -331,7 +333,8 @@ def test_concurrent_collections(
         / "ConcurrentCollections.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.concurrent.*;
@@ -509,7 +512,7 @@ class Task {
     public String getId() { return id; }
     public String getDescription() { return description; }
 }
-"""
+""",
     )
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
@@ -543,7 +546,8 @@ def test_executor_service_patterns(
         / "ExecutorExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.concurrent.*;
@@ -745,7 +749,7 @@ public class ExecutorExample {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
@@ -778,7 +782,8 @@ def test_completable_future_patterns(
         / "CompletableFutureExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.concurrent.*;
@@ -984,7 +989,7 @@ public class CompletableFutureExample {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")
@@ -1017,7 +1022,8 @@ def test_locks_and_conditions(
         / "LocksExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.concurrent.locks.*;
@@ -1222,7 +1228,7 @@ public class LocksExample {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_concurrency_project, mock_ingestor, skip_if_missing="java")

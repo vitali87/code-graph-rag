@@ -25,7 +25,8 @@ def test_basic_namespaces(
     """Test basic namespace declarations and usage."""
     test_file = cpp_namespaces_project / "basic_namespaces.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 
@@ -185,7 +186,7 @@ void demonstrateBasicNamespaces() {
     std::cout << "PI from math::constants: " << math::constants::PI << std::endl;
     std::cout << "E from math::constants: " << math::constants::E << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_namespaces_project, mock_ingestor)
@@ -230,7 +231,8 @@ def test_using_directives(
     """Test using directives and namespace aliases."""
     test_file = cpp_namespaces_project / "using_directives.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -397,7 +399,7 @@ void demonstrateTemplateUsing() {
     Container<string>::size_type count = stringContainer.size();
     cout << "Container size: " << count << endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_namespaces_project, mock_ingestor)
@@ -444,7 +446,8 @@ def test_anonymous_namespaces(
     """Test anonymous namespaces and internal linkage."""
     test_file = cpp_namespaces_project / "anonymous_namespaces.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 
@@ -585,7 +588,7 @@ void compareLinkageStyles() {
     static_function();  // C-style internal linkage
     modern_internal_function();  // C++ style internal linkage
 }
-"""
+""",
     )
 
     run_updater(cpp_namespaces_project, mock_ingestor)
@@ -638,7 +641,8 @@ def test_cpp_namespaces_comprehensive(
     """Comprehensive test ensuring all namespace patterns create proper relationships."""
     test_file = cpp_namespaces_project / "comprehensive_namespaces.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ namespace pattern in one file
 #include <iostream>
 #include <string>
@@ -785,7 +789,7 @@ void testNamespaceFeatures() {
     internal_func();            // Anonymous namespace
     global_func();              // Global namespace
 }
-"""
+""",
     )
 
     run_updater(cpp_namespaces_project, mock_ingestor)

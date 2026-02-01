@@ -13,13 +13,18 @@ def rust_closures_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Closures and functions test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Closures and functions test crate"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_closures_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     return project_path
 
@@ -31,7 +36,8 @@ def test_basic_closures_and_captures(
     """Test basic closure syntax and different capture modes."""
     test_file = rust_closures_project / "basic_closures.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic closure definitions
 fn basic_closure_examples() {
     // Simple closure with no captures
@@ -219,7 +225,7 @@ fn generic_closures_demo() {
     let uppercased = generic_closure_operations(strings, |s| s.to_uppercase());
     println!("Uppercased: {:?}", uppercased);
 }
-"""
+""",
     )
 
     run_updater(rust_closures_project, mock_ingestor)
@@ -242,7 +248,8 @@ def test_function_pointers_and_types(
     """Test function pointers, function types, and function item types."""
     test_file = rust_closures_project / "function_pointers.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Function pointer types
 type UnaryOp = fn(i32) -> i32;
 type BinaryOp = fn(i32, i32) -> i32;
@@ -519,7 +526,7 @@ where
 {
     f(10)
 }
-"""
+""",
     )
 
     run_updater(rust_closures_project, mock_ingestor)
@@ -540,7 +547,8 @@ def test_higher_order_functions(
     """Test higher-order functions and functional programming patterns."""
     test_file = rust_closures_project / "higher_order.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 
 // Higher-order function that takes multiple function parameters
@@ -889,7 +897,7 @@ fn observable_demo() {
     let results: Vec<i32> = even_stream.take(5).collect();
     println!("Observable results: {:?}", results);
 }
-"""
+""",
     )
 
     run_updater(rust_closures_project, mock_ingestor)
@@ -912,7 +920,8 @@ def test_async_closures_and_futures(
     """Test async closures and future-related patterns."""
     test_file = rust_closures_project / "async_closures.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -1191,7 +1200,7 @@ async fn demo_parallel_processing() {
 
     println!("Parallel results: {:?}", results);
 }
-"""
+""",
     )
 
     run_updater(rust_closures_project, mock_ingestor)

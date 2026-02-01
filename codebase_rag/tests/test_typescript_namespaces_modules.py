@@ -19,7 +19,8 @@ def typescript_namespaces_project(temp_repo: Path) -> Path:
     (project_path / "types").mkdir()
 
     (project_path / "types" / "common.ts").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export namespace Common {
     export interface User {
         id: string;
@@ -30,7 +31,7 @@ export namespace Common {
         return { id, name };
     }
 }
-"""
+""",
     )
 
     return project_path
@@ -43,7 +44,8 @@ def test_namespace_declarations(
     """Test TypeScript namespace declarations and structure."""
     test_file = typescript_namespaces_project / "namespace_declarations.ts"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Basic namespace declarations
 
 // Simple namespace
@@ -366,7 +368,7 @@ console.log(set.size()); // 2
 
 const merged = Collections.Utils.merge(list, new Collections.ArrayList<string>());
 console.log(merged.size()); // 2
-"""
+""",
     )
 
     run_updater(typescript_namespaces_project, mock_ingestor)
@@ -437,7 +439,8 @@ def test_namespace_merging(
     """Test TypeScript namespace merging and declaration merging."""
     test_file = typescript_namespaces_project / "namespace_merging.ts"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Namespace merging examples
 
 // First declaration of Utils namespace
@@ -763,7 +766,7 @@ API.get('https://api.example.com/users')
     });
 
 console.log('Valid method:', API.Http.isValidMethod('GET')); // true
-"""
+""",
     )
 
     run_updater(typescript_namespaces_project, mock_ingestor)
@@ -840,7 +843,8 @@ def test_module_patterns(
     """Test TypeScript module patterns and ES6 modules."""
     test_file = typescript_namespaces_project / "module_patterns.ts"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Module patterns in TypeScript
 
 // Internal module (namespace)
@@ -1184,7 +1188,7 @@ console.log(platformInfo);
 if (ConditionalModule.IS_NODE) {
     console.log('Process ID:', ConditionalModule.Node.getProcessId());
 }
-"""
+""",
     )
 
     run_updater(typescript_namespaces_project, mock_ingestor)
@@ -1254,7 +1258,8 @@ def test_typescript_namespaces_comprehensive(
     """Comprehensive test ensuring all TypeScript namespace/module patterns are covered."""
     test_file = typescript_namespaces_project / "comprehensive_namespaces.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every TypeScript namespace/module pattern in one file
 
 // Basic namespace
@@ -1335,7 +1340,7 @@ const helper = new Exported.Helper();
 console.log(helper.help());
 
 Conditional.log('Debug message');
-"""
+""",
     )
 
     run_updater(typescript_namespaces_project, mock_ingestor)

@@ -169,7 +169,7 @@ class TestFindNodeTypesPath:
             src_dir = grammar_path / "src"
             src_dir.mkdir()
             node_types_file = src_dir / "node-types.json"
-            node_types_file.write_text("[]")
+            node_types_file.write_text(encoding="utf-8", data="[]")
 
             result = _find_node_types_path(str(grammar_path), "python")
             assert result == str(node_types_file)
@@ -180,7 +180,7 @@ class TestFindNodeTypesPath:
             lang_dir = grammar_path / "python" / "src"
             lang_dir.mkdir(parents=True)
             node_types_file = lang_dir / "node-types.json"
-            node_types_file.write_text("[]")
+            node_types_file.write_text(encoding="utf-8", data="[]")
 
             result = _find_node_types_path(str(grammar_path), "python")
             assert result == str(node_types_file)
@@ -191,7 +191,7 @@ class TestFindNodeTypesPath:
             lang_dir = grammar_path / "type_script" / "src"
             lang_dir.mkdir(parents=True)
             node_types_file = lang_dir / "node-types.json"
-            node_types_file.write_text("[]")
+            node_types_file.write_text(encoding="utf-8", data="[]")
 
             result = _find_node_types_path(str(grammar_path), "type-script")
             assert result == str(node_types_file)
@@ -214,7 +214,7 @@ class TestParseTreeSitterJson:
                 ]
             }
             config_path = Path(tmpdir) / "tree-sitter.json"
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
             with patch("click.echo"):
                 result = _parse_tree_sitter_json(
@@ -236,7 +236,7 @@ class TestParseTreeSitterJson:
                 ]
             }
             config_path = Path(tmpdir) / "tree-sitter.json"
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
             with patch("click.echo"):
                 result = _parse_tree_sitter_json(
@@ -257,7 +257,7 @@ class TestParseTreeSitterJson:
                 ]
             }
             config_path = Path(tmpdir) / "tree-sitter.json"
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
             with patch("click.echo"):
                 result = _parse_tree_sitter_json(
@@ -278,7 +278,7 @@ class TestParseTreeSitterJson:
                 ]
             }
             config_path = Path(tmpdir) / "tree-sitter.json"
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
             with patch("click.echo"):
                 result = _parse_tree_sitter_json(
@@ -296,7 +296,7 @@ class TestParseTreeSitterJson:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = {"grammars": []}
             config_path = Path(tmpdir) / "tree-sitter.json"
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
             result = _parse_tree_sitter_json(str(config_path), "grammar", None)
             assert result is None
@@ -305,7 +305,7 @@ class TestParseTreeSitterJson:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = {"version": 1}
             config_path = Path(tmpdir) / "tree-sitter.json"
-            config_path.write_text(json.dumps(config))
+            config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
             result = _parse_tree_sitter_json(str(config_path), "grammar", None)
             assert result is None

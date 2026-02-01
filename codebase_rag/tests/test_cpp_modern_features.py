@@ -15,7 +15,9 @@ def cpp_modern_project(temp_repo: Path) -> Path:
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    (project_path / "src" / "main.cpp").write_text("int main() { return 0; }")
+    (project_path / "src" / "main.cpp").write_text(
+        encoding="utf-8", data="int main() { return 0; }"
+    )
 
     return project_path
 
@@ -27,7 +29,8 @@ def test_auto_keyword_type_deduction(
     """Test auto keyword and type deduction features."""
     test_file = cpp_modern_project / "auto_features.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <map>
@@ -174,7 +177,7 @@ void demonstrateAutoFeatures() {
 
     std::cout << "Max value: " << max_val << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_modern_project, mock_ingestor)
@@ -205,7 +208,8 @@ def test_lambda_expressions(
     """Test lambda expressions and closures."""
     test_file = cpp_modern_project / "lambda_features.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -434,7 +438,7 @@ void demonstrateLambdaFeatures() {
     LambdaDemo demo({1, 2, 3, 4, 5});
     demo.processWithLambda();
 }
-"""
+""",
     )
 
     run_updater(cpp_modern_project, mock_ingestor)
@@ -464,7 +468,8 @@ def test_smart_pointers_move_semantics(
     """Test smart pointers and move semantics."""
     test_file = cpp_modern_project / "smart_pointers_move.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -739,7 +744,7 @@ void demonstrateSmartPointersAndMove() {
     std::cout << "Manager has " << manager.getUniqueCount()
               << " unique and " << manager.getSharedCount() << " shared resources" << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_modern_project, mock_ingestor)
@@ -780,7 +785,8 @@ def test_variadic_templates_constexpr(
     """Test variadic templates and constexpr functions."""
     test_file = cpp_modern_project / "variadic_constexpr.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <tuple>
 #include <type_traits>
@@ -1004,7 +1010,7 @@ void demonstrateVariadicConstexpr() {
     testVariadicTemplates();
     testTypeTraits();
 }
-"""
+""",
     )
 
     run_updater(cpp_modern_project, mock_ingestor)
@@ -1034,7 +1040,8 @@ def test_structured_bindings_ranges(
     """Test structured bindings (C++17) and range-based for loops."""
     test_file = cpp_modern_project / "structured_bindings_ranges.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <map>
@@ -1279,7 +1286,7 @@ void demonstrateStructuredBindingsAndRanges() {
     testCustomRange();
     testAdvancedRanges();
 }
-"""
+""",
     )
 
     run_updater(cpp_modern_project, mock_ingestor)
@@ -1308,7 +1315,8 @@ def test_cpp_modern_comprehensive(
     """Comprehensive test ensuring all modern C++ features create proper relationships."""
     test_file = cpp_modern_project / "comprehensive_modern.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every modern C++ feature in one file
 #include <iostream>
 #include <memory>
@@ -1470,7 +1478,7 @@ void demonstrateModernFeatures() {
         std::cout << "  Size: " << res.size() << std::endl;
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_modern_project, mock_ingestor)

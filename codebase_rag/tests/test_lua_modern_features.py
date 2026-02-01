@@ -11,7 +11,8 @@ def test_lua_54_attributes_syntax(temp_repo: Path, mock_ingestor: MagicMock) -> 
     project.mkdir()
 
     (project / "attributes.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local Attributes = {}
 
 -- Test <const> attribute
@@ -130,11 +131,12 @@ function Attributes.complex_assignments()
 end
 
 return Attributes
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local Attributes = require('attributes')
 
 -- Test constant usage
@@ -167,7 +169,7 @@ until coroutine.status(co) == "dead"
 -- Test complex assignments
 local sum = Attributes.complex_assignments()
 print("Sum:", sum)
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -208,7 +210,8 @@ def test_lua_54_enhanced_metamethods(temp_repo: Path, mock_ingestor: MagicMock) 
     project.mkdir()
 
     (project / "metamethods.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local MetaMethods = {}
 
 -- Test new metamethod behavior in Lua 5.4
@@ -346,11 +349,12 @@ function MetaMethods.test_index_metamethod()
 end
 
 return MetaMethods
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local MetaMethods = require('metamethods')
 
 -- Test comparison operators
@@ -370,7 +374,7 @@ print("Call results:", table.concat(call_results, ", "))
 -- Test index metamethod
 local index_results = MetaMethods.test_index_metamethod()
 print("Index results:", table.concat(index_results, ", "))
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -409,7 +413,8 @@ def test_lua_54_enhanced_stdlib(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project.mkdir()
 
     (project / "stdlib.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local StdLib = {}
 
 -- Test enhanced math.random in Lua 5.4
@@ -562,11 +567,12 @@ function StdLib.run_all_tests()
 end
 
 return StdLib
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local StdLib = require('stdlib')
 
 -- Run all enhanced standard library tests
@@ -584,7 +590,7 @@ for category, results in pairs(all_results) do
     end
     print()
 end
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -633,7 +639,8 @@ def test_lua_54_numerical_for_loops(temp_repo: Path, mock_ingestor: MagicMock) -
     project.mkdir()
 
     (project / "for_loops.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local ForLoops = {}
 
 -- Test Lua 5.4 numerical for loop changes
@@ -752,11 +759,12 @@ function ForLoops.test_for_control_flow()
 end
 
 return ForLoops
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local ForLoops = require('for_loops')
 
 -- Test all for loop variations
@@ -772,7 +780,7 @@ print("Edge cases:", #edge_results.large_numbers, "large numbers")
 print("Function calls:", #call_results, "results")
 print("Nested loops: 3x3 matrix created")
 print("Control flow: break =", #control_results.break_test, "continue =", #control_results.continue_test)
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)

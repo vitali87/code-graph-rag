@@ -36,7 +36,8 @@ def test_builder_pattern_relationships(
         / "BuilderPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class Computer {
@@ -167,7 +168,7 @@ class ComputerService {
         System.out.println("Budget: " + budget.getSpecs()); // CALLS Computer.getSpecs()
     }
 }
-"""
+""",
     )
 
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
@@ -194,7 +195,8 @@ def test_observer_pattern_relationships(
         / "ObserverPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.List;
@@ -354,7 +356,7 @@ class NewsSystem {
         System.out.println("Fox latest: " + fox.getLatestNews()); // CALLS NewsChannel.getLatestNews()
     }
 }
-"""
+""",
     )
 
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
@@ -387,7 +389,8 @@ def test_factory_pattern_relationships(
         / "FactoryPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Product interface
@@ -598,7 +601,7 @@ class VehicleProduction {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
@@ -637,7 +640,8 @@ def test_decorator_pattern_relationships(
         / "DecoratorPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Component interface
@@ -804,7 +808,7 @@ class CoffeeShop {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
@@ -843,7 +847,8 @@ def test_strategy_pattern_relationships(
         / "StrategyPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Strategy interface
@@ -1003,7 +1008,7 @@ class PaymentProcessor {
         cart.checkout(); // CALLS ShoppingCart.checkout()
     }
 }
-"""
+""",
     )
 
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")
@@ -1036,7 +1041,8 @@ def test_command_pattern_relationships(
         / "CommandPattern.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.Stack;
@@ -1287,7 +1293,7 @@ class SmartHome {
         remote.pressUndo(); // CALLS RemoteControl.pressUndo() - undo light on
     }
 }
-"""
+""",
     )
 
     run_updater(java_complex_project, mock_ingestor, skip_if_missing="java")

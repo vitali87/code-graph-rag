@@ -21,7 +21,7 @@ def test_returns_empty_when_no_file(temp_repo: Path) -> None:
 
 def test_loads_exclude_patterns_from_file(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("vendor\nmy_build\n")
+    cgrignore.write_text(encoding="utf-8", data="vendor\nmy_build\n")
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -33,7 +33,9 @@ def test_loads_exclude_patterns_from_file(temp_repo: Path) -> None:
 
 def test_ignores_comments_and_blank_lines(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("# Comment\n\nvendor\n  # Indented comment\n")
+    cgrignore.write_text(
+        encoding="utf-8", data="# Comment\n\nvendor\n  # Indented comment\n"
+    )
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -43,7 +45,7 @@ def test_ignores_comments_and_blank_lines(temp_repo: Path) -> None:
 
 def test_strips_whitespace(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("  vendor  \n\ttemp\t\n")
+    cgrignore.write_text(encoding="utf-8", data="  vendor  \n\ttemp\t\n")
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -55,7 +57,7 @@ def test_returns_empty_on_read_error(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("vendor")
+    cgrignore.write_text(encoding="utf-8", data="vendor")
 
     original_open = Path.open
 
@@ -72,7 +74,7 @@ def test_returns_empty_on_read_error(
 
 def test_handles_duplicates(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("vendor\nvendor\ntemp\n")
+    cgrignore.write_text(encoding="utf-8", data="vendor\nvendor\ntemp\n")
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -91,7 +93,7 @@ def test_returns_empty_if_cgrignore_is_a_directory(temp_repo: Path) -> None:
 class TestNegationSyntax:
     def test_parses_negation_patterns(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("!vendor\n!node_modules\n")
+        cgrignore.write_text(encoding="utf-8", data="!vendor\n!node_modules\n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -100,7 +102,9 @@ class TestNegationSyntax:
 
     def test_mixed_exclude_and_negation(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("custom_build\n!vendor\ntemp_data\n!node_modules\n")
+        cgrignore.write_text(
+            encoding="utf-8", data="custom_build\n!vendor\ntemp_data\n!node_modules\n"
+        )
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -109,7 +113,7 @@ class TestNegationSyntax:
 
     def test_negation_strips_leading_whitespace(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("  !vendor  \n")
+        cgrignore.write_text(encoding="utf-8", data="  !vendor  \n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -119,7 +123,7 @@ class TestNegationSyntax:
         self, temp_repo: Path
     ) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("!  foo\n!   bar  \n")
+        cgrignore.write_text(encoding="utf-8", data="!  foo\n!   bar  \n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -127,7 +131,7 @@ class TestNegationSyntax:
 
     def test_returns_cgrignore_patterns_type(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("exclude\n!unignore\n")
+        cgrignore.write_text(encoding="utf-8", data="exclude\n!unignore\n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -142,7 +146,7 @@ class TestCgrignoreIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("vendor\ncustom_cache\n")
+        cgrignore.write_text(encoding="utf-8", data="vendor\ncustom_cache\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -157,7 +161,7 @@ class TestCgrignoreIntegration:
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("from_cgrignore\n")
+        cgrignore.write_text(encoding="utf-8", data="from_cgrignore\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path, cli_excludes=["from_cli"])
@@ -181,7 +185,7 @@ class TestCgrignoreIntegration:
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("my_custom_dir\n")
+        cgrignore.write_text(encoding="utf-8", data="my_custom_dir\n")
         mock_ask.return_value = "none"
 
         prompt_for_unignored_directories(tmp_path)
@@ -195,7 +199,7 @@ class TestCgrignoreIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text(".git\nvendor\n")
+        cgrignore.write_text(encoding="utf-8", data=".git\nvendor\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -213,7 +217,7 @@ class TestNegationIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("custom_exclude\n!vendor\n")
+        cgrignore.write_text(encoding="utf-8", data="custom_exclude\n!vendor\n")
         mock_ask.return_value = "none"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -230,7 +234,7 @@ class TestNegationIntegration:
         (tmp_path / ".git").mkdir()
         (tmp_path / "node_modules").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("!vendor\n")
+        cgrignore.write_text(encoding="utf-8", data="!vendor\n")
         mock_ask.return_value = "1"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -240,7 +244,7 @@ class TestNegationIntegration:
 
     def test_unignore_only_returns_without_prompt(self, tmp_path: Path) -> None:
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("!vendor\n!node_modules\n")
+        cgrignore.write_text(encoding="utf-8", data="!vendor\n!node_modules\n")
 
         result = prompt_for_unignored_directories(tmp_path)
 
@@ -253,7 +257,7 @@ class TestNegationIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("custom\n!vendor\n")
+        cgrignore.write_text(encoding="utf-8", data="custom\n!vendor\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path)

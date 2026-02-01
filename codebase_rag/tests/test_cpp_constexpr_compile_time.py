@@ -25,7 +25,8 @@ def test_basic_constexpr(
     """Test basic constexpr functions and variables."""
     test_file = cpp_constexpr_project / "basic_constexpr.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <array>
 #include <string_view>
@@ -324,7 +325,7 @@ void demonstrateBasicConstexpr() {
     testBasicConstexprFeatures();
     demonstrateCompileTimeVsRuntime();
 }
-"""
+""",
     )
 
     run_updater(cpp_constexpr_project, mock_ingestor)
@@ -366,7 +367,8 @@ def test_constexpr_if_and_templates(
     """Test constexpr if and template metaprogramming."""
     test_file = cpp_constexpr_project / "constexpr_if_templates.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <type_traits>
 #include <string>
@@ -637,7 +639,7 @@ void testConstexprIfAndTemplates() {
 void demonstrateConstexprIfAndTemplates() {
     testConstexprIfAndTemplates();
 }
-"""
+""",
     )
 
     run_updater(cpp_constexpr_project, mock_ingestor)
@@ -663,7 +665,8 @@ def test_cpp_constexpr_comprehensive(
     """Comprehensive test ensuring all constexpr and compile-time patterns create proper relationships."""
     test_file = cpp_constexpr_project / "comprehensive_constexpr.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive constexpr and compile-time programming demonstration
 #include <iostream>
 #include <array>
@@ -764,7 +767,7 @@ void demonstrateComprehensiveConstexpr() {
     ComprehensiveConstexprDemo demo;
     demo.demonstrateComprehensiveConstexpr();
 }
-"""
+""",
     )
 
     run_updater(cpp_constexpr_project, mock_ingestor)

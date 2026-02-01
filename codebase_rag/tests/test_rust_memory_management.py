@@ -12,15 +12,20 @@ def rust_memory_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_memory_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_memory_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Memory management test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Memory management test crate"
+    )
 
     return project_path
 
@@ -32,7 +37,8 @@ def test_ownership_borrowing_basic(
     """Test basic ownership and borrowing patterns."""
     test_file = rust_memory_project / "ownership_basic.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 fn take_ownership(s: String) {
     println!("{}", s);
 }
@@ -61,7 +67,7 @@ fn main() {
 
     let s4 = return_ownership();
 }
-"""
+""",
     )
 
     run_updater(rust_memory_project, mock_ingestor)
@@ -84,7 +90,8 @@ def test_lifetimes_explicit(
     """Test explicit lifetime annotations."""
     test_file = rust_memory_project / "lifetimes.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
     if x.len() > y.len() {
         x
@@ -119,7 +126,7 @@ impl<'a> ImportantExcerpt<'a> {
         self.part
     }
 }
-"""
+""",
     )
 
     run_updater(rust_memory_project, mock_ingestor)
@@ -142,7 +149,8 @@ def test_smart_pointers(
     """Test smart pointer usage (Box, Rc, RefCell, etc.)."""
     test_file = rust_memory_project / "smart_pointers.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -179,7 +187,7 @@ fn create_list() -> List {
     use List::{Cons, Nil};
     Cons(1, Box::new(Cons(2, Box::new(Cons(3, Box::new(Nil))))))
 }
-"""
+""",
     )
 
     run_updater(rust_memory_project, mock_ingestor)
@@ -200,7 +208,8 @@ def test_reference_counting(
     """Test reference counting patterns."""
     test_file = rust_memory_project / "reference_counting.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 
@@ -237,7 +246,7 @@ fn create_tree_with_cycles() {
         leaf.parent.borrow().upgrade()
     );
 }
-"""
+""",
     )
 
     run_updater(rust_memory_project, mock_ingestor)
@@ -258,7 +267,8 @@ def test_drop_trait_cleanup(
     """Test Drop trait implementation for cleanup."""
     test_file = rust_memory_project / "drop_cleanup.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 struct CustomSmartPointer {
     data: String,
 }
@@ -287,7 +297,7 @@ fn early_drop() {
     drop(c);
     println!("CustomSmartPointer dropped before the end of main.");
 }
-"""
+""",
     )
 
     run_updater(rust_memory_project, mock_ingestor)
@@ -308,7 +318,8 @@ def test_unsafe_code_patterns(
     """Test unsafe code patterns and raw pointers."""
     test_file = rust_memory_project / "unsafe_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 fn raw_pointers() {
     let mut num = 5;
 
@@ -360,7 +371,7 @@ unsafe impl Foo for Bar {
         println!("Implementing dangerous method");
     }
 }
-"""
+""",
     )
 
     run_updater(rust_memory_project, mock_ingestor)
@@ -381,7 +392,8 @@ def test_memory_layout_optimization(
     """Test memory layout and optimization patterns."""
     test_file = rust_memory_project / "memory_layout.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::mem;
 
 #[repr(C)]
@@ -432,7 +444,7 @@ fn union_example() {
         println!("Union as float: {}", u.f);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_memory_project, mock_ingestor)

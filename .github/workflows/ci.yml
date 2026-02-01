@@ -1,0 +1,268 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --group dev
+
+      - name: Run ruff check
+        run: |
+          uv run ruff check . --output-format=github
+
+      - name: Run ruff format check
+        run: |
+          uv run ruff format --check .
+
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full --group dev
+
+      - name: Run type checking
+        run: |
+          uv run ty check codebase_rag --exclude codebase_rag/tests/
+
+  test-unit:
+    name: Unit Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full --extra test --extra semantic --group dev
+
+      - name: Run unit tests (parallel)
+        run: |
+          uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: unit-${{ matrix.os }}
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  test-integration:
+    name: Integration Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Start Memgraph (Linux via Docker)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          docker run -d --name memgraph -p 7687:7687 memgraph/memgraph-platform:latest
+          echo "Waiting for Memgraph to start..."
+          for i in {1..30}; do
+            if docker exec memgraph echo "SELECT 1;" 2>/dev/null; then
+              echo "Memgraph is ready!"
+              break
+            fi
+            echo "Attempt $i/30: Memgraph not ready yet..."
+            sleep 2
+          done
+
+      - name: Start Memgraph (Windows/macOS)
+        if: matrix.os != 'ubuntu-latest'
+        run: |
+          docker run -d --name memgraph -p 7687:7687 memgraph/memgraph-platform:latest
+          echo "Waiting for Memgraph to start..."
+          for i in {1..30}; do
+            if docker exec memgraph echo "SELECT 1;" 2>/dev/null; then
+              echo "Memgraph is ready!"
+              break
+            fi
+            echo "Attempt $i/30: Memgraph not ready yet..."
+            sleep 2
+          done
+        shell: bash
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full --extra test --extra semantic --group dev
+
+      - name: Run integration tests
+        env:
+          MEMGRAPH_HOST: localhost
+          MEMGRAPH_PORT: 7687
+        run: |
+          uv run pytest -m "integration" -v --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: integration-${{ matrix.os }}
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Stop Memgraph
+        if: always()
+        run: |
+          docker stop memgraph || true
+          docker rm memgraph || true
+        shell: bash
+
+  pr-title-check:
+    name: PR Title Convention
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+
+    steps:
+      - name: Check PR title format
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            build
+            chore
+            ci
+            docs
+            feat
+            fix
+            perf
+            refactor
+            prefactor
+            revert
+            style
+            test
+          requireScope: false
+          subjectPattern: ^.+$
+          subjectPatternError: |
+            The subject "{subject}" found in the pull request title "{title}"
+            didn't match the configured pattern. Please ensure that the subject
+            starts with a lowercase letter.
+          wip: false
+          validateSingleCommit: false
+          validateSingleCommitMatchesPrTitle: false
+
+  all-checks-pass:
+    name: All Checks Pass
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, typecheck, test-unit, test-integration]
+    timeout-minutes: 5
+
+    steps:
+      - name: Check all jobs
+        run: |
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Typecheck: ${{ needs.typecheck.result }}"
+          echo "Unit Tests: ${{ needs.test-unit.result }}"
+          echo "Integration Tests: ${{ needs.test-integration.result }}"
+
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "❌ Lint failed"
+            exit 1
+          fi
+          if [[ "${{ needs.typecheck.result }}" != "success" ]]; then
+            echo "❌ Type check failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-unit.result }}" != "success" ]]; then
+            echo "❌ Unit tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-integration.result }}" != "success" ]]; then
+            echo "❌ Integration tests failed"
+            exit 1
+          fi
+          echo "✅ All checks passed!"

@@ -23,13 +23,14 @@ class TestCommonJSDestructuringImports:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "utils.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const { readFile, writeFile } = require('fs');
 
 function processFile(path) {
     return readFile(path);
 }
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -43,13 +44,14 @@ function processFile(path) {
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "aliased.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const { readFile: rf, writeFile: wf } = require('fs');
 
 function read(path) {
     return rf(path);
 }
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -68,13 +70,14 @@ class TestCommonJSExports:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "exports_dot.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 exports.myHelper = function() {
     return 'helper';
 };
 
 exports.anotherHelper = () => 'arrow helper';
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -94,13 +97,14 @@ exports.anotherHelper = () => 'arrow helper';
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "module_exports.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 module.exports.create = function(data) {
     return { ...data, id: Date.now() };
 };
 
 module.exports.update = (id, data) => ({ id, ...data });
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -123,10 +127,11 @@ class TestES6Exports:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "es6_const.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export const add = (a, b) => a + b;
 export const subtract = (a, b) => a - b;
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -146,7 +151,8 @@ export const subtract = (a, b) => a - b;
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "es6_func.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export function multiply(a, b) {
     return a * b;
 }
@@ -154,7 +160,7 @@ export function multiply(a, b) {
 export function divide(a, b) {
     return a / b;
 }
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -174,13 +180,14 @@ export function divide(a, b) {
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "es6_generator.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export function* range(start, end) {
     for (let i = start; i < end; i++) {
         yield i;
     }
 }
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -202,7 +209,8 @@ class TestMixedModuleSystems:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "mixed.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const { EventEmitter } = require('events');
 
 export function createEmitter() {
@@ -212,7 +220,7 @@ export function createEmitter() {
 exports.legacyCreate = function() {
     return new EventEmitter();
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -235,7 +243,8 @@ class TestNestedRequires:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "nested_require.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 function loadModule(name) {
     const mod = require(name);
     return mod;
@@ -245,7 +254,7 @@ function process() {
     const { join } = require('path');
     return join('a', 'b');
 }
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -272,13 +281,14 @@ class TestTypeScriptModules:
         self, temp_ts_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_ts_project / "utils.ts").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export function greet(name: string): string {
     return `Hello, ${name}!`;
 }
 
 export const calculate = (a: number, b: number): number => a + b;
-"""
+""",
         )
 
         run_updater(temp_ts_project, mock_ingestor)
@@ -298,7 +308,8 @@ export const calculate = (a: number, b: number): number => a + b;
         self, temp_ts_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_ts_project / "async_utils.ts").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export async function fetchData(url: string): Promise<string> {
     return fetch(url).then(r => r.text());
 }
@@ -307,7 +318,7 @@ export const fetchJson = async <T>(url: string): Promise<T> => {
     const response = await fetch(url);
     return response.json();
 };
-"""
+""",
         )
 
         run_updater(temp_ts_project, mock_ingestor)
@@ -327,7 +338,8 @@ export const fetchJson = async <T>(url: string): Promise<T> => {
         self, temp_ts_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_ts_project / "service.ts").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export class UserService {
     constructor(private db: Database) {}
 
@@ -339,7 +351,7 @@ export class UserService {
         return this.db.create(data);
     }
 }
-"""
+""",
         )
 
         run_updater(temp_ts_project, mock_ingestor)
@@ -361,14 +373,15 @@ class TestMultipleDestructuredImports:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "multi_import.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const { readFile, writeFile, appendFile } = require('fs');
 const { join, resolve, dirname } = require('path');
 
 function processFiles(files) {
     return files.map(f => join(dirname(f), 'processed'));
 }
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -382,7 +395,8 @@ function processFiles(files) {
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "mixed_import.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const fs = require('fs');
 const { join } = require('path');
 const { EventEmitter } = require('events');
@@ -390,7 +404,7 @@ const { EventEmitter } = require('events');
 function readAndJoin(file, dir) {
     return join(dir, fs.readFileSync(file, 'utf8'));
 }
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -409,7 +423,8 @@ class TestExportConstFunctionExpression:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "func_expr.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export const handler = function(event) {
     return { statusCode: 200, body: event };
 };
@@ -418,7 +433,7 @@ export const asyncHandler = async function(event) {
     await Promise.resolve();
     return event;
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -441,7 +456,8 @@ class TestAsyncExports:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "async_exports.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export async function fetchUsers() {
     return await fetch('/users').then(r => r.json());
 }
@@ -453,7 +469,7 @@ exports.legacyFetch = async function() {
 module.exports.anotherFetch = async (url) => {
     return await fetch(url).then(r => r.json());
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -479,7 +495,9 @@ class TestLargeFileWithManyExports:
         exports_code = "\n".join(
             [f"export const func{i} = (x) => x + {i};" for i in range(20)]
         )
-        (temp_js_project / "many_exports.js").write_text(exports_code)
+        (temp_js_project / "many_exports.js").write_text(
+            encoding="utf-8", data=exports_code
+        )
 
         run_updater(temp_js_project, mock_ingestor)
 
@@ -500,7 +518,8 @@ class TestCommonJSObjectExports:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "object_exports.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 module.exports = {
     create: function(data) {
         return { id: 1, ...data };
@@ -510,7 +529,7 @@ module.exports = {
         return { deleted: id };
     }
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -530,14 +549,15 @@ class TestDeepNestedModulePaths:
         nested_dir.mkdir(parents=True)
 
         (nested_dir / "string.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const { join } = require('path');
 const { readFileSync } = require('fs');
 
 exports.readAndJoin = function(file, dir) {
     return join(dir, readFileSync(file, 'utf8'));
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -556,7 +576,8 @@ class TestSpecialCharactersInExports:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "special_names.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 exports.$helper = function() {
     return 'dollar helper';
 };
@@ -566,7 +587,7 @@ exports._privateHelper = () => 'private helper';
 exports.helper123 = function() {
     return 'numbered helper';
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -587,7 +608,7 @@ exports.helper123 = function() {
 @pytest.mark.skipif(not JS_AVAILABLE, reason="tree-sitter-javascript not available")
 class TestEmptyAndMinimalFiles:
     def test_empty_file(self, temp_js_project: Path, mock_ingestor: MagicMock) -> None:
-        (temp_js_project / "empty.js").write_text("")
+        (temp_js_project / "empty.js").write_text(encoding="utf-8", data="")
 
         run_updater(temp_js_project, mock_ingestor)
 
@@ -595,13 +616,14 @@ class TestEmptyAndMinimalFiles:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "comments_only.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 // This is a comment
 /* This is a block comment */
 /**
  * This is a JSDoc comment
  */
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -610,11 +632,12 @@ class TestEmptyAndMinimalFiles:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "imports_only.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -631,7 +654,8 @@ class TestIIFEPatterns:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "iife.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 (function() {
     exports.init = function() {
         return 'initialized';
@@ -641,7 +665,7 @@ class TestIIFEPatterns:
 (() => {
     exports.setup = () => 'setup complete';
 })();
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -664,7 +688,8 @@ class TestTypeScriptInterfaces:
         self, temp_ts_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_ts_project / "types.ts").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export interface User {
     id: string;
     name: string;
@@ -675,7 +700,7 @@ export type UserCreator = (data: Partial<User>) => User;
 export function createUser(data: Partial<User>): User {
     return { id: '1', name: 'default', ...data };
 }
-"""
+""",
         )
 
         run_updater(temp_ts_project, mock_ingestor)
@@ -697,7 +722,8 @@ class TestTypeScriptDecorators:
         self, temp_ts_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_ts_project / "decorated.ts").write_text(
-            """
+            encoding="utf-8",
+            data="""
 function Injectable() {
     return function(target: any) {};
 }
@@ -708,7 +734,7 @@ export class ApiService {
         return Promise.resolve('data');
     }
 }
-"""
+""",
         )
 
         run_updater(temp_ts_project, mock_ingestor)

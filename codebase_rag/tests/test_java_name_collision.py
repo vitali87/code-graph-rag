@@ -42,7 +42,8 @@ def test_name_collision_prefers_explicit_import(
         / "Helper.java"
     )
     utils_helper.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.utils;
 
 public class Helper {
@@ -50,7 +51,7 @@ public class Helper {
         return "From utils package";
     }
 }
-"""
+""",
     )
 
     other_helper = (
@@ -64,7 +65,8 @@ public class Helper {
         / "Helper.java"
     )
     other_helper.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.other;
 
 public class Helper {
@@ -72,7 +74,7 @@ public class Helper {
         return "From other package";
     }
 }
-"""
+""",
     )
 
     service = (
@@ -86,7 +88,8 @@ public class Helper {
         / "Service.java"
     )
     service.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.app;
 
 import com.example.utils.Helper;
@@ -98,7 +101,7 @@ public class Service {
         helper.utilsMethod();
     }
 }
-"""
+""",
     )
 
     run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")
@@ -151,7 +154,8 @@ def test_name_collision_prefers_same_package(
         / "Helper.java"
     )
     app_helper.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.app;
 
 public class Helper {
@@ -159,7 +163,7 @@ public class Helper {
         return "From app package";
     }
 }
-"""
+""",
     )
 
     other_helper = (
@@ -173,7 +177,8 @@ public class Helper {
         / "Helper.java"
     )
     other_helper.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.other;
 
 public class Helper {
@@ -181,7 +186,7 @@ public class Helper {
         return "From other package";
     }
 }
-"""
+""",
     )
 
     service = (
@@ -195,7 +200,8 @@ public class Helper {
         / "Service.java"
     )
     service.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.app;
 
 public class Service {
@@ -205,7 +211,7 @@ public class Service {
         helper.appMethod();
     }
 }
-"""
+""",
     )
 
     run_updater(java_collision_project, mock_ingestor, skip_if_missing="java")

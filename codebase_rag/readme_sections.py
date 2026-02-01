@@ -55,7 +55,7 @@ def format_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
 
 def extract_makefile_commands(makefile_path: Path) -> list[MakeCommand]:
     commands: list[MakeCommand] = []
-    content = makefile_path.read_text()
+    content = makefile_path.read_text(encoding="utf-8")
     for line in content.splitlines():
         if match := MAKEFILE_PATTERN.match(line):
             commands.append(
@@ -177,14 +177,16 @@ def _load_pypi_cache() -> dict[str, tuple[str, float]]:
     if not PYPI_CACHE_FILE.exists():
         return {}
     try:
-        data = json.loads(PYPI_CACHE_FILE.read_text())
+        data = json.loads(PYPI_CACHE_FILE.read_text(encoding="utf-8"))
         return {k: (v[0], v[1]) for k, v in data.items()}
     except (json.JSONDecodeError, KeyError, IndexError):
         return {}
 
 
 def _save_pypi_cache(cache: dict[str, tuple[str, float]]) -> None:
-    PYPI_CACHE_FILE.write_text(json.dumps({k: list(v) for k, v in cache.items()}))
+    PYPI_CACHE_FILE.write_text(
+        json.dumps({k: list(v) for k, v in cache.items()}), encoding="utf-8"
+    )
 
 
 def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -> str:

@@ -1,0 +1,107 @@
+name: ❓ Question
+description: Ask a question about using Graph-Code
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for your question! For general discussions or open-ended questions, consider using [GitHub Discussions](https://github.com/vitali87/code-graph-rag/discussions).
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Ask your question clearly and concisely
+      placeholder: What do you want to know?
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What I'm Trying to Achieve
+      description: Describe what you're trying to accomplish
+      placeholder: I'm trying to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've Tried
+      description: List the steps or approaches you've already attempted
+      placeholder: |
+        1. First I tried...
+        2. Then I attempted...
+        3. I also looked at...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - WSL
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: Output of `python --version`
+      placeholder: "3.12.0"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Graph-Code Version
+      description: Version or commit hash
+      placeholder: "0.1.0 or commit hash"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation Method
+      options:
+        - uv
+        - pip
+        - docker
+        - from source
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context/Code
+      description: If applicable, share relevant code snippets, commands, or configuration
+      render: shell
+      placeholder: |
+        # Example command or code
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Information
+      description: Any other context, error messages, or screenshots that might help
+      placeholder: Add any other context here
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and discussions
+          required: true
+        - label: This is a question, not a bug report (use Bug Report template for bugs)
+          required: true

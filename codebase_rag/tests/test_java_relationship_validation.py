@@ -41,7 +41,8 @@ def test_composition_and_aggregation_relationships(
         / "CompositionExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.List;
@@ -126,7 +127,7 @@ public class Car {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
@@ -153,7 +154,8 @@ def test_dependency_injection_relationships(
         / "DependencyInjection.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Service interfaces
@@ -255,7 +257,7 @@ class Application {
         userService.sendNotification("john@example.com", "Your account is ready!"); // CALLS UserService.sendNotification()
     }
 }
-"""
+""",
     )
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
@@ -308,7 +310,8 @@ def test_cross_package_relationships(
         / "User.java"
     )
     model_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.model;
 
 public class User {
@@ -351,7 +354,7 @@ public class User {
         return name + " (" + email + ")";
     }
 }
-"""
+""",
     )
 
     service_file = (
@@ -365,7 +368,8 @@ public class User {
         / "UserRepository.java"
     )
     service_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.service;
 
 import com.example.model.User;
@@ -436,7 +440,7 @@ public class UserRepository {
         return "User not found";
     }
 }
-"""
+""",
     )
 
     controller_file = (
@@ -449,7 +453,8 @@ public class UserRepository {
         / "UserController.java"
     )
     controller_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import com.example.model.User;
@@ -500,7 +505,7 @@ public class UserController {
         return result.toString();
     }
 }
-"""
+""",
     )
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
@@ -546,7 +551,8 @@ def test_method_overriding_relationships(
         / "OverrideExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 abstract class Shape {
@@ -668,7 +674,7 @@ public class ShapeCalculator {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
@@ -699,7 +705,8 @@ def test_static_method_and_field_relationships(
         / "StaticExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 class MathUtils {
@@ -810,7 +817,7 @@ public class StaticUsageExample {
         System.out.println(message + ": " + result);
     }
 }
-"""
+""",
     )
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")
@@ -835,7 +842,8 @@ def test_inner_class_relationships(
         / "InnerClassExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class OuterClass {
@@ -947,7 +955,7 @@ public class OuterClass {
         demonstrateAnonymousClass(); // CALLS method that creates anonymous class
     }
 }
-"""
+""",
     )
 
     run_updater(java_relationships_project, mock_ingestor, skip_if_missing="java")

@@ -9,7 +9,9 @@ def test_string_pattern_matching(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_patterns"
     project.mkdir()
 
-    (project / "patterns.lua").write_text("""
+    (project / "patterns.lua").write_text(
+        encoding="utf-8",
+        data="""
 local pattern_utils = {}
 
 function pattern_utils.match_pattern(text, pattern)
@@ -86,7 +88,8 @@ local numbers = extract_numbers("I have 10 cats and 5 dogs")
 local positions = find_word_positions("hello world hello", "hello")
 
 return pattern_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -110,7 +113,9 @@ def test_string_manipulation_functions(
     project = temp_repo / "lua_string_manip"
     project.mkdir()
 
-    (project / "string_manip.lua").write_text("""
+    (project / "string_manip.lua").write_text(
+        encoding="utf-8",
+        data="""
 local string_manip = {}
 
 function string_manip.trim_whitespace(input)
@@ -207,7 +212,8 @@ local replaced = replace_patterns("hello 123 world")
 local formatted_text = string_manip.format_string("Value: %d, Percent: %.2f%%", 42, 87.5)
 
 return string_manip
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -229,7 +235,9 @@ def test_complex_pattern_operations(temp_repo: Path, mock_ingestor: MagicMock) -
     project = temp_repo / "lua_complex_patterns"
     project.mkdir()
 
-    (project / "complex_patterns.lua").write_text("""
+    (project / "complex_patterns.lua").write_text(
+        encoding="utf-8",
+        data="""
 local complex_patterns = {}
 
 function complex_patterns.extract_with_pattern(text, pattern)
@@ -312,7 +320,8 @@ local safe_input = sanitize_input("user[input]")
 local csv_fields = parse_csv_line("name, age, city")
 
 return complex_patterns
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -334,7 +343,9 @@ def test_unicode_and_encoding(temp_repo: Path, mock_ingestor: MagicMock) -> None
     project = temp_repo / "lua_unicode"
     project.mkdir()
 
-    (project / "unicode.lua").write_text("""
+    (project / "unicode.lua").write_text(
+        encoding="utf-8",
+        data="""
 local unicode_utils = {}
 local utf8 = require("utf8")
 
@@ -398,7 +409,8 @@ local result = handle_unicode("Hello 🌍")
 local valid_utf8 = unicode_utils.get_utf8_length("Hello 🌍")
 
 return unicode_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
