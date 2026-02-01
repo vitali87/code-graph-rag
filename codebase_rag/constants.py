@@ -19,6 +19,10 @@ class Provider(StrEnum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GOOGLE = "google"
+    AZURE = "azure"
+    COHERE = "cohere"
+    LOCAL = "local"
+    VLLM = "vllm"
 
 
 class Color(StrEnum):
@@ -46,6 +50,8 @@ class FileAction(StrEnum):
     READ = "read"
     EDIT = "edit"
 
+
+DEFAULT_MODEL_ROLE = "model"
 
 BINARY_EXTENSIONS: frozenset[str] = frozenset(
     {

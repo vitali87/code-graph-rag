@@ -34,6 +34,28 @@ app = typer.Typer(
 )
 
 
+def validate_models_early() -> None:
+    try:
+        orchestrator_config = settings.active_orchestrator_config
+        orchestrator_config.validate_api_key(cs.ModelRole.ORCHESTRATOR)
+
+        cypher_config = settings.active_cypher_config
+        cypher_config.validate_api_key(cs.ModelRole.CYPHER)
+    except ValueError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
+
+
+def _update_and_validate_models(orchestrator: str | None, cypher: str | None) -> None:
+    try:
+        update_model_settings(orchestrator, cypher)
+    except ValueError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
+
+    validate_models_early()
+
+
 @app.callback()
 def _global_options(
     quiet: bool = typer.Option(
@@ -118,7 +140,7 @@ def start(
         )
         raise typer.Exit(1)
 
-    update_model_settings(orchestrator, cypher)
+    _update_and_validate_models(orchestrator, cypher)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -312,6 +334,8 @@ def optimize(
     app_context.session.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
+
+    _update_and_validate_models(orchestrator, cypher)
 
     try:
         asyncio.run(
