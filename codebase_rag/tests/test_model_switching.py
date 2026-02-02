@@ -417,7 +417,7 @@ class TestCreateModelFromString:
         self, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
-        mock_settings.LOCAL_MODEL_ENDPOINT = "http://localhost:11434/v1"
+        mock_settings.ollama_endpoint = "http://localhost:11434/v1"
 
         with patch("codebase_rag.main.get_provider_from_config") as mock_get_provider:
             mock_provider = MagicMock()
