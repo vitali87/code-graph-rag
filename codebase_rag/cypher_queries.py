@@ -51,6 +51,11 @@ LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
 
+CYPHER_EXAMPLE_CLASS_METHODS = f"""MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
+WHERE c.qualified_name ENDS WITH '.UserService'
+RETURN m.name AS name, m.qualified_name AS qualified_name
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
+
 CYPHER_EXPORT_NODES = """
 MATCH (n)
 RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
