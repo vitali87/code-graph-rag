@@ -66,7 +66,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --group dev
+          uv sync --extra treesitter-full --extra semantic --group dev
 
       - name: Run type checking
         run: |
@@ -108,7 +108,7 @@ jobs:
           uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
-        if: always()
+        if: always() && secrets.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
@@ -164,7 +164,7 @@ jobs:
           uv run pytest -m "integration" -v --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
-        if: always()
+        if: always() && secrets.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
