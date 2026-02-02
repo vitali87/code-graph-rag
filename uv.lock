@@ -1080,15 +1080,7 @@ wheels = [
 
 [[package]]
 name = "graph-code"
-<<<<<<< HEAD
-<<<<<<< HEAD
-version = "0.0.46"
-=======
-version = "0.0.40"
->>>>>>> f71973c (fix(tests,ci): resolve 65 test failures and add cross-platform CI)
-=======
-version = "0.0.40"
->>>>>>> ce96cc8 (fix(tests,ci): resolve 65 test failures and add cross-platform CI)
+version = "0.0.48"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
