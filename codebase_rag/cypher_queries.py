@@ -53,7 +53,7 @@ CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as na
 
 CYPHER_EXAMPLE_CLASS_METHODS = f"""MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
 WHERE c.qualified_name ENDS WITH '.UserService'
-RETURN m.name AS name, m.qualified_name AS qualified_name
+RETURN m.name AS name, m.qualified_name AS qualified_name, labels(m) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXPORT_NODES = """
