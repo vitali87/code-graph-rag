@@ -553,7 +553,7 @@ def _create_model_from_string(
         config = ModelConfig(
             provider=provider_name,
             model_id=model_id,
-            endpoint=str(settings.LOCAL_MODEL_ENDPOINT),
+            endpoint=settings.ollama_endpoint,
             api_key=cs.DEFAULT_API_KEY,
         )
     else:
@@ -708,7 +708,7 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
     kwargs = current_config.to_update_kwargs()
 
     if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
-        kwargs[cs.FIELD_ENDPOINT] = str(settings.LOCAL_MODEL_ENDPOINT)
+        kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
         kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
 
     set_method(provider, model, **kwargs)

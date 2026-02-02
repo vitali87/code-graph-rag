@@ -6,7 +6,7 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import AnyHttpUrl, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -164,7 +164,11 @@ class AppConfig(BaseSettings):
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
-    LOCAL_MODEL_ENDPOINT: AnyHttpUrl = AnyHttpUrl("http://localhost:11434/v1")
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+
+    @property
+    def ollama_endpoint(self) -> str:
+        return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
@@ -273,7 +277,7 @@ class AppConfig(BaseSettings):
         return ModelConfig(
             provider=cs.Provider.OLLAMA,
             model_id=cs.DEFAULT_MODEL,
-            endpoint=str(self.LOCAL_MODEL_ENDPOINT),
+            endpoint=self.ollama_endpoint,
             api_key=cs.DEFAULT_API_KEY,
         )
 

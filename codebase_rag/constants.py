@@ -142,8 +142,6 @@ class GoogleProviderType(StrEnum):
 
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
-OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
-OLLAMA_DEFAULT_ENDPOINT = f"{OLLAMA_DEFAULT_BASE_URL}/v1"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
