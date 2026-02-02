@@ -5,7 +5,7 @@ import pytest
 
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
-pytestmark = [pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
 
 @pytest.fixture(params=["asyncio"])

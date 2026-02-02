@@ -11,7 +11,7 @@ from codebase_rag.tools.shell_command import (
     create_shell_command_tool,
 )
 
-pytestmark = [pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
 
 @pytest.fixture(params=["asyncio"])

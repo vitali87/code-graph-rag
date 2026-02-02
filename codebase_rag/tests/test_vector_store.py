@@ -26,10 +26,20 @@ def mock_qdrant_client() -> MagicMock:
 def reset_global_client() -> Generator[None, None, None]:
     import codebase_rag.vector_store as vs
 
-    if has_qdrant_client():
+    if has_qdrant_client() and vs._CLIENT is not None:
+        try:
+            vs._CLIENT.close()
+        except Exception:
+            pass
         vs._CLIENT = None
+
     yield
-    if has_qdrant_client():
+
+    if has_qdrant_client() and vs._CLIENT is not None:
+        try:
+            vs._CLIENT.close()
+        except Exception:
+            pass
         vs._CLIENT = None
 
 
@@ -62,6 +72,10 @@ def integration_client(
     yield client
 
     vs._CLIENT = None  # ty: ignore[invalid-assignment]
+    try:
+        client.close()
+    except Exception:
+        pass
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
