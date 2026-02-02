@@ -234,7 +234,7 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     {CYPHER_EXAMPLE_LIMIT_ONE}
     ```
 
-*   **Natural Language:** "What methods does UserService have?"
+*   **Natural Language:** "What methods does UserService have?" or "Show me methods in UserService" or "List UserService methods"
 *   **Cypher Query (Use ENDS WITH to match class by short name):**
     ```cypher
     {CYPHER_EXAMPLE_CLASS_METHODS}
