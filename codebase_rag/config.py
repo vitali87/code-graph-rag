@@ -168,7 +168,7 @@ class AppConfig(BaseSettings):
 
     @property
     def ollama_endpoint(self) -> str:
-        return f"{self.OLLAMA_BASE_URL}/v1"
+        return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
