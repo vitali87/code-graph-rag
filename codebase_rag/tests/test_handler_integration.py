@@ -24,7 +24,9 @@ class TestHandlerDelegationInPipeline:
     ) -> None:
         project_path = temp_repo / "js_handler_test"
         project_path.mkdir()
-        (project_path / "test.js").write_text("function foo() {}")
+        (project_path / "test.js").write_text(
+            encoding="utf-8", data="function foo() {}"
+        )
 
         parsers, queries = load_parsers()
         if cs.SupportedLanguage.JS not in parsers:
@@ -50,7 +52,9 @@ class TestHandlerDelegationInPipeline:
     ) -> None:
         project_path = temp_repo / "ts_handler_test"
         project_path.mkdir()
-        (project_path / "test.ts").write_text("function bar(): void {}")
+        (project_path / "test.ts").write_text(
+            encoding="utf-8", data="function bar(): void {}"
+        )
 
         parsers, queries = load_parsers()
         if cs.SupportedLanguage.TS not in parsers:
@@ -76,7 +80,7 @@ class TestHandlerDelegationInPipeline:
     ) -> None:
         project_path = temp_repo / "cpp_handler_test"
         project_path.mkdir()
-        (project_path / "test.cpp").write_text("void foo() {}")
+        (project_path / "test.cpp").write_text(encoding="utf-8", data="void foo() {}")
 
         parsers, queries = load_parsers()
         if cs.SupportedLanguage.CPP not in parsers:
@@ -95,7 +99,7 @@ class TestHandlerDelegationInPipeline:
     ) -> None:
         project_path = temp_repo / "rust_handler_test"
         project_path.mkdir()
-        (project_path / "test.rs").write_text("fn foo() {}")
+        (project_path / "test.rs").write_text(encoding="utf-8", data="fn foo() {}")
 
         parsers, queries = load_parsers()
         if cs.SupportedLanguage.RUST not in parsers:
@@ -115,7 +119,7 @@ class TestHandlerDelegationInPipeline:
         project_path = temp_repo / "java_handler_test"
         project_path.mkdir()
         (project_path / "Test.java").write_text(
-            "public class Test { public void foo() {} }"
+            encoding="utf-8", data="public class Test { public void foo() {} }"
         )
 
         parsers, queries = load_parsers()
@@ -135,7 +139,9 @@ class TestHandlerDelegationInPipeline:
     ) -> None:
         project_path = temp_repo / "lua_handler_test"
         project_path.mkdir()
-        (project_path / "test.lua").write_text("function foo() end")
+        (project_path / "test.lua").write_text(
+            encoding="utf-8", data="function foo() end"
+        )
 
         parsers, queries = load_parsers()
         if cs.SupportedLanguage.LUA not in parsers:
@@ -154,7 +160,7 @@ class TestHandlerDelegationInPipeline:
     ) -> None:
         project_path = temp_repo / "python_handler_test"
         project_path.mkdir()
-        (project_path / "test.py").write_text("def foo(): pass")
+        (project_path / "test.py").write_text(encoding="utf-8", data="def foo(): pass")
 
         parsers, queries = load_parsers()
         if cs.SupportedLanguage.PYTHON not in parsers:
@@ -173,8 +179,12 @@ class TestHandlerDelegationInPipeline:
     ) -> None:
         project_path = temp_repo / "multi_lang_handler_test"
         project_path.mkdir()
-        (project_path / "test.js").write_text("function jsFunc() {}")
-        (project_path / "test.py").write_text("def pyFunc(): pass")
+        (project_path / "test.js").write_text(
+            encoding="utf-8", data="function jsFunc() {}"
+        )
+        (project_path / "test.py").write_text(
+            encoding="utf-8", data="def pyFunc(): pass"
+        )
 
         parsers, queries = load_parsers()
         if cs.SupportedLanguage.JS not in parsers:
@@ -196,10 +206,11 @@ class TestJsTsHandlerIntegration:
         project_path = temp_repo / "js_standalone_func_test"
         project_path.mkdir()
         (project_path / "test.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 function standalone() { return 'standalone'; }
 const arrow = () => 'arrow';
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -218,12 +229,13 @@ const arrow = () => 'arrow';
         project_path = temp_repo / "js_object_literal_test"
         project_path.mkdir()
         (project_path / "test.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const calculator = {
     add(a, b) { return a + b; },
     subtract(a, b) { return a - b; }
 };
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -242,13 +254,14 @@ const calculator = {
         project_path = temp_repo / "js_export_inside_func_test"
         project_path.mkdir()
         (project_path / "test.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 export function topLevel() { return 'top'; }
 
 function wrapper() {
     module.exports.inner = function() { return 'inner'; };
 }
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -267,12 +280,13 @@ function wrapper() {
         project_path = temp_repo / "js_class_test"
         project_path.mkdir()
         (project_path / "test.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 class Calculator {
     add(a, b) { return a + b; }
     subtract(a, b) { return a - b; }
 }
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -292,11 +306,12 @@ class TestCppHandlerIntegration:
         project_path = temp_repo / "cpp_lambda_test"
         project_path.mkdir()
         (project_path / "test.cpp").write_text(
-            """
+            encoding="utf-8",
+            data="""
 void process() {
     auto lambda = []() { return 42; };
 }
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -316,11 +331,12 @@ void process() {
         project_path = temp_repo / "cpp_namespace_test"
         project_path.mkdir()
         (project_path / "test.cpp").write_text(
-            """
+            encoding="utf-8",
+            data="""
 namespace MyNamespace {
     void myFunction() {}
 }
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -340,12 +356,13 @@ namespace MyNamespace {
         project_path = temp_repo / "cpp_template_base_test"
         project_path.mkdir()
         (project_path / "test.cpp").write_text(
-            """
+            encoding="utf-8",
+            data="""
 template<typename T>
 class Base {};
 
 class Derived : public Base<int> {};
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -365,13 +382,14 @@ class TestRustHandlerIntegration:
         project_path = temp_repo / "rust_func_test"
         project_path.mkdir()
         (project_path / "test.rs").write_text(
-            """
+            encoding="utf-8",
+            data="""
 fn standalone_function() -> i32 {
     42
 }
 
 pub fn public_function() {}
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -390,11 +408,12 @@ pub fn public_function() {}
         project_path = temp_repo / "rust_struct_test"
         project_path.mkdir()
         (project_path / "test.rs").write_text(
-            """
+            encoding="utf-8",
+            data="""
 struct MyStruct {
     field: i32,
 }
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -412,12 +431,13 @@ class TestJavaHandlerIntegration:
         project_path = temp_repo / "java_class_test"
         project_path.mkdir()
         (project_path / "Calculator.java").write_text(
-            """
+            encoding="utf-8",
+            data="""
 public class Calculator {
     public int add(int a, int b) { return a + b; }
     public int subtract(int a, int b) { return a - b; }
 }
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -437,7 +457,8 @@ class TestLuaHandlerIntegration:
         project_path = temp_repo / "lua_assigned_test"
         project_path.mkdir()
         (project_path / "test.lua").write_text(
-            """
+            encoding="utf-8",
+            data="""
 myFunc = function()
     return 42
 end
@@ -445,7 +466,7 @@ end
 function namedFunc()
     return 43
 end
-"""
+""",
         )
 
         parsers, queries = load_parsers()
@@ -464,7 +485,8 @@ end
         project_path = temp_repo / "lua_dot_index_test"
         project_path.mkdir()
         (project_path / "test.lua").write_text(
-            """
+            encoding="utf-8",
+            data="""
 local MyModule = {}
 
 MyModule.myMethod = function()
@@ -476,7 +498,7 @@ function MyModule.anotherMethod()
 end
 
 return MyModule
-"""
+""",
         )
 
         parsers, queries = load_parsers()

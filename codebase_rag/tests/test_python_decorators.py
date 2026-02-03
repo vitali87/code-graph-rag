@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -14,11 +16,12 @@ def decorator_project(tmp_path: Path) -> Path:
     project_path = tmp_path / "decorator_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     decorators_file = project_path / "decorators.py"
     decorators_file.write_text(
-        '''"""Module with various decorator patterns."""
+        encoding="utf-8",
+        data='''"""Module with various decorator patterns."""
 
 import functools
 from dataclasses import dataclass
@@ -96,7 +99,7 @@ class PropertyDecoratorExample:
         self._value = new_value
 
     @classmethod
-    def create_from_string(cls, data: str) -> "PropertyDecoratorExample":
+    def create_from_string(cls, data: str) -> PropertyDecoratorExample:
         """Class method with decorator."""
         return cls(int(data))
 
@@ -141,7 +144,7 @@ class ComplexDecoratedClass:
 
     @classmethod
     @retry(attempts=2)
-    def factory_method(cls, value: str) -> "ComplexDecoratedClass":
+    def factory_method(cls, value: str) -> ComplexDecoratedClass:
         """Class method with multiple decorators."""
         return cls(value)
 
@@ -151,7 +154,7 @@ class ComplexDecoratedClass:
 def complex_decorated_function(key: str, value: Any) -> dict:
     """Function with complex decorator arguments."""
     return {"key": key, "value": value}
-'''
+''',
     )
 
     return project_path

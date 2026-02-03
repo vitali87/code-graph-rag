@@ -12,7 +12,7 @@ from codebase_rag.utils.source_extraction import (
 class TestExtractSourceLines:
     def test_extracts_single_line(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\nline3\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\nline3\n")
 
         result = extract_source_lines(file_path, 2, 2)
 
@@ -20,7 +20,7 @@ class TestExtractSourceLines:
 
     def test_extracts_multiple_lines(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\nline3\nline4\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\nline3\nline4\n")
 
         result = extract_source_lines(file_path, 2, 3)
 
@@ -28,7 +28,7 @@ class TestExtractSourceLines:
 
     def test_extracts_all_lines(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\nline3\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\nline3\n")
 
         result = extract_source_lines(file_path, 1, 3)
 
@@ -36,7 +36,7 @@ class TestExtractSourceLines:
 
     def test_strips_trailing_whitespace(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("  code  \n  more  \n")
+        file_path.write_text(encoding="utf-8", data="  code  \n  more  \n")
 
         result = extract_source_lines(file_path, 1, 2)
 
@@ -51,7 +51,7 @@ class TestExtractSourceLines:
 
     def test_returns_none_for_zero_start_line(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\n")
+        file_path.write_text(encoding="utf-8", data="line1\n")
 
         result = extract_source_lines(file_path, 0, 1)
 
@@ -59,7 +59,7 @@ class TestExtractSourceLines:
 
     def test_returns_none_for_negative_start_line(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\n")
+        file_path.write_text(encoding="utf-8", data="line1\n")
 
         result = extract_source_lines(file_path, -1, 1)
 
@@ -67,7 +67,7 @@ class TestExtractSourceLines:
 
     def test_returns_none_for_zero_end_line(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\n")
+        file_path.write_text(encoding="utf-8", data="line1\n")
 
         result = extract_source_lines(file_path, 1, 0)
 
@@ -75,7 +75,7 @@ class TestExtractSourceLines:
 
     def test_returns_none_for_start_greater_than_end(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         result = extract_source_lines(file_path, 2, 1)
 
@@ -83,7 +83,7 @@ class TestExtractSourceLines:
 
     def test_returns_none_when_start_exceeds_file_length(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         result = extract_source_lines(file_path, 5, 6)
 
@@ -91,7 +91,7 @@ class TestExtractSourceLines:
 
     def test_returns_none_when_end_exceeds_file_length(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         result = extract_source_lines(file_path, 1, 10)
 
@@ -99,7 +99,7 @@ class TestExtractSourceLines:
 
     def test_handles_empty_file(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("")
+        file_path.write_text(encoding="utf-8", data="")
 
         result = extract_source_lines(file_path, 1, 1)
 
@@ -107,7 +107,7 @@ class TestExtractSourceLines:
 
     def test_preserves_indentation(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("def func():\n    return 42\n")
+        file_path.write_text(encoding="utf-8", data="def func():\n    return 42\n")
 
         result = extract_source_lines(file_path, 1, 2)
 
@@ -117,7 +117,7 @@ class TestExtractSourceLines:
 class TestExtractSourceWithFallback:
     def test_uses_line_extraction_when_no_ast_extractor(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         result = extract_source_with_fallback(file_path, 1, 2)
 
@@ -125,7 +125,7 @@ class TestExtractSourceWithFallback:
 
     def test_uses_ast_extractor_when_provided(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         def mock_ast_extractor(name: str, path: Path) -> str:
             return f"AST result for {name}"
@@ -140,7 +140,7 @@ class TestExtractSourceWithFallback:
         self, tmp_path: Path
     ) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         def mock_ast_extractor(name: str, path: Path) -> None:
             return None
@@ -155,7 +155,7 @@ class TestExtractSourceWithFallback:
         self, tmp_path: Path
     ) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         def mock_ast_extractor(name: str, path: Path) -> str:
             raise RuntimeError("AST extraction failed")
@@ -168,7 +168,7 @@ class TestExtractSourceWithFallback:
 
     def test_skips_ast_when_qualified_name_is_none(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
         ast_called = False
 
         def mock_ast_extractor(name: str, path: Path) -> str:
@@ -185,7 +185,7 @@ class TestExtractSourceWithFallback:
 
     def test_skips_ast_when_extractor_is_none(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text("line1\nline2\n")
+        file_path.write_text(encoding="utf-8", data="line1\nline2\n")
 
         result = extract_source_with_fallback(
             file_path, 1, 2, qualified_name="my.func", ast_extractor=None

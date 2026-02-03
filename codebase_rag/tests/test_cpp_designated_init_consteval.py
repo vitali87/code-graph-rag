@@ -25,7 +25,8 @@ def test_designated_initializers(
     """Test C++20 designated initializers."""
     test_file = cpp_designated_consteval_project / "designated_initializers.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -296,7 +297,7 @@ void demonstrateDesignatedInitializers() {
     testDesignatedInitWithArrays();
     testMixedInitializationStyles();
 }
-"""
+""",
     )
 
     run_updater(cpp_designated_consteval_project, mock_ingestor)
@@ -339,7 +340,8 @@ def test_consteval_immediate_functions(
     """Test C++20 consteval immediate functions."""
     test_file = cpp_designated_consteval_project / "consteval_functions.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <array>
@@ -647,7 +649,7 @@ void demonstrateConsteval() {
     testConstevalVsConstexpr();
     testConstevalMetaprogramming();
 }
-"""
+""",
     )
 
     run_updater(cpp_designated_consteval_project, mock_ingestor)
@@ -678,7 +680,8 @@ def test_lambda_init_captures(
     """Test C++14/17/20 lambda init captures and generalized capture."""
     test_file = cpp_designated_consteval_project / "lambda_init_captures.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <vector>
@@ -978,7 +981,7 @@ void demonstrateLambdaInitCaptures() {
     testGeneralizedCapture();
     testLambdaCapturePatterns();
 }
-"""
+""",
     )
 
     run_updater(cpp_designated_consteval_project, mock_ingestor)

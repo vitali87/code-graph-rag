@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -34,7 +36,7 @@ def js_parser() -> Parser | None:
 @pytest.fixture
 def definition_processor(
     temp_js_project: Path, mock_ingestor: MagicMock
-) -> "GraphUpdater":
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=mock_ingestor,
@@ -325,7 +327,8 @@ class TestPrototypeMethodIngestion:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "prototype_test.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 function Person(name) {
     this.name = name;
 }
@@ -337,7 +340,7 @@ Person.prototype.greet = function() {
 Person.prototype.farewell = function() {
     return 'Goodbye, ' + this.name;
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -358,7 +361,8 @@ Person.prototype.farewell = function() {
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "inheritance_test.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 function Animal(name) {
     this.name = name;
 }
@@ -378,7 +382,7 @@ Dog.prototype.constructor = Dog;
 Dog.prototype.bark = function() {
     return 'Woof!';
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -395,7 +399,8 @@ class TestObjectLiteralMethodIngestion:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "object_methods.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const calculator = {
     add(a, b) {
         return a + b;
@@ -407,7 +412,7 @@ const calculator = {
         return a * b;
     }
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -431,13 +436,14 @@ class TestArrowFunctionIngestion:
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "arrow_functions.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const utils = {
     double: (x) => x * 2,
     triple: (x) => x * 3,
     square: x => x * x
 };
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)
@@ -458,11 +464,12 @@ const utils = {
         self, temp_js_project: Path, mock_ingestor: MagicMock
     ) -> None:
         (temp_js_project / "assignment_arrows.js").write_text(
-            """
+            encoding="utf-8",
+            data="""
 const obj = {};
 obj.method1 = () => 'method1';
 obj.method2 = (x) => x * 2;
-"""
+""",
         )
 
         run_updater(temp_js_project, mock_ingestor)

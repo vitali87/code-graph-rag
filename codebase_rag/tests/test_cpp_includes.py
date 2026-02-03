@@ -19,18 +19,20 @@ def cpp_includes_project(temp_repo: Path) -> Path:
     (project_path / "external").mkdir()
 
     (project_path / "include" / "base.h").write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 class Base {
 public:
     virtual ~Base() = default;
     virtual void process() = 0;
 };
-"""
+""",
     )
 
     (project_path / "include" / "common" / "types.h").write_text(
-        """
+        encoding="utf-8",
+        data="""
 #ifndef TYPES_H
 #define TYPES_H
 
@@ -44,11 +46,12 @@ enum Status {
 };
 
 #endif // TYPES_H
-"""
+""",
     )
 
     (project_path / "include" / "utils" / "math.h").write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 namespace utils {
     namespace math {
@@ -57,16 +60,17 @@ namespace utils {
         const double PI = 3.14159;
     }
 }
-"""
+""",
     )
 
     (project_path / "external" / "third_party.h").write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 namespace external {
     void thirdPartyFunction();
 }
-"""
+""",
     )
 
     return project_path
@@ -79,7 +83,8 @@ def test_standard_library_includes(
     """Test standard library include parsing and relationship creation."""
     test_file = cpp_includes_project / "stdlib_includes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Standard C++ library includes
 #include <iostream>
 #include <string>
@@ -140,7 +145,7 @@ void demonstrateStdLibrary() {
     double result = sqrt(16.0);
     assert(result == 4.0);
 }
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)
@@ -182,7 +187,8 @@ def test_local_header_includes(
     """Test local header include parsing and relationship creation."""
     test_file = cpp_includes_project / "src" / "local_includes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Local header includes with different path styles
 #include "base.h"
 #include "../include/base.h"
@@ -235,12 +241,13 @@ void useLocalHeaders() {
         values[id] = utils::math::multiply(id, utils::math::PI);
     }
 }
-"""
+""",
     )
 
     header_file = cpp_includes_project / "src" / "local_includes.h"
     header_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 #include "../include/base.h"
 
@@ -251,7 +258,7 @@ public:
 };
 
 void useLocalHeaders();
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)
@@ -287,7 +294,8 @@ def test_conditional_includes(
     """Test conditional include patterns with preprocessor directives."""
     test_file = cpp_includes_project / "conditional_includes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Platform-specific includes
 #ifdef _WIN32
 #include <windows.h>
@@ -412,7 +420,7 @@ void demonstrateConditionalIncludes() {
     PlatformUtils::processRange(numbers);
 #endif
 }
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)
@@ -445,7 +453,8 @@ def test_system_vs_local_includes(
     """Test distinction between system <> and local "" includes."""
     test_file = cpp_includes_project / "include_types.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // System includes (angle brackets)
 #include <iostream>
 #include <vector>
@@ -537,7 +546,7 @@ void demonstrateIncludeTypes() {
     Status finalStatus = SUCCESS;
     std::cout << "Demo completed with status: " << finalStatus << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)
@@ -575,7 +584,8 @@ def test_include_guards_and_pragma_once(
 
     guard_header = cpp_includes_project / "include" / "with_guards.h"
     guard_header.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #ifndef WITH_GUARDS_H
 #define WITH_GUARDS_H
 
@@ -590,12 +600,13 @@ private:
 };
 
 #endif // WITH_GUARDS_H
-"""
+""",
     )
 
     pragma_header = cpp_includes_project / "include" / "with_pragma.h"
     pragma_header.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #pragma once
 
 #include <vector>
@@ -609,12 +620,13 @@ public:
 private:
     std::unique_ptr<std::vector<int>> items_;
 };
-"""
+""",
     )
 
     test_file = cpp_includes_project / "include_guards_test.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Include headers with different guard mechanisms
 #include "include/with_guards.h"
 #include "include/with_pragma.h"
@@ -666,7 +678,7 @@ std::vector<int> PragmaClass::getItems() const {
     }
     return *items_;
 }
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)
@@ -699,7 +711,8 @@ def test_cpp_includes_comprehensive(
     """Comprehensive test ensuring all C++ include patterns create proper relationships."""
     test_file = cpp_includes_project / "comprehensive_includes.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ include pattern in one file
 
 // System includes
@@ -815,7 +828,7 @@ void demonstrateAllIncludes() {
     std::cout << "Demo completed with status: "
               << statusNames[status] << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)
@@ -867,7 +880,8 @@ def test_cpp20_module_import_syntax(
     """Test C++20 module import syntax parsing."""
     test_file = cpp_includes_project / "module_imports.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // C++20 module import declarations
 import std.core;
 import std.io;
@@ -891,7 +905,7 @@ public:
         std::cout << "Using C++20 modules" << std::endl;
     }
 };
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)
@@ -922,7 +936,8 @@ def test_cpp20_module_partition_imports(
     """Test C++20 module partition import syntax."""
     test_file = cpp_includes_project / "partition_imports.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Primary module interface
 export module data_processor;
 
@@ -945,7 +960,7 @@ export namespace processor {
         }
     };
 }
-"""
+""",
     )
 
     run_updater(cpp_includes_project, mock_ingestor)

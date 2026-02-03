@@ -13,13 +13,18 @@ def rust_smart_pointers_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Smart pointers test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Smart pointers test crate"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_smart_pointers_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     return project_path
 
@@ -31,7 +36,8 @@ def test_box_pointer_patterns(
     """Test Box smart pointer patterns and heap allocation."""
     test_file = rust_smart_pointers_project / "box_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic Box usage
 struct LargeStruct {
     data: [u8; 1024],
@@ -281,7 +287,7 @@ fn box_raw_patterns() {
     *leaked += 1;
     println!("Leaked value: {}", *leaked);
 }
-"""
+""",
     )
 
     run_updater(rust_smart_pointers_project, mock_ingestor)
@@ -304,7 +310,8 @@ def test_rc_reference_counting(
     """Test Rc reference counting patterns and shared ownership."""
     test_file = rust_smart_pointers_project / "rc_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 
@@ -677,7 +684,7 @@ fn test_rc_trait_objects() {
 
     println!("Rectangle reference count: {}", Rc::strong_count(&rectangle));
 }
-"""
+""",
     )
 
     run_updater(rust_smart_pointers_project, mock_ingestor)
@@ -700,7 +707,8 @@ def test_arc_atomic_reference_counting(
     """Test Arc atomic reference counting for thread safety."""
     test_file = rust_smart_pointers_project / "arc_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -1126,7 +1134,7 @@ fn test_arc_trait_objects() {
     let results = pool.process_concurrent(inputs);
     println!("Concurrent processing results: {:?}", results);
 }
-"""
+""",
     )
 
     run_updater(rust_smart_pointers_project, mock_ingestor)
@@ -1151,7 +1159,8 @@ def test_refcell_interior_mutability(
     """Test RefCell interior mutability patterns."""
     test_file = rust_smart_pointers_project / "refcell_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::cell::{RefCell, Ref, RefMut, Cell};
 use std::rc::Rc;
 
@@ -1546,7 +1555,7 @@ fn test_advanced_refcell() {
     println!("Final state: {}", state_machine.get_current_state());
     println!("Transition history: {:?}", state_machine.get_history());
 }
-"""
+""",
     )
 
     run_updater(rust_smart_pointers_project, mock_ingestor)
@@ -1569,7 +1578,8 @@ def test_custom_smart_pointers(
     """Test custom smart pointer implementations."""
     test_file = rust_smart_pointers_project / "custom_smart_pointers.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::ops::{Deref, DerefMut, Drop};
 use std::ptr::NonNull;
 use std::marker::PhantomData;
@@ -2022,7 +2032,7 @@ fn test_thread_safe_ptr() {
 
     println!("Pointer is empty: {}", ptr.is_empty());
 }
-"""
+""",
     )
 
     run_updater(rust_smart_pointers_project, mock_ingestor)

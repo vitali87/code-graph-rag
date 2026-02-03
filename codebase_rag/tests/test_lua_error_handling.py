@@ -10,7 +10,9 @@ def test_lua_pcall_xpcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) ->
     project = temp_repo / "lua_error_pcall"
     project.mkdir()
 
-    (project / "safe_ops.lua").write_text("""
+    (project / "safe_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local SafeOps = {}
 
 -- Safe division using pcall
@@ -117,9 +119,12 @@ function SafeOps.retry_with_backoff(operation, max_attempts, initial_delay)
 end
 
 return SafeOps
-""")
+""",
+    )
 
-    (project / "error_types.lua").write_text("""
+    (project / "error_types.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ErrorTypes = {}
 
 -- Custom error types
@@ -203,9 +208,12 @@ function ErrorTypes.safe_network_call(url)
 end
 
 return ErrorTypes
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local SafeOps = require('safe_ops')
 local ErrorTypes = require('error_types')
 
@@ -261,7 +269,8 @@ if response then
 else
     print("Network error:", net_err.type, net_err.message)
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -310,7 +319,9 @@ def test_lua_debug_library(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_debug_lib"
     project.mkdir()
 
-    (project / "debugger.lua").write_text("""
+    (project / "debugger.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Debugger = {}
 
 -- Stack inspection
@@ -442,9 +453,12 @@ function Debugger.create_error_boundary(handler)
 end
 
 return Debugger
-""")
+""",
+    )
 
-    (project / "validators.lua").write_text("""
+    (project / "validators.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Validators = {}
 
 -- Type validation with detailed errors
@@ -572,9 +586,12 @@ function Validators.assert_in_range(value, min_val, max_val, message)
 end
 
 return Validators
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Debugger = require('debugger')
 local Validators = require('validators')
 
@@ -630,7 +647,8 @@ local stats = profiler.get_stats()
 for func, count in pairs(stats) do
     print(string.format("Function %s called %d times", func, count))
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -669,7 +687,9 @@ def test_lua_exception_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_exceptions"
     project.mkdir()
 
-    (project / "exceptions.lua").write_text("""
+    (project / "exceptions.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Exceptions = {}
 
 -- Exception class
@@ -823,9 +843,12 @@ return {
     with_fallback = Exceptions.with_fallback,
     create_circuit_breaker = Exceptions.create_circuit_breaker
 }
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local lib = require('exceptions')
 local Exception = lib.Exception
 local DatabaseException = lib.DatabaseException
@@ -886,7 +909,8 @@ for i = 1, 4 do
         print("Operation", i, "failed:", result)
     end
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -926,7 +950,9 @@ def test_lua_error_recovery(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_error_recovery"
     project.mkdir()
 
-    (project / "resilience.lua").write_text("""
+    (project / "resilience.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Resilience = {}
 
 -- Timeout wrapper
@@ -1084,9 +1110,12 @@ function Resilience.safe_iterator(items, processor)
 end
 
 return Resilience
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Resilience = require('resilience')
 
 -- Test timeout
@@ -1135,7 +1164,8 @@ local degraded_op = Resilience.with_degradation(
 
 local result, degraded = degraded_op()
 print("Degraded operation result:", result, "degraded:", degraded)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

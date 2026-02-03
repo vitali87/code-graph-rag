@@ -15,7 +15,9 @@ def cpp_inheritance_project(temp_repo: Path) -> Path:
     (project_path / "src").mkdir()
     (project_path / "include").mkdir()
 
-    (project_path / "include" / "shapes.h").write_text("#pragma once\nclass Shape {};")
+    (project_path / "include" / "shapes.h").write_text(
+        encoding="utf-8", data="#pragma once\nclass Shape {};"
+    )
 
     return project_path
 
@@ -27,7 +29,8 @@ def test_single_inheritance(
     """Test single inheritance patterns and virtual functions."""
     test_file = cpp_inheritance_project / "single_inheritance.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 #include <memory>
@@ -265,7 +268,7 @@ void demonstrateSingleInheritance() {
     specificPuppy.fetch();  // Inherited from Dog
     specificPuppy.eat();    // Inherited from Animal
 }
-"""
+""",
     )
 
     run_updater(cpp_inheritance_project, mock_ingestor)
@@ -327,7 +330,8 @@ def test_multiple_inheritance(
     """Test multiple inheritance patterns and virtual base classes."""
     test_file = cpp_inheritance_project / "multiple_inheritance.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <string>
 
@@ -623,7 +627,7 @@ void testAnimalAbilities() {
     std::cout << "  As Walkable: max speed = " << walkable->getMaxSpeed() << std::endl;
     std::cout << "  As LivingBeing: energy = " << being->getEnergy() << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_inheritance_project, mock_ingestor)
@@ -688,7 +692,8 @@ def test_abstract_classes_and_interfaces(
     """Test abstract classes and interface-like patterns."""
     test_file = cpp_inheritance_project / "abstract_interfaces.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <memory>
@@ -1008,7 +1013,7 @@ void testAbstractDestructors() {
     ptr->process();
     // Destructor chain will be called automatically when ptr goes out of scope
 }
-"""
+""",
     )
 
     run_updater(cpp_inheritance_project, mock_ingestor)
@@ -1085,7 +1090,8 @@ def test_cpp_inheritance_comprehensive(
     """Comprehensive test ensuring all inheritance patterns create proper relationships."""
     test_file = cpp_inheritance_project / "comprehensive_inheritance.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ inheritance pattern in one file
 #include <iostream>
 #include <memory>
@@ -1324,7 +1330,7 @@ void testTemplateInheritance() {
     // TemplateBase<int>* ptr = &intObj;  // This works
     // TemplateBase<std::string>* ptr2 = &stringObj;  // This works
 }
-"""
+""",
     )
 
     run_updater(cpp_inheritance_project, mock_ingestor)
@@ -1380,7 +1386,8 @@ def test_cpp_inheritance_edge_cases(
     """Test edge cases in C++ inheritance parsing including complex templates and namespaces."""
     test_file = cpp_inheritance_project / "edge_case_inheritance.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Edge cases for C++ inheritance parsing
 #include <vector>
 #include <memory>
@@ -1560,7 +1567,7 @@ void demonstrateEdgeCases() {
     OuterWithNested::NestedDerived nested;
     nested.nestedMethod();
 }
-"""
+""",
     )
 
     run_updater(cpp_inheritance_project, mock_ingestor)

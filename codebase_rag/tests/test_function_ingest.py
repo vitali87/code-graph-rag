@@ -537,7 +537,8 @@ class TestIntegrationFunctionIngestion:
 
         main_file = project_path / "main.py"
         main_file.write_text(
-            """
+            encoding="utf-8",
+            data="""
 def top_level_function():
     pass
 
@@ -552,7 +553,7 @@ def deeply_nested():
             pass
         return level3
     return level2
-"""
+""",
         )
 
         return project_path
@@ -583,11 +584,14 @@ def deeply_nested():
         project_path.mkdir()
 
         package_json = project_path / "package.json"
-        package_json.write_text('{"name": "js-functions-test", "version": "1.0.0"}')
+        package_json.write_text(
+            encoding="utf-8", data='{"name": "js-functions-test", "version": "1.0.0"}'
+        )
 
         main_file = project_path / "main.js"
         main_file.write_text(
-            """
+            encoding="utf-8",
+            data="""
 function topLevel() {
     return 1;
 }
@@ -605,7 +609,7 @@ const factory = function createFactory() {
     const helper = (data) => data.map(x => x);
     return { helper };
 };
-"""
+""",
         )
 
         return project_path

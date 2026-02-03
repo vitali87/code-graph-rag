@@ -43,7 +43,8 @@ def test_basic_method_calls(
         / "BasicMethodCalls.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class BasicMethodCalls {
@@ -101,7 +102,7 @@ public class BasicMethodCalls {
         other.setName("Modified");
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -135,7 +136,8 @@ def test_inheritance_and_polymorphism(
         / "InheritanceExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 abstract class Animal {
@@ -232,7 +234,7 @@ public class InheritanceExample {
         String breed = dog.getBreed();
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -281,7 +283,8 @@ def test_interface_method_calls(
         / "InterfaceExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -401,7 +404,7 @@ public class InterfaceExample {
         System.out.println("Area changed from " + originalArea + " to " + newArea);
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -465,7 +468,8 @@ def test_generic_method_calls(
         / "GenericMethods.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -534,7 +538,7 @@ public class GenericMethods {
         words.stream().mapToInt(String::length).sum();
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -573,7 +577,8 @@ def test_fully_qualified_static_method_calls(
         / "StaticMethodCalls.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.List;
@@ -616,7 +621,7 @@ public class StaticMethodCalls {
         return java.lang.String.format("Formatted: %d", value);  // CALLS fully qualified static method
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -654,7 +659,8 @@ def test_cross_file_method_calls_with_imports(
 
     helper_file = utils_dir / "Helper.java"
     helper_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.utils;
 
 public class Helper {
@@ -676,7 +682,7 @@ public class Helper {
         return value;
     }
 }
-"""
+""",
     )
 
     main_file = (
@@ -689,7 +695,8 @@ public class Helper {
         / "MainClass.java"
     )
     main_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import com.example.utils.Helper;
@@ -723,7 +730,7 @@ public class MainClass {
         String result = paramHelper.getValue();  // This should create CALLS relationship
     }
 }
-"""
+""",
     )
 
     parsers, queries = load_parsers()

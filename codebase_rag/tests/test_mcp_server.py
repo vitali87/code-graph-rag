@@ -101,7 +101,7 @@ class TestGetProjectRoot:
     def test_raises_error_when_path_is_file(self, tmp_path: Path) -> None:
         """Test that ValueError is raised when the path is a file, not a directory."""
         test_file = tmp_path / "test_file.txt"
-        test_file.write_text("test content")
+        test_file.write_text(encoding="utf-8", data="test content")
 
         with patch.dict(os.environ, {"TARGET_REPO_PATH": str(test_file)}):
             with pytest.raises(
@@ -123,6 +123,9 @@ class TestGetProjectRoot:
         assert result == child.resolve()
         assert result.is_absolute()
 
+    @pytest.mark.skipif(
+        os.name == "nt", reason="Symlinks require special privileges on Windows"
+    )
     def test_handles_symlinks(self, tmp_path: Path) -> None:
         """Test that symlinks are resolved correctly."""
         real_path = tmp_path / "real_repo"

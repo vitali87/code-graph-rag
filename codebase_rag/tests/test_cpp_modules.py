@@ -26,7 +26,8 @@ def test_basic_module_interface(
     """Test basic module interface declarations and exports."""
     interface_file = cpp_modules_project / "interfaces" / "math_module.ixx"
     interface_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // math_module.ixx - Module interface file
 export module math_operations;
 
@@ -170,12 +171,13 @@ namespace math::internal {
         return std::max(min_val, std::min(value, max_val));
     }
 }
-"""
+""",
     )
 
     impl_file = cpp_modules_project / "src" / "math_module.cpp"
     impl_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // math_module.cpp - Module implementation file
 module math_operations;
 
@@ -259,7 +261,7 @@ namespace math {
         return result;
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_modules_project, mock_ingestor)
@@ -304,7 +306,8 @@ def test_module_partitions(
     """Test module partitions and internal module structure."""
     primary_interface = cpp_modules_project / "interfaces" / "data_structures.ixx"
     primary_interface.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // data_structures.ixx - Primary module interface
 export module data_structures;
 
@@ -340,12 +343,13 @@ export namespace ds {
         algorithms::for_each_if(container, pred);
     }
 }
-"""
+""",
     )
 
     container_partition = cpp_modules_project / "modules" / "containers.ixx"
     container_partition.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // containers.ixx - Container partition
 export module data_structures:containers;
 
@@ -500,12 +504,13 @@ export namespace ds::containers {
         iterator end() { return iterator(nullptr); }
     };
 }
-"""
+""",
     )
 
     algorithms_partition = cpp_modules_project / "modules" / "algorithms.ixx"
     algorithms_partition.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // algorithms.ixx - Algorithms partition
 export module data_structures:algorithms;
 
@@ -585,7 +590,7 @@ export namespace ds::algorithms {
         return sum(container) / static_cast<typename Container::value_type>(container.size());
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_modules_project, mock_ingestor)
@@ -612,7 +617,8 @@ def test_module_imports_usage(
     """Test module imports and usage patterns."""
     usage_file = cpp_modules_project / "src" / "module_usage.cpp"
     usage_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // module_usage.cpp - Using imported modules
 import math_operations;
 import data_structures;
@@ -778,7 +784,7 @@ void showcaseModuleFeatures() {
 
     demonstrateModuleUsage();
 }
-"""
+""",
     )
 
     run_updater(cpp_modules_project, mock_ingestor)

@@ -26,7 +26,8 @@ def test_thread_basics(
     """Test basic thread creation and management."""
     test_file = cpp_concurrency_project / "thread_basics.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -234,7 +235,7 @@ void demonstrateThreadUtilities() {
     });
     yielder.join();
 }
-"""
+""",
     )
 
     run_updater(cpp_concurrency_project, mock_ingestor)
@@ -274,7 +275,8 @@ def test_mutex_and_locks(
     """Test mutex and lock mechanisms."""
     test_file = cpp_concurrency_project / "mutex_locks.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -574,7 +576,7 @@ void demonstrateMutexPatterns() {
     // Scoped lock demo
     demonstrateScopedLock();
 }
-"""
+""",
     )
 
     run_updater(cpp_concurrency_project, mock_ingestor)
@@ -603,7 +605,8 @@ def test_atomics_and_memory_ordering(
     """Test atomic operations and memory ordering."""
     test_file = cpp_concurrency_project / "atomics.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <atomic>
 #include <thread>
@@ -917,7 +920,7 @@ void compareAtomicVsMutex() {
     std::cout << "Atomic time: " << std::chrono::duration_cast<std::chrono::milliseconds>(atomic_time).count() << "ms" << std::endl;
     std::cout << "Mutex time: " << std::chrono::duration_cast<std::chrono::milliseconds>(mutex_time).count() << "ms" << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_concurrency_project, mock_ingestor)
@@ -946,7 +949,8 @@ def test_condition_variables_and_futures(
     """Test condition variables, futures, and promises."""
     test_file = cpp_concurrency_project / "condition_futures.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -1323,7 +1327,7 @@ void demonstrateAsyncPipeline() {
     int final_result = stage3.get();
     std::cout << "Pipeline result: " << final_result << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_concurrency_project, mock_ingestor)
@@ -1353,7 +1357,8 @@ def test_cpp_concurrency_comprehensive(
     """Comprehensive test ensuring all concurrency patterns create proper relationships."""
     test_file = cpp_concurrency_project / "comprehensive_concurrency.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ concurrency pattern in one file
 #include <iostream>
 #include <thread>
@@ -1831,7 +1836,7 @@ private:
 void runComprehensiveBenchmark() {
     ConcurrencyBenchmark::benchmark();
 }
-"""
+""",
     )
 
     run_updater(cpp_concurrency_project, mock_ingestor)

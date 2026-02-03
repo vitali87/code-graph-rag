@@ -89,7 +89,8 @@ class TestIssue194OutOfClassLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "simple.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class QCMakeCacheView {
 public:
     bool setSearchFilter(QString const& s);
@@ -99,7 +100,7 @@ bool QCMakeCacheView::setSearchFilter(QString const& s)
 {
     return true;
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -121,7 +122,8 @@ bool QCMakeCacheView::setSearchFilter(QString const& s)
     ) -> None:
         test_file = cpp_line_numbers_project / "multiple.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class Calculator {
 public:
     int add(int a, int b);
@@ -140,7 +142,7 @@ int Calculator::subtract(int a, int b) {
 int Calculator::multiply(int a, int b) {
     return a * b;
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -168,7 +170,8 @@ int Calculator::multiply(int a, int b) {
     ) -> None:
         test_file = cpp_line_numbers_project / "constructor.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class MyClass {
 public:
     MyClass(int value);
@@ -179,7 +182,7 @@ private:
 MyClass::MyClass(int value) : value_(value) {
     // constructor body
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -201,7 +204,8 @@ MyClass::MyClass(int value) : value_(value) {
     ) -> None:
         test_file = cpp_line_numbers_project / "destructor.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class Resource {
 public:
     ~Resource();
@@ -212,7 +216,7 @@ private:
 Resource::~Resource() {
     delete data_;
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -236,7 +240,8 @@ class TestTemplateOutOfClassLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "template.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 template<typename T>
 class Container {
 public:
@@ -253,7 +258,7 @@ template<typename T>
 T Container<T>::get(int index) const {
     return T();
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -286,7 +291,8 @@ class TestInlineMethodLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "inline.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class Simple {
 public:
     int getValue() const { return value_; }
@@ -294,7 +300,7 @@ public:
 private:
     int value_;
 };
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -317,7 +323,8 @@ private:
     ) -> None:
         test_file = cpp_line_numbers_project / "multiline_inline.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class Complex {
 public:
     int compute(int x) {
@@ -326,7 +333,7 @@ public:
         return result;
     }
 };
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -346,7 +353,8 @@ class TestMixedInlineAndOutOfClassLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "mixed.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class MixedClass {
 public:
     int inlineMethod() { return 42; }
@@ -358,7 +366,7 @@ void MixedClass::outOfClassMethod() {
     // implementation
     return;
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -390,7 +398,8 @@ class TestNestedClassOutOfClassLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "nested.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class Outer {
 public:
     class Inner {
@@ -407,7 +416,7 @@ void Outer::outerMethod() {
 void Outer::Inner::innerMethod() {
     // inner implementation
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -432,7 +441,8 @@ class TestNamespacedClassOutOfClassLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "namespaced.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 namespace MyNamespace {
 
 class MyClass {
@@ -445,7 +455,7 @@ void MyClass::method() {
 }
 
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -463,7 +473,8 @@ void MyClass::method() {
     ) -> None:
         test_file = cpp_line_numbers_project / "deep_namespace.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 namespace Level1 {
 namespace Level2 {
 namespace Level3 {
@@ -480,7 +491,7 @@ void DeepClass::deepMethod() {
 }
 }
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -500,7 +511,8 @@ class TestOperatorOverloadingLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "operators.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class Vector {
 public:
     Vector operator+(const Vector& other) const;
@@ -519,7 +531,7 @@ Vector Vector::operator-(const Vector& other) const {
 bool Vector::operator==(const Vector& other) const {
     return true;
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -548,14 +560,15 @@ class TestDeclarationOnlyMethods:
     ) -> None:
         test_file = cpp_line_numbers_project / "declaration_only.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class HeaderOnlyClass {
 public:
     void method1();
     int method2(int x);
     void method3(const std::string& s);
 };
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -585,7 +598,8 @@ class TestStructMethodLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "struct_methods.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 struct Point {
     double x, y;
     double distance(const Point& other) const;
@@ -601,7 +615,7 @@ double Point::distance(const Point& other) const {
 Point Point::operator+(const Point& other) const {
     return Point{x + other.x, y + other.y};
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -621,7 +635,8 @@ class TestConstAndStaticMethodLineNumbers:
     ) -> None:
         test_file = cpp_line_numbers_project / "const_method.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class ConstExample {
 public:
     int getValue() const;
@@ -637,7 +652,7 @@ int ConstExample::getValue() const {
 void ConstExample::setValue(int v) {
     value_ = v;
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)
@@ -660,7 +675,8 @@ void ConstExample::setValue(int v) {
     ) -> None:
         test_file = cpp_line_numbers_project / "static_method.cpp"
         test_file.write_text(
-            """\
+            encoding="utf-8",
+            data="""\
 class StaticExample {
 public:
     static int getCount();
@@ -676,7 +692,7 @@ int StaticExample::getCount() {
 void StaticExample::resetCount() {
     count_ = 0;
 }
-"""
+""",
         )
 
         run_updater(cpp_line_numbers_project, mock_ingestor)

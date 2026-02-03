@@ -19,13 +19,14 @@ def test_lua_require_imports(
     project_path.mkdir()
 
     (project_path / "utils.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local M = {}
 function M.func()
   return 1
 end
 return M
-"""
+""",
     )
 
     require_utils = (
@@ -46,7 +47,8 @@ return M
     )
 
     (project_path / "main.lua").write_text(
-        f"""
+        encoding="utf-8",
+        data=f"""
 {require_utils}
 {require_json}
 {require_pkg}
@@ -56,7 +58,7 @@ local function run()
   local y = json.encode({{a=1}})
   return x, y, mod
 end
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -90,7 +92,8 @@ def test_lua_stdlib_detection(temp_repo: Path, mock_ingestor: MagicMock) -> None
     project_path.mkdir()
 
     (project_path / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local function use_stdlib()
     local s = string.upper("hello")
     local t = table.concat({1, 2, 3}, ",")
@@ -101,7 +104,7 @@ local function use_stdlib()
 end
 
 return use_stdlib
-"""
+""",
     )
 
     parsers, queries = load_parsers()
@@ -134,17 +137,19 @@ def test_lua_pcall_require_pattern(temp_repo: Path, mock_ingestor: MagicMock) ->
     project_path.mkdir()
 
     (project_path / "optional_module.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local M = {}
 function M.optional_func()
     return "optional"
 end
 return M
-"""
+""",
     )
 
     (project_path / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local ok, json = pcall(require, 'json')
 local success, optional = pcall(require, 'optional_module')
 
@@ -159,7 +164,7 @@ local function safe_load()
 end
 
 return safe_load
-"""
+""",
     )
 
     parsers, queries = load_parsers()

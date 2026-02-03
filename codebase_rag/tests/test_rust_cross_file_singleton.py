@@ -12,19 +12,24 @@ def rust_singleton_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_singleton_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_singleton_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     src_dir = project_path / "src"
     src_dir.mkdir()
     storage_dir = src_dir / "storage"
     storage_dir.mkdir()
 
-    (storage_dir / "mod.rs").write_text("""
+    (storage_dir / "mod.rs").write_text(
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -60,12 +65,15 @@ impl Storage {
         self.data.get(key).cloned()
     }
 }
-""")
+""",
+    )
 
     controllers_dir = src_dir / "controllers"
     controllers_dir.mkdir()
 
-    (controllers_dir / "mod.rs").write_text("""
+    (controllers_dir / "mod.rs").write_text(
+        encoding="utf-8",
+        data="""
 use crate::storage::Storage;
 use std::sync::{Arc, Mutex};
 
@@ -95,9 +103,12 @@ impl SceneController {
         true
     }
 }
-""")
+""",
+    )
 
-    (src_dir / "main.rs").write_text("""
+    (src_dir / "main.rs").write_text(
+        encoding="utf-8",
+        data="""
 mod storage;
 mod controllers;
 
@@ -130,7 +141,8 @@ fn main() -> Option<String> {
     let app = Application::new();
     app.start()
 }
-""")
+""",
+    )
 
     return project_path
 

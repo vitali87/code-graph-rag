@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -195,6 +196,9 @@ class TestWriteFilePathHandling:
 class TestWriteFileErrorHandling:
     """Test error handling and edge cases."""
 
+    @pytest.mark.skipif(
+        os.name == "nt", reason="chmod 0o444 does not prevent file creation on Windows"
+    )
     async def test_write_to_readonly_directory(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:

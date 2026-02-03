@@ -12,7 +12,9 @@ def rust_web_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_web_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_web_test"
 version = "0.1.0"
@@ -24,10 +26,13 @@ reqwest = { version = "0.11", features = ["json"] }
 axum = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-""")
+""",
+    )
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Web test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Web test crate"
+    )
 
     return project_path
 
@@ -39,7 +44,8 @@ def test_http_client_requests(
     """Test HTTP client request patterns."""
     test_file = rust_web_project / "http_client.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -189,7 +195,7 @@ async fn concurrent_requests(client: &reqwest::Client) -> Result<Vec<User>, Box<
     let users: Result<Vec<User>, _> = results.into_iter().collect();
     Ok(users?)
 }
-"""
+""",
     )
 
     run_updater(rust_web_project, mock_ingestor)
@@ -210,7 +216,8 @@ def test_web_server_axum(
     """Test Axum web server patterns."""
     test_file = rust_web_project / "axum_server.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -431,7 +438,7 @@ mod middleware {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_web_project, mock_ingestor)
@@ -452,7 +459,8 @@ def test_websockets_realtime(
     """Test WebSocket and real-time communication patterns."""
     test_file = rust_web_project / "websockets.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -841,7 +849,7 @@ impl GameServer {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_web_project, mock_ingestor)
@@ -862,7 +870,8 @@ def test_json_api_serialization(
     """Test JSON API and serialization patterns."""
     test_file = rust_web_project / "json_api.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use serde::{Deserialize, Serialize, Serializer, Deserializer};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -1126,7 +1135,7 @@ async fn batch_process_json_requests(requests: Vec<String>) -> Vec<ApiResponse<V
 
     responses
 }
-"""
+""",
     )
 
     run_updater(rust_web_project, mock_ingestor)
@@ -1147,7 +1156,8 @@ def test_database_orm_patterns(
     """Test database and ORM patterns."""
     test_file = rust_web_project / "database.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
@@ -1592,7 +1602,7 @@ async fn migration_example() {
 
     println!("Available migrations: {}", migrations.len());
 }
-"""
+""",
     )
 
     run_updater(rust_web_project, mock_ingestor)

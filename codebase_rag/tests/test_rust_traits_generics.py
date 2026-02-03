@@ -13,12 +13,17 @@ def rust_traits_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Library root")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Library root"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_traits_test"
 version = "0.1.0"
-""")
+""",
+    )
 
     return project_path
 
@@ -30,7 +35,8 @@ def test_basic_trait_definitions(
     """Test basic trait definition parsing and method extraction."""
     test_file = rust_traits_project / "basic_traits.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic trait with method signatures
 pub trait Drawable {
     fn draw(&self);
@@ -152,7 +158,7 @@ impl Printable for Rectangle {
         print!("Rectangle({}x{})", self.width, self.height);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_traits_project, mock_ingestor, skip_if_missing="rust")
@@ -185,7 +191,8 @@ def test_generic_types_and_constraints(
     """Test generic type parameters and trait bounds."""
     test_file = rust_traits_project / "generics.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::fmt::{Debug, Display};
 use std::ops::{Add, Mul};
 
@@ -329,7 +336,7 @@ impl<T: std::hash::Hash + Eq> Collectable<T> for SetCollector {
         items.into_iter().collect()
     }
 }
-"""
+""",
     )
 
     run_updater(rust_traits_project, mock_ingestor)
@@ -363,7 +370,8 @@ def test_associated_types_and_constants(
     """Test traits with associated types and constants."""
     test_file = rust_traits_project / "associated_types.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Trait with associated types and constants
 pub trait Parser {
     type Input;
@@ -549,7 +557,7 @@ impl Factory for StringFactory {
         format!("Product-{}", std::thread_local! { static COUNTER: std::cell::Cell<u32> = std::cell::Cell::new(0); })
     }
 }
-"""
+""",
     )
 
     run_updater(rust_traits_project, mock_ingestor)
@@ -574,7 +582,8 @@ def test_trait_objects_and_dynamic_dispatch(
     """Test trait objects and dynamic dispatch patterns."""
     test_file = rust_traits_project / "trait_objects.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Object-safe trait for dynamic dispatch
 pub trait Drawable {
     fn draw(&self);
@@ -755,7 +764,7 @@ pub fn compare_drawable_areas<T: AsRef<dyn Drawable>>(a: T, b: T) -> std::cmp::O
     let area_b = b.as_ref().area();
     area_a.partial_cmp(&area_b).unwrap_or(std::cmp::Ordering::Equal)
 }
-"""
+""",
     )
 
     run_updater(rust_traits_project, mock_ingestor)
@@ -778,7 +787,8 @@ def test_higher_ranked_trait_bounds(
     """Test higher-ranked trait bounds (HRTB) and complex lifetime scenarios."""
     test_file = rust_traits_project / "hrtb.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Higher-ranked trait bounds with for<'a> syntax
 pub fn call_with_any_lifetime<F>(f: F) -> i32
 where
@@ -928,7 +938,7 @@ where
     let processed = processor(input);
     transformer.transform(processed)
 }
-"""
+""",
     )
 
     run_updater(rust_traits_project, mock_ingestor)

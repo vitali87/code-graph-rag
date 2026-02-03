@@ -9,7 +9,9 @@ def test_file_operations(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_file_operations"
     project.mkdir()
 
-    (project / "file_ops.lua").write_text("""
+    (project / "file_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 function read_file(filename)
     local file = io.open(filename, "r")
     if not file then
@@ -49,7 +51,8 @@ local input_file = io.input("data.txt")
 local output_file = io.output("result.txt")
 local line = io.read("*line")
 io.write("Processing complete\n")
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -65,7 +68,9 @@ def test_file_reading_modes(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_file_reading"
     project.mkdir()
 
-    (project / "read_modes.lua").write_text("""
+    (project / "read_modes.lua").write_text(
+        encoding="utf-8",
+        data="""
 function read_file_modes(filename)
     local file = io.open(filename, "r")
     if not file then return nil end
@@ -110,7 +115,8 @@ end
 for line in io.lines("config.txt") do
     print("Config:", line)
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -126,7 +132,9 @@ def test_file_positioning_and_info(temp_repo: Path, mock_ingestor: MagicMock) ->
     project = temp_repo / "lua_file_positioning"
     project.mkdir()
 
-    (project / "file_positioning.lua").write_text("""
+    (project / "file_positioning.lua").write_text(
+        encoding="utf-8",
+        data="""
 function file_manipulation(filename)
     local file = io.open(filename, "r+")
     if not file then return nil end
@@ -178,7 +186,8 @@ temp:write("temporary data")
 temp:seek("set", 0)
 local temp_content = temp:read("*all")
 temp:close()
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -194,7 +203,9 @@ def test_serialization_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_data_serialization"
     project.mkdir()
 
-    (project / "serialization.lua").write_text("""
+    (project / "serialization.lua").write_text(
+        encoding="utf-8",
+        data="""
 function serialize_to_file(data, filename)
     local file = io.open(filename, "w")
     if not file then return false end
@@ -273,7 +284,8 @@ end
 
 serialize_to_file({name = "John", age = 30}, "person.lua")
 local person = deserialize_from_file("person.lua")
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -295,7 +307,9 @@ def test_binary_file_operations(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_binary_io"
     project.mkdir()
 
-    (project / "binary_io.lua").write_text("""
+    (project / "binary_io.lua").write_text(
+        encoding="utf-8",
+        data="""
 function read_binary_file(filename)
     local file = io.open(filename, "rb")
     if not file then return nil end
@@ -348,7 +362,8 @@ end
 
 local binary_data = read_binary_file("image.png")
 write_binary_file("copy.png", binary_data.data)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

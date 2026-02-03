@@ -15,7 +15,9 @@ def cpp_singleton_project(temp_repo: Path) -> Path:
     storage_dir = project_path / "storage"
     storage_dir.mkdir()
 
-    (storage_dir / "Storage.h").write_text("""
+    (storage_dir / "Storage.h").write_text(
+        encoding="utf-8",
+        data="""
 #pragma once
 #include <map>
 #include <string>
@@ -49,12 +51,15 @@ public:
 };
 
 Storage* Storage::instance = nullptr;
-""")
+""",
+    )
 
     controllers_dir = project_path / "controllers"
     controllers_dir.mkdir()
 
-    (controllers_dir / "SceneController.h").write_text("""
+    (controllers_dir / "SceneController.h").write_text(
+        encoding="utf-8",
+        data="""
 #pragma once
 #include "../storage/Storage.h"
 #include <string>
@@ -77,9 +82,12 @@ public:
         return true;
     }
 };
-""")
+""",
+    )
 
-    (project_path / "main.cpp").write_text("""
+    (project_path / "main.cpp").write_text(
+        encoding="utf-8",
+        data="""
 #include "controllers/SceneController.h"
 #include "storage/Storage.h"
 #include <string>
@@ -103,7 +111,8 @@ std::string main() {
     Application* app = new Application();
     return app->start();
 }
-""")
+""",
+    )
 
     return project_path
 

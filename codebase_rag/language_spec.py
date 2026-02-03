@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -8,7 +10,7 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
 
-def _python_get_name(node: "Node") -> str | None:
+def _python_get_name(node: Node) -> str | None:
     name_node = node.child_by_field_name("name")
     return (
         name_node.text.decode(cs.ENCODING_UTF8)
@@ -28,7 +30,7 @@ def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
-def _js_get_name(node: "Node") -> str | None:
+def _js_get_name(node: Node) -> str | None:
     if node.type in cs.JS_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         return (
@@ -50,7 +52,7 @@ def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
-def _generic_get_name(node: "Node") -> str | None:
+def _generic_get_name(node: Node) -> str | None:
     name_node = node.child_by_field_name("name")
     if name_node and name_node.text:
         return name_node.text.decode(cs.ENCODING_UTF8)
@@ -71,7 +73,7 @@ def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
-def _rust_get_name(node: "Node") -> str | None:
+def _rust_get_name(node: Node) -> str | None:
     if node.type in cs.RS_TYPE_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.type == cs.TS_TYPE_IDENTIFIER and name_node.text:
@@ -95,7 +97,7 @@ def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
-def _cpp_get_name(node: "Node") -> str | None:
+def _cpp_get_name(node: Node) -> str | None:
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:

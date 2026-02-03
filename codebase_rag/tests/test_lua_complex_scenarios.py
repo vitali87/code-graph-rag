@@ -9,7 +9,9 @@ def test_web_framework_scenario(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_web_framework"
     project.mkdir()
 
-    (project / "web_framework.lua").write_text("""
+    (project / "web_framework.lua").write_text(
+        encoding="utf-8",
+        data="""
 local http = require("socket.http")
 local ltn12 = require("ltn12")
 local json = require("cjson")
@@ -86,16 +88,20 @@ app:use(function(ctx) ctx.start_time = os.time() end)
 app:get("/", function(ctx) return ctx:json({message = "Hello World"}) end)
 app:post("/data", function(ctx) return {status = 201, body = "Created"} end)
 app:start()
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local WebServer = require('web_framework')
 
 local app = WebServer:new(3000)
 app:use(function(ctx) ctx.start_time = os.time() end)
 app:get("/", function(ctx) return ctx:json({message = "Hello World"}) end)
 app:start()
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -123,7 +129,9 @@ def test_database_orm_scenario(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_database_orm"
     project.mkdir()
 
-    (project / "database_orm.lua").write_text("""
+    (project / "database_orm.lua").write_text(
+        encoding="utf-8",
+        data="""
 local mysql = require("luasql.mysql")
 local inspect = require("inspect")
 
@@ -201,9 +209,12 @@ local users = db:query("SELECT * FROM users WHERE age > :min_age", {min_age = 18
 print(inspect(users))
 
 db:close()
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Database = require('database_orm')
 local inspect = require('inspect')
 
@@ -217,7 +228,8 @@ local db = Database:new({
 local users = db:query("SELECT * FROM users WHERE age > :min_age", {min_age = 18})
 print(inspect(users))
 db:close()
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -245,7 +257,9 @@ def test_game_engine_scenario(temp_repo: Path, mock_ingestor: MagicMock) -> None
     project = temp_repo / "lua_game_engine"
     project.mkdir()
 
-    (project / "game_engine.lua").write_text("""
+    (project / "game_engine.lua").write_text(
+        encoding="utf-8",
+        data="""
 local love = require("love")
 local vector = require("vector")
 local physics = require("physics")
@@ -344,7 +358,8 @@ function Game:draw()
 end
 
 Game:init()
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -368,7 +383,9 @@ def test_configuration_management_scenario(
     project = temp_repo / "lua_config_management"
     project.mkdir()
 
-    (project / "config_mgmt.lua").write_text("""
+    (project / "config_mgmt.lua").write_text(
+        encoding="utf-8",
+        data="""
 local yaml = require("lyaml")
 local lfs = require("lfs")
 local socket = require("socket")
@@ -499,9 +516,12 @@ setmetatable({}, {
         return config_mgr:get("default", k)
     end
 })
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ConfigManager = require('config_mgmt')
 
 local config_mgr = ConfigManager:new("/etc/myapp")
@@ -510,7 +530,8 @@ config_mgr:load_all_configs()
 local db_host = config_mgr:get("database", "host")
 local db_port = config_mgr:get("database", "port")
 local api_key = config_mgr:get("api", "key")
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -538,7 +559,9 @@ def test_data_processing_pipeline(temp_repo: Path, mock_ingestor: MagicMock) -> 
     project = temp_repo / "lua_data_pipeline"
     project.mkdir()
 
-    (project / "data_pipeline.lua").write_text("""
+    (project / "data_pipeline.lua").write_text(
+        encoding="utf-8",
+        data="""
 local csv = require("csv")
 local json = require("cjson")
 local http = require("socket.http")
@@ -667,9 +690,12 @@ local csv_data = pipeline:process_csv_file("input.csv")
 local api_data = pipeline:fetch_remote_data("https://api.example.com/users")
 
 pipeline:export_results(csv_data)
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local DataPipeline = require('data_pipeline')
 
 local pipeline = DataPipeline:new()
@@ -681,7 +707,8 @@ end)
 
 local csv_data = pipeline:process_csv_file("input.csv")
 pipeline:export_results(csv_data)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -709,7 +736,9 @@ def test_microservice_architecture(temp_repo: Path, mock_ingestor: MagicMock) ->
     project = temp_repo / "lua_microservices"
     project.mkdir()
 
-    (project / "microservices.lua").write_text("""
+    (project / "microservices.lua").write_text(
+        encoding="utf-8",
+        data="""
 local resty_http = require("resty.http")
 local redis = require("resty.redis")
 local jwt = require("resty.jwt")
@@ -856,9 +885,12 @@ local order_result = mesh:call_service("order-service", "/orders", "POST", {
     user_id = 123,
     items = {"item1", "item2"}
 })
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local ServiceMesh = require('microservices')
 
 local mesh = ServiceMesh:new({jwt_secret = "secret123"})
@@ -866,7 +898,8 @@ mesh:register_service("user-service", "http://users:8080")
 mesh:register_service("order-service", "http://orders:8080")
 
 local user_data = mesh:call_service("user-service", "/users/123", "GET")
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

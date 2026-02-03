@@ -17,10 +17,12 @@ def javascript_async_project(temp_repo: Path) -> Path:
     (project_path / "api").mkdir()
 
     (project_path / "src" / "helpers.js").write_text(
-        "export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));"
+        encoding="utf-8",
+        data="export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));",
     )
     (project_path / "utils" / "common.js").write_text(
-        "export function handleError(error) { console.error(error); }"
+        encoding="utf-8",
+        data="export function handleError(error) { console.error(error); }",
     )
 
     return project_path
@@ -33,7 +35,8 @@ def test_promise_patterns(
     """Test Promise creation, chaining, and error handling patterns."""
     test_file = javascript_async_project / "promise_patterns.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic Promise creation
 function createSimplePromise() {
     return new Promise((resolve, reject) => {
@@ -258,7 +261,7 @@ function saveProfile(profile) {
 function handleProfileError(error) {
     return Promise.resolve({ error: error.message, fallback: true });
 }
-"""
+""",
     )
 
     run_updater(javascript_async_project, mock_ingestor)
@@ -305,7 +308,8 @@ def test_async_await_patterns(
     """Test async/await syntax and patterns."""
     test_file = javascript_async_project / "async_await_patterns.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic async/await functions
 async function fetchUser(userId) {
     try {
@@ -620,7 +624,7 @@ async function saveData(data) {
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-"""
+""",
     )
 
     run_updater(javascript_async_project, mock_ingestor)
@@ -666,7 +670,8 @@ def test_callback_patterns(
     """Test callback patterns and callback-based async code."""
     test_file = javascript_async_project / "callback_patterns.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic callback patterns
 function fetchUserWithCallback(userId, callback) {
     setTimeout(() => {
@@ -984,7 +989,7 @@ const saveUserPromise = promisifyCallback(saveUserWithCallback);
 fetchUserPromise(789)
     .then(user => console.log("Promisified user:", user))
     .catch(err => console.error("Promisified error:", err));
-"""
+""",
     )
 
     run_updater(javascript_async_project, mock_ingestor)
@@ -1031,7 +1036,8 @@ def test_generator_patterns(
     """Test generator functions and async generators."""
     test_file = javascript_async_project / "generator_patterns.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic generator functions
 function* simpleGenerator() {
     yield 1;
@@ -1315,7 +1321,7 @@ function delay(ms) {
 }
 
 consumeAsyncGenerator();
-"""
+""",
     )
 
     run_updater(javascript_async_project, mock_ingestor)
@@ -1364,7 +1370,8 @@ def test_async_comprehensive(
     """Comprehensive test ensuring all async patterns create proper relationships."""
     test_file = javascript_async_project / "comprehensive_async.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript async pattern in one file
 
 // Promise
@@ -1510,7 +1517,7 @@ const serviceResult = service.process();
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-"""
+""",
     )
 
     run_updater(javascript_async_project, mock_ingestor)

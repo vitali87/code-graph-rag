@@ -21,7 +21,8 @@ def javascript_spread_rest_project(temp_repo: Path) -> Path:
     (project_path / "utils").mkdir()
 
     (project_path / "utils" / "arrays.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export function mergeArrays(arr1, arr2) {
     return [...arr1, ...arr2];
 }
@@ -29,7 +30,7 @@ export function mergeArrays(arr1, arr2) {
 export function clone(arr) {
     return [...arr];
 }
-"""
+""",
     )
 
     return project_path
@@ -42,7 +43,8 @@ def test_spread_in_arrays(
     """Test spread operator usage in arrays."""
     test_file = javascript_spread_rest_project / "array_spread.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Array spread patterns
 
 // Basic array spreading
@@ -157,7 +159,7 @@ console.log(setArray);      // [1, 2, 3, 4]
 console.log(merged);        // [1, 2, 3, 4, 5, 6]
 console.log(range);         // [5, 6, 7, 8, 9, 10]
 console.log(max);           // 10
-"""
+""",
     )
 
     run_updater(javascript_spread_rest_project, mock_ingestor)
@@ -198,7 +200,8 @@ def test_spread_in_objects(
     """Test spread operator usage in objects."""
     test_file = javascript_spread_rest_project / "object_spread.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Object spread patterns
 
 // Basic object spreading
@@ -378,7 +381,7 @@ console.log(updated);      // { name: 'John', age: 31, city: 'NYC', country: 'US
 console.log(user);         // { name: 'Alice', id: ..., age: 25, role: 'admin', created: ... }
 console.log(config);       // Merged configuration
 console.log(apiConfig);    // Environment-specific config
-"""
+""",
     )
 
     run_updater(javascript_spread_rest_project, mock_ingestor)
@@ -419,7 +422,8 @@ def test_rest_parameters(
     """Test rest parameters in function definitions."""
     test_file = javascript_spread_rest_project / "rest_parameters.js"
     test_file.write_text(
-        r"""
+        encoding="utf-8",
+        data=r"""
 // Rest parameters patterns
 
 // Basic rest parameters
@@ -614,7 +618,7 @@ const combined = combine(gen1(), gen2());
 for (const value of combined) {
     console.log(value); // 1, 2, 3, 4
 }
-"""
+""",
     )
 
     run_updater(javascript_spread_rest_project, mock_ingestor)
@@ -662,7 +666,8 @@ def test_destructuring_with_spread_rest(
     """Test destructuring combined with spread and rest operators."""
     test_file = javascript_spread_rest_project / "destructuring_spread_rest.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Destructuring with spread and rest
 
 // Array destructuring with rest
@@ -892,7 +897,7 @@ console.log(processed);     // { first: 1, second: 2, rest: [3,4,5,6,7], restLen
 console.log(userInfo);      // { essential: {...}, additional: {...} }
 console.log(configResult);  // { connection: 'localhost:3000', options: {...} }
 console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50] }
-"""
+""",
     )
 
     run_updater(javascript_spread_rest_project, mock_ingestor)
@@ -938,7 +943,8 @@ def test_spread_rest_comprehensive(
     """Comprehensive test ensuring all spread/rest patterns are covered."""
     test_file = javascript_spread_rest_project / "comprehensive_spread_rest.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript spread/rest pattern in one file
 
 // Array spread
@@ -1040,7 +1046,7 @@ const complex = combinePatterns(
 );
 
 console.log(complex);
-"""
+""",
     )
 
     run_updater(javascript_spread_rest_project, mock_ingestor)

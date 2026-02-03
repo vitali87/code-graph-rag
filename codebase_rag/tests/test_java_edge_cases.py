@@ -37,7 +37,8 @@ def test_empty_classes_and_interfaces(
         / "EmptyTypes.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Completely empty class
@@ -93,7 +94,7 @@ public class StaticOnlyClass {
 public abstract class AbstractOnlyClass {
     public abstract void abstractMethod();
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -126,7 +127,8 @@ def test_single_line_vs_multiline_constructs(
         / "LineFormats.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Single-line class
@@ -211,7 +213,7 @@ public class ArrayFormats {
         5
     };
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -246,7 +248,8 @@ def test_unicode_identifiers(
         / "UnicodeIdentifiers.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Classes with Unicode names
@@ -333,7 +336,7 @@ public class UnicodeConstants {
     public static final int 最大值 = 100;
     public static final double π = 3.14159;
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -370,7 +373,8 @@ def test_long_qualified_names(
 
     test_file = deep_path / "VeryLongQualifiedNames.java"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example.very.deep.package.structure.with.many.levels;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -440,7 +444,7 @@ enum EnumWithVeryLongNameThatTestsEnumNameLengthLimitationsAndParsingCapabilitie
     String valueWithVeryLongNameThatTestsAnnotationValueNameLengthLimitations() default "";
     int priorityWithLongNameForTestingPurposes() default 0;
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -471,7 +475,8 @@ def test_deeply_nested_generics(
         / "DeeplyNestedGenerics.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -586,7 +591,7 @@ public class DeeplyNestedGenerics {
         // Complex variance relationships
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -614,7 +619,8 @@ def test_parsing_edge_cases_syntax(
         / "SyntaxEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import static java.lang.Math.*;
@@ -789,7 +795,7 @@ class ComplexInheritance
         return 0;
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -817,7 +823,8 @@ def test_malformed_but_valid_syntax(
         / "MalformedButValid.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package
     com
     .
@@ -914,7 +921,7 @@ class WeirdGenerics<T,U,V> {
 
     public<X,Y>Map<X,Y>method(){return null;}
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -942,7 +949,8 @@ def test_boundary_value_literals(
         / "BoundaryValues.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class BoundaryValues {
@@ -1062,7 +1070,7 @@ public class BoundaryValues {
         double result6 = 0.0 / 0.0; // NaN
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -1090,7 +1098,8 @@ def test_comment_edge_cases(
         / "CommentEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example; // Package comment
 
 import java.util.*; /* Import comment */
@@ -1195,7 +1204,7 @@ public class CommentEdgeCases {
 
     // Comment at end of file without newline
 } // Class end comment
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -1223,7 +1232,8 @@ def test_whitespace_edge_cases(
         / "WhitespaceEdgeCases.java"
     )
     test_file.write_text(
-        "package com.example;\n\n"
+        encoding="utf-8",
+        data="package com.example;\n\n"
         + "import java.util.*;\n\n"
         + "public class WhitespaceEdgeCases {\n\n"
         + "    // Tabs vs spaces mixing\n"
@@ -1270,7 +1280,7 @@ def test_whitespace_edge_cases(
         + "    public\\u0020void\\u00A0unicodeSpaces() {\n"
         + "        // Regular space: \\u0020, Non-breaking space: \\u00A0\n"
         + "    }\n"
-        + "}\n"
+        + "}\n",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -1298,7 +1308,8 @@ def test_package_and_import_edge_cases(
         / "PackageImportEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // File-level comment before package
 package com.example;
 
@@ -1427,7 +1438,7 @@ class AnotherClassInSameFile {
         List<String> emptyList = emptyList();
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -1456,7 +1467,8 @@ def test_modifier_combinations_edge_cases(
         / "ModifierCombinations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.io.Serializable;
@@ -1668,7 +1680,7 @@ public class NestedClassModifiers {
         public abstract void abstractMethod();
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -1702,7 +1714,8 @@ def test_generic_variance_edge_cases(
         / "GenericVarianceEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1887,7 +1900,7 @@ public class GenericVarianceEdgeCases {
         List<String> stringList = rawList; // Unchecked
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -1918,7 +1931,8 @@ def test_annotation_edge_cases(
         / "AnnotationEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.lang.annotation.*;
@@ -2133,7 +2147,7 @@ class ImplementingClass implements AnnotatedInterface {
         // Inherits @Deprecated from interface
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
@@ -2167,7 +2181,8 @@ def test_operator_and_expression_edge_cases(
         / "OperatorEdgeCases.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class OperatorEdgeCases {
@@ -2394,7 +2409,7 @@ public class OperatorEdgeCases {
                          (Math.max(x, y) - Math.min(x, y) + 1);
     }
 }
-"""
+""",
     )
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")

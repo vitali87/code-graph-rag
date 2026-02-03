@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shlex
+import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -147,7 +150,7 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
         except (OSError, ValueError):
             return True, f"rm with invalid path: {path_arg}"
         resolved_str = str(resolved)
-        if resolved_str == "/":
+        if resolved == resolved.parent:
             return True, "rm targeting root directory"
         parts = resolved.parts
         if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
@@ -271,6 +274,12 @@ class ShellCommander:
         all_stderr: list[bytes] = []
         last_return_code = 0
 
+        env = os.environ.copy()
+        if sys.platform == "win32":
+            git_bin = r"C:\Program Files\Git\usr\bin"
+            if os.path.isdir(git_bin) and git_bin not in env["PATH"]:
+                env["PATH"] = f"{git_bin};{env['PATH']}"
+
         for segment in segments:
             elapsed = time.monotonic() - start_time
             remaining_timeout = self.timeout - elapsed
@@ -278,13 +287,18 @@ class ShellCommander:
                 raise TimeoutError
 
             cmd_parts = shlex.split(segment)
+            executable = shutil.which(cmd_parts[0], path=env["PATH"])
+            if not executable:
+                executable = cmd_parts[0]
+
             proc = await asyncio.create_subprocess_exec(
-                cmd_parts[0],
+                executable,
                 *cmd_parts[1:],
                 stdin=asyncio.subprocess.PIPE if input_data is not None else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.project_root,
+                env=env,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(

@@ -11,6 +11,8 @@ from codebase_rag.tools.document_analyzer import (
     create_document_analyzer_tool,
 )
 
+pytestmark = [pytest.mark.integration]
+
 
 @pytest.fixture
 def temp_test_repo(tmp_path: Path) -> Path:

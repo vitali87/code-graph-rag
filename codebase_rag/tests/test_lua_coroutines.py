@@ -9,7 +9,9 @@ def test_lua_basic_coroutines(temp_repo: Path, mock_ingestor: MagicMock) -> None
     project = temp_repo / "lua_coroutines_basic"
     project.mkdir()
 
-    (project / "coroutines.lua").write_text("""
+    (project / "coroutines.lua").write_text(
+        encoding="utf-8",
+        data="""
 local co = {}
 
 function co.producer(n)
@@ -43,9 +45,12 @@ function co.fibonacci()
 end
 
 return co
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local co = require('coroutines')
 
 -- Test producer-consumer pattern
@@ -58,7 +63,8 @@ for i = 1, 10 do
     local _, val = coroutine.resume(fib)
     print("Fib:", val)
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -80,7 +86,9 @@ def test_lua_coroutine_scheduler(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_scheduler"
     project.mkdir()
 
-    (project / "scheduler.lua").write_text("""
+    (project / "scheduler.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Scheduler = {}
 Scheduler.__index = Scheduler
 
@@ -136,9 +144,12 @@ function Scheduler:kill(task_id)
 end
 
 return Scheduler
-""")
+""",
+    )
 
-    (project / "tasks.lua").write_text("""
+    (project / "tasks.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Tasks = {}
 
 function Tasks.worker1(scheduler, n)
@@ -169,9 +180,12 @@ function Tasks.long_task(scheduler, iterations)
 end
 
 return Tasks
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Scheduler = require('scheduler')
 local Tasks = require('tasks')
 
@@ -185,7 +199,8 @@ local id4 = sched:spawn(Tasks.long_task, sched, 10000)
 
 -- Run scheduler
 sched:run()
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -213,7 +228,9 @@ def test_lua_async_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_async"
     project.mkdir()
 
-    (project / "async.lua").write_text("""
+    (project / "async.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Async = {}
 
 -- Simulated async operations
@@ -286,9 +303,12 @@ function Async.sequence(tasks)
 end
 
 return Async
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Async = require('async')
 
 -- Test parallel execution
@@ -315,7 +335,8 @@ local sequence_task = Async.sequence(seq_tasks)
 while coroutine.status(sequence_task) ~= "dead" do
     coroutine.resume(sequence_task)
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -337,7 +358,9 @@ def test_lua_generator_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_generators"
     project.mkdir()
 
-    (project / "generators.lua").write_text("""
+    (project / "generators.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Gen = {}
 
 function Gen.range(start, stop, step)
@@ -406,9 +429,12 @@ function Gen.collect(gen)
 end
 
 return Gen
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Gen = require('generators')
 
 -- Create a range generator
@@ -427,7 +453,8 @@ local limited = Gen.take(squares, 10)
 local results = Gen.collect(limited)
 
 print("First 10 squares of even numbers:", table.concat(results, ", "))
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -449,7 +476,9 @@ def test_lua_state_machines(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_state_machine"
     project.mkdir()
 
-    (project / "state_machine.lua").write_text("""
+    (project / "state_machine.lua").write_text(
+        encoding="utf-8",
+        data="""
 local StateMachine = {}
 StateMachine.__index = StateMachine
 
@@ -487,9 +516,12 @@ function StateMachine:get_state()
 end
 
 return StateMachine
-""")
+""",
+    )
 
-    (project / "game_ai.lua").write_text("""
+    (project / "game_ai.lua").write_text(
+        encoding="utf-8",
+        data="""
 local StateMachine = require('state_machine')
 
 local GameAI = {}
@@ -536,9 +568,12 @@ function GameAI.update_enemy(enemy, dt)
 end
 
 return GameAI
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local GameAI = require('game_ai')
 
 local enemy = GameAI.create_enemy()
@@ -548,7 +583,8 @@ for frame = 1, 20 do
     print("Frame", frame, "- State:", enemy:get_state())
     GameAI.update_enemy(enemy, 0.016)
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

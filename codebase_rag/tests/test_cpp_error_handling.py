@@ -25,7 +25,8 @@ def test_basic_exception_handling(
     """Test basic exception handling with try/catch/throw."""
     test_file = cpp_error_handling_project / "basic_exceptions.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <exception>
 #include <stdexcept>
@@ -382,7 +383,7 @@ void demonstrateBasicExceptionHandling() {
     testBasicExceptionHandling();
     testNetworkExceptions();
 }
-"""
+""",
     )
 
     run_updater(cpp_error_handling_project, mock_ingestor)
@@ -426,7 +427,8 @@ def test_raii_patterns(
     """Test RAII (Resource Acquisition Is Initialization) patterns."""
     test_file = cpp_error_handling_project / "raii_patterns.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <fstream>
@@ -788,7 +790,7 @@ void demonstrateRAIIPatterns() {
     testRAIIMutexLocking();
     testRAIIResourceManager();
 }
-"""
+""",
     )
 
     run_updater(cpp_error_handling_project, mock_ingestor)
@@ -818,7 +820,8 @@ def test_cpp_error_handling_comprehensive(
     """Comprehensive test ensuring all error handling patterns create proper relationships."""
     test_file = cpp_error_handling_project / "comprehensive_error_handling.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive error handling combining exceptions, RAII, and error recovery
 #include <iostream>
 #include <memory>
@@ -886,7 +889,7 @@ void demonstrateComprehensiveErrorHandling() {
     ComprehensiveErrorDemo demo;
     demo.processWithRecovery();
 }
-"""
+""",
     )
 
     run_updater(cpp_error_handling_project, mock_ingestor)

@@ -9,7 +9,9 @@ def test_global_environment_access(temp_repo: Path, mock_ingestor: MagicMock) ->
     project = temp_repo / "lua_global_env"
     project.mkdir()
 
-    (project / "globals.lua").write_text("""
+    (project / "globals.lua").write_text(
+        encoding="utf-8",
+        data="""
 local env_manager = {}
 
 function env_manager.backup_global(name)
@@ -70,7 +72,8 @@ _G.increment = function()
 end
 
 return env_manager
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -92,7 +95,9 @@ def test_environment_manipulation(temp_repo: Path, mock_ingestor: MagicMock) -> 
     project = temp_repo / "lua_env_manipulation"
     project.mkdir()
 
-    (project / "env_manip.lua").write_text("""
+    (project / "env_manip.lua").write_text(
+        encoding="utf-8",
+        data="""
 local env_utils = {}
 
 function env_utils.create_safe_env()
@@ -165,7 +170,8 @@ setfenv(chunk, safe_env)
 local result = chunk()
 
 return env_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -187,7 +193,9 @@ def test_module_environment_patterns(temp_repo: Path, mock_ingestor: MagicMock) 
     project = temp_repo / "lua_module_env"
     project.mkdir()
 
-    (project / "module_env.lua").write_text("""
+    (project / "module_env.lua").write_text(
+        encoding="utf-8",
+        data="""
 local M = {}
 local env_helpers = {}
 
@@ -250,7 +258,8 @@ setfenv(1, {
 })
 
 return M
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -272,7 +281,9 @@ def test_dynamic_code_execution(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_dynamic_exec"
     project.mkdir()
 
-    (project / "dynamic_exec.lua").write_text("""
+    (project / "dynamic_exec.lua").write_text(
+        encoding="utf-8",
+        data="""
 local code_executor = {}
 
 function code_executor.create_safe_env()
@@ -336,7 +347,8 @@ local safe_env = code_executor.create_safe_env()
 local result = code_executor.execute_in_env(code, safe_env)
 
 return code_executor
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -358,7 +370,9 @@ def test_global_variable_management(temp_repo: Path, mock_ingestor: MagicMock) -
     project = temp_repo / "lua_global_mgmt"
     project.mkdir()
 
-    (project / "global_mgmt.lua").write_text("""
+    (project / "global_mgmt.lua").write_text(
+        encoding="utf-8",
+        data="""
 local global_manager = {}
 local globals_backup = {}
 
@@ -433,7 +447,8 @@ _G.test_global = "test_value"
 restore_globals({"print", "require"})
 
 return global_manager
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

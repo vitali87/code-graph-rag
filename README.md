@@ -244,6 +244,7 @@ Use the Makefile for common development tasks:
 | `make format` | Run ruff format |
 | `make typecheck` | Run type checking with ty |
 | `make check` | Run all checks: lint, typecheck, test |
+| `make pre-commit` | Run all pre-commit checks locally (comprehensive test before commit) |
 <!-- /SECTION:makefile_commands -->
 
 ## 🎯 Usage
@@ -687,6 +688,7 @@ my_build_output
 - **click**: Composable command line interface toolkit
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
+- **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
 <!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools

@@ -84,10 +84,11 @@ class TestGraphExportIntegration:
         self, temp_repo: Path, mock_ingestor
     ) -> None:
         (temp_repo / "example.py").write_text(
-            """
+            encoding="utf-8",
+            data="""
 def greet(name):
     return f"Hello, {name}"
-"""
+""",
         )
 
         create_and_run_updater(temp_repo, mock_ingestor)
@@ -107,14 +108,15 @@ def greet(name):
         self, temp_repo: Path, mock_ingestor
     ) -> None:
         (temp_repo / "myclass.py").write_text(
-            """
+            encoding="utf-8",
+            data="""
 class Calculator:
     def add(self, a, b):
         return a + b
 
     def subtract(self, a, b):
         return a - b
-"""
+""",
         )
 
         create_and_run_updater(temp_repo, mock_ingestor)
@@ -138,14 +140,15 @@ class Calculator:
         self, temp_repo: Path, mock_ingestor
     ) -> None:
         (temp_repo / "caller.py").write_text(
-            """
+            encoding="utf-8",
+            data="""
 def helper():
     return 42
 
 def main():
     result = helper()
     return result
-"""
+""",
         )
 
         create_and_run_updater(temp_repo, mock_ingestor)
@@ -167,13 +170,14 @@ def main():
         self, temp_repo: Path, mock_ingestor
     ) -> None:
         (temp_repo / "mod.py").write_text(
-            """
+            encoding="utf-8",
+            data="""
 def foo():
     pass
 
 class Bar:
     pass
-"""
+""",
         )
 
         create_and_run_updater(temp_repo, mock_ingestor)
@@ -191,7 +195,7 @@ class Bar:
     def test_exported_json_structure_is_valid(
         self, temp_repo: Path, mock_ingestor
     ) -> None:
-        (temp_repo / "simple.py").write_text("x = 1\n")
+        (temp_repo / "simple.py").write_text(encoding="utf-8", data="x = 1\n")
 
         create_and_run_updater(temp_repo, mock_ingestor)
         graph_data = build_graph_data_from_mock(mock_ingestor)

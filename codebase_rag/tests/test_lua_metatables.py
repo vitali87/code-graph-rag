@@ -10,7 +10,9 @@ def test_lua_arithmetic_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -
     project = temp_repo / "lua_arithmetic_meta"
     project.mkdir()
 
-    (project / "vector.lua").write_text("""
+    (project / "vector.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Vector = {}
 Vector.__index = Vector
 
@@ -71,9 +73,12 @@ function Vector:normalize()
 end
 
 return Vector
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Vector = require('vector')
 
 local v1 = Vector:new(3, 4)
@@ -90,7 +95,8 @@ local magnitude = #v1
 print(tostring(sum))
 print(tostring(diff))
 print(tostring(scaled))
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -126,7 +132,9 @@ def test_lua_comparison_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -
     project = temp_repo / "lua_comparison_meta"
     project.mkdir()
 
-    (project / "comparable.lua").write_text("""
+    (project / "comparable.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Comparable = {}
 Comparable.__index = Comparable
 
@@ -189,9 +197,12 @@ return {
     Comparable = Comparable,
     PriorityQueue = PriorityQueue
 }
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local lib = require('comparable')
 local Comparable = lib.Comparable
 local PriorityQueue = lib.PriorityQueue
@@ -208,7 +219,8 @@ while queue:size() > 0 do
     local item = queue:pop()
     print(item.value, item.priority)
 end
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -255,7 +267,9 @@ def test_lua_index_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_index_meta"
     project.mkdir()
 
-    (project / "proxy.lua").write_text("""
+    (project / "proxy.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Proxy = {}
 
 function Proxy.create_readonly(target)
@@ -338,9 +352,12 @@ return {
     Proxy = Proxy,
     Properties = Properties
 }
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local lib = require('proxy')
 local Proxy = lib.Proxy
 local Properties = lib.Properties
@@ -370,7 +387,8 @@ props:define_property("computed",
 
 props.computed = 20
 print("Computed:", props.computed)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -402,7 +420,9 @@ def test_lua_call_metamethod(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_call_meta"
     project.mkdir()
 
-    (project / "callable.lua").write_text("""
+    (project / "callable.lua").write_text(
+        encoding="utf-8",
+        data="""
 -- Function factory using __call
 local FunctionFactory = {}
 FunctionFactory.__index = FunctionFactory
@@ -500,9 +520,12 @@ return {
     Partial = Partial,
     EventEmitter = EventEmitter
 }
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local lib = require('callable')
 local FunctionFactory = lib.FunctionFactory
 local Memoizer = lib.Memoizer
@@ -531,7 +554,8 @@ print("Partial result:", add5(3, 2))
 local emitter = EventEmitter:new()
 emitter:on("test", function(msg) print("Received:", msg) end)
 emitter("test", "Hello World")
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -581,7 +605,9 @@ def test_lua_weak_references(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_weak_refs"
     project.mkdir()
 
-    (project / "weak_refs.lua").write_text("""
+    (project / "weak_refs.lua").write_text(
+        encoding="utf-8",
+        data="""
 local WeakCache = {}
 WeakCache.__index = WeakCache
 
@@ -686,9 +712,12 @@ return {
     Observable = Observable,
     Registry = Registry
 }
-""")
+""",
+    )
 
-    (project / "main.lua").write_text("""
+    (project / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local lib = require('weak_refs')
 local WeakCache = lib.WeakCache
 local Observable = lib.Observable
@@ -732,7 +761,8 @@ local id2 = registry:register(obj2)
 
 print("Registry count:", registry:count())
 print("Found by ID:", registry:get_by_id(id1).data)
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

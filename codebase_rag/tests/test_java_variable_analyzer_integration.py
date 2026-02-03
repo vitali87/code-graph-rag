@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,7 +28,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def java_parser() -> "Parser":
+def java_parser() -> Parser:
     parser = Parser(Language(tsjava.language()))
     return parser
 
@@ -79,7 +81,7 @@ def engine(
 class TestParameterAnalysisWithRealParsing:
     def test_method_with_single_parameter(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -101,7 +103,7 @@ public class UserService {
 
     def test_method_with_multiple_parameters(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -124,7 +126,7 @@ public class Calculator {
 
     def test_method_with_varargs_parameter(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -147,7 +149,7 @@ public class Logger {
 
     def test_constructor_parameters(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -201,7 +203,7 @@ public class User {
 class TestLocalVariableAnalysisWithRealParsing:
     def test_simple_local_variable_declaration(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -226,7 +228,7 @@ public class Example {
 
     def test_local_variable_with_object_creation(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -253,7 +255,7 @@ public class Example {
 
     def test_multiple_declarators_same_type(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -274,7 +276,7 @@ public class Example {
 
     def test_array_type_declaration(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -313,7 +315,7 @@ public class Example {
 class TestClassFieldAnalysisWithRealParsing:
     def test_class_fields_accessible_in_method(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -338,7 +340,7 @@ public class User {
 
     def test_static_fields(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -378,7 +380,7 @@ public class Constants {
 class TestAssignmentAnalysisWithRealParsing:
     def test_simple_assignment_in_constructor(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -401,7 +403,7 @@ public class Person {
 
     def test_assignment_with_literal_value(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -426,7 +428,7 @@ public class Example {
 
     def test_chained_assignments(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -476,7 +478,7 @@ public class Example {
 class TestEnhancedForLoopAnalysisWithRealParsing:
     def test_enhanced_for_loop_with_list(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -502,7 +504,7 @@ public class Example {
 
     def test_enhanced_for_loop_with_array(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -526,7 +528,7 @@ public class Example {
 
     def test_nested_enhanced_for_loops(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -554,7 +556,7 @@ public class Example {
 
     def test_enhanced_for_with_custom_type(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -596,7 +598,7 @@ public class Example {
 class TestTypeInferenceWithRealParsing:
     def test_infer_type_from_new_expression(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -623,7 +625,7 @@ public class Example {
 
     def test_infer_type_from_literals(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -663,7 +665,7 @@ public class Example {
 class TestComplexScenariosWithRealParsing:
     def test_method_with_all_variable_types(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -703,7 +705,7 @@ public class ComplexExample {
 
     def test_nested_classes_variable_resolution(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -731,7 +733,7 @@ public class Outer {
 
     def test_static_method_variables(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -757,7 +759,7 @@ public class StaticExample {
 
     def test_try_catch_variable_declarations(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -790,7 +792,7 @@ public class ExceptionExample {
 
     def test_lambda_expression_context(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -818,7 +820,7 @@ public class LambdaExample {
 
     def test_switch_expression_variables(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -869,7 +871,7 @@ public class SwitchExample {
 class TestEdgeCasesWithRealParsing:
     def test_empty_method_body(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -889,7 +891,7 @@ public class Empty {
 
     def test_abstract_method(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -908,7 +910,7 @@ public abstract class AbstractClass {
 
     def test_interface_method(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -927,7 +929,7 @@ public interface MyInterface {
 
     def test_generic_method(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -951,7 +953,7 @@ public class GenericExample {
 
     def test_record_constructor(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""

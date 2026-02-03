@@ -15,7 +15,9 @@ def lua_singleton_project(temp_repo: Path) -> Path:
     storage_dir = project_path / "storage"
     storage_dir.mkdir()
 
-    (storage_dir / "Storage.lua").write_text("""
+    (storage_dir / "Storage.lua").write_text(
+        encoding="utf-8",
+        data="""
 -- Singleton pattern in Lua using tables and metatables
 local Storage = {}
 Storage.__index = Storage
@@ -43,12 +45,15 @@ function Storage:load(key)
 end
 
 return Storage
-""")
+""",
+    )
 
     controllers_dir = project_path / "controllers"
     controllers_dir.mkdir()
 
-    (controllers_dir / "SceneController.lua").write_text("""
+    (controllers_dir / "SceneController.lua").write_text(
+        encoding="utf-8",
+        data="""
 local Storage = require('storage.Storage')
 
 local SceneController = {}
@@ -76,9 +81,12 @@ function SceneController:loadGameScene(gameData)
 end
 
 return SceneController
-""")
+""",
+    )
 
-    (project_path / "main.lua").write_text("""
+    (project_path / "main.lua").write_text(
+        encoding="utf-8",
+        data="""
 local SceneController = require('controllers.SceneController')
 local Storage = require('storage.Storage')
 
@@ -111,7 +119,8 @@ return {
     Application = Application,
     main = main
 }
-""")
+""",
+    )
 
     return project_path
 

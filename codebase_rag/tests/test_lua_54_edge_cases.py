@@ -11,7 +11,8 @@ def test_lua_54_goto_labels(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project.mkdir()
 
     (project / "goto_labels.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local GotoLabels = {}
 
 -- Test basic goto and labels
@@ -186,11 +187,12 @@ function GotoLabels.test_goto_with_closures()
 end
 
 return GotoLabels
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local GotoLabels = require('goto_labels')
 
 -- Test all goto label patterns
@@ -210,7 +212,7 @@ print("Nested goto result:", nested_result)
 
 local machine_results = GotoLabels.test_goto_with_closures()
 print("State machine:", table.concat(machine_results, " -> "))
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -251,7 +253,8 @@ def test_lua_54_utf8_library(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project.mkdir()
 
     (project / "utf8_lib.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local UTF8Lib = {}
 
 -- Test UTF-8 library functions
@@ -394,11 +397,12 @@ function UTF8Lib.test_utf8_normalization()
 end
 
 return UTF8Lib
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local UTF8Lib = require('utf8_lib')
 
 -- Test UTF-8 library functions
@@ -422,7 +426,7 @@ print("UTF-8 chars found:", #pattern_results.utf8_chars)
 local norm_results = UTF8Lib.test_utf8_normalization()
 print("Composed length:", norm_results.composed_len)
 print("Decomposed length:", norm_results.decomposed_len)
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)
@@ -467,7 +471,8 @@ def test_lua_54_bitwise_operators(temp_repo: Path, mock_ingestor: MagicMock) -> 
     project.mkdir()
 
     (project / "bitwise_ops.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local BitwiseOps = {}
 
 -- Test basic bitwise operations
@@ -648,11 +653,12 @@ function BitwiseOps.test_bit_algorithms()
 end
 
 return BitwiseOps
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local BitwiseOps = require('bitwise_ops')
 
 -- Test all bitwise operations
@@ -674,7 +680,7 @@ local algorithm_results = BitwiseOps.test_bit_algorithms()
 for num, result in pairs(algorithm_results) do
     print("Number", num, "has", result.set_bits, "set bits")
 end
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)

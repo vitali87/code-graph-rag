@@ -40,14 +40,14 @@ class SubmoduleResult:
 
 def _add_git_submodule(grammar_url: str, grammar_path: str) -> SubmoduleResult | None:
     try:
-        click.echo(f"🔄 {cs.LANG_MSG_ADDING_SUBMODULE.format(url=grammar_url)}")
+        click.echo(f"Adding submodule: {grammar_url}")
         subprocess.run(
             ["git", "submodule", "add", grammar_url, grammar_path],
             check=True,
             capture_output=True,
             text=True,
         )
-        click.echo(f"✅ {cs.LANG_MSG_SUBMODULE_SUCCESS.format(path=grammar_path)}")
+        click.echo(f"OK Submodule added at: {grammar_path}")
         return SubmoduleResult(success=True, grammar_path=grammar_path)
     except subprocess.CalledProcessError as e:
         return _handle_submodule_error(e, grammar_url, grammar_path)
@@ -63,12 +63,12 @@ def _handle_submodule_error(
 
     if "does not exist" in error_output or "not found" in error_output:
         logger.error(cs.LANG_ERR_REPO_NOT_FOUND.format(url=grammar_url))
-        click.echo(f"❌ {cs.LANG_ERR_REPO_NOT_FOUND.format(url=grammar_url)}")
-        click.echo(f"💡 {cs.LANG_ERR_CUSTOM_URL_HINT}")
+        click.echo(f"Error: {cs.LANG_ERR_REPO_NOT_FOUND.format(url=grammar_url)}")
+        click.echo(f"Hint: {cs.LANG_ERR_CUSTOM_URL_HINT}")
         return None
 
     logger.error(cs.LANG_ERR_GIT.format(error=error_output))
-    click.echo(f"❌ {cs.LANG_ERR_GIT.format(error=error_output)}")
+    click.echo(f"Error: {cs.LANG_ERR_GIT.format(error=error_output)}")
     raise error
 
 
@@ -76,7 +76,7 @@ def _reinstall_existing_submodule(
     grammar_url: str, grammar_path: str
 ) -> SubmoduleResult | None:
     click.secho(
-        f"⚠️  {cs.LANG_MSG_SUBMODULE_EXISTS.format(path=grammar_path)}",
+        f"Warning: {cs.LANG_MSG_SUBMODULE_EXISTS.format(path=grammar_path)}",
         fg=cs.Color.YELLOW,
     )
     try:
@@ -105,7 +105,7 @@ def _reinstall_existing_submodule(
             capture_output=True,
             text=True,
         )
-        click.echo(f"✅ {cs.LANG_MSG_REINSTALL_SUCCESS.format(path=grammar_path)}")
+        click.echo(f"OK {cs.LANG_MSG_REINSTALL_SUCCESS.format(path=grammar_path)}")
         return SubmoduleResult(success=True, grammar_path=grammar_path)
     except (subprocess.CalledProcessError, OSError) as reinstall_e:
         return _handle_reinstall_failure(reinstall_e, grammar_path)
@@ -117,10 +117,10 @@ def _handle_reinstall_failure(
     error_msg = error.stderr if hasattr(error, "stderr") else str(error)
     logger.error(cs.LANG_ERR_REINSTALL_FAILED.format(error=error_msg))
     click.secho(
-        f"❌ {cs.LANG_ERR_REINSTALL_FAILED.format(error=error_msg)}",
+        f"Error: {cs.LANG_ERR_REINSTALL_FAILED.format(error=error_msg)}",
         fg=cs.Color.RED,
     )
-    click.echo(f"💡 {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
+    click.echo(f"Hint: {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
     click.echo(f"   git submodule deinit -f {grammar_path}")
     click.echo(f"   git rm -f {grammar_path}")
     click.echo(f"   rm -rf {cs.LANG_GIT_MODULES_PATH.format(path=grammar_path)}")
@@ -132,7 +132,7 @@ def _parse_tree_sitter_json(
     if not os.path.exists(json_path):
         return None
 
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         config = json.load(f)
 
     if "grammars" not in config or len(config["grammars"]) == 0:
@@ -220,7 +220,7 @@ def _categorize_node_types(
 
 def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
     try:
-        with open(node_types_path) as f:
+        with open(node_types_path, encoding="utf-8") as f:
             node_types = json.load(f)
 
         all_node_names: set[str] = set()
@@ -242,9 +242,9 @@ def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
         semantic_categories = _extract_semantic_categories(node_types)
 
         click.echo(
-            f"📊 {cs.LANG_MSG_FOUND_NODE_TYPES.format(count=len(all_node_names))}"
+            f"Stats: {cs.LANG_MSG_FOUND_NODE_TYPES.format(count=len(all_node_names))}"
         )
-        click.echo(f"🌳 {cs.LANG_MSG_SEMANTIC_CATEGORIES}")
+        click.echo(f"Tree: {cs.LANG_MSG_SEMANTIC_CATEGORIES}")
 
         for category, subtypes in semantic_categories.items():
             preview = f"{subtypes[:5]}{cs.LANG_ELLIPSIS if len(subtypes) > 5 else ''}"
@@ -256,7 +256,7 @@ def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
 
         categories = _categorize_node_types(semantic_categories, node_types)
 
-        click.echo(f"🎯 {cs.LANG_MSG_MAPPED_CATEGORIES}")
+        click.echo(f"Target: {cs.LANG_MSG_MAPPED_CATEGORIES}")
         click.echo(cs.LANG_MSG_FUNCTIONS.format(nodes=categories.functions))
         click.echo(cs.LANG_MSG_CLASSES.format(nodes=categories.classes))
         click.echo(cs.LANG_MSG_MODULES.format(nodes=categories.modules))
@@ -325,14 +325,14 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
         return _write_language_config(config_entry, language_name)
     except Exception as e:
         logger.error(cs.LANG_ERR_UPDATE_CONFIG.format(error=e))
-        click.echo(f"❌ {cs.LANG_ERR_UPDATE_CONFIG.format(error=e)}")
+        click.echo(f"Error: {cs.LANG_ERR_UPDATE_CONFIG.format(error=e)}")
         click.echo(click.style(cs.LANG_FALLBACK_MANUAL_ADD, bold=True))
         click.echo(click.style(config_entry, fg=cs.Color.GREEN))
         return False
 
 
 def _write_language_config(config_entry: str, language_name: str) -> bool:
-    config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text()
+    config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
     closing_brace_pos = config_content.rfind("}")
 
     if closing_brace_pos == -1:
@@ -345,11 +345,11 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
         + config_content[closing_brace_pos:]
     )
 
-    with open(cs.LANG_CONFIG_FILE, "w") as f:
+    with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
         f.write(new_content)
 
-    click.echo(f"✅ {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
-    click.echo(f"📝 {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}")
+    click.echo(f"OK {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
+    click.echo(f"Note: {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}")
     _show_review_hints()
     return True
 
@@ -357,18 +357,20 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
 def _show_review_hints() -> None:
     click.echo()
     click.echo(
-        click.style(f"📋 {cs.LANG_MSG_REVIEW_PROMPT}", bold=True, fg=cs.Color.YELLOW)
+        click.style(
+            f"Review: {cs.LANG_MSG_REVIEW_PROMPT}", bold=True, fg=cs.Color.YELLOW
+        )
     )
     click.echo(cs.LANG_MSG_REVIEW_HINT)
     click.echo(cs.LANG_MSG_EDIT_HINT.format(path=cs.LANG_CONFIG_FILE))
     click.echo()
-    click.echo(f"🎯 {cs.LANG_MSG_COMMON_ISSUES}")
+    click.echo(f"Target: {cs.LANG_MSG_COMMON_ISSUES}")
     click.echo(f"   • {cs.LANG_MSG_ISSUE_MISCLASSIFIED.strip()}")
     click.echo(f"   • {cs.LANG_MSG_ISSUE_MISSING.strip()}")
     click.echo(f"   • {cs.LANG_MSG_ISSUE_CLASS_TYPES.strip()}")
     click.echo(f"   • {cs.LANG_MSG_ISSUE_CALL_TYPES.strip()}")
     click.echo()
-    click.echo(f"💡 {cs.LANG_MSG_LIST_HINT}")
+    click.echo(f"Hint: {cs.LANG_MSG_LIST_HINT}")
 
 
 @click.group(help=ch.CMD_LANGUAGE_GROUP)
@@ -390,14 +392,14 @@ def add_grammar(
 
     if not grammar_url:
         if not language_name:
-            click.echo(f"❌ {cs.LANG_ERR_MISSING_ARGS}")
+            click.echo(f"Error: {cs.LANG_ERR_MISSING_ARGS}")
             return
         grammar_url = cs.LANG_DEFAULT_GRAMMAR_URL.format(name=language_name)
-        click.echo(f"🔍 {cs.LANG_MSG_USING_DEFAULT_URL.format(url=grammar_url)}")
+        click.echo(f"Search: {cs.LANG_MSG_USING_DEFAULT_URL.format(url=grammar_url)}")
 
     if grammar_url and cs.LANG_TREE_SITTER_URL_MARKER not in grammar_url:
         click.secho(
-            f"⚠️ {cs.LANG_MSG_CUSTOM_URL_WARNING}",
+            f"Warning: {cs.LANG_MSG_CUSTOM_URL_WARNING}",
             fg=cs.Color.YELLOW,
             bold=True,
         )
@@ -465,7 +467,7 @@ def list_languages() -> None:
     console = Console()
 
     table = Table(
-        title=f"📋 {cs.LANG_TABLE_TITLE}",
+        title=f"List: {cs.LANG_TABLE_TITLE}",
         show_header=True,
         header_style=f"bold {cs.Color.MAGENTA}",
     )
@@ -504,12 +506,12 @@ def list_languages() -> None:
 def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     if language_name not in LANGUAGE_SPECS:
         available_langs = ", ".join(LANGUAGE_SPECS.keys())
-        click.echo(f"❌ {cs.LANG_MSG_LANG_NOT_FOUND.format(name=language_name)}")
-        click.echo(f"📋 {cs.LANG_MSG_AVAILABLE_LANGS.format(langs=available_langs)}")
+        click.echo(f"Error: {cs.LANG_MSG_LANG_NOT_FOUND.format(name=language_name)}")
+        click.echo(f"List: {cs.LANG_MSG_AVAILABLE_LANGS.format(langs=available_langs)}")
         return
 
     try:
-        original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text()
+        original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
         pattern = rf'    "{language_name}": LanguageSpec\([\s\S]*?\),\n'
         new_content = re.sub(pattern, "", original_content)
 
@@ -517,14 +519,14 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         patches = dmp_obj.patch_make(original_content, new_content)
         result, _ = dmp_obj.patch_apply(patches, original_content)
 
-        with open(cs.LANG_CONFIG_FILE, "w") as f:
+        with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(result)
 
-        click.echo(f"✅ {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
+        click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
 
     except Exception as e:
         logger.error(cs.LANG_ERR_REMOVE_CONFIG.format(error=e))
-        click.echo(f"❌ {cs.LANG_ERR_REMOVE_CONFIG.format(error=e)}")
+        click.echo(f"Error: {cs.LANG_ERR_REMOVE_CONFIG.format(error=e)}")
         return
 
     if not keep_submodule:
@@ -534,7 +536,7 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         if os.path.exists(submodule_path):
             try:
                 click.echo(
-                    f"🔄 {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
+                    f"Removing: {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
                 )
                 subprocess.run(
                     ["git", "submodule", "deinit", "-f", submodule_path],
@@ -549,41 +551,41 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
                 if os.path.exists(modules_path):
                     shutil.rmtree(modules_path)
                     click.echo(
-                        f"🧹 {cs.LANG_MSG_CLEANED_MODULES.format(path=modules_path)}"
+                        f"Cleaned: {cs.LANG_MSG_CLEANED_MODULES.format(path=modules_path)}"
                     )
 
                 click.echo(
-                    f"🗑️  {cs.LANG_MSG_SUBMODULE_REMOVED.format(path=submodule_path)}"
+                    f"Deleted: {cs.LANG_MSG_SUBMODULE_REMOVED.format(path=submodule_path)}"
                 )
             except subprocess.CalledProcessError as e:
                 logger.error(cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e))
-                click.echo(f"❌ {cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e)}")
-                click.echo(f"💡 {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
+                click.echo(f"Error: {cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e)}")
+                click.echo(f"Hint: {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
                 click.echo(f"   git submodule deinit -f {submodule_path}")
                 click.echo(f"   git rm -f {submodule_path}")
         else:
-            click.echo(f"ℹ️  {cs.LANG_MSG_NO_SUBMODULE.format(path=submodule_path)}")
+            click.echo(f"Info: {cs.LANG_MSG_NO_SUBMODULE.format(path=submodule_path)}")
     else:
-        click.echo(f"ℹ️  {cs.LANG_MSG_KEEPING_SUBMODULE}")
+        click.echo(f"Info: {cs.LANG_MSG_KEEPING_SUBMODULE}")
 
-    click.echo(f"🎉 {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
+    click.echo(f"Done: {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
 
 
 @cli.command(help=ch.CMD_LANGUAGE_CLEANUP)
 def cleanup_orphaned_modules() -> None:
     modules_dir = f".git/modules/{cs.LANG_GRAMMARS_DIR}"
     if not os.path.exists(modules_dir):
-        click.echo(f"📂 {cs.LANG_MSG_NO_MODULES_DIR}")
+        click.echo(f"Info: {cs.LANG_MSG_NO_MODULES_DIR}")
         return
 
     gitmodules_submodules: set[str] = set()
     try:
-        with open(cs.LANG_GITMODULES_FILE) as f:
+        with open(cs.LANG_GITMODULES_FILE, encoding="utf-8") as f:
             content = f.read()
             paths = re.findall(cs.LANG_GITMODULES_REGEX, content)
             gitmodules_submodules = set(paths)
     except FileNotFoundError:
-        click.echo(f"📄 {cs.LANG_MSG_NO_GITMODULES}")
+        click.echo(f"Info: {cs.LANG_MSG_NO_GITMODULES}")
 
     orphaned = []
     for item in os.listdir(modules_dir):
@@ -592,21 +594,21 @@ def cleanup_orphaned_modules() -> None:
             orphaned.append(item)
 
     if not orphaned:
-        click.echo(f"✨ {cs.LANG_MSG_NO_ORPHANS}")
+        click.echo(f"Clean: {cs.LANG_MSG_NO_ORPHANS}")
         return
 
     click.echo(
-        f"🔍 {cs.LANG_MSG_FOUND_ORPHANS.format(count=len(orphaned), modules=', '.join(orphaned))}"
+        f"Search: {cs.LANG_MSG_FOUND_ORPHANS.format(count=len(orphaned), modules=', '.join(orphaned))}"
     )
 
     if click.confirm(cs.LANG_PROMPT_REMOVE_ORPHANS):
         for module in orphaned:
             module_path = os.path.join(modules_dir, module)
             shutil.rmtree(module_path)
-            click.echo(f"🗑️  {cs.LANG_MSG_REMOVED_ORPHAN.format(module=module)}")
-        click.echo(f"🎉 {cs.LANG_MSG_CLEANUP_COMPLETE}")
+            click.echo(f"Deleted: {cs.LANG_MSG_REMOVED_ORPHAN.format(module=module)}")
+        click.echo(f"Done: {cs.LANG_MSG_CLEANUP_COMPLETE}")
     else:
-        click.echo(f"❌ {cs.LANG_MSG_CLEANUP_CANCELLED}")
+        click.echo(f"Cancelled: {cs.LANG_MSG_CLEANUP_CANCELLED}")
 
 
 if __name__ == "__main__":

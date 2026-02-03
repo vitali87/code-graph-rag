@@ -1,0 +1,91 @@
+# GitHub Labels Configuration
+# This file defines all labels used in issue templates and workflows
+# Managed by the label-sync workflow
+
+- name: bug
+  color: d73a4a
+  description: Something isn't working correctly
+
+- name: documentation
+  color: 0075ca
+  description: Improvements or additions to documentation
+
+- name: enhancement
+  color: a2eeef
+  description: New feature or request
+
+- name: question
+  color: d876e3
+  description: Further information is requested
+
+- name: poor-quality
+  color: e99695
+  description: PR does not meet contribution standards
+
+- name: good first issue
+  color: 7057ff
+  description: Good for newcomers
+
+- name: help wanted
+  color: 008672
+  description: Extra attention is needed
+
+- name: duplicate
+  color: cfd3d7
+  description: This issue or pull request already exists
+
+- name: invalid
+  color: e4e669
+  description: This doesn't seem right
+
+- name: wontfix
+  color: ffffff
+  description: This will not be worked on
+
+- name: dependencies
+  color: 0366d6
+  description: Pull requests that update a dependency file
+
+- name: security
+  color: ee0701
+  description: Security vulnerability or concern
+
+- name: performance
+  color: f9d0c4
+  description: Performance improvements
+
+- name: breaking change
+  color: b60205
+  description: Breaking API or behavior change
+
+- name: language support
+  color: 1d76db
+  description: Related to programming language support
+
+- name: ci/cd
+  color: 0e8a16
+  description: Continuous integration and deployment
+
+- name: tests
+  color: fbca04
+  description: Related to testing
+
+- name: needs triage
+  color: ededed
+  description: Needs initial review and categorization
+
+- name: blocked
+  color: b60205
+  description: Blocked by another issue or external dependency
+
+- name: in progress
+  color: c2e0c6
+  description: Currently being worked on
+
+- name: ready for review
+  color: 0e8a16
+  description: Ready for code review
+
+- name: skip-review
+  color: ededed
+  description: Skip automated code review

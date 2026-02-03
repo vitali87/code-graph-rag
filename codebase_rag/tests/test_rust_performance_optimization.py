@@ -12,7 +12,9 @@ def rust_performance_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_performance_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_performance_test"
 version = "0.1.0"
@@ -21,10 +23,13 @@ edition = "2021"
 [dependencies]
 criterion = "0.5"
 rayon = "1.7"
-""")
+""",
+    )
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Performance test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Performance test crate"
+    )
 
     return project_path
 
@@ -36,7 +41,8 @@ def test_benchmarking_patterns(
     """Test benchmarking and measurement patterns."""
     test_file = rust_performance_project / "benchmarking.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::time::{Duration, Instant};
 
 fn time_function<F, R>(f: F) -> (R, Duration)
@@ -301,7 +307,7 @@ fn memory_usage_tracking() {
 
     println!("Memory usage: {} bytes", tracker.current_usage());
 }
-"""
+""",
     )
 
     run_updater(rust_performance_project, mock_ingestor)
@@ -322,7 +328,8 @@ def test_simd_vectorization(
     """Test SIMD and vectorization patterns."""
     test_file = rust_performance_project / "simd_vectorization.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::arch::x86_64::*;
 
 fn scalar_add(a: &[f32], b: &[f32], result: &mut [f32]) {
@@ -567,7 +574,7 @@ mod fastrand {
         range.start + (range.end - range.start) / 2
     }
 }
-"""
+""",
     )
 
     run_updater(rust_performance_project, mock_ingestor)
@@ -588,7 +595,8 @@ def test_parallel_processing_rayon(
     """Test parallel processing with Rayon."""
     test_file = rust_performance_project / "parallel_rayon.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -876,7 +884,7 @@ mod fastrand {
         range.start + (range.end - range.start) / 2
     }
 }
-"""
+""",
     )
 
     run_updater(rust_performance_project, mock_ingestor)
@@ -897,7 +905,8 @@ def test_memory_optimization(
     """Test memory optimization patterns."""
     test_file = rust_performance_project / "memory_optimization.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::mem;
 use std::alloc::{alloc, dealloc, Layout};
 
@@ -1205,7 +1214,7 @@ fn memory_mapped_files() {
         println!("Test file created for memory mapping");
     }
 }
-"""
+""",
     )
 
     run_updater(rust_performance_project, mock_ingestor)
@@ -1227,7 +1236,8 @@ def test_profiling_optimization_tools(
     """Test profiling and optimization tooling patterns."""
     test_file = rust_performance_project / "profiling_tools.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 
@@ -1617,7 +1627,7 @@ fn hotspot_detection() {
 
     detector.report_hotspots(5);
 }
-"""
+""",
     )
 
     run_updater(rust_performance_project, mock_ingestor)
