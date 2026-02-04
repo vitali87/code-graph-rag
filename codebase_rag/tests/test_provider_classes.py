@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +18,6 @@ from codebase_rag.providers.litellm import LiteLLMProvider
 
 class TestProviderRegistry:
     def test_get_valid_providers(self) -> None:
-        # All providers now map to LiteLLMProvider
         google_provider = get_provider(
             Provider.GOOGLE, api_key="test-key", provider_type="api"
         )
@@ -35,7 +35,6 @@ class TestProviderRegistry:
         assert ollama_provider.provider_name == Provider.OLLAMA
 
     def test_get_unknown_provider(self) -> None:
-        # Now returns LiteLLMProvider even for unknown keys (fallback logic)
         provider = get_provider("unknown_provider", api_key="xyz")
         assert isinstance(provider, LiteLLMProvider)
         assert provider.provider_name == "unknown_provider"
@@ -45,9 +44,7 @@ class TestProviderRegistry:
         assert Provider.GOOGLE in providers
         assert Provider.OPENAI in providers
         assert Provider.OLLAMA in providers
-        # Should contain dynamic providers from LiteLLM
         assert len(providers) > 20
-        # Check for a common LiteLLM provider that isn't in our enum defaults
         assert (
             "bedrock" in providers
             or "sagemaker" in providers
@@ -110,30 +107,26 @@ class TestLiteLLMProvider:
 
         provider.create_model("gemini-1.5-pro")
 
-        # Check provider initialization
         mock_pydantic_provider.assert_called_once_with(
             api_key="test-key", api_base=None
         )
 
-        # Check model initialization
-        # Should convert to google/gemini-1.5-pro
         mock_openai_model.assert_called_once()
         args = mock_openai_model.call_args[0]
         assert args[0] == "google/gemini-1.5-pro"
         assert "provider" in mock_openai_model.call_args[1]
 
-    @patch("os.environ")
-    @patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider")
-    @patch("codebase_rag.providers.litellm.OpenAIChatModel")
-    def test_vertex_env_vars(
-        self, mock_model: Any, mock_provider: Any, mock_environ: Any
-    ) -> None:
+    def test_vertex_env_vars(self) -> None:
         provider = LiteLLMProvider(
             provider=Provider.GOOGLE, project_id="vertex-proj", region="us-central1"
         )
 
-        provider.create_model("gemini-pro")
+        with patch.dict(os.environ, {}, clear=True):
+            with (
+                patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"),
+                patch("codebase_rag.providers.litellm.OpenAIChatModel"),
+            ):
+                provider.create_model("gemini-pro")
 
-        # Verify env vars were set
-        mock_environ.__setitem__.assert_any_call("VERTEXAI_PROJECT", "vertex-proj")
-        mock_environ.__setitem__.assert_any_call("VERTEXAI_LOCATION", "us-central1")
+                assert os.environ.get("VERTEXAI_PROJECT") == "vertex-proj"
+                assert os.environ.get("VERTEXAI_LOCATION") == "us-central1"

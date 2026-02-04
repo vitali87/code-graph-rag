@@ -82,6 +82,9 @@ class DocumentAnalyzer:
             logger.success(ls.DOC_SUCCESS.format(path=file_path))
             return str(result.data)  # type: ignore[attr-defined]
 
+        except (ValueError, OSError) as e:
+            logger.error(ls.DOC_FAILED.format(path=file_path, error=e))
+            return te.DOC_ANALYSIS_FAILED.format(error=e)
         except Exception as e:
             logger.exception(ls.DOC_FAILED.format(path=file_path, error=e))
             return te.DOC_ANALYSIS_FAILED.format(error=e)

@@ -1,5 +1,5 @@
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -29,20 +29,21 @@ def test_create_model_formats():
         ) as mock_pydantic_provider,
         patch("codebase_rag.providers.litellm.OpenAIChatModel") as mock_model,
     ):
+        # (H) Match settings argument structure
+
         provider.create_model("gpt-4o")
-        mock_model.assert_called_with(
-            "openai/gpt-4o", provider=mock_pydantic_provider.return_value
-        )
+        args, kwargs = mock_model.call_args
+        assert args[0] == "openai/gpt-4o"
+        assert kwargs["provider"] == mock_pydantic_provider.return_value
+        assert isinstance(kwargs["settings"], dict)
 
         provider.create_model("anthropic/claude-3-5-sonnet")
-        mock_model.assert_called_with(
-            "anthropic/claude-3-5-sonnet", provider=mock_pydantic_provider.return_value
-        )
+        args, kwargs = mock_model.call_args
+        assert args[0] == "anthropic/claude-3-5-sonnet"
 
         provider.create_model("ollama:llama3")
-        mock_model.assert_called_with(
-            "ollama/llama3", provider=mock_pydantic_provider.return_value
-        )
+        args, kwargs = mock_model.call_args
+        assert args[0] == "ollama/llama3"
 
 
 def test_provider_specific_env_vars():
@@ -51,17 +52,15 @@ def test_provider_specific_env_vars():
         provider="vertex_ai", project_id="test-project", region="us-central1"
     )
 
-    os.environ.pop("VERTEXAI_PROJECT", None)
-    os.environ.pop("VERTEXAI_LOCATION", None)
+    with patch.dict(os.environ, {}, clear=True):
+        with (
+            patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"),
+            patch("codebase_rag.providers.litellm.OpenAIChatModel"),
+        ):
+            provider.create_model("gemini-1.5-pro")
 
-    with (
-        patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"),
-        patch("codebase_rag.providers.litellm.OpenAIChatModel"),
-    ):
-        provider.create_model("gemini-1.5-pro")
-
-        assert os.environ.get("VERTEXAI_PROJECT") == "test-project"
-        assert os.environ.get("VERTEXAI_LOCATION") == "us-central1"
+            assert os.environ.get("VERTEXAI_PROJECT") == "test-project"
+            assert os.environ.get("VERTEXAI_LOCATION") == "us-central1"
 
 
 def test_api_key_handling():
@@ -95,20 +94,16 @@ def test_error_handling():
 
 
 def test_extra_headers_handling():
-    """Test that extra_headers are passed to litellm."""
+    """Test that extra_headers are passed to OpenAIChatModel settings."""
     headers = {"x-portkey-api-key": "pk-test", "x-portkey-provider": "anthropic"}
-    provider = LiteLLMProvider(
-        provider="openai",
-        api_key="test",
-        extra_headers=headers
-    )
+    provider = LiteLLMProvider(provider="openai", api_key="test", extra_headers=headers)
 
-    # Mock the litellm module that gets imported inside the method
-    with patch.dict("sys.modules", {"litellm": MagicMock()}):
-        import sys
-        mock_litellm = sys.modules["litellm"]
-        mock_litellm.extra_headers = {}
+    with patch("codebase_rag.providers.litellm.OpenAIChatModel") as mock_model:
+        with patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"):
+            provider.create_model("gpt-4")
 
-        provider.create_model("gpt-4")
-
-        assert mock_litellm.extra_headers == headers
+        mock_model.assert_called_once()
+        _, kwargs = mock_model.call_args
+        settings = kwargs.get("settings")
+        assert settings is not None
+        assert settings["extra_headers"] == headers

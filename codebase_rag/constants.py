@@ -49,8 +49,6 @@ def get_all_providers() -> list[str]:
 
         except (ImportError, AttributeError):
             _ALL_PROVIDERS_CACHE = [str(p.value) for p in Provider]
-    if _ALL_PROVIDERS_CACHE is None:
-        return []
     return _ALL_PROVIDERS_CACHE
 
 

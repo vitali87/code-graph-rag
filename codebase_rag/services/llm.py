@@ -40,11 +40,12 @@ class CypherGenerator:
             config = settings.active_cypher_config
             llm = _create_provider_model(config)
 
-            local_keywords = {"ollama", "local", "vllm", "llama", "qwen"}
-            is_local = any(
-                k in str(config.provider).lower() or k in config.model_id.lower()
-                for k in local_keywords
-            )
+            local_providers = {
+                cs.Provider.OLLAMA,
+                cs.Provider.LOCAL,
+                cs.Provider.VLLM,
+            }
+            is_local = config.provider.lower() in local_providers
             system_prompt = (
                 LOCAL_CYPHER_SYSTEM_PROMPT if is_local else CYPHER_SYSTEM_PROMPT
             )

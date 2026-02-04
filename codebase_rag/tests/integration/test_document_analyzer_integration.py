@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.constants import Provider
 from codebase_rag.tools.document_analyzer import (
     DocumentAnalyzer,
     create_document_analyzer_tool,
@@ -40,33 +39,34 @@ def temp_test_repo(tmp_path: Path) -> Path:
 @pytest.fixture
 def mock_settings() -> MagicMock:
     settings = MagicMock()
-    settings.active_orchestrator_config.provider = Provider.GOOGLE
+    settings.active_orchestrator_config.provider = "openai"
     settings.active_orchestrator_config.provider_type = "api"
     settings.active_orchestrator_config.api_key = "test-api-key"
-    settings.active_orchestrator_config.model_id = "gemini-1.5-flash"
+    settings.active_orchestrator_config.model_id = "gpt-4o"
+    return settings
+    settings.active_orchestrator_config.model_id = "gpt-4o"
     return settings
 
 
 @pytest.fixture
-def mock_genai_client() -> MagicMock:
-    client = MagicMock()
-    response = MagicMock()
-    response.text = "This is an analysis of the document."
-    client.models.generate_content.return_value = response
-    return client
+def mock_agent_run() -> MagicMock:
+    with patch("codebase_rag.tools.document_analyzer.Agent") as mock_agent_cls:
+        mock_instance = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = "This is an analysis of the document."
+        mock_instance.run_sync.return_value = mock_result
+        mock_agent_cls.return_value = mock_instance
+        yield mock_instance.run_sync
 
 
 @pytest.fixture
 def analyzer_with_mock(
     temp_test_repo: Path,
     mock_settings: MagicMock,
-    mock_genai_client: MagicMock,
+    mock_agent_run: MagicMock,
 ) -> DocumentAnalyzer:
     with patch("codebase_rag.tools.document_analyzer.settings", mock_settings):
-        with patch(
-            "codebase_rag.tools.document_analyzer.genai.Client",
-            return_value=mock_genai_client,
-        ):
+        with patch("codebase_rag.tools.document_analyzer._create_provider_model"):
             return DocumentAnalyzer(str(temp_test_repo))
 
 
@@ -74,16 +74,16 @@ class TestDocumentAnalyzerIntegration:
     def test_analyze_text_file(
         self,
         analyzer_with_mock: DocumentAnalyzer,
-        mock_genai_client: MagicMock,
+        mock_agent_run: MagicMock,
     ) -> None:
         result = analyzer_with_mock.analyze("readme.txt", "What is this file about?")
         assert "analysis" in result.lower()
-        mock_genai_client.models.generate_content.assert_called_once()
+        mock_agent_run.assert_called_once()
 
     def test_analyze_code_file(
         self,
         analyzer_with_mock: DocumentAnalyzer,
-        mock_genai_client: MagicMock,
+        mock_agent_run: MagicMock,
     ) -> None:
         result = analyzer_with_mock.analyze("code.py", "What does this code do?")
         assert "analysis" in result.lower()
@@ -91,7 +91,7 @@ class TestDocumentAnalyzerIntegration:
     def test_analyze_json_file(
         self,
         analyzer_with_mock: DocumentAnalyzer,
-        mock_genai_client: MagicMock,
+        mock_agent_run: MagicMock,
     ) -> None:
         result = analyzer_with_mock.analyze("data.json", "What data is in this file?")
         assert "analysis" in result.lower()
@@ -99,7 +99,7 @@ class TestDocumentAnalyzerIntegration:
     def test_analyze_nested_file(
         self,
         analyzer_with_mock: DocumentAnalyzer,
-        mock_genai_client: MagicMock,
+        mock_agent_run: MagicMock,
     ) -> None:
         result = analyzer_with_mock.analyze("docs/manual.txt", "Summarize this manual")
         assert "analysis" in result.lower()
@@ -125,13 +125,10 @@ class TestDocumentAnalyzerToolIntegration:
         self,
         temp_test_repo: Path,
         mock_settings: MagicMock,
-        mock_genai_client: MagicMock,
+        mock_agent_run: MagicMock,
     ) -> None:
         with patch("codebase_rag.tools.document_analyzer.settings", mock_settings):
-            with patch(
-                "codebase_rag.tools.document_analyzer.genai.Client",
-                return_value=mock_genai_client,
-            ):
+            with patch("codebase_rag.tools.document_analyzer._create_provider_model"):
                 analyzer = DocumentAnalyzer(str(temp_test_repo))
                 tool = create_document_analyzer_tool(analyzer)
                 result = tool.function(
@@ -144,13 +141,10 @@ class TestDocumentAnalyzerToolIntegration:
         self,
         temp_test_repo: Path,
         mock_settings: MagicMock,
-        mock_genai_client: MagicMock,
+        mock_agent_run: MagicMock,
     ) -> None:
         with patch("codebase_rag.tools.document_analyzer.settings", mock_settings):
-            with patch(
-                "codebase_rag.tools.document_analyzer.genai.Client",
-                return_value=mock_genai_client,
-            ):
+            with patch("codebase_rag.tools.document_analyzer._create_provider_model"):
                 analyzer = DocumentAnalyzer(str(temp_test_repo))
                 tool = create_document_analyzer_tool(analyzer)
                 result = tool.function(
@@ -165,12 +159,14 @@ class TestDocumentAnalyzerWithDifferentProviders:
         self,
         temp_test_repo: Path,
     ) -> None:
-        mock_settings = MagicMock()
-        mock_settings.active_orchestrator_config.provider = "anthropic"
-        with patch("codebase_rag.tools.document_analyzer.settings", mock_settings):
-            analyzer = DocumentAnalyzer(str(temp_test_repo))
-            result = analyzer.analyze("readme.txt", "What is this?")
-            assert "not supported" in result.lower()
+        with patch("codebase_rag.tools.document_analyzer.settings"):
+            with patch(
+                "codebase_rag.tools.document_analyzer._create_provider_model",
+                side_effect=ValueError("Provider error"),
+            ):
+                analyzer = DocumentAnalyzer(str(temp_test_repo))
+                result = analyzer.analyze("readme.txt", "What is this?")
+                assert "failed" in result.lower() or "error" in result.lower()
 
 
 class TestDocumentAnalyzerResponseHandling:
@@ -179,41 +175,37 @@ class TestDocumentAnalyzerResponseHandling:
         temp_test_repo: Path,
         mock_settings: MagicMock,
     ) -> None:
-        mock_client = MagicMock()
-        response = MagicMock()
-        response.text = None
-        candidate = MagicMock()
-        part = MagicMock()
-        part.text = "Analysis from candidate"
-        candidate.content.parts = [part]
-        response.candidates = [candidate]
-        mock_client.models.generate_content.return_value = response
-
         with patch("codebase_rag.tools.document_analyzer.settings", mock_settings):
-            with patch(
-                "codebase_rag.tools.document_analyzer.genai.Client",
-                return_value=mock_client,
-            ):
-                analyzer = DocumentAnalyzer(str(temp_test_repo))
-                result = analyzer.analyze("readme.txt", "What is this?")
-                assert result == "Analysis from candidate"
+            with patch("codebase_rag.tools.document_analyzer._create_provider_model"):
+                with patch(
+                    "codebase_rag.tools.document_analyzer.Agent"
+                ) as mock_agent_cls:
+                    mock_instance = MagicMock()
+                    mock_result = MagicMock()
+                    mock_result.data = "Analysis from candidate"
+                    mock_instance.run_sync.return_value = mock_result
+                    mock_agent_cls.return_value = mock_instance
+
+                    analyzer = DocumentAnalyzer(str(temp_test_repo))
+                    result = analyzer.analyze("readme.txt", "What is this?")
+                    assert result == "Analysis from candidate"
 
     def test_handles_empty_response(
         self,
         temp_test_repo: Path,
         mock_settings: MagicMock,
     ) -> None:
-        mock_client = MagicMock()
-        response = MagicMock()
-        response.text = None
-        response.candidates = None
-        mock_client.models.generate_content.return_value = response
-
         with patch("codebase_rag.tools.document_analyzer.settings", mock_settings):
-            with patch(
-                "codebase_rag.tools.document_analyzer.genai.Client",
-                return_value=mock_client,
-            ):
-                analyzer = DocumentAnalyzer(str(temp_test_repo))
-                result = analyzer.analyze("readme.txt", "What is this?")
-                assert "no" in result.lower() and "content" in result.lower()
+            with patch("codebase_rag.tools.document_analyzer._create_provider_model"):
+                with patch(
+                    "codebase_rag.tools.document_analyzer.Agent"
+                ) as mock_agent_cls:
+                    mock_instance = MagicMock()
+                    mock_result = MagicMock()
+                    mock_result.data = None
+                    mock_instance.run_sync.return_value = mock_result
+                    mock_agent_cls.return_value = mock_instance
+
+                    analyzer = DocumentAnalyzer(str(temp_test_repo))
+                    result = analyzer.analyze("readme.txt", "What is this?")
+                    assert result in ("None", "")

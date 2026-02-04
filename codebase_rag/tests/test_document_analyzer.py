@@ -36,12 +36,24 @@ def mock_settings() -> MagicMock:
 
 @pytest.fixture
 def mock_agent_run() -> MagicMock:
-    """Mock the Agent.run_sync method."""
-    with patch("codebase_rag.tools.document_analyzer.Agent.run_sync") as mock_run:
-        result = MagicMock()
-        result.data = "Analysis result"
-        mock_run.return_value = result
-        yield mock_run
+    """Mock the Agent.run_sync method by mocking the Agent class."""
+    with patch("codebase_rag.tools.document_analyzer.Agent") as mock_agent_cls:
+        mock_instance = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = "Analysis result"
+        mock_instance.run_sync.return_value = mock_result
+        mock_agent_cls.return_value = mock_instance
+        yield mock_instance.run_sync
+
+
+@pytest.fixture
+def mock_create_model() -> MagicMock:
+    """Mock _create_provider_model to avoid provider instantiation."""
+    with patch(
+        "codebase_rag.tools.document_analyzer._create_provider_model"
+    ) as mock_create:
+        mock_create.return_value = MagicMock()
+        yield mock_create
 
 
 class TestDocumentAnalyzerInit:
@@ -80,6 +92,7 @@ class TestDocumentAnalyzerAnalyze:
         temp_project_root: Path,
         mock_settings: MagicMock,
         mock_agent_run: MagicMock,
+        mock_create_model: MagicMock,
     ) -> None:
         test_file = temp_project_root / "test.txt"
         test_file.write_text("Test content", encoding="utf-8")
@@ -95,6 +108,7 @@ class TestDocumentAnalyzerAnalyze:
         temp_project_root: Path,
         mock_settings: MagicMock,
         mock_agent_run: MagicMock,
+        mock_create_model: MagicMock,
     ) -> None:
         test_file = temp_project_root / "test.txt"
         test_file.write_text("Test content", encoding="utf-8")
@@ -109,15 +123,17 @@ class TestDocumentAnalyzerAnalyze:
         self,
         temp_project_root: Path,
         mock_settings: MagicMock,
+        mock_create_model: MagicMock,
     ) -> None:
         test_file = temp_project_root / "test.txt"
         test_file.write_text("Test content", encoding="utf-8")
 
         with patch("codebase_rag.tools.document_analyzer.settings", mock_settings):
-            with patch(
-                "codebase_rag.tools.document_analyzer.Agent.run_sync",
-                side_effect=Exception("API Error"),
-            ):
+            with patch("codebase_rag.tools.document_analyzer.Agent") as mock_agent_cls:
+                mock_instance = MagicMock()
+                mock_instance.run_sync.side_effect = Exception("API Error")
+                mock_agent_cls.return_value = mock_instance
+
                 analyzer = DocumentAnalyzer(str(temp_project_root))
                 result = analyzer.analyze("test.txt", "What is this?")
                 assert "failed" in result.lower() or "error" in result.lower()

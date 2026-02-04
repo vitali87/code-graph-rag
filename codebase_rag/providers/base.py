@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -25,18 +24,16 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
 
 
 def get_provider(
-    provider_name: str | cs.Provider, **config: str | int | None
+    provider_name: str | cs.Provider,
+    **config: Any,
 ) -> ModelProvider:
     provider_key = str(provider_name)
     if provider_key not in PROVIDER_REGISTRY:
-        return LiteLLMProvider(provider=provider_name, **config)  # type: ignore[invalid-argument-type]
+        return LiteLLMProvider(provider=provider_name, **config)
 
     provider_class = PROVIDER_REGISTRY[provider_key]
     if provider_class == LiteLLMProvider:
-        from typing import Any, cast
-
-        # (H) Bypass type checking for kwargs unpacking as LiteLLMProvider handles validation
-        return LiteLLMProvider(provider=provider_name, **cast(dict[str, Any], config))
+        return LiteLLMProvider(provider=provider_name, **config)
     return provider_class(**config)
 
 

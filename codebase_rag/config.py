@@ -6,7 +6,7 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -255,6 +255,26 @@ class AppConfig(BaseSettings):
     _active_cypher: ModelConfig | None = None
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+
+    @field_validator(
+        "ORCHESTRATOR_EXTRA_HEADERS", "CYPHER_EXTRA_HEADERS", mode="before"
+    )
+    @classmethod
+    def parse_json_headers(
+        cls, v: str | dict[str, str] | None
+    ) -> dict[str, str] | None:
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            import json
+
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                raise ValueError("Headers must be a valid JSON string or dictionary")
+        return v
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
