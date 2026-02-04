@@ -1,5 +1,5 @@
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -92,3 +92,23 @@ def test_error_handling():
     ):
         with pytest.raises(ValueError, match="Invalid config"):
             provider.create_model("gpt-4")
+
+
+def test_extra_headers_handling():
+    """Test that extra_headers are passed to litellm."""
+    headers = {"x-portkey-api-key": "pk-test", "x-portkey-provider": "anthropic"}
+    provider = LiteLLMProvider(
+        provider="openai",
+        api_key="test",
+        extra_headers=headers
+    )
+
+    # Mock the litellm module that gets imported inside the method
+    with patch.dict("sys.modules", {"litellm": MagicMock()}):
+        import sys
+        mock_litellm = sys.modules["litellm"]
+        mock_litellm.extra_headers = {}
+
+        provider.create_model("gpt-4")
+
+        assert mock_litellm.extra_headers == headers

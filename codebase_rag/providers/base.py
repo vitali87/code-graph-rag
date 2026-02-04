@@ -50,6 +50,7 @@ def get_provider_from_config(config: ModelConfig) -> ModelProvider:
         provider_type=config.provider_type,
         thinking_budget=config.thinking_budget,
         service_account_file=config.service_account_file,
+        extra_headers=config.extra_headers,
     )
 
 

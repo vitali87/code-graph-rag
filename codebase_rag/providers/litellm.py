@@ -19,6 +19,7 @@ class LiteLLMProvider(ModelProvider):
         region: str | None = None,
         provider_type: str | None = None,
         thinking_budget: int | None = None,
+        extra_headers: dict[str, str] | None = None,
         **kwargs: str | int | None,
     ) -> None:
         """Initialize LiteLLMProvider."""
@@ -30,6 +31,7 @@ class LiteLLMProvider(ModelProvider):
         self.region = region
         self.provider_type = provider_type
         self.thinking_budget = thinking_budget
+        self.extra_headers = extra_headers
 
     @property
     def provider_name(self) -> str:
@@ -62,5 +64,25 @@ class LiteLLMProvider(ModelProvider):
             os.environ["VERTEXAI_PROJECT"] = self.project_id
         if self.region:
             os.environ["VERTEXAI_LOCATION"] = self.region
+
+        # Handle extra headers (e.g. for Portkey)
+        # We set these in os.environ as LiteLLM can pick them up from there,
+        # or we might need to rely on PydanticAI to pass them if supported.
+        # For now, we'll iterate and set them as env vars if they start with certain prefixes
+        # or just rely on the user having set them in the config which we now have.
+        # Actually, LiteLLM allows 'extra_headers' in completion, but PydanticAI model init
+        # doesn't easily expose a way to inject them globally into the client *unless*
+        # we configure the client directly.
+        #
+        # However, for Portkey specifically, usage is often:
+        # provider="openai", base_url="https://api.portkey.ai/v1", headers=...
+        #
+        # Let's import litellm and set module-level headers if present, as a fallback.
+        if self.extra_headers:
+            import litellm
+
+            if not hasattr(litellm, "extra_headers") or not litellm.extra_headers:
+                litellm.extra_headers = {}
+            litellm.extra_headers.update(self.extra_headers)
 
         return OpenAIChatModel(full_model_id, provider=provider)

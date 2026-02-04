@@ -105,6 +105,7 @@ class ModelConfig:
     provider_type: str | None = None
     thinking_budget: int | None = None
     service_account_file: str | None = None
+    extra_headers: dict[str, str] | None = None
 
     def to_update_kwargs(self) -> ModelConfigKwargs:
         result = asdict(self)
@@ -153,6 +154,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_PROVIDER_TYPE: str | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
+    ORCHESTRATOR_EXTRA_HEADERS: dict[str, str] | None = None
 
     CYPHER_PROVIDER: str = ""
     CYPHER_MODEL: str = ""
@@ -163,6 +165,7 @@ class AppConfig(BaseSettings):
     CYPHER_PROVIDER_TYPE: str | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
+    CYPHER_EXTRA_HEADERS: dict[str, str] | None = None
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
@@ -272,6 +275,7 @@ class AppConfig(BaseSettings):
                 service_account_file=getattr(
                     self, f"{role_upper}_SERVICE_ACCOUNT_FILE", None
                 ),
+                extra_headers=getattr(self, f"{role_upper}_EXTRA_HEADERS", None),
             )
 
         return ModelConfig(
