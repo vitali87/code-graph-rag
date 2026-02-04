@@ -21,7 +21,7 @@ def test_get_all_providers_dynamic():
 
 def test_create_model_formats():
     """Test creating models with various formats."""
-    provider = LiteLLMProvider(provider=Provider.OPENAI)
+    provider = LiteLLMProvider(provider=Provider.OPENAI, api_key="test")
 
     with (
         patch(
@@ -49,7 +49,10 @@ def test_create_model_formats():
 def test_provider_specific_env_vars():
     """Verify project_id/region are set in os.environ when creating the model."""
     provider = LiteLLMProvider(
-        provider="vertex_ai", project_id="test-project", region="us-central1"
+        provider="vertex_ai",
+        project_id="test-project",
+        region="us-central1",
+        api_key="test",
     )
 
     with patch.dict(os.environ, {}, clear=True):
@@ -83,7 +86,7 @@ def test_api_key_handling():
 
 def test_error_handling():
     """Mock litellm raising an exception."""
-    provider = LiteLLMProvider(provider="openai")
+    provider = LiteLLMProvider(provider="openai", api_key="test")
 
     with patch(
         "codebase_rag.providers.litellm.PydanticLiteLLMProvider",

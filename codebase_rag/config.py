@@ -271,10 +271,17 @@ class AppConfig(BaseSettings):
             import json
 
             try:
-                return json.loads(v)
-            except json.JSONDecodeError:
-                raise ValueError("Headers must be a valid JSON string or dictionary")
-        return v
+                data = json.loads(v)
+                if not isinstance(data, dict):
+                    raise ValueError("Headers JSON string must decode to a dictionary.")
+                return data
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    "Headers must be a valid JSON string or dictionary."
+                ) from e
+        raise TypeError(
+            f"Headers must be a JSON string or a dictionary, not {type(v).__name__}."
+        )
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()

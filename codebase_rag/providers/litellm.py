@@ -50,7 +50,9 @@ class LiteLLMProvider(ModelProvider):
             return
 
         if not self.api_key:
-            pass
+            raise ValueError(
+                f"API key is required for provider '{self.provider_name}' but was not found."
+            )
 
     def create_model(self, model_id: str, **kwargs: Any) -> OpenAIChatModel:
         """Create a PydanticAI model using LiteLLM."""
@@ -67,12 +69,14 @@ class LiteLLMProvider(ModelProvider):
         )
 
         if self.service_account_file:
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = self.service_account_file
+            os.environ.setdefault(
+                "GOOGLE_APPLICATION_CREDENTIALS", self.service_account_file
+            )
 
         if self.project_id:
-            os.environ["VERTEXAI_PROJECT"] = self.project_id
+            os.environ.setdefault("VERTEXAI_PROJECT", self.project_id)
         if self.region:
-            os.environ["VERTEXAI_LOCATION"] = self.region
+            os.environ.setdefault("VERTEXAI_LOCATION", self.region)
 
         extra_body = dict(kwargs)
         if self.thinking_budget is not None and "thinking_budget" not in extra_body:

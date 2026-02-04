@@ -118,7 +118,10 @@ class TestLiteLLMProvider:
 
     def test_vertex_env_vars(self) -> None:
         provider = LiteLLMProvider(
-            provider=Provider.GOOGLE, project_id="vertex-proj", region="us-central1"
+            provider=Provider.GOOGLE,
+            project_id="vertex-proj",
+            region="us-central1",
+            api_key="test",
         )
 
         with patch.dict(os.environ, {}, clear=True):

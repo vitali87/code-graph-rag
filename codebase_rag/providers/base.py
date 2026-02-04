@@ -28,11 +28,8 @@ def get_provider(
     **config: Any,
 ) -> ModelProvider:
     provider_key = str(provider_name)
-    if provider_key not in PROVIDER_REGISTRY:
-        return LiteLLMProvider(provider=provider_name, **config)
-
-    provider_class = PROVIDER_REGISTRY[provider_key]
-    if provider_class == LiteLLMProvider:
+    provider_class = PROVIDER_REGISTRY.get(provider_key)
+    if provider_class is None or provider_class is LiteLLMProvider:
         return LiteLLMProvider(provider=provider_name, **config)
     return provider_class(**config)
 
