@@ -19,6 +19,10 @@ ANTHROPIC_NO_AUTH = (
 ANTHROPIC_CLAUDE_SETTINGS_ERROR = (
     "Failed to read Claude Code settings from ~/.claude/settings.json: {error}"
 )
+ANTHROPIC_MALFORMED_HEADER = (
+    "Malformed custom header line: '{line}'. "
+    "Expected format 'Header-Name: value'. Each header must contain a colon separator."
+)
 OLLAMA_NOT_RUNNING = (
     "Ollama server not responding at {endpoint}. "
     "Make sure Ollama is running: ollama serve"

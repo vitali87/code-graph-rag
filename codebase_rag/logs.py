@@ -619,3 +619,8 @@ EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
 MODEL_SWITCHED = "Model switched to: {model}"
 MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
 MODEL_CURRENT = "Current model: {model}"
+
+# (H) Custom headers logs
+CUSTOM_HEADERS_EMPTY = (
+    "Empty custom headers string received, treating as no headers set"
+)

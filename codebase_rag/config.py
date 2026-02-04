@@ -13,6 +13,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
+from .utils.claude_settings import parse_custom_headers
 
 load_dotenv()
 
@@ -171,7 +172,9 @@ class AppConfig(BaseSettings):
 
         if provider and model:
             custom_headers_str = getattr(self, f"{role_upper}_CUSTOM_HEADERS", None)
-            custom_headers = parse_custom_headers(custom_headers_str) if custom_headers_str is not None else None
+            custom_headers = (
+                parse_custom_headers(custom_headers_str) if custom_headers_str else None
+            )
 
             return ModelConfig(
                 provider=provider.lower(),

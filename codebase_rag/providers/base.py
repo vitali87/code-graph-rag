@@ -159,14 +159,6 @@ class OllamaProvider(ModelProvider):
 
 
 class AnthropicProvider(ModelProvider):
-    """Provider for Anthropic Claude models.
-
-    Supports multiple authentication modes:
-    1. Direct API key + optional custom endpoint
-    2. Claude Code settings (~/.claude/settings.json)
-    3. Portkey proxy via custom headers
-    """
-
     def __init__(
         self,
         api_key: str | None = None,
