@@ -308,6 +308,9 @@ class AppConfig(BaseSettings):
         self._active_cypher = config
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
+        if "/" in model_string:
+            provider, model = model_string.split("/", 1)
+            return provider.lower(), model
         if ":" not in model_string:
             return cs.Provider.OLLAMA, model_string
         provider, model = model_string.split(":", 1)

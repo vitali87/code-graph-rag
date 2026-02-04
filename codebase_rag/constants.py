@@ -15,6 +15,10 @@ class ModelRole(StrEnum):
 
 
 class Provider(StrEnum):
+    """Static subset of common providers.
+    Use get_all_providers() for the full dynamic list from litellm.
+    """
+
     OLLAMA = "ollama"
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
@@ -23,6 +27,31 @@ class Provider(StrEnum):
     COHERE = "cohere"
     LOCAL = "local"
     VLLM = "vllm"
+    LITELLM = "litellm"
+    GROQ = "groq"
+    MISTRAL = "mistral"
+
+
+_ALL_PROVIDERS_CACHE: list[str] | None = None
+
+
+def get_all_providers() -> list[str]:
+    """Get all providers from litellm dynamically and cache the result."""
+    global _ALL_PROVIDERS_CACHE
+    if _ALL_PROVIDERS_CACHE is None:
+        try:
+            import litellm
+
+            _ALL_PROVIDERS_CACHE = [
+                str(p.value) if hasattr(p, "value") else str(p)
+                for p in litellm.provider_list
+            ]
+
+        except (ImportError, AttributeError):
+            _ALL_PROVIDERS_CACHE = [str(p.value) for p in Provider]
+    if _ALL_PROVIDERS_CACHE is None:
+        return []
+    return _ALL_PROVIDERS_CACHE
 
 
 class Color(StrEnum):
