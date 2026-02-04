@@ -84,7 +84,7 @@ class LiteLLMProvider(ModelProvider):
 
         settings = ModelSettings(
             extra_headers=self.extra_headers or {},
-            extra_body=extra_body if extra_body else None,
+            extra_body=extra_body or None,
         )
 
         return OpenAIChatModel(

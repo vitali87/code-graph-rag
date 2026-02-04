@@ -70,7 +70,7 @@ class DocumentAnalyzer:
             if not mime_type:
                 mime_type = cs.MIME_TYPE_DEFAULT
 
-            agent = Agent(model=model)
+            agent: Agent[None, str] = Agent(model=model)
 
             content = [
                 BinaryContent(data=full_path.read_bytes(), media_type=mime_type),
@@ -80,7 +80,7 @@ class DocumentAnalyzer:
             result = agent.run_sync(content)
 
             logger.success(ls.DOC_SUCCESS.format(path=file_path))
-            return str(result.data)  # type: ignore[attr-defined]
+            return str(result.output)
 
         except (ValueError, OSError) as e:
             logger.error(ls.DOC_FAILED.format(path=file_path, error=e))

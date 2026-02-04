@@ -40,7 +40,7 @@ def mock_agent_run() -> MagicMock:
     with patch("codebase_rag.tools.document_analyzer.Agent") as mock_agent_cls:
         mock_instance = MagicMock()
         mock_result = MagicMock()
-        mock_result.data = "Analysis result"
+        mock_result.output = "Analysis result"
         mock_instance.run_sync.return_value = mock_result
         mock_agent_cls.return_value = mock_instance
         yield mock_instance.run_sync

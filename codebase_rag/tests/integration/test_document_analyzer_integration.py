@@ -44,8 +44,6 @@ def mock_settings() -> MagicMock:
     settings.active_orchestrator_config.api_key = "test-api-key"
     settings.active_orchestrator_config.model_id = "gpt-4o"
     return settings
-    settings.active_orchestrator_config.model_id = "gpt-4o"
-    return settings
 
 
 @pytest.fixture
@@ -53,7 +51,7 @@ def mock_agent_run() -> MagicMock:
     with patch("codebase_rag.tools.document_analyzer.Agent") as mock_agent_cls:
         mock_instance = MagicMock()
         mock_result = MagicMock()
-        mock_result.data = "This is an analysis of the document."
+        mock_result.output = "This is an analysis of the document."
         mock_instance.run_sync.return_value = mock_result
         mock_agent_cls.return_value = mock_instance
         yield mock_instance.run_sync
@@ -182,7 +180,7 @@ class TestDocumentAnalyzerResponseHandling:
                 ) as mock_agent_cls:
                     mock_instance = MagicMock()
                     mock_result = MagicMock()
-                    mock_result.data = "Analysis from candidate"
+                    mock_result.output = "Analysis from candidate"
                     mock_instance.run_sync.return_value = mock_result
                     mock_agent_cls.return_value = mock_instance
 
@@ -202,7 +200,7 @@ class TestDocumentAnalyzerResponseHandling:
                 ) as mock_agent_cls:
                     mock_instance = MagicMock()
                     mock_result = MagicMock()
-                    mock_result.data = None
+                    mock_result.output = None
                     mock_instance.run_sync.return_value = mock_result
                     mock_agent_cls.return_value = mock_instance
 
