@@ -21,7 +21,8 @@ def test_format_library_basics(
     """Test basic std::format functionality."""
     test_file = cpp_format_spaceship_project / "format_basics.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <format>
 #include <iostream>
 #include <string>
@@ -50,7 +51,7 @@ void testNumberFormatting() {
     std::cout << hex << std::endl;
     std::cout << fixed << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_format_spaceship_project, mock_ingestor)
@@ -76,7 +77,8 @@ def test_spaceship_operator(
     """Test C++20 spaceship operator functionality."""
     test_file = cpp_format_spaceship_project / "spaceship.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <compare>
 #include <iostream>
 
@@ -126,7 +128,7 @@ void testSpaceshipOperator() {
     std::cout << "Point comparison works" << std::endl;
     std::cout << "Custom comparison works" << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_format_spaceship_project, mock_ingestor)
@@ -157,7 +159,8 @@ def test_format_spaceship_integration(
     """Test integration of format library and spaceship operator."""
     test_file = cpp_format_spaceship_project / "integration.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <format>
 #include <compare>
 #include <iostream>
@@ -198,7 +201,7 @@ void analyzeData() {
     std::cout << formatted << std::endl;
     std::cout << comparison_result << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_format_spaceship_project, mock_ingestor)

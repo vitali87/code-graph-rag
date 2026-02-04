@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,7 +28,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def java_parser() -> "Parser":
+def java_parser() -> Parser:
     parser = Parser(Language(tsjava.language()))
     return parser
 
@@ -79,7 +81,7 @@ def type_inference_engine(
 class TestJavaTypeResolverWithRealParsing:
     def test_get_superclass_name_with_real_ast(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -108,7 +110,7 @@ public class Child extends Parent {
 
     def test_get_superclass_name_no_extends(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -132,7 +134,7 @@ public class Simple {
 
     def test_get_superclass_name_generic_extends(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -158,7 +160,7 @@ public class MyList extends ArrayList<String> {
 
     def test_get_implemented_interfaces_single(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -185,7 +187,7 @@ public class Worker implements Runnable {
 
     def test_get_implemented_interfaces_multiple(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -217,7 +219,7 @@ public class Data implements Serializable, Comparable<Data>, Cloneable {
 
     def test_get_implemented_interfaces_none(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -241,7 +243,7 @@ public class Plain {
 
     def test_get_current_class_name_class(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -265,7 +267,7 @@ public class MyService {
 
     def test_get_current_class_name_interface(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -290,7 +292,7 @@ public interface Repository {
 
     def test_get_current_class_name_enum(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -316,7 +318,7 @@ public enum Status {
 
     def test_traverse_for_class_declarations_multiple_in_file(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
@@ -352,7 +354,7 @@ enum Type {
 
     def test_class_with_extends_and_implements(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
         mock_ast_cache: MagicMock,
     ) -> None:
@@ -386,7 +388,7 @@ public class Employee extends Person implements Comparable<Employee>, Serializab
 
     def test_nested_class(
         self,
-        java_parser: "Parser",
+        java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""

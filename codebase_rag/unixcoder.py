@@ -1,6 +1,6 @@
-# Adapted from https://github.com/microsoft/unixcoder
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# (H) Adapted from https://github.com/microsoft/unixcoder
+# (H) Copyright (c) Microsoft Corporation.
+# (H) Licensed under the MIT license.
 
 import torch
 from torch import nn

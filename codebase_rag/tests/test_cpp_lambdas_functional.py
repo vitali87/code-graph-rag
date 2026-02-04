@@ -26,7 +26,8 @@ def test_basic_lambdas(
     """Test basic lambda expressions with different capture modes."""
     test_file = cpp_lambdas_project / "basic_lambdas.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -492,7 +493,7 @@ void demonstrateLambdasAndFunctional() {
     testHigherOrderFunctions();
     testLambdaClosures();
 }
-"""
+""",
     )
 
     run_updater(cpp_lambdas_project, mock_ingestor)
@@ -546,7 +547,8 @@ def test_async_functional_patterns(
     """Test async and concurrent functional patterns."""
     test_file = cpp_lambdas_project / "async_functional.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <future>
 #include <thread>
@@ -749,7 +751,7 @@ void demonstrateAsyncFunctionalPatterns() {
     testAsyncFunctionalPatterns();
     testEventSystemWithLambdas();
 }
-"""
+""",
     )
 
     run_updater(cpp_lambdas_project, mock_ingestor)
@@ -776,7 +778,8 @@ def test_cpp_lambdas_comprehensive(
     """Comprehensive test ensuring all lambda and functional patterns create proper relationships."""
     test_file = cpp_lambdas_project / "comprehensive_lambdas.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Comprehensive lambda and functional programming demonstration
 #include <iostream>
 #include <vector>
@@ -837,7 +840,7 @@ void demonstrateComprehensiveLambdas() {
     ComprehensiveLambdaDemo demo;
     demo.demonstrateComprehensiveLambdas();
 }
-"""
+""",
     )
 
     run_updater(cpp_lambdas_project, mock_ingestor)

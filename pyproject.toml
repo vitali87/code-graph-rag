@@ -1,6 +1,6 @@
 [project]
 name = "graph-code"
-version = "0.0.38"
+version = "0.0.50"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,6 +22,7 @@ dependencies = [
     "click>=8.0.0",
     "protobuf>=5.27.0",
     "defusedxml>=0.7.1",
+    "huggingface-hub[hf-xet]>=0.36.0",
 ]
 
 [project.scripts]
@@ -38,6 +39,7 @@ packages = ["codebase_rag", "codec"]
 test = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
+    "pytest-cov>=4.0.0",
     "pytest-xdist>=3.8.0",
     "testcontainers>=4.9.0",
 ]

@@ -22,9 +22,11 @@ def javascript_closures_project(temp_repo: Path) -> Path:
     (project_path / "src").mkdir()
     (project_path / "utils").mkdir()
 
-    (project_path / "src" / "counter.js").write_text("export let globalCounter = 0;")
+    (project_path / "src" / "counter.js").write_text(
+        encoding="utf-8", data="export let globalCounter = 0;"
+    )
     (project_path / "utils" / "logger.js").write_text(
-        "export function log(message) { console.log(message); }"
+        encoding="utf-8", data="export function log(message) { console.log(message); }"
     )
 
     return project_path
@@ -37,7 +39,8 @@ def test_basic_closures(
     """Test basic closure patterns and variable capture."""
     test_file = javascript_closures_project / "basic_closures.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic closure - function accessing outer variable
 function outerFunction(x) {
     const outerVar = x;
@@ -195,7 +198,7 @@ const varFunctions = createFunctionArrayVar();
 
 const letResults = letFunctions.map(fn => fn());
 const varResults = varFunctions.map(fn => fn());
-"""
+""",
     )
 
     run_updater(javascript_closures_project, mock_ingestor)
@@ -253,7 +256,8 @@ def test_variable_scoping(
     """Test JavaScript variable scoping rules (var, let, const)."""
     test_file = javascript_closures_project / "variable_scoping.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Global scope
 var globalVar = "global var";
 let globalLet = "global let";
@@ -476,7 +480,7 @@ function tryCatchScope() {
 }
 
 tryCatchScope();
-"""
+""",
     )
 
     run_updater(javascript_closures_project, mock_ingestor)
@@ -522,7 +526,8 @@ def test_hoisting_behavior(
     """Test JavaScript hoisting behavior for variables and functions."""
     test_file = javascript_closures_project / "hoisting_behavior.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Function declaration hoisting
 console.log(hoistedFunction()); // Works due to hoisting
 
@@ -749,7 +754,7 @@ function hoistingEdgeCases() {
 const edgeCases = hoistingEdgeCases();
 const nested = edgeCases();
 const nestedResult = nested();
-"""
+""",
     )
 
     run_updater(javascript_closures_project, mock_ingestor)
@@ -798,7 +803,8 @@ def test_module_patterns_iife(
     """Test module patterns using IIFE and closures."""
     test_file = javascript_closures_project / "module_patterns.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic module pattern
 const BasicModule = (function() {
     let privateVariable = 0;
@@ -1127,7 +1133,7 @@ Observer.notify('Test notification');
 Config.set('timeout', 10000);
 const timeout = Config.get('timeout');
 const allConfig = Config.getAll();
-"""
+""",
     )
 
     run_updater(javascript_closures_project, mock_ingestor)
@@ -1162,7 +1168,8 @@ def test_closures_comprehensive(
     """Comprehensive test ensuring all closure and scoping patterns create proper relationships."""
     test_file = javascript_closures_project / "comprehensive_closures.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript closure and scoping pattern in one file
 
 // Basic closure
@@ -1323,7 +1330,7 @@ function accessMultipleScopes() {
 
 const accessScopes = accessMultipleScopes()();
 const scopeResult = accessScopes();
-"""
+""",
     )
 
     run_updater(javascript_closures_project, mock_ingestor)

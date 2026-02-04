@@ -131,12 +131,12 @@ class OpenAIProvider(ModelProvider):
 class OllamaProvider(ModelProvider):
     def __init__(
         self,
-        endpoint: str = cs.OLLAMA_DEFAULT_ENDPOINT,
+        endpoint: str | None = None,
         api_key: str = cs.DEFAULT_API_KEY,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.endpoint = endpoint
+        self.endpoint = endpoint or settings.ollama_endpoint
         self.api_key = api_key
 
     @property
@@ -273,7 +273,8 @@ def list_providers() -> list[str]:
     return list(PROVIDER_REGISTRY.keys())
 
 
-def check_ollama_running(endpoint: str = cs.OLLAMA_DEFAULT_BASE_URL) -> bool:
+def check_ollama_running(endpoint: str | None = None) -> bool:
+    endpoint = endpoint or settings.OLLAMA_BASE_URL
     try:
         health_url = urljoin(endpoint, cs.OLLAMA_HEALTH_PATH)
         with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:

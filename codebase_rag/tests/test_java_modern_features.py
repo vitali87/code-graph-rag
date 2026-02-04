@@ -37,7 +37,8 @@ def test_java_records(
         / "Records.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.Objects;
@@ -109,7 +110,7 @@ public record Employee(
 @interface NotNull {}
 @interface Positive {}
 @interface Email {}
-"""
+""",
     )
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
@@ -147,7 +148,8 @@ def test_java_sealed_classes(
         / "SealedClasses.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Sealed class with permitted subclasses
@@ -240,7 +242,7 @@ public record Multiplication(Expression left, Expression right) implements Expre
         return left.evaluate() * right.evaluate();
     }
 }
-"""
+""",
     )
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
@@ -296,7 +298,8 @@ def test_java_switch_expressions(
         / "SwitchExpressions.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class SwitchExpressions {
@@ -398,7 +401,7 @@ public class SwitchExpressions {
 enum CustomerType {
     REGULAR, PREMIUM, VIP, EMPLOYEE
 }
-"""
+""",
     )
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
@@ -444,7 +447,8 @@ def test_java_text_blocks(
         / "TextBlocks.java"
     )
     test_file.write_text(
-        '''
+        encoding="utf-8",
+        data='''
 package com.example;
 
 public class TextBlocks {
@@ -556,7 +560,7 @@ public class TextBlocks {
         };
     }
 }
-'''
+''',
     )
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
@@ -589,7 +593,8 @@ def test_java_var_keyword(
         / "VarKeyword.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -685,7 +690,7 @@ public class VarKeyword {
         return Optional.of("User: " + name);
     }
 }
-"""
+""",
     )
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")
@@ -718,7 +723,8 @@ def test_java_instanceof_patterns(
         / "InstanceofPatterns.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 public class InstanceofPatterns {
@@ -821,7 +827,7 @@ public class InstanceofPatterns {
         return "Not a string";
     }
 }
-"""
+""",
     )
 
     run_updater(java_modern_project, mock_ingestor, skip_if_missing="java")

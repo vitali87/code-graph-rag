@@ -1,0 +1,109 @@
+name: 📋 Task/Enhancement
+description: Track development tasks and improvements (for maintainers/contributors)
+title: "[Task]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to track development tasks, technical improvements, and enhancements.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Brief description of what needs to be done
+      placeholder: Implement/refactor/improve...
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this task important? What problem does it solve?
+      placeholder: This is needed because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What needs to be done to consider this task complete?
+      value: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        - [ ] Tests added/updated
+        - [ ] Documentation updated
+        - [ ] CI passes
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Notes
+      description: Technical details, approach, or design decisions
+      placeholder: |
+        Technical approach:
+        - Step 1...
+        - Step 2...
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Related Files/Modules
+      description: Which files or modules will be affected?
+      placeholder: |
+        - codebase_rag/module/file.py
+        - tests/test_file.py
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Does this task depend on or block other issues?
+      placeholder: |
+        - Depends on: #123
+        - Blocks: #456
+        - Related: #789
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Estimated Effort
+      description: How much work is involved?
+      options:
+        - Small (< 4 hours)
+        - Medium (4-16 hours)
+        - Large (> 16 hours)
+        - Unknown
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Low
+        - Medium
+        - High
+        - Critical
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any additional information, links, or context
+      placeholder: Links, references, etc.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Are you planning to work on this?
+      options:
+        - label: I'm willing to implement this task
+          required: false
+        - label: I need help with implementation
+          required: false

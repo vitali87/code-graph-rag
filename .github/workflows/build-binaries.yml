@@ -3,13 +3,18 @@ name: Build Binaries
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
+  release:
+    types: [created]
 
 jobs:
   build:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -26,27 +31,51 @@ jobs:
             arch: arm64
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
-    - name: Install dependencies
-      run: uv sync
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full
+          uv add --dev pyinstaller
 
-    - name: Install PyInstaller
-      run: uv add --dev pyinstaller
+      - name: Build binary
+        run: uv run python build_binary.py
 
-    - name: Build binary
-      run: uv run python build_binary.py
+      - name: Test binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            ./dist/graph-code-*.exe --version
+          else
+            ./dist/graph-code-* --version
+          fi
 
-    - name: Upload binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: graph-code-${{ matrix.platform }}-${{ matrix.arch }}
-        path: dist/graph-code-*
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: graph-code-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/graph-code-*
+          retention-days: 30
+          compression-level: 9
+
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/graph-code-*
+          fail_on_unmatched_files: true

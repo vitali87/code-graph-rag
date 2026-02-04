@@ -51,6 +51,11 @@ LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
 
+CYPHER_EXAMPLE_CLASS_METHODS = f"""MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
+WHERE c.qualified_name ENDS WITH '.UserService'
+RETURN m.name AS name, m.qualified_name AS qualified_name, labels(m) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
+
 CYPHER_EXPORT_NODES = """
 MATCH (n)
 RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
@@ -96,6 +101,10 @@ ORDER BY n.qualified_name
 
 def build_constraint_query(label: str, prop: str) -> str:
     return f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
+
+
+def build_index_query(label: str, prop: str) -> str:
+    return f"CREATE INDEX ON :{label}({prop});"
 
 
 def build_merge_node_query(label: str, id_key: str) -> str:

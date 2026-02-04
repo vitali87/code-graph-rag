@@ -13,13 +13,18 @@ def rust_trait_objects_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Trait objects test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Trait objects test crate"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_trait_objects_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     return project_path
 
@@ -31,7 +36,8 @@ def test_basic_trait_objects(
     """Test basic trait objects and dynamic dispatch."""
     test_file = rust_trait_objects_project / "basic_trait_objects.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic trait for trait objects
 trait Drawable {
     fn draw(&self) -> String;
@@ -239,7 +245,7 @@ fn canvas_operations() {
         println!("First shape is larger: {}", is_first_larger);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_trait_objects_project, mock_ingestor)
@@ -260,7 +266,8 @@ def test_object_safety_patterns(
     """Test object safety requirements and patterns."""
     test_file = rust_trait_objects_project / "object_safety.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Object-safe trait (can be used as trait object)
 trait ObjectSafeTrait {
     fn method_with_self(&self) -> String;
@@ -589,7 +596,7 @@ fn downcast_example() {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_trait_objects_project, mock_ingestor)
@@ -612,7 +619,8 @@ def test_dynamic_dispatch_performance(
     """Test dynamic dispatch patterns and performance considerations."""
     test_file = rust_trait_objects_project / "dynamic_dispatch.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::time::Instant;
 
 // Trait for performance testing
@@ -939,7 +947,7 @@ fn run_performance_tests() {
 
     test_branch_prediction();
 }
-"""
+""",
     )
 
     run_updater(rust_trait_objects_project, mock_ingestor)
@@ -962,7 +970,8 @@ def test_advanced_trait_object_patterns(
     """Test advanced trait object patterns and combinations."""
     test_file = rust_trait_objects_project / "advanced_patterns.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -1399,7 +1408,7 @@ async fn test_async_trait_objects() {
         println!("Async processor {} result: {}", i, result);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_trait_objects_project, mock_ingestor)

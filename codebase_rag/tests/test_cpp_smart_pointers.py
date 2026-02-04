@@ -26,7 +26,8 @@ def test_unique_ptr_patterns(
     """Test unique_ptr usage patterns and ownership semantics."""
     test_file = cpp_smart_pointers_project / "unique_ptr_patterns.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -356,7 +357,7 @@ void demonstratePolymorphicUniquePtr() {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_smart_pointers_project, mock_ingestor)
@@ -394,7 +395,8 @@ def test_shared_ptr_patterns(
     """Test shared_ptr usage patterns and reference counting."""
     test_file = cpp_smart_pointers_project / "shared_ptr_patterns.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -768,7 +770,7 @@ void demonstrateAllocators() {
         std::cout << "Array[" << i << "] = " << array[i] << std::endl;
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_smart_pointers_project, mock_ingestor)
@@ -798,7 +800,8 @@ def test_weak_ptr_and_advanced_patterns(
     """Test weak_ptr usage and advanced smart pointer patterns."""
     test_file = cpp_smart_pointers_project / "weak_ptr_advanced.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -1207,7 +1210,7 @@ void demonstrateWeakPtrCache() {
     cache.cleanup();
     std::cout << "Cache size after cleanup: " << cache.size() << std::endl;
 }
-"""
+""",
     )
 
     run_updater(cpp_smart_pointers_project, mock_ingestor)
@@ -1237,7 +1240,8 @@ def test_cpp_smart_pointers_comprehensive(
     """Comprehensive test ensuring all smart pointer patterns create proper relationships."""
     test_file = cpp_smart_pointers_project / "comprehensive_smart_pointers.cpp"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every C++ smart pointer pattern in one file
 #include <iostream>
 #include <memory>
@@ -1569,7 +1573,7 @@ void comprehensiveDemonstration() {
         std::cout << "Shared array[" << i << "] = " << array_shared[i] << std::endl;
     }
 }
-"""
+""",
     )
 
     run_updater(cpp_smart_pointers_project, mock_ingestor)

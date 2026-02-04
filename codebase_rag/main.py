@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import os
 import shlex
 import shutil
 import sys
@@ -103,7 +104,7 @@ def log_session_event(event: str) -> None:
 
 def get_session_context() -> str:
     if app_context.session.log_file and app_context.session.log_file.exists():
-        content = app_context.session.log_file.read_text()
+        content = app_context.session.log_file.read_text(encoding="utf-8")
         return f"{cs.SESSION_CONTEXT_START}{content}{cs.SESSION_CONTEXT_END}"
     return ""
 
@@ -439,14 +440,26 @@ async def _run_agent_response_loop(
 
 def _find_image_paths(question: str) -> list[Path]:
     try:
-        tokens = shlex.split(question)
+        if os.name == "nt":
+            # (H) On Windows, shlex.split with posix=False to preserve backslashes
+            tokens = shlex.split(question, posix=False)
+        else:
+            tokens = shlex.split(question)
     except ValueError:
         tokens = question.split()
-    return [
-        Path(token)
-        for token in tokens
-        if token.startswith("/") and token.lower().endswith(cs.IMAGE_EXTENSIONS)
-    ]
+
+    image_paths: list[Path] = []
+    for token in tokens:
+        # (H) Strip quotes if they remain (shlex with posix=False might keep some)
+        token = token.strip("'\"")
+        # (H) Check if it looks like an image path
+        if token.lower().endswith(cs.IMAGE_EXTENSIONS):
+            # (H) On Windows, could be C:\... or \...
+            # (H) On POSIX, starts with /
+            p = Path(token)
+            if p.is_absolute() or token.startswith("/") or token.startswith("\\"):
+                image_paths.append(p)
+    return image_paths
 
 
 def _get_path_variants(path_str: str) -> tuple[str, ...]:
@@ -553,7 +566,7 @@ def _create_model_from_string(
         config = ModelConfig(
             provider=provider_name,
             model_id=model_id,
-            endpoint=str(settings.LOCAL_MODEL_ENDPOINT),
+            endpoint=settings.ollama_endpoint,
             api_key=cs.DEFAULT_API_KEY,
         )
     else:
@@ -708,7 +721,7 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
     kwargs = current_config.to_update_kwargs()
 
     if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
-        kwargs[cs.FIELD_ENDPOINT] = str(settings.LOCAL_MODEL_ENDPOINT)
+        kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
         kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
 
     set_method(provider, model, **kwargs)
@@ -780,7 +793,7 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
             if not path.is_dir():
                 continue
             if path.name in cs.IGNORE_PATTERNS:
-                detected.add(str(path.relative_to(repo_path)))
+                detected.add(path.relative_to(repo_path).as_posix())
             else:
                 queue.append((path, depth + 1))
     return detected

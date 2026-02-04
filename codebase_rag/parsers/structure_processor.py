@@ -34,7 +34,7 @@ class StructureProcessor:
             return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
         if parent_container_qn:
             return (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-        return (cs.NodeLabel.FOLDER, cs.KEY_PATH, str(parent_rel_path))
+        return (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
 
     def identify_structure(self) -> None:
         directories = {self.repo_path}
@@ -78,7 +78,7 @@ class StructureProcessor:
                     {
                         cs.KEY_QUALIFIED_NAME: package_qn,
                         cs.KEY_NAME: root.name,
-                        cs.KEY_PATH: str(relative_root),
+                        cs.KEY_PATH: relative_root.as_posix(),
                     },
                 )
                 parent_identifier = self._get_parent_identifier(
@@ -96,7 +96,7 @@ class StructureProcessor:
                 )
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.FOLDER,
-                    {cs.KEY_PATH: str(relative_root), cs.KEY_NAME: root.name},
+                    {cs.KEY_PATH: relative_root.as_posix(), cs.KEY_NAME: root.name},
                 )
                 parent_identifier = self._get_parent_identifier(
                     parent_rel_path, parent_container_qn
@@ -104,11 +104,11 @@ class StructureProcessor:
                 self.ingestor.ensure_relationship_batch(
                     parent_identifier,
                     cs.RelationshipType.CONTAINS_FOLDER,
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, str(relative_root)),
+                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, relative_root.as_posix()),
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
-        relative_filepath = str(file_path.relative_to(self.repo_path))
+        relative_filepath = file_path.relative_to(self.repo_path).as_posix()
         relative_root = file_path.parent.relative_to(self.repo_path)
 
         parent_container_qn = self.structural_elements.get(relative_root)

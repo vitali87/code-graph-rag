@@ -13,13 +13,18 @@ def rust_lifetimes_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Advanced lifetimes test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Advanced lifetimes test crate"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_lifetimes_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     return project_path
 
@@ -31,7 +36,8 @@ def test_complex_lifetime_relationships(
     """Test complex lifetime relationships and dependencies."""
     test_file = rust_lifetimes_project / "complex_lifetimes.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Multiple lifetime parameters with dependencies
 struct Container<'a, 'b: 'a> {
     primary: &'a str,
@@ -240,7 +246,7 @@ fn test_complex_lifetimes() {
     let path_exists = graph.path_exists(1, 2);
     println!("Path exists: {}", path_exists);
 }
-"""
+""",
     )
 
     run_updater(rust_lifetimes_project, mock_ingestor)
@@ -263,7 +269,8 @@ def test_lifetime_elision_rules(
     """Test lifetime elision rules and implicit lifetimes."""
     test_file = rust_lifetimes_project / "lifetime_elision.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Functions with implicit lifetime elision
 fn first_word(s: &str) -> &str {
     let bytes = s.as_bytes();
@@ -555,7 +562,7 @@ fn test_advanced_elision() {
     let (combined, first, second) = explicit_complex_example("one", "two", "three");
     println!("Combined: {}, First: {}, Second: {}", combined, first, second);
 }
-"""
+""",
     )
 
     run_updater(rust_lifetimes_project, mock_ingestor)
@@ -578,7 +585,8 @@ def test_borrowing_edge_cases(
     """Test complex borrowing scenarios and edge cases."""
     test_file = rust_lifetimes_project / "borrowing_edge_cases.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 use std::cell::{RefCell, Ref, RefMut};
 use std::rc::Rc;
@@ -942,7 +950,7 @@ fn iterator_borrowing_patterns() {
         println!("Group {}: {:?}", i, group);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_lifetimes_project, mock_ingestor)
@@ -965,7 +973,8 @@ def test_lifetime_variance_and_subtyping(
     """Test lifetime variance, subtyping, and coercion rules."""
     test_file = rust_lifetimes_project / "lifetime_variance.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Variance in lifetime parameters
 struct Covariant<'a> {
     data: &'a str,
@@ -1345,7 +1354,7 @@ fn test_generic_variance() {
     let (num_ref, str_ref) = generic_num.variance_with_generics(generic_str.get_data());
     println!("Generic variance: {} and {}", num_ref, str_ref);
 }
-"""
+""",
     )
 
     run_updater(rust_lifetimes_project, mock_ingestor)

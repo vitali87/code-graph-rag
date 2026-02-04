@@ -23,7 +23,8 @@ def javascript_this_project(temp_repo: Path) -> Path:
     (project_path / "utils").mkdir()
 
     (project_path / "utils" / "helpers.js").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export function helperFunction() {
     console.log('Helper this:', this);
     return this;
@@ -33,7 +34,7 @@ export const helperArrow = () => {
     console.log('Helper arrow this:', this);
     return this;
 };
-"""
+""",
     )
 
     return project_path
@@ -46,7 +47,8 @@ def test_this_in_different_contexts(
     """Test 'this' binding in various contexts."""
     test_file = javascript_this_project / "this_contexts.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Global context
 console.log(this); // window/global
 
@@ -213,7 +215,7 @@ const detached = classInstance.method;
 const bound = classInstance.boundMethod;
 detached(); // undefined this
 bound(); // preserved this
-"""
+""",
     )
 
     run_updater(javascript_this_project, mock_ingestor)
@@ -254,7 +256,8 @@ def test_bind_call_apply_methods(
     """Test bind(), call(), and apply() method usage."""
     test_file = javascript_this_project / "bind_call_apply.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Function to be bound/called/applied
 function greet(greeting, punctuation) {
     return `${greeting}, ${this.name}${punctuation}`;
@@ -410,7 +413,7 @@ const result2 = processor.filterArray([5, 10, 15, 20]);
 
 console.log(result1); // [10, 20, 30]
 console.log(result2); // [15, 20]
-"""
+""",
     )
 
     run_updater(javascript_this_project, mock_ingestor)
@@ -452,7 +455,8 @@ def test_arrow_functions_lexical_this(
     """Test arrow functions and lexical this binding."""
     test_file = javascript_this_project / "arrow_lexical_this.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Arrow functions and lexical this
 
 // Global arrow function
@@ -664,7 +668,7 @@ console.log(component.regularMethod());
 console.log(component.arrowField());
 
 regularFunction(10, 20, 30);
-"""
+""",
     )
 
     run_updater(javascript_this_project, mock_ingestor)
@@ -705,7 +709,8 @@ def test_this_in_callbacks_and_events(
     """Test this binding in callbacks and event handlers."""
     test_file = javascript_this_project / "callbacks_events.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Callbacks and event handlers
 
 // Timer callbacks
@@ -972,7 +977,7 @@ emitter.on('data', function(data) {
 });
 
 searchHandler.debouncedSearch('test query');
-"""
+""",
     )
 
     run_updater(javascript_this_project, mock_ingestor)
@@ -1013,7 +1018,8 @@ def test_this_comprehensive(
     """Comprehensive test ensuring all this binding patterns are covered."""
     test_file = javascript_this_project / "comprehensive_this.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript this binding pattern in one file
 
 // Global context
@@ -1121,7 +1127,7 @@ function outer() {
 }
 
 outer.call({ context: 'custom' });
-"""
+""",
     )
 
     run_updater(javascript_this_project, mock_ingestor)

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import types
 from collections import defaultdict
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
@@ -29,6 +32,7 @@ from ..cypher_queries import (
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
     build_constraint_query,
+    build_index_query,
     build_merge_node_query,
     build_merge_relationship_query,
     wrap_with_unwind,
@@ -64,7 +68,7 @@ class MemgraphIngestor:
             ]
         ] = []
 
-    def __enter__(self) -> "MemgraphIngestor":
+    def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
@@ -72,7 +76,10 @@ class MemgraphIngestor:
         return self
 
     def __exit__(
-        self, exc_type: type | None, exc_val: Exception | None, exc_tb: object
+        self,
+        exc_type: type | None,
+        exc_val: Exception | None,
+        exc_tb: types.TracebackType | None,
     ) -> None:
         if exc_type:
             logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
@@ -185,6 +192,16 @@ class MemgraphIngestor:
             except Exception:
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
+        self._ensure_indexes()
+
+    def _ensure_indexes(self) -> None:
+        logger.info(ls.MG_ENSURING_INDEXES)
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
+            try:
+                self._execute_query(build_index_query(label, prop))
+            except Exception:
+                pass
+        logger.info(ls.MG_INDEXES_DONE)
 
     def ensure_node_batch(
         self, label: str, properties: dict[str, PropertyValue]

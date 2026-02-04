@@ -18,6 +18,9 @@
   <a href="https://mseep.ai/app/vitali87-code-graph-rag">
     <img src="https://mseep.net/pr/vitali87-code-graph-rag-badge.png" alt="MseeP.ai Security Assessment" height="20" />
   </a>
+  <a href="https://code-graph-rag.com">
+    <img src="https://img.shields.io/badge/Enterprise-Support%20%26%20Services-6366f1" alt="Enterprise Support" />
+  </a>
 </p>
 </div>
 
@@ -290,6 +293,7 @@ Use the Makefile for common development tasks:
 | `make format` | Run ruff format |
 | `make typecheck` | Run type checking with ty |
 | `make check` | Run all checks: lint, typecheck, test |
+| `make pre-commit` | Run all pre-commit checks locally (comprehensive test before commit) |
 <!-- /SECTION:makefile_commands -->
 
 ## 🎯 Usage
@@ -733,6 +737,7 @@ my_build_output
 - **click**: Composable command line interface toolkit
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
+- **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
 <!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools
@@ -914,6 +919,17 @@ For issues or questions:
 2. Verify Memgraph connection
 3. Ensure all environment variables are set
 4. Review the graph schema matches your expectations
+
+## 💼 Enterprise Services
+
+Graph-Code is open source and free to use. For organizations that need additional support, we offer:
+
+- **Technical Support Contracts** — Custom SLAs, priority issue resolution, and dedicated assistance
+- **Integration Consulting** — Help deploying Graph-Code in your infrastructure and integrating with your toolchain
+- **Custom Development** — Tailored features, new language support, and workflow optimization for your specific codebase
+- **Training & Onboarding** — Get your team up to speed with hands-on training sessions
+
+**[Learn more at code-graph-rag.com →](https://code-graph-rag.com)**
 
 ## Star History
 

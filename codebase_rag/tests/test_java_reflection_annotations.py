@@ -36,7 +36,8 @@ def test_custom_annotations(
         / "CustomAnnotations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.lang.annotation.*;
@@ -243,7 +244,7 @@ public class AnnotatedUser {
         System.out.println("Complex annotation example: " + parameter);
     }
 }
-"""
+""",
     )
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
@@ -288,7 +289,8 @@ def test_reflection_api_usage(
         / "ReflectionExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.lang.reflect.*;
@@ -560,7 +562,7 @@ public class ReflectionExample {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
@@ -594,7 +596,8 @@ def test_annotation_processing(
         / "AnnotationProcessor.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.lang.annotation.*;
@@ -955,7 +958,7 @@ public class AnnotationProcessor {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")
@@ -994,7 +997,8 @@ def test_meta_annotations_inheritance(
         / "MetaAnnotations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.lang.annotation.*;
@@ -1229,7 +1233,7 @@ public class MetaAnnotations {
         return String.valueOf(value);
     }
 }
-"""
+""",
     )
 
     run_updater(java_reflection_project, mock_ingestor, skip_if_missing="java")

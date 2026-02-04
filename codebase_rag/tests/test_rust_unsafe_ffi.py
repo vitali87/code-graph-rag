@@ -13,16 +13,21 @@ def rust_unsafe_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Unsafe and FFI test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Unsafe and FFI test crate"
+    )
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_unsafe_test"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 libc = "0.2"
-""")
+""",
+    )
 
     return project_path
 
@@ -34,7 +39,8 @@ def test_raw_pointers_and_dereferencing(
     """Test raw pointer operations and unsafe dereferencing."""
     test_file = rust_unsafe_project / "raw_pointers.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::ptr;
 
 // Raw pointer basic operations
@@ -172,7 +178,7 @@ unsafe fn atomic_raw_operations() {
     COUNTER.store(100, Ordering::SeqCst);
     let value = COUNTER.load(Ordering::Acquire);
 }
-"""
+""",
     )
 
     run_updater(rust_unsafe_project, mock_ingestor)
@@ -193,7 +199,8 @@ def test_extern_c_functions(
     """Test extern C function declarations and FFI patterns."""
     test_file = rust_unsafe_project / "extern_c.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::raw::{c_double, c_float, c_long, c_uchar};
 
@@ -333,7 +340,7 @@ impl CComplexStruct {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(rust_unsafe_project, mock_ingestor)
@@ -356,7 +363,8 @@ def test_unsafe_traits_and_implementations(
     """Test unsafe traits and their implementations."""
     test_file = rust_unsafe_project / "unsafe_traits.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
@@ -564,7 +572,7 @@ fn serialize_zerocopy<T: ZeroCopy>(value: &T) -> Vec<u8> {
 unsafe fn deserialize_zerocopy<T: ZeroCopy>(bytes: &[u8]) -> Option<T> {
     T::from_bytes(bytes).copied()
 }
-"""
+""",
     )
 
     run_updater(rust_unsafe_project, mock_ingestor)
@@ -587,7 +595,8 @@ def test_inline_assembly(
     """Test inline assembly and low-level operations."""
     test_file = rust_unsafe_project / "inline_asm.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::arch::asm;
 
 // Basic inline assembly
@@ -770,7 +779,7 @@ unsafe fn aarch64_specific() {
         options(nostack, preserves_flags)
     );
 }
-"""
+""",
     )
 
     run_updater(rust_unsafe_project, mock_ingestor)
@@ -791,7 +800,8 @@ def test_unsafe_unions_and_transmute(
     """Test unsafe unions and transmute operations."""
     test_file = rust_unsafe_project / "unions_transmute.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::mem;
 
 // Basic union definition
@@ -1020,7 +1030,7 @@ unsafe fn bit_field_operations() {
     println!("Low: 0x{:04x}, High: 0x{:04x}", low_bits, high_bits);
     println!("Modified: 0x{:08x}", new_value);
 }
-"""
+""",
     )
 
     run_updater(rust_unsafe_project, mock_ingestor)

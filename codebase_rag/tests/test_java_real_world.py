@@ -37,7 +37,8 @@ def test_spring_framework_annotations(
         / "SpringExample.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import org.springframework.stereotype.*;
@@ -147,7 +148,7 @@ public class DatabaseConnection {
         // Initialize connection
     }
 }
-"""
+""",
     )
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
@@ -186,7 +187,8 @@ def test_design_patterns_singleton_factory(
         / "DesignPatterns.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 // Singleton Pattern
@@ -333,7 +335,7 @@ class WindowsTextField implements TextField {
         return text;
     }
 }
-"""
+""",
     )
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
@@ -389,7 +391,8 @@ def test_builder_observer_patterns(
         / "BuilderObserver.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -560,7 +563,7 @@ class PaymentContext {
         strategy.pay(amount);
     }
 }
-"""
+""",
     )
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
@@ -617,7 +620,8 @@ def test_dao_repository_patterns(
         / "DataAccess.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -818,7 +822,7 @@ class CustomerRepository {
         customerDao.delete(id);
     }
 }
-"""
+""",
     )
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
@@ -866,7 +870,8 @@ def test_configuration_classes(
         / "AppConfiguration.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import org.springframework.context.annotation.*;
@@ -1016,7 +1021,7 @@ class SmtpEmailService implements EmailService {
         System.out.println("Sending via SMTP to: " + to);
     }
 }
-"""
+""",
     )
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
@@ -1073,7 +1078,8 @@ def test_utility_helper_classes(
         / "Utilities.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1307,7 +1313,7 @@ public final class MathUtils {
         return value >= min && value <= max;
     }
 }
-"""
+""",
     )
 
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")

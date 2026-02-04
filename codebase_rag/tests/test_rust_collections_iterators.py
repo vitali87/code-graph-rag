@@ -12,15 +12,20 @@ def rust_collections_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "rust_collections_test"
     project_path.mkdir()
 
-    (project_path / "Cargo.toml").write_text("""
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""
 [package]
 name = "rust_collections_test"
 version = "0.1.0"
 edition = "2021"
-""")
+""",
+    )
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Collections test crate")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Collections test crate"
+    )
 
     return project_path
 
@@ -32,7 +37,8 @@ def test_vector_operations(
     """Test vector operations and methods."""
     test_file = rust_collections_project / "vectors.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 fn basic_vector_operations() {
     let mut v = Vec::new();
     v.push(1);
@@ -150,7 +156,7 @@ fn vector_binary_search() {
         Err(index) => println!("6 not found, would insert at index {}", index),
     }
 }
-"""
+""",
     )
 
     run_updater(rust_collections_project, mock_ingestor)
@@ -171,7 +177,8 @@ def test_hashmap_operations(
     """Test HashMap operations and methods."""
     test_file = rust_collections_project / "hashmaps.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::HashMap;
 
 fn basic_hashmap_operations() {
@@ -323,7 +330,7 @@ fn hashmap_iteration_patterns() {
 
     println!("Final map: {:?}", map);
 }
-"""
+""",
     )
 
     run_updater(rust_collections_project, mock_ingestor)
@@ -344,7 +351,8 @@ def test_iterator_patterns(
     """Test iterator patterns and methods."""
     test_file = rust_collections_project / "iterators.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 fn basic_iterator_usage() {
     let v = vec![1, 2, 3, 4, 5];
 
@@ -533,7 +541,7 @@ fn custom_iterator() {
         println!("Counter: {}", n);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_collections_project, mock_ingestor)
@@ -554,7 +562,8 @@ def test_other_collections(
     """Test other collection types like HashSet, BTreeMap, etc."""
     test_file = rust_collections_project / "other_collections.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::collections::{HashSet, BTreeMap, BTreeSet, VecDeque, LinkedList};
 
 fn hashset_operations() {
@@ -738,7 +747,7 @@ fn collection_performance_characteristics() {
     println!("HashSet insertion time: {:?}", set_time);
     println!("BTreeSet insertion time: {:?}", btree_time);
 }
-"""
+""",
     )
 
     run_updater(rust_collections_project, mock_ingestor)
@@ -759,7 +768,8 @@ def test_functional_programming(
     """Test functional programming patterns with collections."""
     test_file = rust_collections_project / "functional.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 fn higher_order_functions() {
     let numbers = vec![1, 2, 3, 4, 5];
 
@@ -957,7 +967,7 @@ fn monad_like_operations() {
 
     println!("Monadic computation: {:?}", result);
 }
-"""
+""",
     )
 
     run_updater(rust_collections_project, mock_ingestor)

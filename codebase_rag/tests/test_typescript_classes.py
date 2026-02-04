@@ -23,7 +23,8 @@ def typescript_classes_project(temp_repo: Path) -> Path:
     (project_path / "utils").mkdir()
 
     (project_path / "models" / "base.ts").write_text(
-        """
+        encoding="utf-8",
+        data="""
 export abstract class BaseModel {
     protected id: string;
 
@@ -33,7 +34,7 @@ export abstract class BaseModel {
 
     abstract validate(): boolean;
 }
-"""
+""",
     )
 
     return project_path
@@ -46,7 +47,8 @@ def test_access_modifiers(
     """Test TypeScript access modifiers (public, private, protected)."""
     test_file = typescript_classes_project / "access_modifiers.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // TypeScript access modifiers
 
 class AccessModifierDemo {
@@ -271,7 +273,7 @@ console.log(repo.getAll()); // OK
 
 const newRepo = Repository.create<number>('numbers');
 console.log(newRepo.name); // OK
-"""
+""",
     )
 
     run_updater(typescript_classes_project, mock_ingestor)
@@ -312,7 +314,8 @@ def test_abstract_classes(
     """Test TypeScript abstract classes and methods."""
     test_file = typescript_classes_project / "abstract_classes.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // TypeScript abstract classes
 
 abstract class Animal {
@@ -610,7 +613,7 @@ console.log(car.start());
 // Cannot instantiate abstract class
 // const animal = new Animal('Generic', 5); // Error
 // const repo = new Repository<string>(); // Error
-"""
+""",
     )
 
     run_updater(typescript_classes_project, mock_ingestor)
@@ -659,7 +662,8 @@ def test_parameter_properties(
     """Test TypeScript parameter properties and constructor shortcuts."""
     test_file = typescript_classes_project / "parameter_properties.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // TypeScript parameter properties
 
 class ParameterPropertiesDemo {
@@ -901,7 +905,7 @@ userService.createUser({ name: 'Dave', age: 40, email: 'dave@example.com' });
 
 const service = new ConfigurableService('MyService');
 service.process();
-"""
+""",
     )
 
     run_updater(typescript_classes_project, mock_ingestor)
@@ -948,7 +952,8 @@ def test_typescript_class_comprehensive(
     """Comprehensive test ensuring all TypeScript class features are covered."""
     test_file = typescript_classes_project / "comprehensive_classes.ts"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every TypeScript class feature in one file
 
 // Abstract class with access modifiers and generics
@@ -1101,7 +1106,7 @@ service.process({ timeout: 1000, retries: 1 }).then(result => {
 
 console.log(service.status); // idle
 console.log(userRepo.name); // users
-"""
+""",
     )
 
     run_updater(typescript_classes_project, mock_ingestor)

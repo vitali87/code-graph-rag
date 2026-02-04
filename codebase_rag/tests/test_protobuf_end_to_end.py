@@ -50,7 +50,7 @@ def test_comprehensive_pipeline_produces_valid_artifact_joint(tmp_path: Path) ->
     for file_path, content in COMPREHENSIVE_PROJECT_FIXTURE.items():
         full_path = project_dir / Path(file_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content)
+        full_path.write_text(encoding="utf-8", data=content)
 
     output_dir = tmp_path / "out_joint"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +100,7 @@ def test_comprehensive_pipeline_produces_valid_artifacts_split_index(
     for file_path, content in COMPREHENSIVE_PROJECT_FIXTURE.items():
         full_path = project_dir / Path(file_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content)
+        full_path.write_text(encoding="utf-8", data=content)
 
     output_dir = tmp_path / "out_split"
     output_dir.mkdir(parents=True, exist_ok=True)

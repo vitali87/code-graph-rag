@@ -15,7 +15,9 @@ def js_singleton_project(temp_repo: Path) -> Path:
     storage_dir = project_path / "storage"
     storage_dir.mkdir()
 
-    (storage_dir / "Storage.js").write_text("""
+    (storage_dir / "Storage.js").write_text(
+        encoding="utf-8",
+        data="""
 // Singleton pattern in JavaScript
 class Storage {
     constructor() {
@@ -47,12 +49,15 @@ class Storage {
 }
 
 module.exports = Storage;
-""")
+""",
+    )
 
     controllers_dir = project_path / "controllers"
     controllers_dir.mkdir()
 
-    (controllers_dir / "SceneController.js").write_text("""
+    (controllers_dir / "SceneController.js").write_text(
+        encoding="utf-8",
+        data="""
 const Storage = require('../storage/Storage');
 
 class SceneController {
@@ -74,9 +79,12 @@ class SceneController {
 }
 
 module.exports = SceneController;
-""")
+""",
+    )
 
-    (project_path / "main.js").write_text("""
+    (project_path / "main.js").write_text(
+        encoding="utf-8",
+        data="""
 const SceneController = require('./controllers/SceneController');
 const Storage = require('./storage/Storage');
 
@@ -100,7 +108,8 @@ function main() {
 }
 
 module.exports = { Application, main };
-""")
+""",
+    )
 
     return project_path
 

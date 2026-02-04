@@ -1,59 +1,59 @@
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-    -   id: check-toml
--   repo: https://github.com/astral-sh/ruff-pre-commit
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+  - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.2
     hooks:
-    -   id: ruff
+      - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
         exclude: ^codec/schema_pb2\.(py|pyi)$
-    -   id: ruff-format
+      - id: ruff-format
         exclude: ^codec/schema_pb2\.(py|pyi)$
--   repo: local
+  - repo: local
     hooks:
-    -   id: ty
+      - id: ty
         name: ty check
         entry: uv run ty check --exclude codebase_rag/tests/
         language: system
         types: [python]
         exclude: ^codec/.*_pb2\.py$
         pass_filenames: false
--   repo: local
+  - repo: local
     hooks:
-    -   id: check-no-docs
+      - id: check-no-docs
         name: no module docstrings or inline comments
         entry: uv run python scripts/check_no_docs.py
         language: system
         types: [python]
         exclude: ^codec/schema_pb2\.py$
--   repo: local
+  - repo: local
     hooks:
-    -   id: generate-readme
+      - id: generate-readme
         name: generate README sections
-        entry: scripts/hooks/generate-readme.sh
-        language: script
+        entry: uv run python scripts/hooks/generate_readme.py
+        language: system
         pass_filenames: false
         always_run: true
--   repo: https://github.com/PyCQA/bandit
+  - repo: https://github.com/PyCQA/bandit
     rev: 1.9.2
     hooks:
-    -   id: bandit
+      - id: bandit
         args: ["-c", "pyproject.toml", "--severity-level", "high"]
         additional_dependencies: ["bandit[toml]"]
         exclude: ^(codebase_rag/tests/|scripts/)
--   repo: https://github.com/compilerla/conventional-pre-commit
+  - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.2.0
     hooks:
-    -   id: conventional-pre-commit
+      - id: conventional-pre-commit
         stages: [commit-msg]
--   repo: local
+  - repo: local
     hooks:
-    -   id: single-line-commit
+      - id: single-line-commit
         name: single-line commit message
         entry: scripts/hooks/check-single-line-commit.sh
         language: script

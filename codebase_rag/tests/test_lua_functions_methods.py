@@ -12,7 +12,8 @@ def test_lua_function_and_method_calls(
     project.mkdir()
 
     (project / "mod.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local M = {}
 
 function M.add(a, b)
@@ -29,11 +30,12 @@ function M:apply(x)
 end
 
 return M
-"""
+""",
     )
 
     (project / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local M = require('mod')
 
 local function pipeline(x)
@@ -42,7 +44,7 @@ local function pipeline(x)
 end
 
 local r = pipeline(10)
-"""
+""",
     )
 
     run_updater(project, mock_ingestor)

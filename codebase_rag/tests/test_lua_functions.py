@@ -13,7 +13,8 @@ def test_lua_function_discovery(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project_path.mkdir()
 
     (project_path / "mod.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local M = {}
 
 local function local_add(a, b)
@@ -29,11 +30,12 @@ function M.use(add_fn, x, y)
 end
 
 return M
-"""
+""",
     )
 
     (project_path / "main.lua").write_text(
-        """
+        encoding="utf-8",
+        data="""
 local mod = require('mod')
 
 local function compute(x, y)
@@ -41,7 +43,7 @@ local function compute(x, y)
 end
 
 local r = compute(4, 2)
-"""
+""",
     )
 
     parsers, queries = load_parsers()

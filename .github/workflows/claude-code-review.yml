@@ -3,22 +3,21 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+    paths:
+      - "codebase_rag/**/*.py"
+      - "codec/**/*.py"
+      - "scripts/**/*.py"
+      - "*.py"
+      - "pyproject.toml"
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
+    name: AI Code Review
+    if: |
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-review')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
@@ -42,14 +41,31 @@ jobs:
 
           # Direct prompt for automated review (no @claude mention needed)
           direct_prompt: |
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
+            Please review this Python pull request against our CONTRIBUTING.md standards:
 
-            Be constructive and helpful in your feedback.
+            **Code Quality:**
+            - Follow type hints and type safety (no Any, cast, or type: ignore)
+            - Use Pydantic models, TypedDict, and StrEnum appropriately
+            - No hardcoded strings (use constants or StrEnum)
+            - Loguru for logging (not print)
+            - Proper error handling and exceptions
+
+            **Testing:**
+            - Adequate test coverage for new functionality
+            - Both unit and integration tests where appropriate
+            - Tests follow pytest best practices
+
+            **Performance & Security:**
+            - Efficient algorithms and data structures
+            - No security vulnerabilities (SQL injection, XSS, etc.)
+            - Proper input validation
+
+            **Style:**
+            - Ruff compliant (linting and formatting)
+            - No inline comments unless prefixed with (H)
+            - Conventional commit message format
+
+            Be constructive and reference specific lines. For first-time contributors, be extra welcoming.
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
           # use_sticky_comment: true

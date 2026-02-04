@@ -322,7 +322,9 @@ class TestProcessDependencies:
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         pyproject = temp_repo / "pyproject.toml"
-        pyproject.write_text("""
+        pyproject.write_text(
+            encoding="utf-8",
+            data="""
 [project]
 dependencies = [
     "requests>=2.28.0",
@@ -332,7 +334,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "ruff"]
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(
             pyproject
@@ -354,14 +357,17 @@ dev = ["pytest>=7.0", "ruff"]
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         requirements = temp_repo / "requirements.txt"
-        requirements.write_text("""
+        requirements.write_text(
+            encoding="utf-8",
+            data="""
 # This is a comment
 requests>=2.28.0
 pydantic==2.5.0
 numpy
 -e git+https://github.com/example/repo.git#egg=example
 flask[async]>=2.0
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(
             requirements
@@ -382,7 +388,9 @@ flask[async]>=2.0
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         package_json = temp_repo / "package.json"
-        package_json.write_text("""{
+        package_json.write_text(
+            encoding="utf-8",
+            data="""{
   "name": "test-project",
   "dependencies": {
     "express": "^4.18.0",
@@ -393,7 +401,8 @@ flask[async]>=2.0
     "typescript": "~5.0.0"
   }
 }
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(
             package_json
@@ -414,7 +423,9 @@ flask[async]>=2.0
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         cargo = temp_repo / "Cargo.toml"
-        cargo.write_text("""
+        cargo.write_text(
+            encoding="utf-8",
+            data="""
 [package]
 name = "test-project"
 version = "0.1.0"
@@ -426,7 +437,8 @@ reqwest = { version = "0.11", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(cargo)
         definition_processor.ingestor.flush_all()
@@ -445,7 +457,9 @@ criterion = "0.5"
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         go_mod = temp_repo / "go.mod"
-        go_mod.write_text("""
+        go_mod.write_text(
+            encoding="utf-8",
+            data="""
 module github.com/example/project
 
 go 1.21
@@ -456,7 +470,8 @@ require (
 )
 
 require github.com/sirupsen/logrus v1.9.0
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(go_mod)
         definition_processor.ingestor.flush_all()
@@ -474,14 +489,17 @@ require github.com/sirupsen/logrus v1.9.0
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         gemfile = temp_repo / "Gemfile"
-        gemfile.write_text("""
+        gemfile.write_text(
+            encoding="utf-8",
+            data="""
 source 'https://rubygems.org'
 
 gem 'rails', '~> 7.0'
 gem 'pg', '>= 1.0'
 gem 'puma'
 gem 'redis', '~> 5.0'
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(gemfile)
         definition_processor.ingestor.flush_all()
@@ -500,7 +518,9 @@ gem 'redis', '~> 5.0'
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         composer = temp_repo / "composer.json"
-        composer.write_text("""{
+        composer.write_text(
+            encoding="utf-8",
+            data="""{
   "require": {
     "php": ">=8.1",
     "laravel/framework": "^10.0",
@@ -510,7 +530,8 @@ gem 'redis', '~> 5.0'
     "phpunit/phpunit": "^10.0"
   }
 }
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(composer)
         definition_processor.ingestor.flush_all()
@@ -529,7 +550,9 @@ gem 'redis', '~> 5.0'
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         csproj = temp_repo / "Project.csproj"
-        csproj.write_text("""
+        csproj.write_text(
+            encoding="utf-8",
+            data="""
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -540,7 +563,8 @@ gem 'redis', '~> 5.0'
     <PackageReference Include="xunit" Version="2.6.0" />
   </ItemGroup>
 </Project>
-""")
+""",
+        )
 
         definition_processor.factory.definition_processor.process_dependencies(csproj)
         definition_processor.ingestor.flush_all()
@@ -667,7 +691,7 @@ class TestProcessFile:
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         py_file = temp_repo / "example.py"
-        py_file.write_text("def hello(): pass")
+        py_file.write_text(encoding="utf-8", data="def hello(): pass")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -697,7 +721,7 @@ class TestProcessFile:
         pkg_dir = temp_repo / "mypackage"
         pkg_dir.mkdir()
         init_file = pkg_dir / "__init__.py"
-        init_file.write_text("# package init")
+        init_file.write_text(encoding="utf-8", data="# package init")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -725,7 +749,7 @@ class TestProcessFile:
         nested_dir = temp_repo / "pkg" / "subpkg"
         nested_dir.mkdir(parents=True)
         init_file = nested_dir / "__init__.py"
-        init_file.write_text("# nested package")
+        init_file.write_text(encoding="utf-8", data="# nested package")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -752,7 +776,7 @@ class TestProcessFile:
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         txt_file = temp_repo / "readme.txt"
-        txt_file.write_text("Just a text file")
+        txt_file.write_text(encoding="utf-8", data="Just a text file")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -769,7 +793,7 @@ class TestProcessFile:
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         py_file = temp_repo / "root_module.py"
-        py_file.write_text("x = 1")
+        py_file.write_text(encoding="utf-8", data="x = 1")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -798,7 +822,7 @@ class TestProcessFile:
         pkg_dir = temp_repo / "mypackage"
         pkg_dir.mkdir()
         py_file = pkg_dir / "module.py"
-        py_file.write_text("y = 2")
+        py_file.write_text(encoding="utf-8", data="y = 2")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -828,7 +852,7 @@ class TestProcessFile:
         folder_dir = temp_repo / "scripts"
         folder_dir.mkdir()
         py_file = folder_dir / "util.py"
-        py_file.write_text("z = 3")
+        py_file.write_text(encoding="utf-8", data="z = 3")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -854,7 +878,7 @@ class TestProcessFile:
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         py_file = temp_repo / "tracked.py"
-        py_file.write_text("a = 1")
+        py_file.write_text(encoding="utf-8", data="a = 1")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -879,14 +903,17 @@ class TestProcessFile:
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         py_file = temp_repo / "with_class.py"
-        py_file.write_text("""
+        py_file.write_text(
+            encoding="utf-8",
+            data="""
 class MyClass:
     def method(self):
         pass
 
 def standalone():
     pass
-""")
+""",
+        )
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -909,7 +936,7 @@ def standalone():
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         py_file = temp_repo / "bad_syntax.py"
-        py_file.write_text("def broken( x = 1")
+        py_file.write_text(encoding="utf-8", data="def broken( x = 1")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -926,7 +953,7 @@ def standalone():
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
         py_file = temp_repo / "empty.py"
-        py_file.write_text("")
+        py_file.write_text(encoding="utf-8", data="")
 
         from codebase_rag.constants import SupportedLanguage
 
@@ -955,7 +982,7 @@ class TestProcessFileRust:
         rust_dir = temp_repo / "src" / "utils"
         rust_dir.mkdir(parents=True)
         mod_file = rust_dir / "mod.rs"
-        mod_file.write_text("pub fn helper() {}")
+        mod_file.write_text(encoding="utf-8", data="pub fn helper() {}")
 
         from codebase_rag.constants import SupportedLanguage
 

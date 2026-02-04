@@ -4,11 +4,24 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 jobs:
   bump-version:
+    name: Auto Version Bump
     if: "!contains(github.event.head_commit.message, 'chore: bump version')"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -37,15 +50,40 @@ jobs:
           CURRENT_VERSION=$(grep -E '^version\s*=' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Bump patch version
+      - name: Determine bump type
+        if: steps.check_manual.outputs.skip == 'false'
+        id: bump_type
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+          else
+            echo "type=patch" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version
         if: steps.check_manual.outputs.skip == 'false'
         id: bump_version
         run: |
           CURRENT="${{ steps.get_version.outputs.current }}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+
+          case "${{ steps.bump_type.outputs.type }}" in
+            major)
+              NEW_MAJOR=$((MAJOR + 1))
+              NEW_VERSION="$NEW_MAJOR.0.0"
+              ;;
+            minor)
+              NEW_MINOR=$((MINOR + 1))
+              NEW_VERSION="$MAJOR.$NEW_MINOR.0"
+              ;;
+            patch)
+              NEW_PATCH=$((PATCH + 1))
+              NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+              ;;
+          esac
+
           echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Bumping version from $CURRENT to $NEW_VERSION (type: ${{ steps.bump_type.outputs.type }})"
 
       - name: Update pyproject.toml
         if: steps.check_manual.outputs.skip == 'false'

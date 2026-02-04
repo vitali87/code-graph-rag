@@ -9,7 +9,9 @@ def test_math_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> Non
     project = temp_repo / "lua_math"
     project.mkdir()
 
-    (project / "math_ops.lua").write_text("""
+    (project / "math_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local math_utils = {}
 
 function math_utils.circle_area(radius)
@@ -48,7 +50,8 @@ local random = get_random_value()
 local max_value = math_utils.get_max_value({10, 20, 30})
 
 return math_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -70,7 +73,9 @@ def test_string_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> N
     project = temp_repo / "lua_string"
     project.mkdir()
 
-    (project / "string_ops.lua").write_text("""
+    (project / "string_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local string_utils = {}
 
 function string_utils.get_text_info(text)
@@ -116,7 +121,8 @@ local pattern_match = string_utils.extract_numbers("abc123def")
 local gsub_result = string_utils.replace_word("hello world", "world", "universe")
 
 return string_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -138,7 +144,9 @@ def test_table_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_table"
     project.mkdir()
 
-    (project / "table_ops.lua").write_text("""
+    (project / "table_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local table_utils = {}
 
 function table_utils.add_element(tbl, element)
@@ -187,7 +195,8 @@ local max_index = table_utils.get_max_numeric_key({a = 1, b = 2, [10] = 3})
 table_utils.iterate_table({1, 2, 3}, print)
 
 return table_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -209,7 +218,9 @@ def test_os_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_os"
     project.mkdir()
 
-    (project / "os_ops.lua").write_text("""
+    (project / "os_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local os_utils = {}
 
 function os_utils.get_current_time()
@@ -269,7 +280,8 @@ local result = system_operations()
 local clock_time = os_utils.get_process_time()
 
 return os_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -291,7 +303,9 @@ def test_io_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_io"
     project.mkdir()
 
-    (project / "io_ops.lua").write_text("""
+    (project / "io_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local io_utils = {}
 
 function io_utils.open_file(filename, mode)
@@ -362,7 +376,8 @@ io_utils.set_input_file("input.txt")
 local temp_file = io_utils.create_temp_file()
 
 return io_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -384,7 +399,9 @@ def test_debug_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> No
     project = temp_repo / "lua_debug"
     project.mkdir()
 
-    (project / "debug_ops.lua").write_text("""
+    (project / "debug_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local debug_utils = {}
 
 function debug_utils.get_function_info(level, what)
@@ -450,7 +467,8 @@ debug_utils.set_metatable({}, {})
 local upvalue = debug_utils.get_upvalue(print, 1)
 
 return debug_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -472,7 +490,9 @@ def test_package_module_functions(temp_repo: Path, mock_ingestor: MagicMock) -> 
     project = temp_repo / "lua_package"
     project.mkdir()
 
-    (project / "package_ops.lua").write_text("""
+    (project / "package_ops.lua").write_text(
+        encoding="utf-8",
+        data="""
 local package_utils = {}
 
 function package_utils.unload_module(module_name)
@@ -548,7 +568,8 @@ package_utils.make_global({})
 local searchpath = package_utils.search_module_path("module", package.path)
 
 return package_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 
@@ -570,7 +591,9 @@ def test_builtin_functions(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "lua_builtins"
     project.mkdir()
 
-    (project / "builtins.lua").write_text("""
+    (project / "builtins.lua").write_text(
+        encoding="utf-8",
+        data="""
 local builtin_utils = {}
 
 function builtin_utils.to_string_safe(value)
@@ -700,7 +723,8 @@ builtin_utils.manage_memory("collect")
 local memory = builtin_utils.manage_memory("count")
 
 return builtin_utils
-""")
+""",
+    )
 
     run_updater(project, mock_ingestor)
 

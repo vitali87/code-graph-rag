@@ -15,7 +15,8 @@ def typescript_mixin_project(temp_repo: Path) -> Path:
 
     mixin_file = project_path / "mixins.ts"
     mixin_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 interface Printable {
     print(): void;
 }
@@ -121,7 +122,7 @@ function demonstrateMixins(): void {
     doc.print();
     doc.serialize();
 }
-"""
+""",
     )
 
     return project_path
@@ -191,7 +192,8 @@ def rust_impl_project(temp_repo: Path) -> Path:
 
     lib_file = project_path / "lib.rs"
     lib_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 pub struct Point {
     x: f64,
     y: f64,
@@ -276,7 +278,7 @@ pub fn demonstrate_impl_blocks() {
     println!("Area: {}", rect.area());
     println!("Contains origin: {}", rect.contains(&p1));
 }
-"""
+""",
     )
 
     return project_path
@@ -332,7 +334,8 @@ def java_interface_project(temp_repo: Path) -> Path:
 
     animal_file = project_path / "Animal.java"
     animal_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package animals;
 
 public interface Animal {
@@ -340,36 +343,39 @@ public interface Animal {
     void move();
     String getName();
 }
-"""
+""",
     )
 
     flyable_file = project_path / "Flyable.java"
     flyable_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package animals;
 
 public interface Flyable {
     void fly();
     int getAltitude();
 }
-"""
+""",
     )
 
     swimmable_file = project_path / "Swimmable.java"
     swimmable_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package animals;
 
 public interface Swimmable {
     void swim();
     int getDepth();
 }
-"""
+""",
     )
 
     dog_file = project_path / "Dog.java"
     dog_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package animals;
 
 public class Dog implements Animal {
@@ -398,12 +404,13 @@ public class Dog implements Animal {
         System.out.println(name + " fetches the ball");
     }
 }
-"""
+""",
     )
 
     duck_file = project_path / "Duck.java"
     duck_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package animals;
 
 public class Duck implements Animal, Flyable, Swimmable {
@@ -454,12 +461,13 @@ public class Duck implements Animal, Flyable, Swimmable {
         return this.depth;
     }
 }
-"""
+""",
     )
 
     main_file = project_path / "Main.java"
     main_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package animals;
 
 public class Main {
@@ -481,7 +489,7 @@ public class Main {
         }
     }
 }
-"""
+""",
     )
 
     return project_path
@@ -548,7 +556,8 @@ def inline_module_project(temp_repo: Path) -> Path:
 
     main_rs = project_path / "main.rs"
     main_rs.write_text(
-        """
+        encoding="utf-8",
+        data="""
 mod utils {
     pub fn helper() -> i32 {
         42
@@ -582,7 +591,7 @@ fn main() {
     println!("Deep value: {}", deep_value);
     println!("Debug: {}", settings.debug);
 }
-"""
+""",
     )
 
     return project_path
@@ -611,11 +620,12 @@ def method_override_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "override_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     base_file = project_path / "base.py"
     base_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class BaseClass:
     def method_a(self):
         return "BaseClass.method_a"
@@ -644,7 +654,7 @@ class DerivedClass(MiddleClass):
 
     def method_e(self):
         return "DerivedClass.method_e"
-"""
+""",
     )
 
     return project_path
@@ -717,11 +727,12 @@ def nested_class_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "nested_class_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     nested_file = project_path / "nested.py"
     nested_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class OuterClass:
     class InnerClass:
         def inner_method(self):
@@ -737,7 +748,7 @@ class OuterClass:
     class AnotherInner:
         def another_method(self):
             return "another"
-"""
+""",
     )
 
     return project_path
@@ -802,11 +813,12 @@ def abstract_class_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "abstract_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     abstract_file = project_path / "abstract_classes.py"
     abstract_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 from abc import ABC, abstractmethod
 
 
@@ -847,7 +859,7 @@ class Rectangle(Shape):
 
     def describe(self):
         return f"Rectangle {self.width}x{self.height}"
-"""
+""",
     )
 
     return project_path
@@ -914,7 +926,8 @@ def js_class_expression_project(temp_repo: Path) -> Path:
 
     class_expr_file = project_path / "class_expressions.js"
     class_expr_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 const Animal = class {
     constructor(name) {
         this.name = name;
@@ -958,7 +971,7 @@ function createAnimal() {
     const animal = new Animal("Generic");
     animal.speak();
 }
-"""
+""",
     )
 
     return project_path
@@ -1009,7 +1022,8 @@ def cpp_template_class_project(temp_repo: Path) -> Path:
 
     template_file = project_path / "templates.cpp"
     template_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 #include <iostream>
 #include <vector>
 
@@ -1064,7 +1078,7 @@ void demonstrateTemplates() {
     strContainer.addString("Hello");
     std::cout << "First: " << strContainer.getFirst() << std::endl;
 }
-"""
+""",
     )
 
     return project_path
@@ -1111,7 +1125,8 @@ def go_struct_project(temp_repo: Path) -> Path:
 
     models_file = project_path / "models.go"
     models_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package models
 
 type Animal interface {
@@ -1196,12 +1211,13 @@ func NewDog(name, breed string, age int) *Dog {
 func NewCat(name string, indoor bool) *Cat {
     return &Cat{Name: name, Indoor: indoor}
 }
-"""
+""",
     )
 
     main_file = project_path / "main.go"
     main_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package main
 
 import (
@@ -1227,7 +1243,7 @@ func demonstrateAnimals() {
 func main() {
     demonstrateAnimals()
 }
-"""
+""",
     )
 
     return project_path
@@ -1330,7 +1346,8 @@ def csharp_class_project(temp_repo: Path) -> Path:
 
     animal_file = project_path / "IAnimal.cs"
     animal_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 namespace Animals
 {
     public interface IAnimal
@@ -1352,12 +1369,13 @@ namespace Animals
         int GetDepth();
     }
 }
-"""
+""",
     )
 
     dog_file = project_path / "Dog.cs"
     dog_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 namespace Animals
 {
     public class Dog : IAnimal
@@ -1387,12 +1405,13 @@ namespace Animals
         }
     }
 }
-"""
+""",
     )
 
     duck_file = project_path / "Duck.cs"
     duck_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 namespace Animals
 {
     public class Duck : IAnimal, IFlyable, ISwimmable
@@ -1441,12 +1460,13 @@ namespace Animals
         }
     }
 }
-"""
+""",
     )
 
     base_class_file = project_path / "BaseVehicle.cs"
     base_class_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 namespace Vehicles
 {
     public abstract class BaseVehicle
@@ -1515,12 +1535,13 @@ namespace Vehicles
         }
     }
 }
-"""
+""",
     )
 
     struct_file = project_path / "Point.cs"
     struct_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 namespace Geometry
 {
     public struct Point
@@ -1571,7 +1592,7 @@ namespace Geometry
         }
     }
 }
-"""
+""",
     )
 
     return project_path
@@ -1837,10 +1858,10 @@ def empty_file_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "empty_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     empty_file = project_path / "empty.py"
-    empty_file.write_text("")
+    empty_file.write_text(encoding="utf-8", data="")
 
     return project_path
 
@@ -1863,17 +1884,18 @@ def comments_only_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "comments_only_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     comments_file = project_path / "comments_only.py"
     comments_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 # This file only contains comments
 # No classes or functions here
 
 # Just some documentation
 # About nothing in particular
-"""
+""",
     )
 
     return project_path
@@ -1897,11 +1919,12 @@ def deeply_nested_class_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "deep_nested_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     deep_file = project_path / "deep.py"
     deep_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class Level1:
     class Level2:
         class Level3:
@@ -1921,7 +1944,7 @@ class Level1:
 
     def level1_method(self):
         return "level 1"
-"""
+""",
     )
 
     return project_path
@@ -1957,11 +1980,12 @@ def circular_inheritance_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "circular_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     circular_file = project_path / "circular.py"
     circular_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class A(C):
     def method_a(self):
         pass
@@ -1973,7 +1997,7 @@ class B(A):
 class C(B):
     def method_c(self):
         pass
-"""
+""",
     )
 
     return project_path
@@ -2005,11 +2029,12 @@ def special_characters_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "special_chars_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     special_file = project_path / "special.py"
     special_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class ClassWith_Underscore:
     def method_with__double__underscore(self):
         pass
@@ -2030,7 +2055,7 @@ class _PrivateClass:
 class __DunderClass:
     def method(self):
         pass
-"""
+""",
     )
 
     return project_path
@@ -2066,11 +2091,12 @@ def multiple_inheritance_project(temp_repo: Path) -> Path:
     project_path = temp_repo / "multi_inherit_test"
     project_path.mkdir()
 
-    (project_path / "__init__.py").write_text("")
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
 
     multi_file = project_path / "multi.py"
     multi_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 class Mixin1:
     def mixin1_method(self):
         pass
@@ -2090,7 +2116,7 @@ class Base:
 class Derived(Base, Mixin1, Mixin2, Mixin3):
     def derived_method(self):
         pass
-"""
+""",
     )
 
     return project_path

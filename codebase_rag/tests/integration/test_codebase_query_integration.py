@@ -9,7 +9,7 @@ from codebase_rag.exceptions import LLMGenerationError
 from codebase_rag.schemas import QueryGraphData
 from codebase_rag.tools.codebase_query import create_query_tool
 
-pytestmark = [pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
 
 @pytest.fixture(params=["asyncio"])

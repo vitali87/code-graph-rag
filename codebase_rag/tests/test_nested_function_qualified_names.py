@@ -14,13 +14,14 @@ def nested_functions_project(temp_repo: Path) -> Path:
 
     package_json = project_path / "package.json"
     package_json.write_text(
-        """
+        encoding="utf-8",
+        data="""
 {
   "name": "nested-functions-test",
   "version": "1.0.0",
   "description": "Test nested function qualified names"
 }
-"""
+""",
     )
 
     return project_path
@@ -33,7 +34,8 @@ def test_object_methods_inside_functions(
     """Test that object methods defined inside functions have correct qualified names."""
     test_file = nested_functions_project / "object_methods_nested.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Object methods defined inside functions
 function createApiClient(baseUrl) {
     const client = {
@@ -70,7 +72,7 @@ class ServiceFactory {
         };
     }
 }
-"""
+""",
     )
 
     run_updater(nested_functions_project, mock_ingestor)
@@ -106,7 +108,8 @@ def test_arrow_functions_in_constructors(
     """Test arrow functions assigned in constructors - should have correct nested qualified names."""
     test_file = nested_functions_project / "arrow_functions_in_constructors.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Arrow functions assigned inside constructors
 class UserService {
     constructor(apiUrl) {
@@ -182,7 +185,7 @@ function DatabaseService(connectionString) {
         return { batch, addToBatch: this.addToBatch, executeBatch: this.executeBatch };
     };
 }
-"""
+""",
     )
 
     run_updater(nested_functions_project, mock_ingestor)
@@ -247,7 +250,8 @@ def test_export_functions_in_modules(
     """Test ES6 export functions defined inside other functions - should be nested."""
     test_file = nested_functions_project / "export_functions_nested.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // ES6 exports defined inside functions
 function createModule() {
     // These should NOT be treated as module-level exports
@@ -286,7 +290,7 @@ class ServiceFactory {
         };
     }
 }
-"""
+""",
     )
 
     run_updater(nested_functions_project, mock_ingestor)
@@ -325,7 +329,8 @@ def test_commonjs_exports_in_functions(
     """Test CommonJS exports defined inside functions - should have correct nested qualified names."""
     test_file = nested_functions_project / "commonjs_exports_nested.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // CommonJS exports defined inside functions
 function createUtilities() {
     // These should NOT be treated as module-level exports
@@ -376,7 +381,7 @@ class ModuleFactory {
         return data.reverse();
     };
 })();
-"""
+""",
     )
 
     run_updater(nested_functions_project, mock_ingestor)

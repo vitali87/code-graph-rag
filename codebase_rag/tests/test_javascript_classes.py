@@ -21,9 +21,11 @@ def javascript_classes_project(temp_repo: Path) -> Path:
     (project_path / "utils").mkdir()
     (project_path / "models").mkdir()
 
-    (project_path / "src" / "base.js").write_text("export class BaseClass {}")
+    (project_path / "src" / "base.js").write_text(
+        encoding="utf-8", data="export class BaseClass {}"
+    )
     (project_path / "utils" / "helpers.js").write_text(
-        "export function validateId(id) { return id > 0; }"
+        encoding="utf-8", data="export function validateId(id) { return id > 0; }"
     )
 
     return project_path
@@ -36,7 +38,8 @@ def test_basic_class_declarations(
     """Test basic ES6 class declaration parsing."""
     test_file = javascript_classes_project / "basic_classes.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic class declaration
 class Person {
     constructor(name, age) {
@@ -156,7 +159,7 @@ const result = processor.processData([
     { id: 1, name: 'Item 1' },
     { id: 2, name: 'Item 2' }
 ]);
-"""
+""",
     )
 
     run_updater(javascript_classes_project, mock_ingestor)
@@ -204,7 +207,8 @@ def test_class_inheritance(
     """Test class inheritance patterns with extends and super()."""
     test_file = javascript_classes_project / "class_inheritance.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Base class
 class Animal {
     constructor(name, species) {
@@ -342,7 +346,7 @@ const eagleFlight = eagle.fly(); // uses super
 const dogInfo = dog.getInfo(); // inherited from Animal
 const poodleFetch = poodle.fetch(); // inherited from Dog
 const eagleHunt = eagle.hunt(); // Eagle specific
-"""
+""",
     )
 
     run_updater(javascript_classes_project, mock_ingestor)
@@ -414,7 +418,8 @@ def test_static_methods_and_properties(
     """Test static methods and static properties in classes."""
     test_file = javascript_classes_project / "static_features.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Class with static methods and properties
 class MathHelper {
     static PI = 3.14159;
@@ -535,7 +540,7 @@ const isValid = User.isValidEmail('test@example.com');
 
 const powerUser = PowerUser.createAdmin('Charlie', 'charlie@example.com');
 const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.com', ['read', 'write']);
-"""
+""",
     )
 
     run_updater(javascript_classes_project, mock_ingestor)
@@ -589,7 +594,8 @@ def test_private_fields_and_methods(
     """Test private fields and methods (# syntax)."""
     test_file = javascript_classes_project / "private_features.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Class with private fields and methods
 class BankAccount {
     #balance = 0;
@@ -736,7 +742,7 @@ const instanceCount = Counter.getInstanceCount();
 // Note: Private field access from outside would cause errors
 // console.log(account.#balance); // SyntaxError
 // account.#validatePin('1234'); // SyntaxError
-"""
+""",
     )
 
     run_updater(javascript_classes_project, mock_ingestor)
@@ -780,7 +786,8 @@ def test_class_expressions_and_mixins(
     """Test class expressions and mixin patterns."""
     test_file = javascript_classes_project / "class_expressions.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Anonymous class expression
 const Animal = class {
     constructor(name) {
@@ -924,7 +931,7 @@ const duckFly = duck.fly();
 const UserModel = createModel('User');
 const user = new UserModel({ name: 'John', age: 30 });
 const userInfo = user.toString();
-"""
+""",
     )
 
     run_updater(javascript_classes_project, mock_ingestor)
@@ -963,7 +970,8 @@ def test_class_comprehensive(
     """Comprehensive test ensuring all class types create proper relationships."""
     test_file = javascript_classes_project / "comprehensive_classes.js"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Every JavaScript class pattern in one file
 
 // Basic class
@@ -1050,7 +1058,7 @@ function testClasses() {
 }
 
 const testResult = testClasses();
-"""
+""",
     )
 
     run_updater(javascript_classes_project, mock_ingestor)

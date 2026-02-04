@@ -13,17 +13,24 @@ def rust_project(temp_repo: Path) -> Path:
     project_path.mkdir()
 
     (project_path / "src").mkdir()
-    (project_path / "src" / "lib.rs").write_text("// Library root")
-    (project_path / "src" / "main.rs").write_text("fn main() {}")
+    (project_path / "src" / "lib.rs").write_text(
+        encoding="utf-8", data="// Library root"
+    )
+    (project_path / "src" / "main.rs").write_text(encoding="utf-8", data="fn main() {}")
     (project_path / "src" / "utils").mkdir()
-    (project_path / "src" / "utils" / "mod.rs").write_text("// Utils module")
+    (project_path / "src" / "utils" / "mod.rs").write_text(
+        encoding="utf-8", data="// Utils module"
+    )
     (project_path / "tests").mkdir()
     (project_path / "examples").mkdir()
 
-    (project_path / "Cargo.toml").write_text("""[package]
+    (project_path / "Cargo.toml").write_text(
+        encoding="utf-8",
+        data="""[package]
 name = "rust_test"
 version = "0.1.0"
-""")
+""",
+    )
 
     return project_path
 
@@ -35,7 +42,8 @@ def test_basic_rust_functions(
     """Test basic Rust function parsing including async, const, and unsafe functions."""
     test_file = rust_project / "basic_functions.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic function declarations
 fn simple_function() {
     println!("Hello, world!");
@@ -108,7 +116,7 @@ fn demonstrate_functions() {
     let iter = complex_return();
     let where_result = where_clause_function(100, "test");
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -163,7 +171,8 @@ def test_rust_structs_enums_unions(
     """Test Rust struct, enum, and union declarations."""
     test_file = rust_project / "types.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic struct
 struct Point {
     x: f64,
@@ -286,7 +295,7 @@ fn demonstrate_types() {
         Message::ChangeColor(r, g, b) => println!("Color: ({}, {}, {})", r, g, b),
     }
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -338,7 +347,8 @@ def test_rust_traits_and_implementations(
     """Test Rust trait definitions and implementations."""
     test_file = rust_project / "traits.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic trait
 trait Display {
     fn fmt(&self) -> String;
@@ -467,7 +477,7 @@ fn demonstrate_traits() {
     let drawable: &dyn Display = &point;
     drawable.print();
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -523,7 +533,8 @@ def test_rust_modules_and_crates(
     """Test Rust module system and crate organization."""
     main_file = rust_project / "modules.rs"
     main_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Inline module
 mod inline_module {
     pub fn public_function() {
@@ -599,12 +610,13 @@ fn demonstrate_modules() {
     #[cfg(feature = "extra")]
     extra_module::extra_function();
 }
-"""
+""",
     )
 
     file_module = rust_project / "file_module.rs"
     file_module.write_text(
-        """
+        encoding="utf-8",
+        data="""
 pub fn file_module_function() {
     println!("Function in file module");
 }
@@ -612,23 +624,25 @@ pub fn file_module_function() {
 pub struct FileModuleStruct {
     pub data: String,
 }
-"""
+""",
     )
 
     utils_dir = rust_project / "utils"
     utils_dir.mkdir(exist_ok=True)
     (utils_dir / "mod.rs").write_text(
-        """
+        encoding="utf-8",
+        data="""
 pub fn helper() {
     println!("Helper function");
 }
 
 pub mod math;
-"""
+""",
     )
 
     (utils_dir / "math.rs").write_text(
-        """
+        encoding="utf-8",
+        data="""
 pub fn add(a: i32, b: i32) -> i32 {
     a + b
 }
@@ -636,7 +650,7 @@ pub fn add(a: i32, b: i32) -> i32 {
 pub fn multiply(a: i32, b: i32) -> i32 {
     a * b
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -683,7 +697,8 @@ def test_rust_generics_and_lifetimes(
     """Test Rust generics, lifetimes, and advanced type features."""
     test_file = rust_project / "generics.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Basic generic struct
 struct Pair<T, U> {
     first: T,
@@ -828,7 +843,7 @@ fn demonstrate_generics() {
 
     let result = higher_ranked(|s| s.len() as i32);
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -874,7 +889,8 @@ def test_rust_pattern_matching(
     """Test Rust pattern matching with match expressions and if let."""
     test_file = rust_project / "pattern_matching.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 enum Color {
     Red,
     Green,
@@ -1036,7 +1052,7 @@ fn demonstrate_patterns() {
     let nested = Some(Ok(42));
     nested_match(nested);
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -1099,7 +1115,8 @@ def test_rust_closures_and_lambdas(
     """Test Rust closures and functional programming features."""
     test_file = rust_project / "closures.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::thread;
 use std::sync::Arc;
 
@@ -1263,7 +1280,7 @@ fn demonstrate_function_usage() {
         .filter(|&c| c.is_alphabetic())
         .count();
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -1311,7 +1328,8 @@ def test_rust_macros(
     """Test Rust macro definitions and usage."""
     test_file = rust_project / "macros.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Declarative macros (macro_rules!)
 macro_rules! say_hello {
     () => {
@@ -1494,7 +1512,7 @@ mod tests {
         assert_eq!(find_min!(1), 1);
     }
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -1538,7 +1556,8 @@ def test_rust_imports_and_use_statements(
     """Test Rust import system including use statements and external crates."""
     test_file = rust_project / "imports.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // Standard library imports
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -1710,7 +1729,7 @@ impl Debug for CustomStruct {
             .finish()
     }
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -1783,7 +1802,8 @@ def test_rust_error_handling(
     """Test Rust error handling with Result, Option, and ? operator."""
     test_file = rust_project / "error_handling.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::num::ParseIntError;
@@ -1997,7 +2017,7 @@ fn demonstrate_error_handling() {
     // Complex pattern matching
     handle_results_and_options();
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -2061,7 +2081,8 @@ def test_rust_comprehensive_integration(
     """Comprehensive integration test combining all Rust language features."""
     test_file = rust_project / "comprehensive.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 // All Rust features in one integration test
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -2338,7 +2359,7 @@ fn demonstrate_comprehensive_rust() {
         Err(error) => println!("Search failed: {}", error),
     }
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)
@@ -2404,7 +2425,8 @@ def test_rust_advanced_edge_cases(
     """Test advanced Rust edge cases including complex lifetimes, generics, FFI, async, and more."""
     test_file = rust_project / "advanced_edge_cases.rs"
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::future::Future;
@@ -3096,7 +3118,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
 
     Ok(format!("Async result: {}, processed: {}", result, processed))
 }
-"""
+""",
     )
 
     run_updater(rust_project, mock_ingestor)

@@ -37,7 +37,8 @@ def test_stream_operations(
         / "StreamOperations.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -371,7 +372,7 @@ public class StreamOperations {
         return true;
     }
 }
-"""
+""",
     )
 
     run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
@@ -404,7 +405,8 @@ def test_functional_interfaces(
         / "FunctionalInterfaces.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -693,7 +695,7 @@ public class FunctionalInterfaces {
         IntFunction<boolean[]> boolArrayConstructor = boolean[]::new;
     }
 }
-"""
+""",
     )
 
     run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
@@ -744,7 +746,8 @@ def test_optional_patterns(
         / "OptionalPatterns.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1025,7 +1028,7 @@ public class OptionalPatterns {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")
@@ -1059,7 +1062,8 @@ def test_method_references_patterns(
         / "MethodReferences.java"
     )
     test_file.write_text(
-        """
+        encoding="utf-8",
+        data="""
 package com.example;
 
 import java.util.*;
@@ -1384,7 +1388,7 @@ public class MethodReferences {
         }
     }
 }
-"""
+""",
     )
 
     run_updater(java_streams_project, mock_ingestor, skip_if_missing="java")

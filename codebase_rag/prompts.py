@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from .cypher_queries import (
+    CYPHER_EXAMPLE_CLASS_METHODS,
     CYPHER_EXAMPLE_CONTENT_BY_PATH,
     CYPHER_EXAMPLE_DECORATED_FUNCTIONS,
     CYPHER_EXAMPLE_FILES_IN_FOLDER,
@@ -37,6 +38,7 @@ CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
 
 - **ALWAYS Return Specific Properties with Aliases**: Do NOT return whole nodes (e.g., `RETURN n`). You MUST return specific properties with clear aliases (e.g., `RETURN n.name AS name`).
 - **Use `STARTS WITH` for Paths**: When matching paths, always use `STARTS WITH` for robustness (e.g., `WHERE n.path STARTS WITH 'workflows/src'`). Do not use `=`.
+- **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{name: 'VatManager'}` equality matching.
 - **Use `toLower()` for Searches**: For case-insensitive searching on string properties, use `toLower()`.
 - **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`)."""
 
@@ -166,6 +168,11 @@ cypher// "find things related to 'database'"
 cypher// "Find the main README.md"
 {CYPHER_EXAMPLE_FIND_FILE}
 
+**Pattern: Finding Methods of a Class by Short Name**
+cypher// "What methods does UserService have?" or "Show me methods in UserService" or "List UserService methods"
+// Use `ENDS WITH` to match the class by short name since qualified_name contains full path.
+{CYPHER_EXAMPLE_CLASS_METHODS}
+
 **4. Output Format**
 Provide only the Cypher query.
 """
@@ -225,6 +232,12 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 *   **Cypher Query:**
     ```cypher
     {CYPHER_EXAMPLE_LIMIT_ONE}
+    ```
+
+*   **Natural Language:** "What methods does UserService have?" or "Show me methods in UserService" or "List UserService methods"
+*   **Cypher Query (Use ENDS WITH to match class by short name):**
+    ```cypher
+    {CYPHER_EXAMPLE_CLASS_METHODS}
     ```
 """
 
