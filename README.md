@@ -675,6 +675,7 @@ my_build_output
 - **mcp**: Model Context Protocol SDK
 - **pydantic-ai**: Agent Framework / shim to use Pydantic with LLMs
 - **pydantic-settings**: Settings management using Pydantic
+- **litellm**: Library to easily interface with LLM API providers
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **toml**: Python Library for Tom's Obvious, Minimal Language
