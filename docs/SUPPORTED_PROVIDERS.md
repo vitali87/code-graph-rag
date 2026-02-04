@@ -3,11 +3,13 @@
 This document lists the models supported by LiteLLM as configured in this project.
 
 ## Local Models (Ollama / Llama.cpp)
+
 - Supports any model pulled via `ollama pull`.
 - Common examples: `ollama/llama3`, `ollama/mistral`, `ollama/phi3`.
 - To use, ensure your local server is running and configure the model string as `ollama/<model-name>`.
 
 ## Anthropic
+
 - claude-3-5-haiku-20241022
 - claude-3-5-haiku-latest
 - claude-3-5-sonnet-20240620
@@ -32,6 +34,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - claude-sonnet-4-5-20250929
 
 ## Azure
+
 - azure/ada
 - azure/codex-mini
 - azure/command-r-plus
@@ -215,6 +218,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - computer-use-preview
 
 ## AWS Bedrock
+
 - 1024-x-1024/50-steps/bedrock/amazon.nova-canvas-v1:0
 - 1024-x-1024/50-steps/stability.stable-diffusion-xl-v1
 - 1024-x-1024/max-steps/stability.stable-diffusion-xl-v1
@@ -251,10 +255,10 @@ This document lists the models supported by LiteLLM as configured in this projec
 - apac.anthropic.claude-3-5-sonnet-20241022-v2:0
 - apac.anthropic.claude-3-haiku-20240307-v1:0
 - apac.anthropic.claude-3-sonnet-20240229-v1:0
-- bedrock/*/1-month-commitment/cohere.command-light-text-v14
-- bedrock/*/1-month-commitment/cohere.command-text-v14
-- bedrock/*/6-month-commitment/cohere.command-light-text-v14
-- bedrock/*/6-month-commitment/cohere.command-text-v14
+- bedrock/\*/1-month-commitment/cohere.command-light-text-v14
+- bedrock/\*/1-month-commitment/cohere.command-text-v14
+- bedrock/\*/6-month-commitment/cohere.command-light-text-v14
+- bedrock/\*/6-month-commitment/cohere.command-text-v14
 - bedrock/ap-northeast-1/1-month-commitment/anthropic.claude-instant-v1
 - bedrock/ap-northeast-1/1-month-commitment/anthropic.claude-v1
 - bedrock/ap-northeast-1/1-month-commitment/anthropic.claude-v2:1
@@ -415,6 +419,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - us.twelvelabs.pegasus-1-2-v1:0
 
 ## Cohere
+
 - cohere/embed-v4.0
 - command
 - command-nightly
@@ -432,6 +437,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - rerank-v3.5
 
 ## Google Gemini
+
 - gemini/deep-research-pro-preview-12-2025
 - gemini/gemini-1.5-flash
 - gemini/gemini-1.5-flash-001
@@ -504,6 +510,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - gemini/veo-3.1-generate-preview
 
 ## Groq
+
 - groq/gemma-7b-it
 - groq/llama-3.1-8b-instant
 - groq/llama-3.3-70b-versatile
@@ -519,6 +526,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - groq/whisper-large-v3-turbo
 
 ## Mistral AI
+
 - mistral/codestral-2405
 - mistral/codestral-2508
 - mistral/codestral-embed
@@ -561,6 +569,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - mistral/pixtral-large-latest
 
 ## Ollama
+
 - ollama/codegeex4
 - ollama/codegemma
 - ollama/codellama
@@ -592,6 +601,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - ollama/vicuna
 
 ## OpenAI
+
 - 1024-x-1024/dall-e-2
 - 1024-x-1024/gpt-image-1.5
 - 1024-x-1024/gpt-image-1.5-2025-12-16
@@ -789,6 +799,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - whisper-1
 
 ## Together AI
+
 - together-ai-21.1b-41b
 - together-ai-4.1b-8b
 - together-ai-41.1b-80b
@@ -833,6 +844,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - together_ai/zai-org/GLM-4.7
 
 ## Google Vertex AI
+
 - vertex_ai/chirp
 - vertex_ai/deepseek-ai/deepseek-ocr-maas
 - vertex_ai/gemini-3-flash-preview
@@ -841,7 +853,9 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/search_api
 
 ## Other Providers
+
 ### ai21
+
 - j2-light
 - j2-mid
 - j2-ultra
@@ -856,6 +870,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - jamba-mini-1.7
 
 ### aiml
+
 - aiml/dall-e-2
 - aiml/dall-e-3
 - aiml/flux-pro
@@ -870,6 +885,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - aiml/google/nano-banana-pro
 
 ### aleph_alpha
+
 - luminous-base
 - luminous-base-control
 - luminous-extended
@@ -878,12 +894,14 @@ This document lists the models supported by LiteLLM as configured in this projec
 - luminous-supreme-control
 
 ### amazon_nova
+
 - amazon-nova/nova-lite-v1
 - amazon-nova/nova-micro-v1
 - amazon-nova/nova-premier-v1
 - amazon-nova/nova-pro-v1
 
 ### anyscale
+
 - anyscale/HuggingFaceH4/zephyr-7b-beta
 - anyscale/codellama/CodeLlama-34b-Instruct-hf
 - anyscale/codellama/CodeLlama-70b-Instruct-hf
@@ -898,16 +916,19 @@ This document lists the models supported by LiteLLM as configured in this projec
 - anyscale/mistralai/Mixtral-8x7B-Instruct-v0.1
 
 ### assemblyai
+
 - assemblyai/best
 - assemblyai/nano
 
 ### aws_polly
+
 - aws_polly/generative
 - aws_polly/long-form
 - aws_polly/neural
 - aws_polly/standard
 
 ### azure_ai
+
 - azure_ai/Cohere-embed-v3-english
 - azure_ai/Cohere-embed-v3-multilingual
 - azure_ai/FLUX-1.1-pro
@@ -979,11 +1000,13 @@ This document lists the models supported by LiteLLM as configured in this projec
 - azure_ai/model_router
 
 ### azure_text
+
 - azure/gpt-3.5-turbo-instruct-0914
 - azure/gpt-35-turbo-instruct
 - azure/gpt-35-turbo-instruct-0914
 
 ### bedrock_converse
+
 - amazon.nova-2-lite-v1:0
 - amazon.nova-2-pro-preview-20251202-v1:0
 - amazon.nova-lite-v1:0
@@ -1077,6 +1100,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - writer.palmyra-x5-v1:0
 
 ### cerebras
+
 - cerebras/gpt-oss-120b
 - cerebras/llama-3.3-70b
 - cerebras/llama3.1-70b
@@ -1086,22 +1110,26 @@ This document lists the models supported by LiteLLM as configured in this projec
 - cerebras/zai-glm-4.7
 
 ### chatgpt
+
 - chatgpt/gpt-5.1-codex-max
 - chatgpt/gpt-5.1-codex-mini
 - chatgpt/gpt-5.2
 - chatgpt/gpt-5.2-codex
 
 ### cloudflare
+
 - cloudflare/@cf/meta/llama-2-7b-chat-fp16
 - cloudflare/@cf/meta/llama-2-7b-chat-int8
 - cloudflare/@cf/mistral/mistral-7b-instruct-v0.1
 - cloudflare/@hf/thebloke/codellama-7b-instruct-awq
 
 ### codestral
+
 - codestral/codestral-2405
 - codestral/codestral-latest
 
 ### cohere_chat
+
 - command-a-03-2025
 - command-light
 - command-r
@@ -1111,6 +1139,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - command-r7b-12-2024
 
 ### dashscope
+
 - dashscope/qwen-coder
 - dashscope/qwen-flash
 - dashscope/qwen-flash-2025-07-28
@@ -1135,6 +1164,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - dashscope/qwq-plus
 
 ### databricks
+
 - databricks/databricks-bge-large-en
 - databricks/databricks-claude-3-7-sonnet
 - databricks/databricks-claude-haiku-4-5
@@ -1165,9 +1195,11 @@ This document lists the models supported by LiteLLM as configured in this projec
 - databricks/databricks-mpt-7b-instruct
 
 ### dataforseo
+
 - dataforseo/search
 
 ### deepgram
+
 - deepgram/base
 - deepgram/base-conversationalai
 - deepgram/base-finance
@@ -1206,6 +1238,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - deepgram/whisper-tiny
 
 ### deepinfra
+
 - deepinfra/Gryphe/MythoMax-L2-13b
 - deepinfra/NousResearch/Hermes-3-Llama-3.1-405B
 - deepinfra/NousResearch/Hermes-3-Llama-3.1-70B
@@ -1275,6 +1308,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - deepinfra/zai-org/GLM-4.5
 
 ### deepseek
+
 - deepseek-chat
 - deepseek-reasoner
 - deepseek/deepseek-chat
@@ -1285,13 +1319,16 @@ This document lists the models supported by LiteLLM as configured in this projec
 - deepseek/deepseek-v3.2
 
 ### elevenlabs
+
 - elevenlabs/scribe_v1
 - elevenlabs/scribe_v1_experimental
 
 ### exa_ai
+
 - exa_ai/search
 
 ### fal_ai
+
 - fal_ai/bria/text-to-image/3.2
 - fal_ai/fal-ai/bytedance/dreamina/v3.1/text-to-image
 - fal_ai/fal-ai/bytedance/seedream/v3/text-to-image
@@ -1306,13 +1343,16 @@ This document lists the models supported by LiteLLM as configured in this projec
 - fal_ai/fal-ai/stable-diffusion-v35-medium
 
 ### featherless_ai
+
 - featherless_ai/featherless-ai/Qwerky-72B
 - featherless_ai/featherless-ai/Qwerky-QwQ-32B
 
 ### firecrawl
+
 - firecrawl/search
 
 ### fireworks_ai
+
 - fireworks-ai-4.1b-to-16b
 - fireworks-ai-56b-to-176b
 - fireworks-ai-above-16b
@@ -1578,6 +1618,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - fireworks_ai/accounts/fireworks/models/zephyr-7b-beta
 
 ### fireworks_ai-embedding-models
+
 - fireworks-ai-embedding-150m-to-350m
 - fireworks-ai-embedding-up-to-150m
 - fireworks_ai/WhereIsAI/UAE-Large-V1
@@ -1587,10 +1628,12 @@ This document lists the models supported by LiteLLM as configured in this projec
 - fireworks_ai/thenlper/gte-large
 
 ### friendliai
+
 - friendliai/meta-llama-3.1-70b-instruct
 - friendliai/meta-llama-3.1-8b-instruct
 
 ### gigachat
+
 - gigachat/Embeddings
 - gigachat/Embeddings-2
 - gigachat/EmbeddingsGigaR
@@ -1599,6 +1642,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - gigachat/GigaChat-2-Pro
 
 ### github_copilot
+
 - github_copilot/claude-haiku-4.5
 - github_copilot/claude-opus-4.5
 - github_copilot/claude-opus-41
@@ -1630,6 +1674,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - github_copilot/text-embedding-ada-002
 
 ### gmi
+
 - gmi/MiniMaxAI/MiniMax-M2.1
 - gmi/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
 - gmi/anthropic/claude-opus-4
@@ -1649,9 +1694,11 @@ This document lists the models supported by LiteLLM as configured in this projec
 - gmi/zai-org/GLM-4.7-FP8
 
 ### google_pse
+
 - google_pse/search
 
 ### gradient_ai
+
 - gradient_ai/alibaba-qwen3-32b
 - gradient_ai/anthropic-claude-3-opus
 - gradient_ai/anthropic-claude-3.5-haiku
@@ -1667,12 +1714,14 @@ This document lists the models supported by LiteLLM as configured in this projec
 - gradient_ai/openai-o3-mini
 
 ### heroku
+
 - heroku/claude-3-5-haiku
 - heroku/claude-3-5-sonnet-latest
 - heroku/claude-3-7-sonnet
 - heroku/claude-4-sonnet
 
 ### hyperbolic
+
 - hyperbolic/NousResearch/Hermes-3-Llama-3.1-70B
 - hyperbolic/Qwen/QwQ-32B
 - hyperbolic/Qwen/Qwen2.5-72B-Instruct
@@ -1691,9 +1740,11 @@ This document lists the models supported by LiteLLM as configured in this projec
 - hyperbolic/moonshotai/Kimi-K2-Instruct
 
 ### jina_ai
+
 - jina-reranker-v2-base-multilingual
 
 ### lambda_ai
+
 - lambda_ai/deepseek-llama3.3-70b
 - lambda_ai/deepseek-r1-0528
 - lambda_ai/deepseek-r1-671b
@@ -1716,6 +1767,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - lambda_ai/qwen3-32b-fp8
 
 ### lemonade
+
 - lemonade/Gemma-3-4b-it-GGUF
 - lemonade/Qwen3-4B-Instruct-2507-GGUF
 - lemonade/Qwen3-Coder-30B-A3B-Instruct-GGUF
@@ -1723,10 +1775,12 @@ This document lists the models supported by LiteLLM as configured in this projec
 - lemonade/gpt-oss-20b-mxfp4-GGUF
 
 ### linkup
+
 - linkup/search
 - linkup/search-deep
 
 ### llamagate
+
 - llamagate/codellama-7b
 - llamagate/deepseek-coder-6.7b
 - llamagate/deepseek-r1-7b-qwen
@@ -1745,12 +1799,14 @@ This document lists the models supported by LiteLLM as configured in this projec
 - llamagate/qwen3-vl-8b
 
 ### meta_llama
+
 - meta_llama/Llama-3.3-70B-Instruct
 - meta_llama/Llama-3.3-8B-Instruct
 - meta_llama/Llama-4-Maverick-17B-128E-Instruct-FP8
 - meta_llama/Llama-4-Scout-17B-16E-Instruct-FP8
 
 ### minimax
+
 - minimax/MiniMax-M2
 - minimax/MiniMax-M2.1
 - minimax/MiniMax-M2.1-lightning
@@ -1760,6 +1816,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - minimax/speech-2.6-turbo
 
 ### moonshot
+
 - moonshot/kimi-k2-0711-preview
 - moonshot/kimi-k2-0905-preview
 - moonshot/kimi-k2-thinking
@@ -1783,14 +1840,17 @@ This document lists the models supported by LiteLLM as configured in this projec
 - moonshot/moonshot-v1-auto
 
 ### morph
+
 - morph/morph-v3-fast
 - morph/morph-v3-large
 
 ### nlp_cloud
+
 - chatdolphin
 - dolphin
 
 ### novita
+
 - novita/Sao10K/L3-8B-Stheno-v3.2
 - novita/baai/bge-m3
 - novita/baai/bge-reranker-v2-m3
@@ -1878,6 +1938,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - novita/zai-org/glm-4.7
 
 ### nscale
+
 - nscale/Qwen/QwQ-32B
 - nscale/Qwen/Qwen2.5-Coder-32B-Instruct
 - nscale/Qwen/Qwen2.5-Coder-3B-Instruct
@@ -1896,11 +1957,13 @@ This document lists the models supported by LiteLLM as configured in this projec
 - nscale/stabilityai/stable-diffusion-xl-base-1.0
 
 ### nvidia_nim
+
 - nvidia_nim/nvidia/llama-3_2-nv-rerankqa-1b-v2
 - nvidia_nim/nvidia/nv-rerankqa-mistral-4b-v3
 - nvidia_nim/ranking/nvidia/llama-3.2-nv-rerankqa-1b-v2
 
 ### oci
+
 - oci/cohere.command-a-03-2025
 - oci/cohere.command-latest
 - oci/cohere.command-plus-latest
@@ -1916,6 +1979,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - oci/xai.grok-4
 
 ### openrouter
+
 - openrouter/anthropic/claude-2
 - openrouter/anthropic/claude-3-5-haiku
 - openrouter/anthropic/claude-3-5-haiku-20241022
@@ -2028,6 +2092,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - openrouter/z-ai/glm-4.7-flash
 
 ### ovhcloud
+
 - ovhcloud/DeepSeek-R1-Distill-Llama-70B
 - ovhcloud/Llama-3.1-8B-Instruct
 - ovhcloud/Meta-Llama-3_1-70B-Instruct
@@ -2045,6 +2110,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - ovhcloud/mamba-codestral-7B-v0.1
 
 ### palm
+
 - palm/chat-bison
 - palm/chat-bison-001
 - palm/text-bison
@@ -2053,10 +2119,12 @@ This document lists the models supported by LiteLLM as configured in this projec
 - palm/text-bison-safety-recitation-off
 
 ### parallel_ai
+
 - parallel_ai/search
 - parallel_ai/search-pro
 
 ### perplexity
+
 - perplexity/codellama-34b-instruct
 - perplexity/codellama-70b-instruct
 - perplexity/llama-2-70b-chat
@@ -2085,6 +2153,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - perplexity/sonar-small-online
 
 ### publicai
+
 - publicai/BSC-LT/ALIA-40b-instruct_Q8_0
 - publicai/BSC-LT/salamandra-7b-instruct-tools-16k
 - publicai/aisingapore/Gemma-SEA-LION-v4-27B-IT
@@ -2096,10 +2165,12 @@ This document lists the models supported by LiteLLM as configured in this projec
 - publicai/swiss-ai/apertus-8b-instruct
 
 ### recraft
+
 - recraft/recraftv2
 - recraft/recraftv3
 
 ### replicate
+
 - replicate/anthropic/claude-3.5-haiku
 - replicate/anthropic/claude-3.5-sonnet
 - replicate/anthropic/claude-3.7-sonnet
@@ -2142,6 +2213,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - replicateopenai/gpt-oss-20b
 
 ### runwayml
+
 - runwayml/eleven_multilingual_v2
 - runwayml/gen3a_turbo
 - runwayml/gen4_aleph
@@ -2150,6 +2222,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - runwayml/gen4_turbo
 
 ### sagemaker
+
 - sagemaker/meta-textgeneration-llama-2-13b
 - sagemaker/meta-textgeneration-llama-2-13b-f
 - sagemaker/meta-textgeneration-llama-2-70b
@@ -2158,6 +2231,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - sagemaker/meta-textgeneration-llama-2-7b-f
 
 ### sambanova
+
 - sambanova/DeepSeek-R1
 - sambanova/DeepSeek-R1-Distill-Llama-70B
 - sambanova/DeepSeek-V3-0324
@@ -2176,12 +2250,15 @@ This document lists the models supported by LiteLLM as configured in this projec
 - sambanova/gpt-oss-120b
 
 ### sarvam
+
 - sarvam/sarvam-m
 
 ### searxng
+
 - searxng/search
 
 ### snowflake
+
 - snowflake/claude-3-5-sonnet
 - snowflake/deepseek-r1
 - snowflake/gemma-7b
@@ -2208,6 +2285,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - snowflake/snowflake-llama-3.3-70b
 
 ### stability
+
 - stability/conservative
 - stability/creative
 - stability/erase
@@ -2233,14 +2311,17 @@ This document lists the models supported by LiteLLM as configured in this projec
 - stability/style-transfer
 
 ### tavily
+
 - tavily/search
 - tavily/search-advanced
 
 ### text-completion-codestral
+
 - text-completion-codestral/codestral-2405
 - text-completion-codestral/codestral-latest
 
 ### text-completion-openai
+
 - babbage-002
 - davinci-002
 - ft:babbage-002
@@ -2249,11 +2330,13 @@ This document lists the models supported by LiteLLM as configured in this projec
 - gpt-3.5-turbo-instruct-0914
 
 ### v0
+
 - v0/v0-1.0-md
 - v0/v0-1.5-lg
 - v0/v0-1.5-md
 
 ### vercel_ai_gateway
+
 - vercel_ai_gateway/alibaba/qwen-3-14b
 - vercel_ai_gateway/alibaba/qwen-3-235b
 - vercel_ai_gateway/alibaba/qwen-3-30b
@@ -2347,6 +2430,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vercel_ai_gateway/zai/glm-4.6
 
 ### vertex_ai-ai21_models
+
 - vertex_ai/jamba-1.5
 - vertex_ai/jamba-1.5-large
 - vertex_ai/jamba-1.5-large@001
@@ -2354,6 +2438,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/jamba-1.5-mini@001
 
 ### vertex_ai-anthropic_models
+
 - vertex_ai/claude-3-5-haiku
 - vertex_ai/claude-3-5-haiku@20241022
 - vertex_ai/claude-3-5-sonnet
@@ -2380,6 +2465,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/claude-sonnet-4@20250514
 
 ### vertex_ai-chat-models
+
 - chat-bison
 - chat-bison-32k
 - chat-bison-32k@002
@@ -2387,6 +2473,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - chat-bison@002
 
 ### vertex_ai-code-chat-models
+
 - codechat-bison
 - codechat-bison-32k
 - codechat-bison-32k@002
@@ -2395,6 +2482,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - codechat-bison@latest
 
 ### vertex_ai-code-text-models
+
 - code-bison
 - code-bison-32k@002
 - code-bison32k
@@ -2406,11 +2494,13 @@ This document lists the models supported by LiteLLM as configured in this projec
 - code-gecko@002
 
 ### vertex_ai-deepseek_models
+
 - vertex_ai/deepseek-ai/deepseek-r1-0528-maas
 - vertex_ai/deepseek-ai/deepseek-v3.1-maas
 - vertex_ai/deepseek-ai/deepseek-v3.2-maas
 
 ### vertex_ai-embedding-models
+
 - gemini-embedding-001
 - multimodalembedding
 - multimodalembedding@001
@@ -2427,6 +2517,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - textembedding-gecko@003
 
 ### vertex_ai-image-models
+
 - vertex_ai/imagegeneration@006
 - vertex_ai/imagen-3.0-capability-001
 - vertex_ai/imagen-3.0-fast-generate-001
@@ -2437,6 +2528,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/imagen-4.0-ultra-generate-001
 
 ### vertex_ai-language-models
+
 - deep-research-pro-preview-12-2025
 - gemini-1.0-pro
 - gemini-1.0-pro-001
@@ -2496,6 +2588,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/gemini-3-pro-image-preview
 
 ### vertex_ai-llama_models
+
 - vertex_ai/meta/llama-3.1-405b-instruct-maas
 - vertex_ai/meta/llama-3.1-70b-instruct-maas
 - vertex_ai/meta/llama-3.1-8b-instruct-maas
@@ -2509,9 +2602,11 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/meta/llama3-8b-instruct-maas
 
 ### vertex_ai-minimax_models
+
 - vertex_ai/minimaxai/minimax-m2-maas
 
 ### vertex_ai-mistral_models
+
 - vertex_ai/codestral-2
 - vertex_ai/codestral-2501
 - vertex_ai/codestral-2@001
@@ -2533,19 +2628,23 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/mistralai/mistral-medium-3@001
 
 ### vertex_ai-moonshot_models
+
 - vertex_ai/moonshotai/kimi-k2-thinking-maas
 
 ### vertex_ai-openai_models
+
 - vertex_ai/openai/gpt-oss-120b-maas
 - vertex_ai/openai/gpt-oss-20b-maas
 
 ### vertex_ai-qwen_models
+
 - vertex_ai/qwen/qwen3-235b-a22b-instruct-2507-maas
 - vertex_ai/qwen/qwen3-coder-480b-a35b-instruct-maas
 - vertex_ai/qwen/qwen3-next-80b-a3b-instruct-maas
 - vertex_ai/qwen/qwen3-next-80b-a3b-thinking-maas
 
 ### vertex_ai-text-models
+
 - text-bison
 - text-bison32k
 - text-bison32k@002
@@ -2555,6 +2654,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - text-unicorn@001
 
 ### vertex_ai-video-models
+
 - vertex_ai/veo-2.0-generate-001
 - vertex_ai/veo-3.0-fast-generate-001
 - vertex_ai/veo-3.0-fast-generate-preview
@@ -2566,14 +2666,17 @@ This document lists the models supported by LiteLLM as configured in this projec
 - vertex_ai/veo-3.1-generate-preview
 
 ### vertex_ai-vision-models
+
 - gemini-1.0-pro-vision
 - gemini-1.0-pro-vision-001
 - gemini-pro-vision
 
 ### vertex_ai-zai_models
+
 - vertex_ai/zai-org/glm-4.7-maas
 
 ### volcengine
+
 - deepseek-v3-2-251201
 - doubao-embedding
 - doubao-embedding-large
@@ -2584,6 +2687,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - kimi-k2-thinking-251104
 
 ### voyage
+
 - voyage/rerank-2
 - voyage/rerank-2-lite
 - voyage/rerank-2.5
@@ -2605,6 +2709,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - voyage/voyage-multimodal-3
 
 ### wandb
+
 - wandb/Qwen/Qwen3-235B-A22B-Instruct-2507
 - wandb/Qwen/Qwen3-235B-A22B-Thinking-2507
 - wandb/Qwen/Qwen3-Coder-480B-A35B-Instruct
@@ -2621,6 +2726,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - wandb/zai-org/GLM-4.5
 
 ### watsonx
+
 - watsonx/bigscience/mt0-xxl-13b
 - watsonx/core42/jais-13b-chat
 - watsonx/google/flan-t5-xl-3b
@@ -2652,6 +2758,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - watsonx/whisper-large-v3-turbo
 
 ### xai
+
 - xai/grok-2
 - xai/grok-2-1212
 - xai/grok-2-latest
@@ -2686,6 +2793,7 @@ This document lists the models supported by LiteLLM as configured in this projec
 - xai/grok-vision-beta
 
 ### zai
+
 - zai/glm-4-32b-0414-128k
 - zai/glm-4.5
 - zai/glm-4.5-air

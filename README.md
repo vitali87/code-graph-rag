@@ -33,6 +33,10 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## Latest News 🔥
 
+- **[NEW]** **Universal LLM Support**: We've migrated to a universal backend powered by **LiteLLM**, supporting 100+ providers including OpenAI, Anthropic, Gemini, DeepSeek, and Ollama!
+  - 📚 [LLM Configuration Guide](docs/LLM_CONFIGURATION.md) - Learn how to set up any provider.
+  - ✅ [Supported Models List](docs/SUPPORTED_PROVIDERS.md) - View the full list of supported models.
+
 - **[NEW]** **MCP Server Integration**: Graph-Code now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
 - [2025/10/21] **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
 
