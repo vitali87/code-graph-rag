@@ -1080,7 +1080,7 @@ wheels = [
 
 [[package]]
 name = "graph-code"
-version = "0.0.48"
+version = "0.0.50"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

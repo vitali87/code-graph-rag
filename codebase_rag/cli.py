@@ -1,4 +1,5 @@
 import asyncio
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
@@ -56,6 +57,19 @@ def _update_and_validate_models(orchestrator: str | None, cypher: str | None) ->
     validate_models_early()
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        try:
+            ver = version("graph-code")
+        except PackageNotFoundError:
+            app_context.console.print(
+                "code-graph-rag version unknown (package not installed)"
+            )
+            raise typer.Exit(1) from None
+        app_context.console.print(f"code-graph-rag version {ver}")
+        raise typer.Exit()
+
+
 @app.callback()
 def _global_options(
     quiet: bool = typer.Option(
@@ -63,6 +77,14 @@ def _global_options(
         "--quiet",
         "-q",
         help="Suppress non-essential output (progress messages, banners, informational logs).",
+        is_eager=True,
+    ),
+    ver: bool = typer.Option(
+        False,
+        "--version",
+        "-v",
+        help="Show the version and exit.",
+        callback=_version_callback,
         is_eager=True,
     ),
 ) -> None:
