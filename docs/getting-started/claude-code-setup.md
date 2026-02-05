@@ -134,3 +134,11 @@ claude mcp add --transport stdio graph-code-frontend \
 ```bash
 claude mcp remove graph-code
 ```
+
+---
+
+## Related Documentation
+
+- **[Quick Start](./quick-start.md)** - Get running in 30 seconds
+- **[MCP Setup](./mcp-setup.md)** - Configure MCP servers for Graph-Code to use
+- **[LLM Configuration](../llm/configuration.md)** - Configure LLM providers
