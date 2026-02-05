@@ -21,12 +21,12 @@ def _get_treesitter_packages() -> list[str]:
 
     packages: list[str] = []
     for dep in treesitter_deps:
-        pkg_name = (
-            dep.split(cs.VERSION_SPLIT_GTE)[0]
-            .split(cs.VERSION_SPLIT_EQ)[0]
-            .split(cs.VERSION_SPLIT_LT)[0]
-            .strip()
-        )
+        pkg_name = dep
+        for sep in (cs.VERSION_SPLIT_GTE, cs.VERSION_SPLIT_EQ, cs.VERSION_SPLIT_LT):
+            parts = pkg_name.split(sep)
+            if parts:
+                pkg_name = parts[0]
+        pkg_name = pkg_name.strip()
         if pkg_name.startswith(cs.TREESITTER_PKG_PREFIX):
             module_name = pkg_name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
             packages.append(module_name)

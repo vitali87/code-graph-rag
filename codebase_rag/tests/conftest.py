@@ -183,6 +183,8 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     )
 
     mock.ast_cache = {}
+    mock.remove_file_from_state = MagicMock()
+    mock._process_function_calls = MagicMock()
 
     return mock
 
