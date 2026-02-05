@@ -4,6 +4,7 @@ from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
 
 from loguru import logger
+from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 from tree_sitter import Node, Parser
 
 from . import constants as cs
@@ -317,13 +318,27 @@ class GraphUpdater:
                 logger.debug(ls.CLEANED_SIMPLE_NAME.format(name=simple_name))
 
     def _process_files(self) -> None:
-        for filepath in self.repo_path.rglob("*"):
-            if filepath.is_file() and not should_skip_path(
+        files_to_process = [
+            filepath
+            for filepath in self.repo_path.rglob("*")
+            if filepath.is_file()
+            and not should_skip_path(
                 filepath,
                 self.repo_path,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
-            ):
+            )
+        ]
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]Indexing files..."),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Indexing", total=len(files_to_process))
+
+            for filepath in files_to_process:
                 lang_config = get_language_spec(filepath.suffix)
                 if (
                     lang_config
@@ -345,6 +360,8 @@ class GraphUpdater:
                 self.factory.structure_processor.process_generic_file(
                     filepath, filepath.name
                 )
+
+                progress.update(task, advance=1)
 
     def _process_function_calls(self) -> None:
         ast_cache_items = list(self.ast_cache.items())
