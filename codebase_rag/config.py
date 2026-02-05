@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
@@ -50,6 +51,22 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
         "name": "Cohere",
     },
 }
+
+
+def _validate_header(name: str, value: str) -> None:
+    """Validate HTTP header name and value for security."""
+    if "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+        raise ValueError(f"Header contains CRLF characters: {name}")
+
+    if not re.match(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$", name):
+        raise ValueError(f"Invalid header name format: {name}")
+
+    if len(name) > 256 or len(value) > 8192:
+        raise ValueError(f"Header too large: {name}")
+
+    dangerous_headers = {"host", "content-length", "transfer-encoding", "connection"}
+    if name.lower() in dangerous_headers:
+        raise ValueError(f"Cannot override system header: {name}")
 
 
 def format_missing_api_key_errors(
@@ -265,23 +282,31 @@ class AppConfig(BaseSettings):
     ) -> dict[str, str] | None:
         if v is None:
             return None
+
+        headers: dict[str, str]
         if isinstance(v, dict):
-            return v
-        if isinstance(v, str):
+            headers = v
+        elif isinstance(v, str):
             import json
 
             try:
                 data = json.loads(v)
                 if not isinstance(data, dict):
                     raise ValueError("Headers JSON string must decode to a dictionary.")
-                return data
+                headers = data
             except json.JSONDecodeError as e:
                 raise ValueError(
                     "Headers must be a valid JSON string or dictionary."
                 ) from e
-        raise TypeError(
-            f"Headers must be a JSON string or a dictionary, not {type(v).__name__}."
-        )
+        else:
+            raise TypeError(
+                f"Headers must be a JSON string or a dictionary, not {type(v).__name__}."
+            )
+
+        for name, value in headers.items():
+            _validate_header(name, str(value))
+
+        return headers
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
@@ -342,12 +367,23 @@ class AppConfig(BaseSettings):
         if "/" in model_string:
             provider, model = model_string.split("/", 1)
             return provider.lower(), model
-        if ":" not in model_string:
-            return cs.Provider.OLLAMA, model_string
-        provider, model = model_string.split(":", 1)
-        if not provider:
-            raise ValueError(ex.PROVIDER_EMPTY)
-        return provider.lower(), model
+
+        if ":" in model_string:
+            import warnings
+
+            warnings.warn(
+                f"Model string '{model_string}' uses deprecated ':' delimiter. "
+                "Please use '/' instead (e.g., 'openai/gpt-4'). "
+                "Support for ':' will be removed in a future version.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            provider, model = model_string.split(":", 1)
+            if not provider:
+                raise ValueError(ex.PROVIDER_EMPTY)
+            return provider.lower(), model
+
+        return cs.Provider.OLLAMA, model_string
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
         resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size
