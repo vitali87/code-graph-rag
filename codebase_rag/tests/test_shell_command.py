@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -395,6 +396,7 @@ class TestPipedCommandExecution:
         assert result.return_code == 0
         assert "1" in result.stdout
 
+    @pytest.mark.skipif(not shutil.which("rg"), reason="ripgrep (rg) not installed")
     async def test_rg_in_pipeline(
         self, shell_commander: ShellCommander, temp_project_root: Path
     ) -> None:
