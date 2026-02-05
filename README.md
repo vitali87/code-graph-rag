@@ -31,16 +31,26 @@
 
 An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
+---
+
+## 📚 Quick Links
+
+- 🚀 **[Quick Start Guide](docs/getting-started/quick-start.md)** - Get running in 30 seconds
+- ⚙️ **[LLM Configuration](docs/llm/configuration.md)** - Configure any LLM provider (100+ supported)
+- 🔌 **[Claude Code Integration](docs/getting-started/claude-code-setup.md)** - Use as MCP server
+- 📖 **[Supported Providers](docs/llm/supported-providers.md)** - Full list of LLM models
+- 🤝 **[Contributing](CONTRIBUTING.md)** - How to contribute
+
 
 ![demo](./assets/demo.gif)
 
 ## Latest News 🔥
 
 - **[NEW]** **Universal LLM Support**: We've migrated to a universal backend powered by **LiteLLM**, supporting 100+ providers including OpenAI, Anthropic, Gemini, DeepSeek, and Ollama!
-  - 📚 [LLM Configuration Guide](docs/LLM_CONFIGURATION.md) - Learn how to set up any provider.
-  - ✅ [Supported Models List](docs/SUPPORTED_PROVIDERS.md) - View the full list of supported models.
+  - 📚 [LLM Configuration Guide](docs/llm/configuration.md) - Learn how to set up any provider.
+  - ✅ [Supported Models List](docs/llm/supported-providers.md) - View the full list of supported models.
 
-- **[NEW]** **MCP Server Integration**: Graph-Code now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
+- **[NEW]** **MCP Server Integration**: Graph-Code now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/getting-started/claude-code-setup.md)
 - [2025/10/21] **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
 
 ## 🚀 Features
@@ -144,82 +154,36 @@ This installs all dependencies and sets up pre-commit hooks automatically.
 This installs Tree-sitter grammars for all supported languages (see Multi-Language Support section).
 
 3. **Set up environment variables**:
+
+Create a `.env` file and configure your LLM provider:
+
 ```bash
 cp .env.example .env
-# Edit .env with your configuration (see options below)
+# Edit .env with your configuration
 ```
 
-### Configuration Options
-
-The new provider-explicit configuration supports mixing different providers for orchestrator and cypher models.
-
-#### Option 1: All Ollama (Local Models)
+**Quick configuration examples:**
 
 ```bash
-# .env file
+# Ollama (Free, Local)
 ORCHESTRATOR_PROVIDER=ollama
-ORCHESTRATOR_MODEL=llama3.2
-ORCHESTRATOR_ENDPOINT=http://localhost:11434/v1
+ORCHESTRATOR_MODEL=llama3
 
-CYPHER_PROVIDER=ollama
-CYPHER_MODEL=codellama
-CYPHER_ENDPOINT=http://localhost:11434/v1
-```
+# Google Gemini (Free Tier)
+GEMINI_API_KEY=your-key-here
+ORCHESTRATOR_PROVIDER=gemini
+ORCHESTRATOR_MODEL=gemini-1.5-flash
 
-#### Option 2: All OpenAI Models
-```bash
-# .env file
+# OpenAI
+OPENAI_API_KEY=sk-proj-your-key
 ORCHESTRATOR_PROVIDER=openai
-ORCHESTRATOR_MODEL=gpt-4o
-ORCHESTRATOR_API_KEY=sk-your-openai-key
-
-CYPHER_PROVIDER=openai
-CYPHER_MODEL=gpt-4o-mini
-CYPHER_API_KEY=sk-your-openai-key
+ORCHESTRATOR_MODEL=gpt-4o-mini
 ```
 
-#### Option 3: All Google Models
-```bash
-# .env file
-ORCHESTRATOR_PROVIDER=google
-ORCHESTRATOR_MODEL=gemini-2.5-pro
-ORCHESTRATOR_API_KEY=your-google-api-key
-
-CYPHER_PROVIDER=google
-CYPHER_MODEL=gemini-2.5-flash
-CYPHER_API_KEY=your-google-api-key
-```
-
-#### Option 4: Mixed Providers
-```bash
-# .env file - Google orchestrator + Ollama cypher
-ORCHESTRATOR_PROVIDER=google
-ORCHESTRATOR_MODEL=gemini-2.5-pro
-ORCHESTRATOR_API_KEY=your-google-api-key
-
-CYPHER_PROVIDER=ollama
-CYPHER_MODEL=codellama
-CYPHER_ENDPOINT=http://localhost:11434/v1
-```
-
-Get your Google API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
-
-**Install and run Ollama**:
-```bash
-# Install Ollama (macOS/Linux)
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Pull required models
-ollama pull llama3.2
-# Or try other models like:
-# ollama pull llama3
-# ollama pull mistral
-# ollama pull codellama
-
-# Ollama will automatically start serving on localhost:11434
-```
-
-> **Note**: Local models provide privacy and no API costs, but may have lower accuracy compared to cloud models like Gemini.
+📚 **For detailed configuration options**, see:
+- [Quick Start Guide](docs/getting-started/quick-start.md) - 30-second setup
+- [Complete LLM Configuration Guide](docs/llm/configuration.md) - All providers and advanced features
+- [Supported Providers List](docs/llm/supported-providers.md) - 100+ models
 
 4. **Start Memgraph database**:
 ```bash
@@ -256,263 +220,34 @@ Use the Makefile for common development tasks:
 
 ## 🎯 Usage
 
-The Graph-Code system offers four main modes of operation:
-1. **Parse & Ingest**: Build knowledge graph from your codebase
-2. **Interactive Query**: Ask questions about your code in natural language
-3. **Export & Analyze**: Export graph data for programmatic analysis
-4. **AI Optimization**: Get AI-powered optimization suggestions for your code.
-5. **Editing**: Perform surgical code replacements and modifications with precise targeting.
+### Quick Start
 
-### Step 1: Parse a Repository
-
-Parse and ingest a multi-language repository into the knowledge graph:
-
-**For the first repository (clean start):**
+1. **Parse your repository**:
 ```bash
-cgr start --repo-path /path/to/repo1 --update-graph --clean
+graph-code start --repo-path /path/to/repo --update-graph --clean
 ```
 
-**For additional repositories (preserve existing data):**
+2. **Query your codebase**:
 ```bash
-cgr start --repo-path /path/to/repo2 --update-graph
-cgr start --repo-path /path/to/repo3 --update-graph
+graph-code start --repo-path /path/to/repo
 ```
 
-**Control Memgraph batch flushing:**
-```bash
-# Flush every 5,000 records instead of the default from settings
-cgr start --repo-path /path/to/repo --update-graph \
-  --batch-size 5000
+3. **Ask questions**:
+```
+> Show me all authentication functions
+> How does the user login flow work?
+> What functions call process_payment?
 ```
 
-The system automatically detects and processes files for all supported languages (see Multi-Language Support section).
+📚 **[Complete Usage Guide](docs/usage/basic-usage.md)** - Detailed usage instructions
 
-### Step 2: Query the Codebase
+### Advanced Features
 
-Start the interactive RAG CLI:
+- 🔄 **[Real-Time Updates](docs/advanced/real-time-updates.md)** - Auto-sync graph with code changes
+- 📊 **[Graph Export](docs/advanced/graph-export.md)** - Export and analyze graph data
+- 🚀 **[Code Optimization](docs/advanced/code-optimization.md)** - AI-powered code improvements
 
-```bash
-cgr start --repo-path /path/to/your/repo
-```
-
-### Step 2.5: Real-Time Graph Updates (Optional)
-
-For active development, you can keep your knowledge graph automatically synchronized with code changes using the realtime updater. This is particularly useful when you're actively modifying code and want the AI assistant to always work with the latest codebase structure.
-
-**What it does:**
-- Watches your repository for file changes (create, modify, delete)
-- Automatically updates the knowledge graph in real-time
-- Maintains consistency by recalculating all function call relationships
-- Filters out irrelevant files (`.git`, `node_modules`, etc.)
-
-**How to use:**
-
-Run the realtime updater in a separate terminal:
-
-```bash
-# Using Python directly
-python realtime_updater.py /path/to/your/repo
-
-# Or using the Makefile
-make watch REPO_PATH=/path/to/your/repo
-```
-
-**With custom Memgraph settings:**
-```bash
-# Python
-python realtime_updater.py /path/to/your/repo --host localhost --port 7687 --batch-size 1000
-
-# Makefile
-make watch REPO_PATH=/path/to/your/repo HOST=localhost PORT=7687 BATCH_SIZE=1000
-```
-
-**Multi-terminal workflow:**
-```bash
-# Terminal 1: Start the realtime updater
-python realtime_updater.py ~/my-project
-
-# Terminal 2: Run the AI assistant
-cgr start --repo-path ~/my-project
-```
-
-**Performance note:** The updater currently recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. **Note:** Optimization of this behavior is a work in progress.
-
-**CLI Arguments:**
-- `repo_path` (required): Path to repository to watch
-- `--host`: Memgraph host (default: `localhost`)
-- `--port`: Memgraph port (default: `7687`)
-- `--batch-size`: Number of buffered nodes/relationships before flushing to Memgraph
-
-**Specify Custom Models:**
-```bash
-# Use specific local models
-cgr start --repo-path /path/to/your/repo \
-  --orchestrator ollama:llama3.2 \
-  --cypher ollama:codellama
-
-# Use specific Gemini models
-cgr start --repo-path /path/to/your/repo \
-  --orchestrator google:gemini-2.0-flash-thinking-exp-01-21 \
-  --cypher google:gemini-2.5-flash-lite-preview-06-17
-
-# Use mixed providers
-cgr start --repo-path /path/to/your/repo \
-  --orchestrator google:gemini-2.0-flash-thinking-exp-01-21 \
-  --cypher ollama:codellama
-```
-
-Example queries (works across all supported languages):
-- "Show me all classes that contain 'user' in their name"
-- "Find functions related to database operations"
-- "What methods does the User class have?"
-- "Show me functions that handle authentication"
-- "List all TypeScript components"
-- "Find Rust structs and their methods"
-- "Show me Go interfaces and implementations"
-- "Find all C++ operator overloads in the Matrix class"
-- "Show me C++ template functions with their specializations"
-- "List all C++ namespaces and their contained classes"
-- "Find C++ lambda expressions used in algorithms"
-- "Add logging to all database connection functions"
-- "Refactor the User class to use dependency injection"
-- "Convert these Python functions to async/await pattern"
-- "Add error handling to authentication methods"
-- "Optimize this function for better performance"
-
-### Step 3: Export Graph Data
-
-For programmatic access and integration with other tools, you can export the entire knowledge graph to JSON:
-
-**Export during graph update:**
-```bash
-cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
-```
-
-**Export existing graph without updating:**
-```bash
-cgr export -o my_graph.json
-```
-
-**Optional: adjust Memgraph batching during export:**
-```bash
-cgr export -o my_graph.json --batch-size 5000
-```
-
-**Working with exported data:**
-```python
-from codebase_rag.graph_loader import load_graph
-
-# Load the exported graph
-graph = load_graph("my_graph.json")
-
-# Get summary statistics
-summary = graph.summary()
-print(f"Total nodes: {summary['total_nodes']}")
-print(f"Total relationships: {summary['total_relationships']}")
-
-# Find specific node types
-functions = graph.find_nodes_by_label("Function")
-classes = graph.find_nodes_by_label("Class")
-
-# Analyze relationships
-for func in functions[:5]:
-    relationships = graph.get_relationships_for_node(func.node_id)
-    print(f"Function {func.properties['name']} has {len(relationships)} relationships")
-```
-
-**Example analysis script:**
-```bash
-python examples/graph_export_example.py my_graph.json
-```
-
-This provides a reliable, programmatic way to access your codebase structure without LLM restrictions, perfect for:
-- Integration with other tools
-- Custom analysis scripts
-- Building documentation generators
-- Creating code metrics dashboards
-
-### Step 4: Code Optimization
-
-For AI-powered codebase optimization with best practices guidance:
-
-**Basic optimization for a specific language:**
-```bash
-cgr optimize python --repo-path /path/to/your/repo
-```
-
-**Optimization with reference documentation:**
-```bash
-cgr optimize python \
-  --repo-path /path/to/your/repo \
-  --reference-document /path/to/best_practices.md
-```
-
-**Using specific models for optimization:**
-```bash
-cgr optimize javascript \
-  --repo-path /path/to/frontend \
-  --orchestrator google:gemini-2.0-flash-thinking-exp-01-21
-
-# Optional: override Memgraph batch flushing during optimization
-cgr optimize javascript --repo-path /path/to/frontend \
-  --batch-size 5000
-```
-
-**Supported Languages for Optimization:**
-All supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `cpp`
-
-**How It Works:**
-1. **Analysis Phase**: The agent analyzes your codebase structure using the knowledge graph
-2. **Pattern Recognition**: Identifies common anti-patterns, performance issues, and improvement opportunities
-3. **Best Practices Application**: Applies language-specific best practices and patterns
-4. **Interactive Approval**: Presents each optimization suggestion for your approval before implementation
-5. **Guided Implementation**: Implements approved changes with detailed explanations
-
-**Example Optimization Session:**
-```
-Starting python optimization session...
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ The agent will analyze your python codebase and propose specific          ┃
-┃ optimizations. You'll be asked to approve each suggestion before          ┃
-┃ implementation. Type 'exit' or 'quit' to end the session.                 ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-🔍 Analyzing codebase structure...
-📊 Found 23 Python modules with potential optimizations
-
-💡 Optimization Suggestion #1:
-   File: src/data_processor.py
-   Issue: Using list comprehension in a loop can be optimized
-   Suggestion: Replace with generator expression for memory efficiency
-
-   [y/n] Do you approve this optimization?
-```
-
-**Reference Document Support:**
-You can provide reference documentation (like coding standards, architectural guidelines, or best practices documents) to guide the optimization process:
-
-```bash
-# Use company coding standards
-cgr optimize python \
-  --reference-document ./docs/coding_standards.md
-
-# Use architectural guidelines
-cgr optimize java \
-  --reference-document ./ARCHITECTURE.md
-
-# Use performance best practices
-cgr optimize rust \
-  --reference-document ./docs/performance_guide.md
-```
-
-The agent will incorporate the guidance from your reference documents when suggesting optimizations, ensuring they align with your project's standards and architectural decisions.
-
-**Common CLI Arguments:**
-- `--orchestrator`: Specify provider:model for main operations (e.g., `google:gemini-2.0-flash-thinking-exp-01-21`, `ollama:llama3.2`)
-- `--cypher`: Specify provider:model for graph queries (e.g., `google:gemini-2.5-flash-lite-preview-06-17`, `ollama:codellama`)
-- `--repo-path`: Path to repository (defaults to current directory)
-- `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
-- `--reference-document`: Path to reference documentation (optimization only)
+---
 
 ## 🔌 MCP Server (Claude Code Integration)
 
@@ -554,7 +289,7 @@ claude mcp add --transport stdio graph-code \
 > Update the login function to add rate limiting
 ```
 
-For detailed setup, see [Claude Code Setup Guide](docs/claude-code-setup.md).
+For detailed setup, see [Claude Code Setup Guide](docs/getting-started/claude-code-setup.md).
 
 ## 📊 Graph Schema
 
@@ -749,13 +484,13 @@ Use the built-in language management tool to add any Tree-sitter supported langu
 
 ```bash
 # Add a language using the standard tree-sitter repository
-cgr language add-grammar <language-name>
+graph-code language add-grammar <language-name>
 
 # Examples:
-cgr language add-grammar c-sharp
-cgr language add-grammar php
-cgr language add-grammar ruby
-cgr language add-grammar kotlin
+graph-code language add-grammar c-sharp
+graph-code language add-grammar php
+graph-code language add-grammar ruby
+graph-code language add-grammar kotlin
 ```
 
 #### Custom Grammar Repositories
@@ -764,7 +499,7 @@ For languages hosted outside the standard tree-sitter organization:
 
 ```bash
 # Add a language from a custom repository
-cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+graph-code language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
 ```
 
 #### What Happens Automatically
@@ -785,7 +520,7 @@ When you add a language, the tool automatically:
 #### Example: Adding C# Support
 
 ```bash
-$ cgr language add-grammar c-sharp
+$ graph-code language add-grammar c-sharp
 🔍 Using default tree-sitter URL: https://github.com/tree-sitter/tree-sitter-c-sharp
 🔄 Adding submodule from https://github.com/tree-sitter/tree-sitter-c-sharp...
 ✅ Successfully added submodule at grammars/tree-sitter-c-sharp
@@ -805,10 +540,10 @@ Calls: ['invocation_expression']
 
 ```bash
 # List all configured languages
-cgr language list-languages
+graph-code language list-languages
 
 # Remove a language (this also removes the git submodule unless --keep-submodule is specified)
-cgr language remove-language <language-name>
+graph-code language remove-language <language-name>
 ```
 
 #### Language Configuration
@@ -830,7 +565,7 @@ The system uses a configuration-driven approach for language support. Each langu
 
 **Grammar not found**: If the automatic URL doesn't work, use a custom URL:
 ```bash
-cgr language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
+graph-code language add-grammar --grammar-url https://github.com/custom/tree-sitter-mylang
 ```
 
 **Version incompatibility**: If you get "Incompatible Language version" errors, update your tree-sitter package:

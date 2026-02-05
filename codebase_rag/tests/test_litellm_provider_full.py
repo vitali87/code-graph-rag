@@ -55,15 +55,27 @@ def test_provider_specific_env_vars():
         api_key="test",
     )
 
+    env_during_creation = {}
+
+    def capture_env(*args, **kwargs):
+        env_during_creation["project"] = os.environ.get("VERTEXAI_PROJECT")
+        env_during_creation["location"] = os.environ.get("VERTEXAI_LOCATION")
+        from unittest.mock import MagicMock
+
+        return MagicMock()
+
     with patch.dict(os.environ, {}, clear=True):
         with (
             patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"),
-            patch("codebase_rag.providers.litellm.OpenAIChatModel"),
+            patch(
+                "codebase_rag.providers.litellm.OpenAIChatModel",
+                side_effect=capture_env,
+            ),
         ):
             provider.create_model("gemini-1.5-pro")
 
-            assert os.environ.get("VERTEXAI_PROJECT") == "test-project"
-            assert os.environ.get("VERTEXAI_LOCATION") == "us-central1"
+            assert env_during_creation["project"] == "test-project"
+            assert env_during_creation["location"] == "us-central1"
 
 
 def test_api_key_handling():
@@ -110,3 +122,113 @@ def test_extra_headers_handling():
         settings = kwargs.get("settings")
         assert settings is not None
         assert settings["extra_headers"] == headers
+
+
+def test_service_account_file_path_resolution():
+    """Verify service account file path is resolved to absolute path."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        sa_file = f.name
+        f.write('{"type": "service_account"}')
+
+    env_during_creation = {}
+
+    def capture_env(*args, **kwargs):
+        env_during_creation["creds"] = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        from unittest.mock import MagicMock
+
+        return MagicMock()
+
+    try:
+        provider = LiteLLMProvider(
+            provider="vertex_ai",
+            project_id="test-project",
+            region="us-central1",
+            api_key="test",
+            service_account_file=sa_file,
+        )
+
+        with (
+            patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"),
+            patch(
+                "codebase_rag.providers.litellm.OpenAIChatModel",
+                side_effect=capture_env,
+            ),
+        ):
+            provider.create_model("gemini-1.5-pro")
+
+            creds = env_during_creation["creds"]
+            assert creds is not None
+            assert Path(creds).is_absolute()
+    finally:
+        os.unlink(sa_file)
+
+
+def test_timeout_configuration():
+    """Verify timeout settings are passed to ModelSettings."""
+    provider = LiteLLMProvider(provider="openai", api_key="test")
+
+    with patch("codebase_rag.providers.litellm.OpenAIChatModel") as mock_model:
+        with patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"):
+            provider.create_model("gpt-4")
+
+        _, kwargs = mock_model.call_args
+        settings = kwargs.get("settings")
+        assert settings is not None
+        assert settings["timeout"] == 300
+
+
+def test_timeout_configuration_custom():
+    """Verify custom timeout settings are respected."""
+    provider = LiteLLMProvider(provider="openai", api_key="test")
+
+    with patch("codebase_rag.providers.litellm.OpenAIChatModel") as mock_model:
+        with patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"):
+            provider.create_model("gpt-4", timeout=600, stream_timeout=60)
+
+        _, kwargs = mock_model.call_args
+        settings = kwargs.get("settings")
+        assert settings is not None
+        assert settings["timeout"] == 600
+
+
+def test_vertex_env_cleanup_after_creation():
+    """Verify Vertex AI env vars are cleaned up after model creation."""
+    original_project = os.environ.get("VERTEXAI_PROJECT")
+    original_location = os.environ.get("VERTEXAI_LOCATION")
+
+    provider = LiteLLMProvider(
+        provider="vertex_ai",
+        project_id="test-project",
+        region="us-west1",
+        api_key="test",
+    )
+
+    with (
+        patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"),
+        patch("codebase_rag.providers.litellm.OpenAIChatModel"),
+    ):
+        provider.create_model("gemini-1.5-pro")
+
+    assert os.environ.get("VERTEXAI_PROJECT") == original_project
+    assert os.environ.get("VERTEXAI_LOCATION") == original_location
+
+
+def test_thinking_budget_passed_to_extra_body():
+    """Verify thinking_budget is passed in extra_body."""
+    provider = LiteLLMProvider(
+        provider="openai",
+        api_key="test",
+        thinking_budget=10000,
+    )
+
+    with patch("codebase_rag.providers.litellm.OpenAIChatModel") as mock_model:
+        with patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"):
+            provider.create_model("gpt-4")
+
+        _, kwargs = mock_model.call_args
+        settings = kwargs.get("settings")
+        assert settings is not None
+        assert settings["extra_body"]["thinking_budget"] == 10000

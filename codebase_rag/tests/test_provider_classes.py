@@ -124,12 +124,24 @@ class TestLiteLLMProvider:
             api_key="test",
         )
 
+        env_during_creation = {}
+
+        def capture_env(*args, **kwargs):
+            env_during_creation["project"] = os.environ.get("VERTEXAI_PROJECT")
+            env_during_creation["location"] = os.environ.get("VERTEXAI_LOCATION")
+            from unittest.mock import MagicMock
+
+            return MagicMock()
+
         with patch.dict(os.environ, {}, clear=True):
             with (
                 patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider"),
-                patch("codebase_rag.providers.litellm.OpenAIChatModel"),
+                patch(
+                    "codebase_rag.providers.litellm.OpenAIChatModel",
+                    side_effect=capture_env,
+                ),
             ):
                 provider.create_model("gemini-pro")
 
-                assert os.environ.get("VERTEXAI_PROJECT") == "vertex-proj"
-                assert os.environ.get("VERTEXAI_LOCATION") == "us-central1"
+                assert env_during_creation["project"] == "vertex-proj"
+                assert env_during_creation["location"] == "us-central1"
