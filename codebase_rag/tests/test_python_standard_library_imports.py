@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -14,7 +15,8 @@ class TestStandardLibraryImports:
     def mock_updater(self) -> GraphUpdater:
         mock_ingestor = MagicMock()
 
-        test_repo = Path("/tmp/myproject")
+        temp_dir = Path(tempfile.mkdtemp())
+        test_repo = temp_dir / "myproject"
         test_repo.mkdir(exist_ok=True)
 
         (test_repo / "utils").mkdir(exist_ok=True)
