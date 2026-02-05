@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from build_binary import _build_package_args, _get_treesitter_packages
 from codebase_rag.constants import PyInstallerPackage
+from scripts.build_binary import _build_package_args, _get_treesitter_packages
 
 
 class TestGetTreesitterPackages:
@@ -20,7 +20,7 @@ class TestGetTreesitterPackages:
             }
         }
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("scripts.build_binary.toml.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == [
@@ -42,7 +42,7 @@ class TestGetTreesitterPackages:
             }
         }
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("scripts.build_binary.toml.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == [
@@ -64,7 +64,7 @@ class TestGetTreesitterPackages:
             }
         }
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("scripts.build_binary.toml.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == ["tree_sitter_python", "tree_sitter_rust"]
@@ -72,7 +72,7 @@ class TestGetTreesitterPackages:
     def test_returns_empty_list_when_no_treesitter_extra(self) -> None:
         mock_pyproject = {"project": {"optional-dependencies": {}}}
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("scripts.build_binary.toml.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == []
@@ -80,7 +80,7 @@ class TestGetTreesitterPackages:
     def test_returns_empty_list_when_no_optional_dependencies(self) -> None:
         mock_pyproject = {"project": {}}
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("scripts.build_binary.toml.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == []

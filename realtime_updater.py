@@ -42,7 +42,11 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         path = Path(path_str)
         if any(path.name.endswith(suffix) for suffix in self.ignore_suffixes):
             return False
-        return all(part not in self.ignore_patterns for part in path.parts)
+        try:
+            rel_path = path.relative_to(self.updater.repo_path)
+            return all(part not in self.ignore_patterns for part in rel_path.parts)
+        except ValueError:
+            return False
 
     def dispatch(self, event: FileSystemEvent) -> None:
         # (H) ┌─────────────────────────────────────────────────────────────────────┐
@@ -77,38 +81,45 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
 
-        # (H) Step 1
-        ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
-        logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
+        try:
+            # (H) Step 1
+            ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
+            logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
-        # (H) Step 2
-        self.updater.remove_file_from_state(path)
+            # (H) Step 2
+            self.updater.remove_file_from_state(path)
 
-        # (H) Step 3
-        if event.event_type in (EventType.MODIFIED, EventType.CREATED):
-            lang_config = get_language_spec(path.suffix)
-            if (
-                lang_config
-                and isinstance(lang_config.language, SupportedLanguage)
-                and lang_config.language in self.updater.parsers
-            ):
-                if result := self.updater.factory.definition_processor.process_file(
-                    path,
-                    lang_config.language,
-                    self.updater.queries,
-                    self.updater.factory.structure_processor.structural_elements,
+            # (H) Step 3
+            if event.event_type in (EventType.MODIFIED, EventType.CREATED):
+                lang_config = get_language_spec(path.suffix)
+                if (
+                    lang_config
+                    and isinstance(lang_config.language, SupportedLanguage)
+                    and lang_config.language in self.updater.parsers
                 ):
-                    root_node, language = result
-                    self.updater.ast_cache[path] = (root_node, language)
+                    if result := self.updater.factory.definition_processor.process_file(
+                        path,
+                        lang_config.language,
+                        self.updater.queries,
+                        self.updater.factory.structure_processor.structural_elements,
+                    ):
+                        root_node, language = result
+                        self.updater.ast_cache[path] = (root_node, language)
 
-        # (H) Step 4
-        logger.info(logs.RECALC_CALLS)
-        ingestor.execute_write(CYPHER_DELETE_CALLS)
-        self.updater._process_function_calls()
+            # (H) Step 4
+            logger.info(logs.RECALC_CALLS)
+            ingestor.execute_write(CYPHER_DELETE_CALLS)
+            self.updater._process_function_calls()
 
-        # (H) Step 5
-        self.updater.ingestor.flush_all()
-        logger.success(logs.GRAPH_UPDATED.format(name=path.name))
+            # (H) Step 5
+            self.updater.ingestor.flush_all()
+            logger.success(logs.GRAPH_UPDATED.format(name=path.name))
+        except Exception as e:
+            logger.error(logs.WATCHER_UPDATE_FAILED.format(path=path, error=e))
+            try:
+                self.updater.ingestor.flush_all()
+            except Exception as flush_error:
+                logger.error(logs.WATCHER_FLUSH_FAILED.format(error=flush_error))
 
 
 def start_watcher(
@@ -145,8 +156,12 @@ def _run_watcher_loop(ingestor, repo_path_obj, parsers, queries):
         while True:
             time.sleep(WATCHER_SLEEP_INTERVAL)
     except KeyboardInterrupt:
+        logger.info(logs.WATCHER_INTERRUPT)
+    except Exception as e:
+        logger.error(logs.WATCHER_UNEXPECTED_ERROR.format(error=e))
+    finally:
         observer.stop()
-    observer.join()
+        observer.join()
 
 
 def _validate_positive_int(value: int | None) -> int | None:

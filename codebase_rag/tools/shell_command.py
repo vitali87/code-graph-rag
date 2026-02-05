@@ -143,21 +143,29 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
         if path_arg in ("*", ".", ".."):
             return True, f"rm targeting dangerous path: {path_arg}"
         try:
-            if path_arg.startswith("/"):
+            if Path(path_arg).is_absolute():
                 resolved = Path(path_arg).resolve()
             else:
                 resolved = (project_root / path_arg).resolve()
         except (OSError, ValueError):
             return True, f"rm with invalid path: {path_arg}"
+
+        try:
+            resolved_no_symlink = resolved.resolve(strict=True)
+            resolved = resolved_no_symlink
+        except (OSError, RuntimeError):
+            pass
+
         resolved_str = str(resolved)
         if resolved == resolved.parent:
             return True, "rm targeting root directory"
-        parts = resolved.parts
-        if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
-            return True, f"rm targeting system directory: {resolved_str}"
         try:
             resolved.relative_to(project_root)
         except ValueError:
+            parent = resolved.parent
+            if parent == parent.parent:
+                if resolved.name in cs.SHELL_SYSTEM_DIRECTORIES:
+                    return True, f"rm targeting system directory: {resolved_str}"
             return True, f"rm targeting path outside project: {resolved_str}"
     return False, ""
 

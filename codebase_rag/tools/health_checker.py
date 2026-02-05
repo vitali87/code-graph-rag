@@ -153,7 +153,17 @@ class HealthChecker:
                 check=False,
             )
             if result.returncode == 0:
-                path = result.stdout.strip().splitlines()[0]
+                lines = result.stdout.strip().splitlines()
+                if not lines:
+                    return HealthCheckResult(
+                        name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(
+                            tool_name=tool_name
+                        ),
+                        passed=False,
+                        message=f"Could not verify {tool_name} installation",
+                        error="No output from tool check command",
+                    )
+                path = lines[0]
                 return HealthCheckResult(
                     name=cs.HEALTH_CHECK_TOOL_INSTALLED.format(tool_name=tool_name),
                     passed=True,

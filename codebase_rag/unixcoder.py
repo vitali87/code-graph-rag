@@ -201,10 +201,14 @@ class Beam:
         self.finished: list[tuple[torch.Tensor, int, int]] = []
 
     def getCurrentState(self) -> torch.Tensor:
+        if not self.nextYs:
+            raise RuntimeError("No current state available")
         batch = self.nextYs[-1].view(-1, 1)
         return batch
 
     def getCurrentOrigin(self) -> torch.Tensor:
+        if not self.prevKs:
+            raise RuntimeError("No origin available, advance() must be called first")
         return self.prevKs[-1]
 
     def advance(self, wordLk: torch.Tensor) -> None:
@@ -232,7 +236,11 @@ class Beam:
                 s = self.scores[i]
                 self.finished.append((s, len(self.nextYs) - 1, i))
 
-        if self.nextYs[-1][0] == self._eos:
+        if (
+            len(self.nextYs) > 0
+            and len(self.nextYs[-1]) > 0
+            and self.nextYs[-1][0] == self._eos
+        ):
             self.eosTop = True
 
     def done(self) -> bool:
@@ -240,16 +248,19 @@ class Beam:
 
     def getFinal(self) -> list[tuple[torch.Tensor, int, int]]:
         if len(self.finished) == 0:
+            if not self.scores.numel() or not self.nextYs:
+                raise RuntimeError("Cannot get final results: no scores or nextYs")
             self.finished.append((self.scores[0], len(self.nextYs) - 1, 0))
         self.finished.sort(key=lambda a: -a[0])
         if len(self.finished) != self.size:
-            unfinished = [
-                (self.scores[i], len(self.nextYs) - 1, i)
-                for i in range(self.nextYs[-1].size(0))
-                if self.nextYs[-1][i] != self._eos
-            ]
-            unfinished.sort(key=lambda a: -a[0])
-            self.finished += unfinished[: self.size - len(self.finished)]
+            if self.nextYs:
+                unfinished = [
+                    (self.scores[i], len(self.nextYs) - 1, i)
+                    for i in range(self.nextYs[-1].size(0))
+                    if self.nextYs[-1][i] != self._eos
+                ]
+                unfinished.sort(key=lambda a: -a[0])
+                self.finished += unfinished[: self.size - len(self.finished)]
         return self.finished[: self.size]
 
     def getHyp(

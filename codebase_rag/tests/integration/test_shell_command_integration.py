@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -112,6 +113,7 @@ class TestShellCommandIntegration:
         assert result.return_code == 0
         assert not (temp_test_repo / "file2.py").exists()
 
+    @pytest.mark.skipif(not shutil.which("rg"), reason="ripgrep (rg) not installed")
     async def test_rg_searches_content(self, shell_commander: ShellCommander) -> None:
         result = await shell_commander.execute("rg hello file2.py")
         assert "hello" in result.stdout or result.return_code == 0
@@ -199,6 +201,7 @@ class TestPipedCommandIntegration:
         lines = result.stdout.strip().split("\n")
         assert len(lines) <= 2
 
+    @pytest.mark.skipif(not shutil.which("rg"), reason="ripgrep (rg) not installed")
     async def test_cat_pipe_rg(
         self, shell_commander: ShellCommander, temp_test_repo: Path
     ) -> None:
@@ -217,6 +220,7 @@ class TestPipedCommandIntegration:
         assert result.return_code == 0
         assert "3" in result.stdout
 
+    @pytest.mark.skipif(not shutil.which("rg"), reason="ripgrep (rg) not installed")
     async def test_find_pipe_rg_pipe_wc(self, shell_commander: ShellCommander) -> None:
         result = await shell_commander.execute("find . -name '*.py' | rg py | wc -l")
         assert result.return_code == 0

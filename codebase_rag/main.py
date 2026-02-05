@@ -289,22 +289,13 @@ def _create_configuration_table(
         f"{cypher_config.model_id} ({cypher_config.provider})",
     )
 
-    orch_endpoint = (
-        orchestrator_config.endpoint
-        if orchestrator_config.provider == cs.Provider.OLLAMA
-        else None
-    )
-    cypher_endpoint = (
-        cypher_config.endpoint if cypher_config.provider == cs.Provider.OLLAMA else None
-    )
-
-    if orch_endpoint and cypher_endpoint and orch_endpoint == cypher_endpoint:
-        table.add_row(cs.TABLE_ROW_OLLAMA_ENDPOINT, orch_endpoint)
-    else:
-        if orch_endpoint:
-            table.add_row(cs.TABLE_ROW_OLLAMA_ORCHESTRATOR, orch_endpoint)
-        if cypher_endpoint:
-            table.add_row(cs.TABLE_ROW_OLLAMA_CYPHER, cypher_endpoint)
+    if orchestrator_config.endpoint:
+        table.add_row("Orchestrator Endpoint", orchestrator_config.endpoint)
+    if (
+        cypher_config.endpoint
+        and cypher_config.endpoint != orchestrator_config.endpoint
+    ):
+        table.add_row("Cypher Endpoint", cypher_config.endpoint)
 
     confirmation_status = (
         cs.CONFIRM_ENABLED if app_context.session.confirm_edits else cs.CONFIRM_DISABLED
@@ -562,11 +553,13 @@ def _create_model_from_string(
 
     if provider_name == base_config.provider:
         config = replace(base_config, model_id=model_id)
-    elif provider_name == cs.Provider.OLLAMA:
+    elif provider_name in {cs.Provider.OLLAMA, cs.Provider.LOCAL}:
         config = ModelConfig(
             provider=provider_name,
             model_id=model_id,
-            endpoint=settings.ollama_endpoint,
+            endpoint=settings.ollama_endpoint
+            if provider_name == cs.Provider.OLLAMA
+            else None,
             api_key=cs.DEFAULT_API_KEY,
         )
     else:
@@ -720,8 +713,12 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
 
     kwargs = current_config.to_update_kwargs()
 
-    if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
-        kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
+    if (
+        provider in {cs.Provider.OLLAMA, cs.Provider.LOCAL}
+        and not kwargs[cs.FIELD_ENDPOINT]
+    ):
+        if provider == cs.Provider.OLLAMA:
+            kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
         kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
 
     set_method(provider, model, **kwargs)

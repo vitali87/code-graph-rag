@@ -9,6 +9,7 @@ dependencies = [
     "mcp>=1.21.1",
     "pydantic-ai>=1.27.0",
     "pydantic-settings>=2.0.0",
+    "litellm>=1.52.0",
     "pymgclient>=1.4.0",
     "python-dotenv>=1.1.0",
     "toml>=0.10.2",

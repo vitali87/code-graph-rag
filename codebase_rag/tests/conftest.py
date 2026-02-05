@@ -15,6 +15,7 @@ from loguru import logger
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 if TYPE_CHECKING:
@@ -99,8 +100,15 @@ def temp_repo() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def mock_ingestor() -> MagicMock:
-    """Provides a mocked MemgraphIngestor instance."""
-    return MagicMock(spec=MemgraphIngestor)
+    """Provides a mocked MemgraphIngestor instance that implements QueryProtocol."""
+    mock = MagicMock(spec=MemgraphIngestor)
+    mock.fetch_all = MagicMock(return_value=[])
+    mock.execute_write = MagicMock(return_value=None)
+    mock.ensure_node_batch = MagicMock()
+    mock.ensure_relationship_batch = MagicMock()
+    mock.flush_all = MagicMock()
+    QueryProtocol.register(type(mock))
+    return mock
 
 
 def run_updater(
@@ -175,6 +183,8 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     )
 
     mock.ast_cache = {}
+    mock.remove_file_from_state = MagicMock()
+    mock._process_function_calls = MagicMock()
 
     return mock
 

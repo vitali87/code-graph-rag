@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
+import re
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -50,6 +53,22 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
         "name": "Cohere",
     },
 }
+
+
+def _validate_header(name: str, value: str) -> None:
+    """Validate HTTP header name and value for security."""
+    if "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+        raise ValueError(f"Header contains CRLF characters: {name}")
+
+    if not re.match(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$", name):
+        raise ValueError(f"Invalid header name format: {name}")
+
+    if len(name) > 256 or len(value) > 8192:
+        raise ValueError(f"Header too large: {name}")
+
+    dangerous_headers = {"host", "content-length", "transfer-encoding", "connection"}
+    if name.lower() in dangerous_headers:
+        raise ValueError(f"Cannot override system header: {name}")
 
 
 def format_missing_api_key_errors(
@@ -105,6 +124,7 @@ class ModelConfig:
     provider_type: str | None = None
     thinking_budget: int | None = None
     service_account_file: str | None = None
+    extra_headers: dict[str, str] | None = None
 
     def to_update_kwargs(self) -> ModelConfigKwargs:
         result = asdict(self)
@@ -153,6 +173,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_PROVIDER_TYPE: str | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
+    ORCHESTRATOR_EXTRA_HEADERS: dict[str, str] | None = None
 
     CYPHER_PROVIDER: str = ""
     CYPHER_MODEL: str = ""
@@ -163,6 +184,7 @@ class AppConfig(BaseSettings):
     CYPHER_PROVIDER_TYPE: str | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
+    CYPHER_EXTRA_HEADERS: dict[str, str] | None = None
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
@@ -253,6 +275,43 @@ class AppConfig(BaseSettings):
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
+    @field_validator(
+        "ORCHESTRATOR_EXTRA_HEADERS", "CYPHER_EXTRA_HEADERS", mode="before"
+    )
+    @classmethod
+    def parse_json_headers(
+        cls, v: str | dict[str, str] | None
+    ) -> dict[str, str] | None:
+        if v is None:
+            return None
+
+        headers: dict[str, str]
+        if isinstance(v, dict):
+            headers = v
+        elif isinstance(v, str):
+            try:
+                data = json.loads(v)
+                if not isinstance(data, dict):
+                    raise ValueError("Headers JSON string must decode to a dictionary.")
+                headers = data
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    "Headers must be a valid JSON string or dictionary."
+                ) from e
+        else:
+            raise TypeError(
+                f"Headers must be a JSON string or a dictionary, not {type(v).__name__}."
+            )
+
+        for name, value in headers.items():
+            if not isinstance(value, str | int | float | bool):
+                raise TypeError(
+                    f"Header value for '{name}' must be a scalar, not {type(value).__name__}."
+                )
+            _validate_header(name, str(value))
+
+        return headers
+
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
 
@@ -272,6 +331,7 @@ class AppConfig(BaseSettings):
                 service_account_file=getattr(
                     self, f"{role_upper}_SERVICE_ACCOUNT_FILE", None
                 ),
+                extra_headers=getattr(self, f"{role_upper}_EXTRA_HEADERS", None),
             )
 
         return ModelConfig(
@@ -308,12 +368,24 @@ class AppConfig(BaseSettings):
         self._active_cypher = config
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
-        if ":" not in model_string:
-            return cs.Provider.OLLAMA, model_string
-        provider, model = model_string.split(":", 1)
-        if not provider:
-            raise ValueError(ex.PROVIDER_EMPTY)
-        return provider.lower(), model
+        if "/" in model_string:
+            provider, model = model_string.split("/", 1)
+            return provider.lower(), model
+
+        if ":" in model_string:
+            warnings.warn(
+                f"Model string '{model_string}' uses deprecated ':' delimiter. "
+                "Please use '/' instead (e.g., 'openai/gpt-4'). "
+                "Support for ':' will be removed in a future version.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            provider, model = model_string.split(":", 1)
+            if not provider:
+                raise ValueError(ex.PROVIDER_EMPTY)
+            return provider.lower(), model
+
+        return cs.Provider.OLLAMA, model_string
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
         resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size

@@ -70,15 +70,15 @@ class TestProviderConfiguration:
         """
         config = AppConfig()
 
-        provider, model = config.parse_model_string("openai:gpt-oss:20b")
+        provider, model = config.parse_model_string("openai/gpt-oss:20b")
         assert provider == "openai"
         assert model == "gpt-oss:20b"
 
-        provider, model = config.parse_model_string("ollama:custom-model:v2.1")
+        provider, model = config.parse_model_string("ollama/custom-model:v2.1")
         assert provider == "ollama"
         assert model == "custom-model:v2.1"
 
-        provider, model = config.parse_model_string("google:custom:model:v1.0")
+        provider, model = config.parse_model_string("google/custom:model:v1.0")
         assert provider == "google"
         assert model == "custom:model:v1.0"
 

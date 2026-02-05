@@ -79,7 +79,12 @@ async def run_agent_test(
     tracker.clear()
     logger.info(f"\n{'#' * 60}\nRunning: {label}\nPrompt: {prompt}\n{'#' * 60}")
 
-    result = await agent.run(prompt)
+    try:
+        result = await agent.run(prompt)
+    except Exception as e:
+        if "connection error" in str(e).lower() or "connecterror" in str(e).lower():
+            pytest.skip(f"LLM connection error: {e}")
+        raise
 
     messages = result.all_messages()
     log_message_history(messages, label)
@@ -95,24 +100,6 @@ async def run_agent_test(
     )
 
     return calls, skipped
-
-
-@pytest.fixture(scope="module")
-def tracker() -> ToolCallTracker:
-    return ToolCallTracker()
-
-
-@pytest.fixture(scope="module")
-def tracking_tools(tracker: ToolCallTracker) -> list[Tool]:
-    return create_tracking_tools(tracker)
-
-
-@pytest.fixture(scope="module")
-def agent(tracking_tools: list[Tool]) -> Agent:
-    try:
-        return create_rag_orchestrator(tracking_tools)
-    except Exception as e:
-        pytest.skip(f"Ollama server not available: {e}")
 
 
 PARALLEL_PROMPT = """Execute ALL of these tasks in parallel, not sequentially:
@@ -155,3 +142,21 @@ class TestToolCallingIntegration:
         assert len(calls) >= 1, f"Expected at least 1 tool call, got {len(calls)}"
 
         logger.info(f"Tools called: {len(calls)}, Skipped: {len(skipped)}")
+
+
+@pytest.fixture(scope="module")
+def tracker() -> ToolCallTracker:
+    return ToolCallTracker()
+
+
+@pytest.fixture(scope="module")
+def tracking_tools(tracker: ToolCallTracker) -> list[Tool]:
+    return create_tracking_tools(tracker)
+
+
+@pytest.fixture(scope="module")
+def agent(tracking_tools: list[Tool]) -> Agent:
+    try:
+        return create_rag_orchestrator(tracking_tools)
+    except Exception as e:
+        pytest.skip(f"Ollama server not available: {e}")
