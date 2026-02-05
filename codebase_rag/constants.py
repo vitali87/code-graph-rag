@@ -80,6 +80,20 @@ class FileAction(StrEnum):
 
 DEFAULT_MODEL_ROLE = "model"
 
+ENV_GOOGLE_APPLICATION_CREDENTIALS = "GOOGLE_APPLICATION_CREDENTIALS"
+ENV_VERTEXAI_PROJECT = "VERTEXAI_PROJECT"
+ENV_VERTEXAI_LOCATION = "VERTEXAI_LOCATION"
+
+LOCAL_PROVIDERS = frozenset({"ollama", "local", "vllm"})
+
+VERTEX_AI_PROVIDERS = frozenset({"vertex_ai", "vertex_ai_beta"})
+
+# (H) ModelSettings configuration keys
+CONFIG_KEY_THINKING_BUDGET = "thinking_budget"
+CONFIG_KEY_NUM_RETRIES = "num_retries"
+CONFIG_KEY_RETRY_AFTER = "retry_after"
+CONFIG_KEY_TIMEOUT = "timeout"
+
 BINARY_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".pdf",

@@ -21,16 +21,20 @@ def _vertex_env_context(project_id, region, service_account_file):
     try:
         if service_account_file:
             sa_path = str(Path(service_account_file).resolve())
-            old_values["GOOGLE_APPLICATION_CREDENTIALS"] = os.environ.get(
-                "GOOGLE_APPLICATION_CREDENTIALS"
+            old_values[cs.ENV_GOOGLE_APPLICATION_CREDENTIALS] = os.environ.get(
+                cs.ENV_GOOGLE_APPLICATION_CREDENTIALS
             )
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = sa_path
+            os.environ[cs.ENV_GOOGLE_APPLICATION_CREDENTIALS] = sa_path
         if project_id:
-            old_values["VERTEXAI_PROJECT"] = os.environ.get("VERTEXAI_PROJECT")
-            os.environ["VERTEXAI_PROJECT"] = project_id
+            old_values[cs.ENV_VERTEXAI_PROJECT] = os.environ.get(
+                cs.ENV_VERTEXAI_PROJECT
+            )
+            os.environ[cs.ENV_VERTEXAI_PROJECT] = project_id
         if region:
-            old_values["VERTEXAI_LOCATION"] = os.environ.get("VERTEXAI_LOCATION")
-            os.environ["VERTEXAI_LOCATION"] = region
+            old_values[cs.ENV_VERTEXAI_LOCATION] = os.environ.get(
+                cs.ENV_VERTEXAI_LOCATION
+            )
+            os.environ[cs.ENV_VERTEXAI_LOCATION] = region
         yield
     finally:
         for key, value in old_values.items():
@@ -75,7 +79,7 @@ class LiteLLMProvider(ModelProvider):
 
     def validate_config(self) -> None:
         """Validate the configuration."""
-        if self.provider_name in ("ollama", "local", "vllm"):
+        if self.provider_name in cs.LOCAL_PROVIDERS:
             return
 
         if not self.api_key:
@@ -83,7 +87,7 @@ class LiteLLMProvider(ModelProvider):
                 f"API key is required for provider '{self.provider_name}' but was not found."
             )
 
-        if self.provider_name in ("vertex_ai", "vertex_ai_beta"):
+        if self.provider_name in cs.VERTEX_AI_PROVIDERS:
             if not self.project_id:
                 raise ValueError(f"project_id is required for {self.provider_name}")
             if not self.region:
@@ -112,15 +116,18 @@ class LiteLLMProvider(ModelProvider):
         )
 
         extra_body = dict(kwargs)
-        if self.thinking_budget is not None and "thinking_budget" not in extra_body:
-            extra_body["thinking_budget"] = self.thinking_budget
+        if (
+            self.thinking_budget is not None
+            and cs.CONFIG_KEY_THINKING_BUDGET not in extra_body
+        ):
+            extra_body[cs.CONFIG_KEY_THINKING_BUDGET] = self.thinking_budget
 
-        if "num_retries" not in extra_body:
-            extra_body["num_retries"] = 3
-        if "retry_after" not in extra_body:
-            extra_body["retry_after"] = 5
+        if cs.CONFIG_KEY_NUM_RETRIES not in extra_body:
+            extra_body[cs.CONFIG_KEY_NUM_RETRIES] = 3
+        if cs.CONFIG_KEY_RETRY_AFTER not in extra_body:
+            extra_body[cs.CONFIG_KEY_RETRY_AFTER] = 5
 
-        timeout_value = kwargs.get("timeout", 300)
+        timeout_value = kwargs.get(cs.CONFIG_KEY_TIMEOUT, 300)
         settings = ModelSettings(
             extra_headers=self.extra_headers or {},
             extra_body=extra_body,

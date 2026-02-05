@@ -304,6 +304,10 @@ class AppConfig(BaseSettings):
             )
 
         for name, value in headers.items():
+            if not isinstance(value, str | int | float | bool):
+                raise TypeError(
+                    f"Header value for '{name}' must be a scalar, not {type(value).__name__}."
+                )
             _validate_header(name, str(value))
 
         return headers
