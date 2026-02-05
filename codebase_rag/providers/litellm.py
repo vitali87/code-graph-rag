@@ -96,13 +96,15 @@ class LiteLLMProvider(ModelProvider):
                     )
 
     def create_model(self, model_id: str, **kwargs: Any) -> OpenAIChatModel:
-        """Create a PydanticAI model using LiteLLM."""
+        """Create a PydanticAI model using LiteLLM.
+
+        Args:
+            model_id: The model identifier WITHOUT provider prefix (e.g., "gpt-4o", "llama3:7b")
+                     The provider is taken from self.provider_name
+        """
         self.validate_config()
 
-        if "/" not in model_id and ":" not in model_id:
-            full_model_id = f"{self.provider_name}/{model_id}"
-        else:
-            full_model_id = model_id.replace(":", "/", 1)
+        full_model_id = f"{self.provider_name}/{model_id}"
 
         provider = PydanticLiteLLMProvider(
             api_key=self.api_key,

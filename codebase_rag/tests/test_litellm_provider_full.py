@@ -20,7 +20,7 @@ def test_get_all_providers_dynamic():
 
 
 def test_create_model_formats():
-    """Test creating models with various formats."""
+    """Test creating models with various model_id formats (without provider prefix)."""
     provider = LiteLLMProvider(provider=Provider.OPENAI, api_key="test")
 
     with (
@@ -29,21 +29,20 @@ def test_create_model_formats():
         ) as mock_pydantic_provider,
         patch("codebase_rag.providers.litellm.OpenAIChatModel") as mock_model,
     ):
-        # (H) Match settings argument structure
-
         provider.create_model("gpt-4o")
         args, kwargs = mock_model.call_args
         assert args[0] == "openai/gpt-4o"
         assert kwargs["provider"] == mock_pydantic_provider.return_value
         assert isinstance(kwargs["settings"], dict)
 
-        provider.create_model("anthropic/claude-3-5-sonnet")
+        provider.create_model("ft:gpt-3.5-turbo:my-org:custom:model:id")
         args, kwargs = mock_model.call_args
-        assert args[0] == "anthropic/claude-3-5-sonnet"
+        assert args[0] == "openai/ft:gpt-3.5-turbo:my-org:custom:model:id"
 
-        provider.create_model("ollama:llama3")
+        provider_ollama = LiteLLMProvider(provider="ollama", api_key="test")
+        provider_ollama.create_model("llama3:7b-instruct")
         args, kwargs = mock_model.call_args
-        assert args[0] == "ollama/llama3"
+        assert args[0] == "ollama/llama3:7b-instruct"
 
 
 def test_provider_specific_env_vars():

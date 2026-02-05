@@ -54,7 +54,7 @@ jobs:
           uv add --dev pyinstaller
 
       - name: Build binary
-        run: uv run python build_binary.py
+        run: uv run python scripts/build_binary.py
 
       - name: Test binary
         shell: bash
