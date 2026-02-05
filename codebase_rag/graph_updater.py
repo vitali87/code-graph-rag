@@ -4,6 +4,7 @@ from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
 
 from loguru import logger
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from tree_sitter import Node, Parser
 
 from . import constants as cs
@@ -317,34 +318,47 @@ class GraphUpdater:
                 logger.debug(ls.CLEANED_SIMPLE_NAME.format(name=simple_name))
 
     def _process_files(self) -> None:
-        for filepath in self.repo_path.rglob("*"):
-            if filepath.is_file() and not should_skip_path(
-                filepath,
-                self.repo_path,
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
-            ):
-                lang_config = get_language_spec(filepath.suffix)
-                if (
-                    lang_config
-                    and isinstance(lang_config.language, cs.SupportedLanguage)
-                    and lang_config.language in self.parsers
-                ):
-                    result = self.factory.definition_processor.process_file(
-                        filepath,
-                        lang_config.language,
-                        self.queries,
-                        self.factory.structure_processor.structural_elements,
-                    )
-                    if result:
-                        root_node, language = result
-                        self.ast_cache[filepath] = (root_node, language)
-                elif self._is_dependency_file(filepath.name, filepath):
-                    self.factory.definition_processor.process_dependencies(filepath)
+        files_processed = 0
 
-                self.factory.structure_processor.process_generic_file(
-                    filepath, filepath.name
-                )
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]Indexing files..."),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("", total=None)
+
+            for filepath in self.repo_path.rglob("*"):
+                if filepath.is_file() and not should_skip_path(
+                    filepath,
+                    self.repo_path,
+                    exclude_paths=self.exclude_paths,
+                    unignore_paths=self.unignore_paths,
+                ):
+                    lang_config = get_language_spec(filepath.suffix)
+                    if (
+                        lang_config
+                        and isinstance(lang_config.language, cs.SupportedLanguage)
+                        and lang_config.language in self.parsers
+                    ):
+                        result = self.factory.definition_processor.process_file(
+                            filepath,
+                            lang_config.language,
+                            self.queries,
+                            self.factory.structure_processor.structural_elements,
+                        )
+                        if result:
+                            root_node, language = result
+                            self.ast_cache[filepath] = (root_node, language)
+                    elif self._is_dependency_file(filepath.name, filepath):
+                        self.factory.definition_processor.process_dependencies(filepath)
+
+                    self.factory.structure_processor.process_generic_file(
+                        filepath, filepath.name
+                    )
+
+                    files_processed += 1
+                    progress.update(task, description=f"{files_processed} processed")
 
     def _process_function_calls(self) -> None:
         ast_cache_items = list(self.ast_cache.items())
