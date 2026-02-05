@@ -95,6 +95,13 @@ class TestLiteLLMProviderConcurrency:
 
         assert len(models) == 2
 
+        headers_seen = [m["extra_headers"] for m in models]
+        provider_a_headers = {"x-portkey-api-key": "pk-user-a"}
+        provider_b_headers = {"Helicone-Auth": "Bearer user-b"}
+
+        assert provider_a_headers in headers_seen, "Provider A's headers not found"
+        assert provider_b_headers in headers_seen, "Provider B's headers not found"
+
     @pytest.mark.asyncio
     async def test_vertex_env_var_cleanup_on_exception(self):
         """Verify env vars cleaned up even if model creation fails."""
