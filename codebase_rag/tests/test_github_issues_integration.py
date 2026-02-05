@@ -45,15 +45,15 @@ class TestGitHubIssuesIntegration:
         """
         config = AppConfig()
 
-        provider, model = config.parse_model_string("openai:gpt-oss:20b")
+        provider, model = config.parse_model_string("openai/gpt-oss:20b")
         assert provider == "openai", "Should correctly identify provider"
         assert model == "gpt-oss:20b", "Should correctly preserve model name with colon"
 
         test_cases = [
-            ("ollama:mistral:7b-instruct", "ollama", "mistral:7b-instruct"),
-            ("google:custom:model:v1.2", "google", "custom:model:v1.2"),
+            ("ollama/mistral:7b-instruct", "ollama", "mistral:7b-instruct"),
+            ("google/custom:model:v1.2", "google", "custom:model:v1.2"),
             (
-                "openai:ft:gpt-3.5-turbo:my-org:custom:model:id",
+                "openai/ft:gpt-3.5-turbo:my-org:custom:model:id",
                 "openai",
                 "ft:gpt-3.5-turbo:my-org:custom:model:id",
             ),
