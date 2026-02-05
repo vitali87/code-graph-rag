@@ -106,22 +106,43 @@ The system consists of two main components:
 
 ### Installing cmake and ripgrep
 
-On macOS:
+On macOS (Homebrew):
 ```bash
+brew update
 brew install cmake ripgrep
 ```
 
 On Linux (Ubuntu/Debian):
 ```bash
-sudo apt-get update
-sudo apt-get install cmake ripgrep
+sudo apt update
+sudo apt install -y cmake ripgrep
 ```
 
-On Linux (CentOS/RHEL):
+On Linux (CentOS/RHEL/Rocky/Alma):
 ```bash
-sudo yum install cmake
-sudo dnf install ripgrep
-# Note: ripgrep may need to be installed from EPEL or via cargo
+sudo yum install -y epel-release || sudo dnf install -y epel-release
+sudo yum install -y cmake ripgrep || sudo dnf install -y cmake ripgrep
+```
+
+On Windows (Chocolatey):
+```bash
+choco install cmake ripgrep -y
+```
+
+On Windows (Scoop):
+```bash
+scoop install cmake ripgrep
+```
+
+On Windows (winget):
+```bash
+winget install Kitware.CMake
+winget install BurntSushi.ripgrep.MSVC
+```
+
+Universal fallback (if ripgrep missing):
+```bash
+cargo install ripgrep
 ```
 
 ## 🛠️ Installation
