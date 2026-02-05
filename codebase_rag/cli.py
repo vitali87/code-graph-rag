@@ -1,5 +1,5 @@
 import asyncio
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
@@ -59,7 +59,14 @@ def _update_and_validate_models(orchestrator: str | None, cypher: str | None) ->
 
 def _version_callback(value: bool) -> None:
     if value:
-        app_context.console.print(f"code-graph-rag version {version('graph-code')}")
+        try:
+            ver = version("graph-code")
+        except PackageNotFoundError:
+            app_context.console.print(
+                "code-graph-rag version unknown (package not installed)"
+            )
+            raise typer.Exit(1) from None
+        app_context.console.print(f"code-graph-rag version {ver}")
         raise typer.Exit()
 
 
