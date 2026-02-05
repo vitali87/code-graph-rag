@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from litellm import exceptions as litellm_exceptions
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider as PydanticLiteLLMProvider
 from pydantic_ai.settings import ModelSettings
@@ -120,7 +121,7 @@ class LiteLLMProvider(ModelProvider):
         timeout_value = kwargs.get("timeout", 300)
         settings = ModelSettings(
             extra_headers=self.extra_headers or {},
-            extra_body=extra_body or None,
+            extra_body=extra_body,
             timeout=timeout_value,
         )
 
@@ -133,22 +134,20 @@ class LiteLLMProvider(ModelProvider):
                     provider=provider,
                     settings=settings,
                 )
+            except litellm_exceptions.RateLimitError as e:
+                raise ValueError(
+                    f"Rate limit exceeded for provider '{self.provider_name}'. "
+                    f"Retries configured: {extra_body.get('num_retries', 0)}"
+                ) from e
+            except litellm_exceptions.Timeout as e:
+                raise ValueError(
+                    f"Request timeout for model '{model_id}' (timeout: {timeout_value}s)"
+                ) from e
+            except litellm_exceptions.InvalidRequestError as e:
+                raise ValueError(
+                    f"Invalid model '{model_id}' for provider '{self.provider_name}'"
+                ) from e
             except Exception as e:
-                error_msg = str(e).lower()
-                if "rate" in error_msg and "limit" in error_msg:
-                    raise ValueError(
-                        f"Rate limit exceeded for provider '{self.provider_name}'. "
-                        f"Retries configured: {extra_body.get('num_retries', 0)}"
-                    ) from e
-                elif "timeout" in error_msg:
-                    raise ValueError(
-                        f"Request timeout for model '{model_id}' (timeout: {timeout_value}s)"
-                    ) from e
-                elif "invalid" in error_msg and "model" in error_msg:
-                    raise ValueError(
-                        f"Invalid model '{model_id}' for provider '{self.provider_name}'"
-                    ) from e
-                else:
-                    raise ValueError(
-                        f"Failed to create model '{model_id}' with provider '{self.provider_name}': {e}"
-                    ) from e
+                raise ValueError(
+                    f"Failed to create model '{model_id}' with provider '{self.provider_name}': {e}"
+                ) from e

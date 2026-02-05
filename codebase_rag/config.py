@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
@@ -287,8 +289,6 @@ class AppConfig(BaseSettings):
         if isinstance(v, dict):
             headers = v
         elif isinstance(v, str):
-            import json
-
             try:
                 data = json.loads(v)
                 if not isinstance(data, dict):
@@ -369,8 +369,6 @@ class AppConfig(BaseSettings):
             return provider.lower(), model
 
         if ":" in model_string:
-            import warnings
-
             warnings.warn(
                 f"Model string '{model_string}' uses deprecated ':' delimiter. "
                 "Please use '/' instead (e.g., 'openai/gpt-4'). "
