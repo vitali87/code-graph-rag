@@ -330,13 +330,14 @@ class StdlibExtractor:
             ):
                 pass
 
-        result = (
-            cs.SEPARATOR_DOT.join(parts[:-1])
-            if entity_name[0].isupper()
-            else full_qualified_name
-        )
-        _cache_stdlib_result(cs.SupportedLanguage.JS, full_qualified_name, result)
-        return result
+        # (H) Fallback: For JS/TS, always strip the last component when we have
+        # (H) module.entity pattern (e.g., fs.readFile -> fs). The import_processor
+        # (H) creates these qualified names when parsing named imports.
+        # (H) This handles both PascalCase (e.g., EventEmitter) and camelCase
+        # (H) (e.g., readFile) entity names.
+        module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+        _cache_stdlib_result(cs.SupportedLanguage.JS, full_qualified_name, module_path)
+        return module_path
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
         parts = full_qualified_name.split(cs.SEPARATOR_SLASH)

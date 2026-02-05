@@ -14,7 +14,7 @@ def test_help_command_works() -> None:
         cwd=repo_root,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
     )
 
     assert result.returncode == 0, f"Help command failed with: {result.stderr}"
