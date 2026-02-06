@@ -80,7 +80,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: What version of Graph-Code are you using?
+      description: What version of Code-Graph-RAG are you using?
       placeholder: "0.1.0 or commit hash"
     validations:
       required: true

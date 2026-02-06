@@ -60,16 +60,16 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.platform }}" = "windows" ]; then
-            ./dist/graph-code-*.exe --version
+            ./dist/code-graph-rag-*.exe --version
           else
-            ./dist/graph-code-* --version
+            ./dist/code-graph-rag-* --version
           fi
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: graph-code-${{ matrix.platform }}-${{ matrix.arch }}
-          path: dist/graph-code-*
+          name: code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/code-graph-rag-*
           retention-days: 30
           compression-level: 9
 
@@ -77,5 +77,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/graph-code-*
+          files: dist/code-graph-rag-*
           fail_on_unmatched_files: true

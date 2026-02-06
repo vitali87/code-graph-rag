@@ -12,12 +12,11 @@ result = subprocess.run(
     cwd=repo_root,
     capture_output=True,
     text=True,
-    shell=True,
 )
 
 if result.returncode != 0:
     sys.stderr.write(result.stderr)
     sys.exit(result.returncode)
 
-subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True, shell=True)
+subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
 sys.exit(0)

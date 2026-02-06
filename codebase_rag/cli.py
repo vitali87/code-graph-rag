@@ -27,7 +27,7 @@ from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 
 app = typer.Typer(
-    name="graph-code",
+    name="code-graph-rag",
     help=ch.APP_DESCRIPTION,
     no_args_is_help=True,
     add_completion=False,

@@ -675,7 +675,7 @@ MSG_CHAT_INSTRUCTIONS = (
 )
 
 # (H) Default titles and prompts
-DEFAULT_TABLE_TITLE = "Graph-Code Initializing..."
+DEFAULT_TABLE_TITLE = "Code-Graph-RAG Initializing..."
 OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
 PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
@@ -862,7 +862,7 @@ class Architecture(StrEnum):
     AMD64 = "amd64"
 
 
-BINARY_NAME_TEMPLATE = "graph-code-{system}-{machine}"
+BINARY_NAME_TEMPLATE = "code-graph-rag-{system}-{machine}"
 BINARY_FILE_PERMISSION = 0o755
 DIST_DIR = "dist"
 BYTES_PER_MB_FLOAT = 1024 * 1024
@@ -2403,7 +2403,7 @@ class MCPParamName(StrEnum):
 
 
 # (H) MCP server constants
-MCP_SERVER_NAME = "graph-code"
+MCP_SERVER_NAME = "code-graph-rag"
 MCP_CONTENT_TYPE_TEXT = "text"
 MCP_DEFAULT_DIRECTORY = "."
 MCP_JSON_INDENT = 2

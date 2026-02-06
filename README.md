@@ -2,7 +2,7 @@
   <picture>
     <source srcset="assets/logo-dark-any.png" media="(prefers-color-scheme: dark)">
     <source srcset="assets/logo-light-any.png" media="(prefers-color-scheme: light)">
-    <img src="assets/logo-dark.png" alt="Graph-Code Logo" width="480">
+    <img src="assets/logo-dark.png" alt="Code-Graph-RAG Logo" width="480">
   </picture>
 
   <p>
@@ -24,7 +24,7 @@
 </p>
 </div>
 
-# Graph-Code: A Graph-Based RAG System for Any Codebases
+# Code-Graph-RAG: A Graph-Based RAG System for Any Codebases
 
 An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
@@ -33,7 +33,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## Latest News 🔥
 
-- **[NEW]** **MCP Server Integration**: Graph-Code now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
+- **[NEW]** **MCP Server Integration**: Code-Graph-RAG now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
 - [2025/10/21] **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
 
 ## 🚀 Features
@@ -249,7 +249,7 @@ Use the Makefile for common development tasks:
 
 ## 🎯 Usage
 
-The Graph-Code system offers four main modes of operation:
+The Code-Graph-RAG system offers four main modes of operation:
 1. **Parse & Ingest**: Build knowledge graph from your codebase
 2. **Interactive Query**: Ask questions about your code in natural language
 3. **Export & Analyze**: Export graph data for programmatic analysis
@@ -509,17 +509,17 @@ The agent will incorporate the guidance from your reference documents when sugge
 
 ## 🔌 MCP Server (Claude Code Integration)
 
-Graph-Code can run as an MCP (Model Context Protocol) server, enabling seamless integration with Claude Code and other MCP clients.
+Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seamless integration with Claude Code and other MCP clients.
 
 ### Quick Setup
 
 ```bash
-claude mcp add --transport stdio graph-code \
+claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
   --env CYPHER_PROVIDER=openai \
   --env CYPHER_MODEL=gpt-4 \
   --env CYPHER_API_KEY=your-api-key \
-  -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
+  -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
 ### Available Tools
@@ -729,7 +729,7 @@ The agent uses AST-based function targeting with Tree-sitter for precise code mo
 
 ### Adding New Languages
 
-Graph-Code makes it easy to add support for any language that has a Tree-sitter grammar. The system automatically handles grammar compilation and integration.
+Code-Graph-RAG makes it easy to add support for any language that has a Tree-sitter grammar. The system automatically handles grammar compilation and integration.
 
 > **⚠️ Recommendation**: While you can add languages yourself, we recommend waiting for official full support to ensure optimal parsing quality, comprehensive feature coverage, and robust integration. The languages marked as "In Development" above will receive dedicated optimization and testing.
 
@@ -873,10 +873,10 @@ For issues or questions:
 
 ## 💼 Enterprise Services
 
-Graph-Code is open source and free to use. For organizations that need additional support, we offer:
+Code-Graph-RAG is open source and free to use. For organizations that need additional support, we offer:
 
 - **Technical Support Contracts** — Custom SLAs, priority issue resolution, and dedicated assistance
-- **Integration Consulting** — Help deploying Graph-Code in your infrastructure and integrating with your toolchain
+- **Integration Consulting** — Help deploying Code-Graph-RAG in your infrastructure and integrating with your toolchain
 - **Custom Development** — Tailored features, new language support, and workflow optimization for your specific codebase
 - **Training & Onboarding** — Get your team up to speed with hands-on training sessions
 

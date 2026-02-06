@@ -460,6 +460,128 @@ wheels = [
 ]
 
 [[package]]
+name = "code-graph-rag"
+version = "0.0.50"
+source = { editable = "." }
+dependencies = [
+    { name = "click" },
+    { name = "defusedxml" },
+    { name = "diff-match-patch" },
+    { name = "huggingface-hub", extra = ["hf-xet"] },
+    { name = "loguru" },
+    { name = "mcp" },
+    { name = "prompt-toolkit" },
+    { name = "protobuf" },
+    { name = "pydantic-ai" },
+    { name = "pydantic-settings" },
+    { name = "pymgclient" },
+    { name = "python-dotenv" },
+    { name = "rich" },
+    { name = "toml" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-python" },
+    { name = "typer" },
+    { name = "watchdog" },
+]
+
+[package.optional-dependencies]
+semantic = [
+    { name = "qdrant-client" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "testcontainers" },
+]
+treesitter-full = [
+    { name = "tree-sitter-cpp" },
+    { name = "tree-sitter-go" },
+    { name = "tree-sitter-java" },
+    { name = "tree-sitter-javascript" },
+    { name = "tree-sitter-lua" },
+    { name = "tree-sitter-python" },
+    { name = "tree-sitter-rust" },
+    { name = "tree-sitter-scala" },
+    { name = "tree-sitter-typescript" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "bandit" },
+    { name = "coverage" },
+    { name = "pre-commit" },
+    { name = "pyinstaller" },
+    { name = "pylint" },
+    { name = "radon" },
+    { name = "ruff" },
+    { name = "semgrep" },
+    { name = "ty" },
+    { name = "types-protobuf" },
+    { name = "types-toml" },
+    { name = "vulture" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.0.0" },
+    { name = "defusedxml", specifier = ">=0.7.1" },
+    { name = "diff-match-patch", specifier = ">=20241021" },
+    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.36.0" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "mcp", specifier = ">=1.21.1" },
+    { name = "prompt-toolkit", specifier = ">=3.0.0" },
+    { name = "protobuf", specifier = ">=5.27.0" },
+    { name = "pydantic-ai", specifier = ">=1.27.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pymgclient", specifier = ">=1.4.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
+    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
+    { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
+    { name = "rich", specifier = ">=13.7.1" },
+    { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },
+    { name = "toml", specifier = ">=0.10.2" },
+    { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
+    { name = "transformers", marker = "extra == 'semantic'", specifier = ">=4.0.0" },
+    { name = "tree-sitter", specifier = "==0.25.0" },
+    { name = "tree-sitter-cpp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.0" },
+    { name = "tree-sitter-go", marker = "extra == 'treesitter-full'", specifier = ">=0.23.4" },
+    { name = "tree-sitter-java", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
+    { name = "tree-sitter-javascript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
+    { name = "tree-sitter-lua", marker = "extra == 'treesitter-full'", specifier = ">=0.0.19" },
+    { name = "tree-sitter-python", specifier = ">=0.23.6" },
+    { name = "tree-sitter-python", marker = "extra == 'treesitter-full'", specifier = ">=0.23.6" },
+    { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
+    { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
+    { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
+    { name = "typer", specifier = ">=0.12.5" },
+    { name = "watchdog", specifier = ">=6.0.0" },
+]
+provides-extras = ["test", "treesitter-full", "semantic"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "bandit", specifier = ">=1.9.2" },
+    { name = "coverage", specifier = ">=7.13.0" },
+    { name = "pre-commit", specifier = ">=4.2.0" },
+    { name = "pyinstaller", specifier = ">=6.14.1" },
+    { name = "pylint", specifier = ">=4.0.4" },
+    { name = "radon", specifier = ">=6.0.1" },
+    { name = "ruff", specifier = ">=0.5.5" },
+    { name = "semgrep", specifier = ">=1.79.0" },
+    { name = "ty", specifier = ">=0.0.7" },
+    { name = "types-protobuf", specifier = ">=5.0.0" },
+    { name = "types-toml", specifier = ">=0.10.8.20240310" },
+    { name = "vulture", specifier = ">=2.14" },
+]
+
+[[package]]
 name = "cohere"
 version = "5.20.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1076,128 +1198,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e5/7b/adfd75544c415c487b33061fe7ae526165241c1ea133f9a9125a56b39fd8/googleapis_common_protos-1.72.0.tar.gz", hash = "sha256:e55a601c1b32b52d7a3e65f43563e2aa61bcd737998ee672ac9b951cd49319f5", size = 147433, upload-time = "2025-11-06T18:29:24.087Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/ab/09169d5a4612a5f92490806649ac8d41e3ec9129c636754575b3553f4ea4/googleapis_common_protos-1.72.0-py3-none-any.whl", hash = "sha256:4299c5a82d5ae1a9702ada957347726b167f9f8d1fc352477702a1e851ff4038", size = 297515, upload-time = "2025-11-06T18:29:13.14Z" },
-]
-
-[[package]]
-name = "graph-code"
-version = "0.0.48"
-source = { editable = "." }
-dependencies = [
-    { name = "click" },
-    { name = "defusedxml" },
-    { name = "diff-match-patch" },
-    { name = "huggingface-hub", extra = ["hf-xet"] },
-    { name = "loguru" },
-    { name = "mcp" },
-    { name = "prompt-toolkit" },
-    { name = "protobuf" },
-    { name = "pydantic-ai" },
-    { name = "pydantic-settings" },
-    { name = "pymgclient" },
-    { name = "python-dotenv" },
-    { name = "rich" },
-    { name = "toml" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-python" },
-    { name = "typer" },
-    { name = "watchdog" },
-]
-
-[package.optional-dependencies]
-semantic = [
-    { name = "qdrant-client" },
-    { name = "torch" },
-    { name = "transformers" },
-]
-test = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-xdist" },
-    { name = "testcontainers" },
-]
-treesitter-full = [
-    { name = "tree-sitter-cpp" },
-    { name = "tree-sitter-go" },
-    { name = "tree-sitter-java" },
-    { name = "tree-sitter-javascript" },
-    { name = "tree-sitter-lua" },
-    { name = "tree-sitter-python" },
-    { name = "tree-sitter-rust" },
-    { name = "tree-sitter-scala" },
-    { name = "tree-sitter-typescript" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "bandit" },
-    { name = "coverage" },
-    { name = "pre-commit" },
-    { name = "pyinstaller" },
-    { name = "pylint" },
-    { name = "radon" },
-    { name = "ruff" },
-    { name = "semgrep" },
-    { name = "ty" },
-    { name = "types-protobuf" },
-    { name = "types-toml" },
-    { name = "vulture" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.0.0" },
-    { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "diff-match-patch", specifier = ">=20241021" },
-    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.36.0" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mcp", specifier = ">=1.21.1" },
-    { name = "prompt-toolkit", specifier = ">=3.0.0" },
-    { name = "protobuf", specifier = ">=5.27.0" },
-    { name = "pydantic-ai", specifier = ">=1.27.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "pymgclient", specifier = ">=1.4.0" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
-    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
-    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
-    { name = "python-dotenv", specifier = ">=1.1.0" },
-    { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
-    { name = "rich", specifier = ">=13.7.1" },
-    { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },
-    { name = "toml", specifier = ">=0.10.2" },
-    { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
-    { name = "transformers", marker = "extra == 'semantic'", specifier = ">=4.0.0" },
-    { name = "tree-sitter", specifier = "==0.25.0" },
-    { name = "tree-sitter-cpp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.0" },
-    { name = "tree-sitter-go", marker = "extra == 'treesitter-full'", specifier = ">=0.23.4" },
-    { name = "tree-sitter-java", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
-    { name = "tree-sitter-javascript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
-    { name = "tree-sitter-lua", marker = "extra == 'treesitter-full'", specifier = ">=0.0.19" },
-    { name = "tree-sitter-python", specifier = ">=0.23.6" },
-    { name = "tree-sitter-python", marker = "extra == 'treesitter-full'", specifier = ">=0.23.6" },
-    { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
-    { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
-    { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
-    { name = "typer", specifier = ">=0.12.5" },
-    { name = "watchdog", specifier = ">=6.0.0" },
-]
-provides-extras = ["test", "treesitter-full", "semantic"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "bandit", specifier = ">=1.9.2" },
-    { name = "coverage", specifier = ">=7.13.0" },
-    { name = "pre-commit", specifier = ">=4.2.0" },
-    { name = "pyinstaller", specifier = ">=6.14.1" },
-    { name = "pylint", specifier = ">=4.0.4" },
-    { name = "radon", specifier = ">=6.0.1" },
-    { name = "ruff", specifier = ">=0.5.5" },
-    { name = "semgrep", specifier = ">=1.79.0" },
-    { name = "ty", specifier = ">=0.0.7" },
-    { name = "types-protobuf", specifier = ">=5.0.0" },
-    { name = "types-toml", specifier = ">=0.10.8.20240310" },
-    { name = "vulture", specifier = ">=2.14" },
 ]
 
 [[package]]
