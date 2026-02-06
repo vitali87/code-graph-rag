@@ -2,7 +2,7 @@
   <picture>
     <source srcset="assets/logo-dark-any.png" media="(prefers-color-scheme: dark)">
     <source srcset="assets/logo-light-any.png" media="(prefers-color-scheme: light)">
-    <img src="assets/logo-dark.png" alt="Code-Graph-RAG Logo" width="480">
+    <img src="assets/logo-dark-any.png" alt="Code-Graph-RAG Logo" width="480">
   </picture>
 
   <p>
