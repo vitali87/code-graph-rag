@@ -38,6 +38,8 @@ class CodeSnippet(BaseModel):
     qualified_name: str
     source_code: str
     file_path: str
+    relative_path: str | None = None
+    project_name: str | None = None
     line_start: int
     line_end: int
     docstring: str | None = None
@@ -53,6 +55,8 @@ class ShellCommandResult(BaseModel):
 
 class EditResult(BaseModel):
     file_path: str
+    relative_path: str | None = None
+    project_name: str | None = None
     success: bool = True
     error_message: str | None = None
 
@@ -65,6 +69,8 @@ class EditResult(BaseModel):
 
 class FileReadResult(BaseModel):
     file_path: str
+    relative_path: str | None = None
+    project_name: str | None = None
     content: str | None = None
     error_message: str | None = None
 

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from .. import constants as cs
@@ -25,3 +26,19 @@ def should_skip_path(
     ):
         return False
     return not cs.IGNORE_PATTERNS.isdisjoint(dir_parts)
+
+
+def calculate_paths(
+    file_path: Path | str,
+    repo_path: Path | str,
+) -> dict[str, str]:
+    file_path = Path(file_path)
+    repo_path = Path(repo_path)
+    relative_path = str(file_path.relative_to(repo_path))
+    abs_path = os.path.abspath(file_path)
+    absolute_path = Path(abs_path).as_posix()
+
+    return {
+        "relative_path": relative_path,
+        "absolute_path": absolute_path,
+    }

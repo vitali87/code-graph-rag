@@ -35,6 +35,7 @@ from ..cypher_queries import (
     build_index_query,
     build_merge_node_query,
     build_merge_relationship_query,
+    build_project_name_indexes,
     wrap_with_unwind,
 )
 from ..types_defs import (
@@ -201,6 +202,13 @@ class MemgraphIngestor:
                 self._execute_query(build_index_query(label, prop))
             except Exception:
                 pass
+
+        for index_query in build_project_name_indexes():
+            try:
+                self._execute_query(index_query)
+            except Exception:
+                pass
+
         logger.info(ls.MG_INDEXES_DONE)
 
     def ensure_node_batch(

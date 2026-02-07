@@ -38,7 +38,18 @@ class FileReader:
             try:
                 content = file_path.read_text(encoding=cs.ENCODING_UTF8)
                 logger.info(ls.TOOL_FILE_READ_SUCCESS.format(path=file_path))
-                return FileReadResult(file_path=str(file_path), content=content)
+
+                absolute_path_str = str(file_path)
+                try:
+                    relative_path_str = str(file_path.relative_to(self.project_root))
+                except ValueError:
+                    relative_path_str = None
+
+                return FileReadResult(
+                    file_path=absolute_path_str,
+                    relative_path=relative_path_str,
+                    content=content,
+                )
             except UnicodeDecodeError:
                 error_msg = te.UNICODE_DECODE.format(path=file_path)
                 logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))

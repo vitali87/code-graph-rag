@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
-from codebase_rag.cypher_queries import wrap_with_unwind
+from codebase_rag.cypher_queries import build_project_name_indexes, wrap_with_unwind
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
@@ -285,7 +285,9 @@ class TestEnsureConstraints:
         with patch.object(ingestor, "_execute_query", side_effect=fail_then_succeed):
             ingestor.ensure_constraints()
 
-        expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2
+        expected_queries = len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(
+            build_project_name_indexes()
+        )
         assert call_count == expected_queries
 
 

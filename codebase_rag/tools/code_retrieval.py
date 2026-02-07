@@ -39,22 +39,37 @@ class CodeRetriever:
                 )
 
             res = results[0]
-            file_path_str = res.get("path")
+            absolute_path_str = res.get("absolute_path")
+            relative_path_str = res.get("relative_path")
+            project_name = res.get("project_name")
+
+            if not absolute_path_str:
+                file_path_str = res.get("path")
+                logger.warning(
+                    f"No absolute_path found for {qualified_name}, falling back to relative path"
+                )
+
             start_line = res.get("start")
             end_line = res.get("end")
 
-            if not all([file_path_str, start_line, end_line]):
+            file_path_to_read = absolute_path_str or (
+                str(self.project_root / file_path_str) if file_path_str else ""
+            )
+
+            if not all([file_path_to_read, start_line, end_line]):
                 return CodeSnippet(
                     qualified_name=qualified_name,
                     source_code="",
-                    file_path=file_path_str or "",
+                    file_path=file_path_to_read or "",
+                    relative_path=relative_path_str,
+                    project_name=project_name,
                     line_start=0,
                     line_end=0,
                     found=False,
                     error_message=te.CODE_MISSING_LOCATION,
                 )
 
-            full_path = self.project_root / file_path_str
+            full_path = Path(file_path_to_read)
             with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
@@ -64,7 +79,9 @@ class CodeRetriever:
             return CodeSnippet(
                 qualified_name=qualified_name,
                 source_code=source_code,
-                file_path=file_path_str,
+                file_path=file_path_to_read,
+                relative_path=relative_path_str,
+                project_name=project_name,
                 line_start=start_line,
                 line_end=end_line,
                 docstring=res.get("docstring"),

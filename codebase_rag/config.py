@@ -17,6 +17,18 @@ from .types_defs import CgrignorePatterns, ModelConfigKwargs
 load_dotenv()
 
 
+def _parse_frozenset_of_strings(value: str | frozenset[str] | None) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, frozenset):
+        return value
+    if isinstance(value, str):
+        if not value.strip():
+            return frozenset()
+        return frozenset(path.strip() for path in value.split(",") if path.strip())
+    return frozenset()
+
+
 class ApiKeyInfoEntry(TypedDict):
     env_var: str
     url: str
@@ -171,7 +183,13 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
+    ALLOWED_PROJECT_ROOTS: str = ""
     SHELL_COMMAND_TIMEOUT: int = 30
+
+    @property
+    def allowed_project_roots_set(self) -> frozenset[str]:
+        return _parse_frozenset_of_strings(self.ALLOWED_PROJECT_ROOTS)
+
     SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
         {
             "ls",

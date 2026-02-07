@@ -54,7 +54,12 @@ class MCPToolsRegistry:
         self.file_editor = FileEditor(project_root=project_root)
         self.file_reader = FileReader(project_root=project_root)
         self.file_writer = FileWriter(project_root=project_root)
-        self.directory_lister = DirectoryLister(project_root=project_root)
+        from ..config import settings
+
+        self.directory_lister = DirectoryLister(
+            project_root=project_root,
+            allowed_roots=settings.allowed_project_roots_set,
+        )
 
         self._query_tool = create_query_tool(
             ingestor=ingestor, cypher_gen=cypher_gen, console=None

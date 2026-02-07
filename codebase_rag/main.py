@@ -984,7 +984,10 @@ def _initialize_services_and_agent(
     shell_commander = ShellCommander(
         project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
     )
-    directory_lister = DirectoryLister(project_root=repo_path)
+    directory_lister = DirectoryLister(
+        project_root=repo_path,
+        allowed_roots=settings.allowed_project_roots_set,
+    )
     document_analyzer = DocumentAnalyzer(project_root=repo_path)
 
     query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)

@@ -262,8 +262,17 @@ class GraphUpdater:
         )
 
     def run(self) -> None:
+        import os
+
+        absolute_path = Path(os.path.abspath(self.repo_path)).as_posix()
+
         self.ingestor.ensure_node_batch(
-            cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
+            cs.NODE_PROJECT,
+            {
+                cs.KEY_NAME: self.project_name,
+                cs.KEY_ABSOLUTE_PATH: absolute_path,
+                cs.KEY_PROJECT_NAME: self.project_name,
+            },
         )
         logger.info(ls.ENSURING_PROJECT.format(name=self.project_name))
 

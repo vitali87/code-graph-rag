@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIChatModel
 
 from codebase_rag.constants import GoogleProviderType, Provider
 from codebase_rag.providers.base import (
@@ -59,7 +59,7 @@ class TestProviderRegistry:
 
             def create_model(
                 self, model_id: str, **kwargs: str | int | None
-            ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel:
+            ) -> GoogleModel | OpenAIChatModel:
                 return MagicMock(spec=GoogleModel)
 
         register_provider("custom", CustomProvider)
@@ -241,21 +241,21 @@ class TestModelCreation:
         assert call_kwargs["settings"] == mock_settings
 
     @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIResponsesModel")
+    @patch("codebase_rag.providers.base.OpenAIChatModel")
     def test_openai_model_creation(
-        self, mock_openai_model: Any, mock_openai_provider: Any
+        self, mock_openai_chat_model: Any, mock_openai_provider: Any
     ) -> None:
         provider = OpenAIProvider(api_key="sk-test-key")
 
         mock_model = MagicMock()
-        mock_openai_model.return_value = mock_model
+        mock_openai_chat_model.return_value = mock_model
 
         provider.create_model("gpt-4o")
 
         mock_openai_provider.assert_called_once_with(
             api_key="sk-test-key", base_url="https://api.openai.com/v1"
         )
-        mock_openai_model.assert_called_once_with(
+        mock_openai_chat_model.assert_called_once_with(
             "gpt-4o", provider=mock_openai_provider.return_value
         )
 

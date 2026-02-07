@@ -10,6 +10,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs
 from ...types_defs import ASTNode, PropertyDict
+from ...utils.path_utils import calculate_paths
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
@@ -142,6 +143,16 @@ class ClassIngestMixin:
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
             cs.KEY_IS_EXPORTED: is_exported,
         }
+
+        if file_path:
+            paths = calculate_paths(
+                file_path=file_path,
+                repo_path=self.repo_path,
+            )
+            class_props[cs.KEY_PATH] = paths["relative_path"]
+            class_props[cs.KEY_ABSOLUTE_PATH] = paths["absolute_path"]
+            class_props[cs.KEY_PROJECT_NAME] = self.project_name
+
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -160,7 +171,9 @@ class ClassIngestMixin:
             self._resolve_to_qn,
             self.function_registry,
         )
-        self._ingest_class_methods(class_node, class_qn, language, lang_queries)
+        self._ingest_class_methods(
+            class_node, class_qn, language, lang_queries, file_path
+        )
 
     def _ingest_rust_impl_methods(
         self,
@@ -183,6 +196,7 @@ class ClassIngestMixin:
         method_captures = method_cursor.captures(body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if isinstance(method_node, Node):
+                file_path = self.module_qn_to_file_path.get(module_qn)
                 ingest_method(
                     method_node,
                     class_qn,
@@ -192,6 +206,9 @@ class ClassIngestMixin:
                     self.simple_name_lookup,
                     self._get_docstring,
                     language,
+                    file_path=file_path,
+                    repo_path=self.repo_path if file_path else None,
+                    project_name=self.project_name,
                 )
 
     def _ingest_class_methods(
@@ -200,6 +217,7 @@ class ClassIngestMixin:
         class_qn: str,
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
+        file_path: Path | None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
         method_query = lang_queries[cs.QUERY_FUNCTIONS]
@@ -233,6 +251,9 @@ class ClassIngestMixin:
                 language,
                 self._extract_decorators,
                 method_qualified_name,
+                file_path=file_path,
+                repo_path=self.repo_path if file_path else None,
+                project_name=self.project_name,
             )
 
     def _process_inline_modules(
