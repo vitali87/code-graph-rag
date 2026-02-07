@@ -29,7 +29,9 @@
 An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
 
-![demo](./assets/demo.gif)
+<p align="center">
+  <img src="./assets/demo.gif" alt="demo">
+</p>
 
 ## Latest News 🔥
 
