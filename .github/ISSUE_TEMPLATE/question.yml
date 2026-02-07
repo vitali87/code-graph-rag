@@ -1,5 +1,5 @@
 name: ❓ Question
-description: Ask a question about using Graph-Code
+description: Ask a question about using Code-Graph-RAG
 title: "[Question]: "
 labels: ["question"]
 body:
@@ -62,7 +62,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Graph-Code Version
+      label: Code-Graph-RAG Version
       description: Version or commit hash
       placeholder: "0.1.0 or commit hash"
     validations:

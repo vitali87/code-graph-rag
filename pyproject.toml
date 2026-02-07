@@ -1,6 +1,6 @@
 [project]
-name = "graph-code"
-version = "0.0.50"
+name = "code-graph-rag"
+version = "0.0.55"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-graph-code = "codebase_rag.cli:app"
+code-graph-rag = "codebase_rag.cli:app"
 cgr = "codebase_rag.cli:app"
 
 [tool.uv]

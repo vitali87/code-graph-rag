@@ -460,6 +460,128 @@ wheels = [
 ]
 
 [[package]]
+name = "code-graph-rag"
+version = "0.0.55"
+source = { editable = "." }
+dependencies = [
+    { name = "click" },
+    { name = "defusedxml" },
+    { name = "diff-match-patch" },
+    { name = "huggingface-hub", extra = ["hf-xet"] },
+    { name = "loguru" },
+    { name = "mcp" },
+    { name = "prompt-toolkit" },
+    { name = "protobuf" },
+    { name = "pydantic-ai" },
+    { name = "pydantic-settings" },
+    { name = "pymgclient" },
+    { name = "python-dotenv" },
+    { name = "rich" },
+    { name = "toml" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-python" },
+    { name = "typer" },
+    { name = "watchdog" },
+]
+
+[package.optional-dependencies]
+semantic = [
+    { name = "qdrant-client" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "testcontainers" },
+]
+treesitter-full = [
+    { name = "tree-sitter-cpp" },
+    { name = "tree-sitter-go" },
+    { name = "tree-sitter-java" },
+    { name = "tree-sitter-javascript" },
+    { name = "tree-sitter-lua" },
+    { name = "tree-sitter-python" },
+    { name = "tree-sitter-rust" },
+    { name = "tree-sitter-scala" },
+    { name = "tree-sitter-typescript" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "bandit" },
+    { name = "coverage" },
+    { name = "pre-commit" },
+    { name = "pyinstaller" },
+    { name = "pylint" },
+    { name = "radon" },
+    { name = "ruff" },
+    { name = "semgrep" },
+    { name = "ty" },
+    { name = "types-protobuf" },
+    { name = "types-toml" },
+    { name = "vulture" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.0.0" },
+    { name = "defusedxml", specifier = ">=0.7.1" },
+    { name = "diff-match-patch", specifier = ">=20241021" },
+    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.36.0" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "mcp", specifier = ">=1.21.1" },
+    { name = "prompt-toolkit", specifier = ">=3.0.0" },
+    { name = "protobuf", specifier = ">=5.27.0" },
+    { name = "pydantic-ai", specifier = ">=1.27.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pymgclient", specifier = ">=1.4.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
+    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
+    { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
+    { name = "rich", specifier = ">=13.7.1" },
+    { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },
+    { name = "toml", specifier = ">=0.10.2" },
+    { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
+    { name = "transformers", marker = "extra == 'semantic'", specifier = ">=4.0.0" },
+    { name = "tree-sitter", specifier = "==0.25.0" },
+    { name = "tree-sitter-cpp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.0" },
+    { name = "tree-sitter-go", marker = "extra == 'treesitter-full'", specifier = ">=0.23.4" },
+    { name = "tree-sitter-java", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
+    { name = "tree-sitter-javascript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
+    { name = "tree-sitter-lua", marker = "extra == 'treesitter-full'", specifier = ">=0.0.19" },
+    { name = "tree-sitter-python", specifier = ">=0.23.6" },
+    { name = "tree-sitter-python", marker = "extra == 'treesitter-full'", specifier = ">=0.23.6" },
+    { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
+    { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
+    { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
+    { name = "typer", specifier = ">=0.12.5" },
+    { name = "watchdog", specifier = ">=6.0.0" },
+]
+provides-extras = ["test", "treesitter-full", "semantic"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "bandit", specifier = ">=1.9.2" },
+    { name = "coverage", specifier = ">=7.13.0" },
+    { name = "pre-commit", specifier = ">=4.2.0" },
+    { name = "pyinstaller", specifier = ">=6.14.1" },
+    { name = "pylint", specifier = ">=4.0.4" },
+    { name = "radon", specifier = ">=6.0.1" },
+    { name = "ruff", specifier = ">=0.5.5" },
+    { name = "semgrep", specifier = ">=1.79.0" },
+    { name = "ty", specifier = ">=0.0.7" },
+    { name = "types-protobuf", specifier = ">=5.0.0" },
+    { name = "types-toml", specifier = ">=0.10.8.20240310" },
+    { name = "vulture", specifier = ">=2.14" },
+]
+
+[[package]]
 name = "cohere"
 version = "5.20.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1076,128 +1198,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e5/7b/adfd75544c415c487b33061fe7ae526165241c1ea133f9a9125a56b39fd8/googleapis_common_protos-1.72.0.tar.gz", hash = "sha256:e55a601c1b32b52d7a3e65f43563e2aa61bcd737998ee672ac9b951cd49319f5", size = 147433, upload-time = "2025-11-06T18:29:24.087Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/ab/09169d5a4612a5f92490806649ac8d41e3ec9129c636754575b3553f4ea4/googleapis_common_protos-1.72.0-py3-none-any.whl", hash = "sha256:4299c5a82d5ae1a9702ada957347726b167f9f8d1fc352477702a1e851ff4038", size = 297515, upload-time = "2025-11-06T18:29:13.14Z" },
-]
-
-[[package]]
-name = "graph-code"
-version = "0.0.50"
-source = { editable = "." }
-dependencies = [
-    { name = "click" },
-    { name = "defusedxml" },
-    { name = "diff-match-patch" },
-    { name = "huggingface-hub", extra = ["hf-xet"] },
-    { name = "loguru" },
-    { name = "mcp" },
-    { name = "prompt-toolkit" },
-    { name = "protobuf" },
-    { name = "pydantic-ai" },
-    { name = "pydantic-settings" },
-    { name = "pymgclient" },
-    { name = "python-dotenv" },
-    { name = "rich" },
-    { name = "toml" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-python" },
-    { name = "typer" },
-    { name = "watchdog" },
-]
-
-[package.optional-dependencies]
-semantic = [
-    { name = "qdrant-client" },
-    { name = "torch" },
-    { name = "transformers" },
-]
-test = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-xdist" },
-    { name = "testcontainers" },
-]
-treesitter-full = [
-    { name = "tree-sitter-cpp" },
-    { name = "tree-sitter-go" },
-    { name = "tree-sitter-java" },
-    { name = "tree-sitter-javascript" },
-    { name = "tree-sitter-lua" },
-    { name = "tree-sitter-python" },
-    { name = "tree-sitter-rust" },
-    { name = "tree-sitter-scala" },
-    { name = "tree-sitter-typescript" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "bandit" },
-    { name = "coverage" },
-    { name = "pre-commit" },
-    { name = "pyinstaller" },
-    { name = "pylint" },
-    { name = "radon" },
-    { name = "ruff" },
-    { name = "semgrep" },
-    { name = "ty" },
-    { name = "types-protobuf" },
-    { name = "types-toml" },
-    { name = "vulture" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.0.0" },
-    { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "diff-match-patch", specifier = ">=20241021" },
-    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.36.0" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mcp", specifier = ">=1.21.1" },
-    { name = "prompt-toolkit", specifier = ">=3.0.0" },
-    { name = "protobuf", specifier = ">=5.27.0" },
-    { name = "pydantic-ai", specifier = ">=1.27.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "pymgclient", specifier = ">=1.4.0" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
-    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
-    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
-    { name = "python-dotenv", specifier = ">=1.1.0" },
-    { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
-    { name = "rich", specifier = ">=13.7.1" },
-    { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },
-    { name = "toml", specifier = ">=0.10.2" },
-    { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
-    { name = "transformers", marker = "extra == 'semantic'", specifier = ">=4.0.0" },
-    { name = "tree-sitter", specifier = "==0.25.0" },
-    { name = "tree-sitter-cpp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.0" },
-    { name = "tree-sitter-go", marker = "extra == 'treesitter-full'", specifier = ">=0.23.4" },
-    { name = "tree-sitter-java", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
-    { name = "tree-sitter-javascript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
-    { name = "tree-sitter-lua", marker = "extra == 'treesitter-full'", specifier = ">=0.0.19" },
-    { name = "tree-sitter-python", specifier = ">=0.23.6" },
-    { name = "tree-sitter-python", marker = "extra == 'treesitter-full'", specifier = ">=0.23.6" },
-    { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
-    { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
-    { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
-    { name = "typer", specifier = ">=0.12.5" },
-    { name = "watchdog", specifier = ">=6.0.0" },
-]
-provides-extras = ["test", "treesitter-full", "semantic"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "bandit", specifier = ">=1.9.2" },
-    { name = "coverage", specifier = ">=7.13.0" },
-    { name = "pre-commit", specifier = ">=4.2.0" },
-    { name = "pyinstaller", specifier = ">=6.14.1" },
-    { name = "pylint", specifier = ">=4.0.4" },
-    { name = "radon", specifier = ">=6.0.1" },
-    { name = "ruff", specifier = ">=0.5.5" },
-    { name = "semgrep", specifier = ">=1.79.0" },
-    { name = "ty", specifier = ">=0.0.7" },
-    { name = "types-protobuf", specifier = ">=5.0.0" },
-    { name = "types-toml", specifier = ">=0.10.8.20240310" },
-    { name = "vulture", specifier = ">=2.14" },
 ]
 
 [[package]]
@@ -3956,6 +3956,8 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/2f/0b295dd8d199ef71e6f176f576473d645d41357b7b8aa978cc6b042575df/torch-2.10.0-1-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:6abb224c2b6e9e27b592a1c0015c33a504b00a0e0938f1499f7f514e9b7bfb5c", size = 79498197, upload-time = "2026-02-06T17:37:27.627Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/1b/af5fccb50c341bd69dc016769503cb0857c1423fbe9343410dfeb65240f2/torch-2.10.0-1-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:7350f6652dfd761f11f9ecb590bfe95b573e2961f7a242eccb3c8e78348d26fe", size = 79498248, upload-time = "2026-02-06T17:37:31.982Z" },
     { url = "https://files.pythonhosted.org/packages/cc/af/758e242e9102e9988969b5e621d41f36b8f258bb4a099109b7a4b4b50ea4/torch-2.10.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:5fd4117d89ffd47e3dcc71e71a22efac24828ad781c7e46aaaf56bf7f2796acf", size = 145996088, upload-time = "2026-01-21T16:24:44.171Z" },
     { url = "https://files.pythonhosted.org/packages/23/8e/3c74db5e53bff7ed9e34c8123e6a8bfef718b2450c35eefab85bb4a7e270/torch-2.10.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:787124e7db3b379d4f1ed54dd12ae7c741c16a4d29b49c0226a89bea50923ffb", size = 915711952, upload-time = "2026-01-21T16:23:53.503Z" },
     { url = "https://files.pythonhosted.org/packages/6e/01/624c4324ca01f66ae4c7cd1b74eb16fb52596dce66dbe51eff95ef9e7a4c/torch-2.10.0-cp312-cp312-win_amd64.whl", hash = "sha256:2c66c61f44c5f903046cc696d088e21062644cbe541c7f1c4eaae88b2ad23547", size = 113757972, upload-time = "2026-01-21T16:24:39.516Z" },

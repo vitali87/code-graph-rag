@@ -1,6 +1,6 @@
-# Claude Code Setup for Graph-Code MCP Server
+# Claude Code Setup for Code-Graph-RAG MCP Server
 
-Connect Graph-Code to Claude Code for powerful codebase analysis and editing.
+Connect Code-Graph-RAG to Claude Code for powerful codebase analysis and editing.
 
 ## Quick Setup
 
@@ -11,12 +11,12 @@ Configure the MCP server from your project directory:
 cd /path/to/your/project
 
 # Add MCP server with project path
-claude mcp add --transport stdio graph-code \
+claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH="$(pwd)" \
   --env CYPHER_PROVIDER=google \
   --env CYPHER_MODEL=gemini-2.0-flash \
   --env CYPHER_API_KEY=your-google-api-key \
-  -- uv run --directory /absolute/path/to/code-graph-rag graph-code mcp-server
+  -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
 **Replace**:
@@ -30,12 +30,12 @@ The `"$(pwd)"` automatically uses your current directory as the target repositor
 Specify the repository path explicitly:
 
 ```bash
-claude mcp add --transport stdio graph-code \
+claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
   --env CYPHER_PROVIDER=google \
   --env CYPHER_MODEL=gemini-2.0-flash \
   --env CYPHER_API_KEY=your-google-api-key \
-  -- uv run --directory /absolute/path/to/code-graph-rag graph-code mcp-server
+  -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
 **Replace**:
@@ -102,24 +102,24 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 Add separate named instances for different projects:
 
 ```bash
-claude mcp add --transport stdio graph-code-backend \
+claude mcp add --transport stdio code-graph-rag-backend \
   --env TARGET_REPO_PATH=/path/to/backend \
   --env CYPHER_PROVIDER=openai \
   --env CYPHER_MODEL=gpt-4 \
   --env CYPHER_API_KEY=your-api-key \
-  -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
+  -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 
-claude mcp add --transport stdio graph-code-frontend \
+claude mcp add --transport stdio code-graph-rag-frontend \
   --env TARGET_REPO_PATH=/path/to/frontend \
   --env CYPHER_PROVIDER=openai \
   --env CYPHER_MODEL=gpt-4 \
   --env CYPHER_API_KEY=your-api-key \
-  -- uv run --directory /path/to/code-graph-rag graph-code mcp-server
+  -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
 ## Troubleshooting
 
-**Can't find uv/graph-code**: Use absolute paths from `which uv`
+**Can't find uv/code-graph-rag**: Use absolute paths from `which uv`
 
 **Wrong repository analyzed**:
 - Without `TARGET_REPO_PATH`: MCP uses the directory where Claude Code is opened
@@ -132,5 +132,5 @@ claude mcp add --transport stdio graph-code-frontend \
 ## Remove
 
 ```bash
-claude mcp remove graph-code
+claude mcp remove code-graph-rag
 ```
