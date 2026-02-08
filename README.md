@@ -568,6 +568,8 @@ The knowledge graph uses the following node types and relationships:
 | Method | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, decorators: list[string]}` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
 | Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| Type | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| Union | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
 | ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, implements_module: string}` |
 | ExternalPackage | `{name: string, version_spec: string}` |

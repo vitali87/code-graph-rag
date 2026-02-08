@@ -81,18 +81,17 @@ CYPHER_RETURN_COUNT = "RETURN count(r) as created"
 CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
 
 CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
-MATCH (m:Module)-[:DEFINES]->(n)
+MATCH (n)
 WHERE id(n) = $node_id
 RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-       n.end_line AS end_line, m.path AS relative_path,
-       m.absolute_path AS absolute_path, m.project_name AS project_name
+       n.end_line AS end_line, n.path AS relative_path,
+       n.absolute_path AS absolute_path, n.project_name AS project_name
 """
 
 CYPHER_FIND_BY_QUALIFIED_NAME = """
 MATCH (n) WHERE n.qualified_name = $qn
-OPTIONAL MATCH (m:Module)-[*]-(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end,
-       m.path AS relative_path, n.absolute_path AS absolute_path,
+       n.path AS relative_path, n.absolute_path AS absolute_path,
        n.project_name AS project_name, n.docstring AS docstring
 LIMIT 1
 """
