@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from .. import constants as cs
@@ -36,8 +35,7 @@ def calculate_paths(
     file_path = Path(file_path)
     repo_path = Path(repo_path)
     relative_path = str(file_path.relative_to(repo_path))
-    abs_path = os.path.abspath(file_path)
-    absolute_path = Path(abs_path).as_posix()
+    absolute_path = str(file_path.resolve())
 
     return PathInfo(
         relative_path=relative_path,

@@ -29,7 +29,9 @@
 An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying of codebase structure and relationships as well as editing capabilities.
 
 
-![demo](./assets/demo.gif)
+<p align="center">
+  <img src="./assets/demo.gif" alt="demo">
+</p>
 
 ## Latest News 🔥
 
@@ -873,14 +875,14 @@ For issues or questions:
 
 ## 💼 Enterprise Services
 
-Code-Graph-RAG is open source and free to use. For organizations that need additional support, we offer:
+Code-Graph-RAG is open source and free to use. For organizations that need more, we offer **fully managed cloud-hosted solutions** and **on-premise deployments**:
 
-- **Technical Support Contracts** — Custom SLAs, priority issue resolution, and dedicated assistance
-- **Integration Consulting** — Help deploying Code-Graph-RAG in your infrastructure and integrating with your toolchain
-- **Custom Development** — Tailored features, new language support, and workflow optimization for your specific codebase
-- **Training & Onboarding** — Get your team up to speed with hands-on training sessions
+- **Cloud-Hosted Deployment** — Managed cloud infrastructure for both the graph database and AI agent connection. Zero infrastructure overhead — we handle scaling, updates, and availability so your team can focus on building.
+- **On-Premise & Air-Gapped Deployment** — Deploy Code-Graph-RAG entirely within your own environment, including air-gapped networks. Full data sovereignty for regulated industries and security-sensitive organizations.
 
-**[Learn more at code-graph-rag.com →](https://code-graph-rag.com)**
+We also offer custom development, integration consulting, technical support contracts, and team training.
+
+**[View plans & pricing at code-graph-rag.com →](https://code-graph-rag.com/enterprise)**
 
 ## Star History
 
