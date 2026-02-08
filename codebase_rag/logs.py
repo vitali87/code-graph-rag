@@ -621,3 +621,9 @@ EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
 MODEL_SWITCHED = "Model switched to: {model}"
 MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
 MODEL_CURRENT = "Current model: {model}"
+
+# (H) Path parse logs
+METHOD_PATH_CALC_FAILED = "Failed to calculate paths for method {qn}: {error}"
+NO_ABSOLUTE_PATH_FALLBACK = (
+    "No absolute_path found for {qn}, falling back to relative path"
+)

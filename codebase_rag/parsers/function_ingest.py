@@ -14,6 +14,7 @@ from ..types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
+    PathInfo,
     PropertyDict,
     SimpleNameLookup,
 )
@@ -270,7 +271,7 @@ class FunctionIngestMixin:
         self,
         func_node: Node,
         resolution: FunctionResolution,
-        paths: dict[str, str] | None = None,
+        paths: PathInfo | None = None,
     ) -> PropertyDict:
         props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,

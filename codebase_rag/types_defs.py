@@ -580,3 +580,8 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.FUNCTION, NodeLabel.METHOD),
     ),
 )
+
+
+class PathInfo(TypedDict):
+    relative_path: str
+    absolute_path: str

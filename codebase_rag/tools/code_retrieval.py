@@ -45,9 +45,7 @@ class CodeRetriever:
 
             if not absolute_path_str:
                 file_path_str = res.get("path")
-                logger.warning(
-                    f"No absolute_path found for {qualified_name}, falling back to relative path"
-                )
+                logger.warning(ls.NO_ABSOLUTE_PATH_FALLBACK.format(qn=qualified_name))
 
             start_line = res.get("start")
             end_line = res.get("end")

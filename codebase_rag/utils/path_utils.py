@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from .. import constants as cs
+from ..types_defs import PathInfo
 
 
 def should_skip_path(
@@ -31,14 +32,14 @@ def should_skip_path(
 def calculate_paths(
     file_path: Path | str,
     repo_path: Path | str,
-) -> dict[str, str]:
+) -> PathInfo:
     file_path = Path(file_path)
     repo_path = Path(repo_path)
     relative_path = str(file_path.relative_to(repo_path))
     abs_path = os.path.abspath(file_path)
     absolute_path = Path(abs_path).as_posix()
 
-    return {
-        "relative_path": relative_path,
-        "absolute_path": absolute_path,
-    }
+    return PathInfo(
+        relative_path=relative_path,
+        absolute_path=absolute_path,
+    )

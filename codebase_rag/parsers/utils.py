@@ -125,8 +125,8 @@ def ingest_method(
             method_props[cs.KEY_PATH] = paths["relative_path"]
             method_props[cs.KEY_ABSOLUTE_PATH] = paths["absolute_path"]
             method_props[cs.KEY_PROJECT_NAME] = project_name
-        except Exception as e:
-            logger.warning(f"Failed to calculate paths for method {method_qn}: {e}")
+        except (ImportError, ValueError, TypeError) as e:
+            logger.warning(logs.METHOD_PATH_CALC_FAILED.format(qn=method_qn, error=e))
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
