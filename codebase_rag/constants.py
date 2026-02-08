@@ -421,7 +421,7 @@ CYPHER_QUERY_EMBEDDINGS = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE (n:Function OR n:Method)
     AND (m.qualified_name = $project_name
-             OR m.qualified_name STARTS WITH $project_name + '.')
+             OR m.qualified_name STARTS WITH ($project_name + '.'))
 RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
              n.start_line AS start_line, n.end_line AS end_line,
              m.path AS path
