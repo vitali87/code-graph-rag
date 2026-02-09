@@ -44,7 +44,7 @@ class CodeRetriever:
             project_name = res.get("project_name")
 
             if not absolute_path_str:
-                file_path_str = res.get("path")
+                file_path_str = res.get("relative_path")
                 logger.warning(ls.NO_ABSOLUTE_PATH_FALLBACK.format(qn=qualified_name))
 
             start_line = res.get("start")
