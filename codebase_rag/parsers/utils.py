@@ -18,6 +18,7 @@ from ..types_defs import (
     SimpleNameLookup,
     TreeSitterNodeProtocol,
 )
+from ..utils.path_utils import calculate_paths
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
@@ -116,8 +117,6 @@ def ingest_method(
 
     if file_path and repo_path and project_name:
         try:
-            from ..utils.path_utils import calculate_paths
-
             paths = calculate_paths(
                 file_path=file_path,
                 repo_path=repo_path,
@@ -125,7 +124,7 @@ def ingest_method(
             method_props[cs.KEY_PATH] = paths["relative_path"]
             method_props[cs.KEY_ABSOLUTE_PATH] = paths["absolute_path"]
             method_props[cs.KEY_PROJECT_NAME] = project_name
-        except (ImportError, ValueError, TypeError) as e:
+        except (ValueError, TypeError) as e:
             logger.warning(logs.METHOD_PATH_CALC_FAILED.format(qn=method_qn, error=e))
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
