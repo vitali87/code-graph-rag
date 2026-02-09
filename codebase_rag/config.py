@@ -6,7 +6,7 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -185,6 +185,14 @@ class AppConfig(BaseSettings):
     TARGET_REPO_PATH: str = "."
     ALLOWED_PROJECT_ROOTS: str = ""
     SHELL_COMMAND_TIMEOUT: int = 30
+    MCP_MODE: str = "edit"
+
+    @field_validator("MCP_MODE")
+    @classmethod
+    def _validate_mcp_mode(cls, v: str) -> str:
+        if v not in ("query", "edit"):
+            raise ValueError("MCP_MODE must be 'query' or 'edit'")
+        return v
 
     @property
     def allowed_project_roots_set(self) -> frozenset[str]:

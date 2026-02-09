@@ -608,10 +608,14 @@ MCP_SERVER_CALLING_TOOL = "[GraphCode MCP] Calling tool: {name}"
 MCP_SERVER_UNKNOWN_TOOL = "[GraphCode MCP] Unknown tool: {name}"
 MCP_SERVER_TOOL_ERROR = "[GraphCode MCP] Error executing tool '{name}': {error}"
 MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
+MCP_SERVER_MODE = "[GraphCode MCP] Server running in mode: {mode}"
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
+MCP_TOOLS_REGISTRY_MODE = (
+    "[GraphCode MCP] MCPToolsRegistry initialized in '{mode}' mode"
+)
 
 # (H) Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
