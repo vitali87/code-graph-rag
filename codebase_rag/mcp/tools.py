@@ -143,36 +143,36 @@ class MCPToolsRegistry:
                     handler=self.list_projects,
                     returns_json=True,
                 ),
+                cs.MCPToolName.READ_FILE: ToolMetadata(
+                    name=cs.MCPToolName.READ_FILE,
+                    description=td.MCP_TOOLS[cs.MCPToolName.READ_FILE],
+                    input_schema=MCPInputSchema(
+                        type=cs.MCPSchemaType.OBJECT,
+                        properties={
+                            cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                                type=cs.MCPSchemaType.STRING,
+                                description=td.MCP_PARAM_FILE_PATH,
+                            ),
+                            cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
+                                type=cs.MCPSchemaType.INTEGER,
+                                description=td.MCP_PARAM_OFFSET,
+                            ),
+                            cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
+                                type=cs.MCPSchemaType.INTEGER,
+                                description=td.MCP_PARAM_LIMIT,
+                            ),
+                        },
+                        required=[cs.MCPParamName.FILE_PATH],
+                    ),
+                    handler=self.read_file,
+                    returns_json=False,
+                ),
             }
         )
 
         if self.mode == "edit":
             tools.update(
                 {
-                    cs.MCPToolName.READ_FILE: ToolMetadata(
-                        name=cs.MCPToolName.READ_FILE,
-                        description=td.MCP_TOOLS[cs.MCPToolName.READ_FILE],
-                        input_schema=MCPInputSchema(
-                            type=cs.MCPSchemaType.OBJECT,
-                            properties={
-                                cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
-                                    type=cs.MCPSchemaType.STRING,
-                                    description=td.MCP_PARAM_FILE_PATH,
-                                ),
-                                cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
-                                    type=cs.MCPSchemaType.INTEGER,
-                                    description=td.MCP_PARAM_OFFSET,
-                                ),
-                                cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
-                                    type=cs.MCPSchemaType.INTEGER,
-                                    description=td.MCP_PARAM_LIMIT,
-                                ),
-                            },
-                            required=[cs.MCPParamName.FILE_PATH],
-                        ),
-                        handler=self.read_file,
-                        returns_json=False,
-                    ),
                     cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
                         name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
                         description=td.MCP_TOOLS[cs.MCPToolName.SURGICAL_REPLACE_CODE],
