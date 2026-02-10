@@ -39,27 +39,26 @@ class CodeRetriever:
                 )
 
             res = results[0]
-            absolute_path_str = res.get("absolute_path")
             project_name = res.get("project_name")
-            file_path_str = res.get("relative_path")
-
-            if not absolute_path_str:
-                logger.warning(ls.NO_ABSOLUTE_PATH_FALLBACK.format(qn=qualified_name))
-
             start_line = res.get("start")
             end_line = res.get("end")
 
-            file_path_to_read = absolute_path_str or (
-                str(self.project_root.as_posix() / file_path_str)
-                if file_path_str
-                else ""
-            )
+            absolute_path_str = res.get("absolute_path")
+            relative_path_str = res.get("relative_path")
 
-            if not all([file_path_to_read, start_line, end_line]):
+            if absolute_path_str:
+                file_path_obj = Path(absolute_path_str)
+            elif relative_path_str:
+                file_path_obj = self.project_root / relative_path_str
+                logger.warning(ls.NO_ABSOLUTE_PATH_FALLBACK.format(qn=qualified_name))
+            else:
+                file_path_obj = None
+
+            if not (file_path_obj and start_line and end_line):
                 return CodeSnippet(
                     qualified_name=qualified_name,
                     source_code="",
-                    file_path=file_path_to_read or "",
+                    file_path=str(file_path_obj) if file_path_obj else "",
                     project_name=project_name,
                     line_start=0,
                     line_end=0,
@@ -67,8 +66,9 @@ class CodeRetriever:
                     error_message=te.CODE_MISSING_LOCATION,
                 )
 
-            full_path = Path(file_path_to_read)
-            with full_path.open("r", encoding=ENCODING_UTF8) as f:
+            assert file_path_obj is not None
+
+            with file_path_obj.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
             snippet_lines = all_lines[start_line - 1 : end_line]
@@ -77,7 +77,7 @@ class CodeRetriever:
             return CodeSnippet(
                 qualified_name=qualified_name,
                 source_code=source_code,
-                file_path=file_path_to_read,
+                file_path=str(file_path_obj),
                 project_name=project_name,
                 line_start=start_line,
                 line_end=end_line,

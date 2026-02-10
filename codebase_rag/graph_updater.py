@@ -262,7 +262,7 @@ class GraphUpdater:
         )
 
     def run(self) -> None:
-        absolute_path = self.repo_path.absolute().as_posix()
+        absolute_path = str(self.repo_path.absolute())
 
         self.ingestor.ensure_node_batch(
             cs.NODE_PROJECT,
