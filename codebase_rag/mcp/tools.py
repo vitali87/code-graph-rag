@@ -398,7 +398,13 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         try:
             if offset is not None or limit is not None:
-                full_path = Path(self.project_root) / file_path
+                full_path = (Path(self.project_root) / file_path).resolve()
+                project_root = Path(self.project_root).resolve()
+                try:
+                    full_path.relative_to(project_root)
+                except ValueError:
+                    raise ValueError("Path outside project root")
+
                 start = offset if offset is not None else 0
 
                 with open(full_path, encoding=cs.ENCODING_UTF8) as f:
