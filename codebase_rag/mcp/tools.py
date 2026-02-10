@@ -6,6 +6,7 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
@@ -53,11 +54,9 @@ class MCPToolsRegistry:
         self.parsers, self.queries = load_parsers()
 
         self.code_retriever = CodeRetriever(project_root, ingestor)
-        self.file_editor = FileEditor(project_root=project_root)
-        self.file_reader = FileReader(project_root=project_root)
-        self.file_writer = FileWriter(project_root=project_root)
-        from .. import logs as lg
-        from ..config import settings
+        self.file_editor = FileEditor(project_root=project_root, mode=mode)
+        self.file_reader = FileReader(project_root=project_root, mode=mode)
+        self.file_writer = FileWriter(project_root=project_root, mode=mode)
 
         logger.info(lg.MCP_TOOLS_REGISTRY_MODE.format(mode=mode))
 
@@ -80,7 +79,6 @@ class MCPToolsRegistry:
         self._tools: dict[str, ToolMetadata] = self._build_tools()
 
     def _build_tools(self) -> dict[str, ToolMetadata]:
-        """Build and return tools dictionary based on current mode."""
         tools: dict[str, ToolMetadata] = {}
 
         tools.update(

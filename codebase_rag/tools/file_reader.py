@@ -14,8 +14,9 @@ from . import tool_descriptions as td
 
 
 class FileReader:
-    def __init__(self, project_root: str = "."):
+    def __init__(self, project_root: str = ".", mode: str = "edit"):
         self.project_root = Path(project_root).resolve()
+        self.mode = mode
         logger.info(ls.FILE_READER_INIT.format(root=self.project_root))
 
     async def read_file(self, file_path: str) -> FileReadResult:

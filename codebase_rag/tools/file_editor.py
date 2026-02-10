@@ -20,8 +20,9 @@ from . import tool_descriptions as td
 
 
 class FileEditor:
-    def __init__(self, project_root: str = ".") -> None:
+    def __init__(self, project_root: str = ".", mode: str = "edit") -> None:
         self.project_root = Path(project_root).resolve()
+        self.mode = mode
         self.dmp = diff_match_patch.diff_match_patch()
         self.parsers, _ = load_parsers()
         logger.info(ls.FILE_EDITOR_INIT.format(root=self.project_root))
@@ -204,6 +205,10 @@ class FileEditor:
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> bool:
+        if self.mode == "query":
+            logger.error(ls.QUERY_MODE_WRITE_BLOCKED.format(path=file_path))
+            return False
+
         logger.info(ls.TOOL_FILE_EDIT_SURGICAL.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
