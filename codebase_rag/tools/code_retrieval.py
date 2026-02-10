@@ -11,13 +11,24 @@ from ..constants import ENCODING_UTF8
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
+from ..utils.path_utils import validate_allowed_path
 from . import tool_descriptions as td
 
 
 class CodeRetriever:
-    def __init__(self, project_root: str, ingestor: QueryProtocol):
+    def __init__(
+        self,
+        project_root: str,
+        ingestor: QueryProtocol,
+        allowed_roots: frozenset[str] | None = None,
+    ):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
+        self.allowed_roots = (
+            frozenset(Path(root).resolve() for root in allowed_roots)
+            if allowed_roots
+            else None
+        )
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
@@ -49,7 +60,9 @@ class CodeRetriever:
             if absolute_path_str:
                 file_path_obj = Path(absolute_path_str)
             elif relative_path_str:
-                file_path_obj = self.project_root / relative_path_str
+                file_path_obj = validate_allowed_path(
+                    relative_path_str, self.project_root, self.allowed_roots
+                )
                 logger.warning(ls.NO_ABSOLUTE_PATH_FALLBACK.format(qn=qualified_name))
             else:
                 file_path_obj = None

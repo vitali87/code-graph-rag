@@ -23,6 +23,7 @@ class FileEditor:
     def __init__(self, project_root: str = ".", mode: str = "edit") -> None:
         self.project_root = Path(project_root).resolve()
         self.mode = mode
+        self.allowed_roots: frozenset[Path] | None = None
         self.dmp = diff_match_patch.diff_match_patch()
         self.parsers, _ = load_parsers()
         logger.info(ls.FILE_EDITOR_INIT.format(root=self.project_root))

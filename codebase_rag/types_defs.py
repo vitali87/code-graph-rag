@@ -133,6 +133,9 @@ class PathValidatorProtocol(Protocol):
     @property
     def project_root(self) -> Path: ...
 
+    @property
+    def allowed_roots(self) -> frozenset[Path] | None: ...
+
 
 class TreeSitterNodeProtocol(Protocol):
     @property

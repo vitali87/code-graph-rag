@@ -17,6 +17,7 @@ class FileWriter:
     def __init__(self, project_root: str = ".", mode: str = "edit"):
         self.project_root = Path(project_root).resolve()
         self.mode = mode
+        self.allowed_roots: frozenset[Path] | None = None
         logger.info(ls.FILE_WRITER_INIT.format(root=self.project_root))
 
     async def create_file(self, file_path: str, content: str) -> FileCreationResult:

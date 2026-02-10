@@ -37,6 +37,8 @@ from codebase_rag.types_defs import (
     QueryResultDict,
 )
 
+from ..utils.path_utils import validate_allowed_path
+
 
 class MCPToolsRegistry:
     def __init__(
@@ -53,9 +55,15 @@ class MCPToolsRegistry:
 
         self.parsers, self.queries = load_parsers()
 
-        self.code_retriever = CodeRetriever(project_root, ingestor)
+        self.code_retriever = CodeRetriever(
+            project_root, ingestor, allowed_roots=settings.allowed_project_roots_set
+        )
         self.file_editor = FileEditor(project_root=project_root, mode=mode)
-        self.file_reader = FileReader(project_root=project_root, mode=mode)
+        self.file_reader = FileReader(
+            project_root=project_root,
+            mode=mode,
+            allowed_roots=settings.allowed_project_roots_set,
+        )
         self.file_writer = FileWriter(project_root=project_root, mode=mode)
 
         logger.info(lg.MCP_TOOLS_REGISTRY_MODE.format(mode=mode))
@@ -398,16 +406,21 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         try:
             if offset is not None or limit is not None:
-                full_path = (Path(self.project_root) / file_path).resolve()
-                project_root = Path(self.project_root).resolve()
-                try:
-                    full_path.relative_to(project_root)
-                except ValueError:
-                    raise ValueError("Path outside project root")
+                project_root_path = Path(self.project_root).resolve()
+                allowed_roots: set[Path] = {project_root_path}
+                if settings.allowed_project_roots_set:
+                    allowed_roots.update(
+                        Path(root).resolve()
+                        for root in settings.allowed_project_roots_set
+                    )
+
+                safe_path = validate_allowed_path(
+                    file_path, project_root_path, frozenset(allowed_roots)
+                )
 
                 start = offset if offset is not None else 0
 
-                with open(full_path, encoding=cs.ENCODING_UTF8) as f:
+                with safe_path.open("r", encoding=cs.ENCODING_UTF8) as f:
                     skipped_count = sum(1 for _ in itertools.islice(f, start))
 
                     if limit is not None:
