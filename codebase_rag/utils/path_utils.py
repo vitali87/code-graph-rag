@@ -34,7 +34,7 @@ def calculate_paths(
 ) -> PathInfo:
     file_path = Path(file_path)
     repo_path = Path(repo_path)
-    relative_path = str(file_path.relative_to(repo_path))
+    relative_path = file_path.relative_to(repo_path).as_posix()
     absolute_path = str(file_path.absolute())
 
     return PathInfo(

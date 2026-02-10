@@ -41,16 +41,18 @@ class CodeRetriever:
             res = results[0]
             absolute_path_str = res.get("absolute_path")
             project_name = res.get("project_name")
+            file_path_str = res.get("relative_path")
 
             if not absolute_path_str:
-                file_path_str = res.get("relative_path")
                 logger.warning(ls.NO_ABSOLUTE_PATH_FALLBACK.format(qn=qualified_name))
 
             start_line = res.get("start")
             end_line = res.get("end")
 
             file_path_to_read = absolute_path_str or (
-                str(self.project_root / file_path_str) if file_path_str else ""
+                str(self.project_root.as_posix() / file_path_str)
+                if file_path_str
+                else ""
             )
 
             if not all([file_path_to_read, start_line, end_line]):

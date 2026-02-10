@@ -26,7 +26,6 @@ def _parse_frozenset_of_strings(value: str | frozenset[str] | None) -> frozenset
         if not value.strip():
             return frozenset()
         return frozenset(path.strip() for path in value.split(",") if path.strip())
-    return frozenset()
 
 
 class ApiKeyInfoEntry(TypedDict):
