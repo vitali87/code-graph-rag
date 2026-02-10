@@ -268,17 +268,7 @@ class FileEditor:
                 f.write(new_content)
 
             logger.success(ls.TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
-
-            try:
-                relative_path_str = str(file_path.relative_to(self.project_root))
-            except ValueError:
-                relative_path_str = None
-
-            return EditResult(
-                file_path=str(file_path),
-                relative_path=relative_path_str,
-                success=True,
-            )
+            return EditResult(file_path=str(file_path), success=True)
 
         except Exception as e:
             error_msg = ls.UNEXPECTED.format(error=e)

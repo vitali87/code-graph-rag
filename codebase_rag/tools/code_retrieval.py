@@ -40,7 +40,6 @@ class CodeRetriever:
 
             res = results[0]
             absolute_path_str = res.get("absolute_path")
-            relative_path_str = res.get("relative_path")
             project_name = res.get("project_name")
 
             if not absolute_path_str:
@@ -59,7 +58,6 @@ class CodeRetriever:
                     qualified_name=qualified_name,
                     source_code="",
                     file_path=file_path_to_read or "",
-                    relative_path=relative_path_str,
                     project_name=project_name,
                     line_start=0,
                     line_end=0,
@@ -78,7 +76,6 @@ class CodeRetriever:
                 qualified_name=qualified_name,
                 source_code=source_code,
                 file_path=file_path_to_read,
-                relative_path=relative_path_str,
                 project_name=project_name,
                 line_start=start_line,
                 line_end=end_line,

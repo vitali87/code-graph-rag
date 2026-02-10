@@ -86,14 +86,12 @@ class TestCrossProjectAccess:
             qualified_name="test.func",
             source_code="def test(): pass",
             file_path="/absolute/path/test.py",
-            relative_path="test.py",
             project_name="test_project",
             line_start=1,
             line_end=2,
         )
 
         assert snippet.file_path == "/absolute/path/test.py"
-        assert snippet.relative_path == "test.py"
         assert snippet.project_name == "test_project"
 
 
