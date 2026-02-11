@@ -18,12 +18,12 @@ class FileReader:
         self,
         project_root: str = ".",
         mode: str = "edit",
-        allowed_roots: frozenset[str] | None = None,
+        allowed_roots: frozenset[Path] | None = None,
     ):
         self.project_root = Path(project_root).resolve()
         self.mode = mode
         self.allowed_roots = (
-            frozenset(Path(root).resolve() for root in allowed_roots)
+            frozenset(root.resolve() for root in allowed_roots)
             if allowed_roots
             else None
         )

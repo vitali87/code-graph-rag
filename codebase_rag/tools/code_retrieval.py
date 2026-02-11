@@ -20,12 +20,12 @@ class CodeRetriever:
         self,
         project_root: str,
         ingestor: QueryProtocol,
-        allowed_roots: frozenset[str] | None = None,
+        allowed_roots: frozenset[Path] | None = None,
     ):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
         self.allowed_roots = (
-            frozenset(Path(root).resolve() for root in allowed_roots)
+            frozenset(root.resolve() for root in allowed_roots)
             if allowed_roots
             else None
         )

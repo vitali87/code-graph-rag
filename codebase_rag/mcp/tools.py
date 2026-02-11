@@ -410,8 +410,7 @@ class MCPToolsRegistry:
                 allowed_roots: set[Path] = {project_root_path}
                 if settings.allowed_project_roots_set:
                     allowed_roots.update(
-                        Path(root).resolve()
-                        for root in settings.allowed_project_roots_set
+                        root.resolve() for root in settings.allowed_project_roots_set
                     )
 
                 safe_path = validate_allowed_path(

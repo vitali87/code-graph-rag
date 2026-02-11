@@ -17,15 +17,17 @@ from .types_defs import CgrignorePatterns, ModelConfigKwargs
 load_dotenv()
 
 
-def _parse_frozenset_of_strings(value: str | frozenset[str] | None) -> frozenset[str]:
+def _parse_frozenset_of_strings(value: str | frozenset[str] | None) -> frozenset[Path]:
     if value is None:
         return frozenset()
     if isinstance(value, frozenset):
-        return value
+        return frozenset(Path(path) for path in value)
     if isinstance(value, str):
         if not value.strip():
             return frozenset()
-        return frozenset(path.strip() for path in value.split(",") if path.strip())
+        return frozenset(
+            Path(path.strip()) for path in value.split(",") if path.strip()
+        )
 
 
 class ApiKeyInfoEntry(TypedDict):
@@ -194,7 +196,7 @@ class AppConfig(BaseSettings):
         return v
 
     @property
-    def allowed_project_roots_set(self) -> frozenset[str]:
+    def allowed_project_roots_set(self) -> frozenset[Path]:
         return _parse_frozenset_of_strings(self.ALLOWED_PROJECT_ROOTS)
 
     SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(

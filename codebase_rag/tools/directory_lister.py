@@ -13,11 +13,10 @@ from . import tool_descriptions as td
 
 
 class DirectoryLister:
-    def __init__(self, project_root: str, allowed_roots: frozenset[str] | None = None):
+    def __init__(self, project_root: str, allowed_roots: frozenset[Path] | None = None):
         self.project_root = Path(project_root).resolve()
         self.allowed_roots = frozenset(
-            {self.project_root}
-            | ({Path(root).resolve() for root in allowed_roots or []})
+            {self.project_root} | ({root.resolve() for root in allowed_roots or []})
         )
 
     def list_directory_contents(self, directory_path: str) -> str:
