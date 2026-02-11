@@ -49,6 +49,9 @@ COMMAND_INVALID_SYNTAX = "Invalid command syntax: {segment}"
 CODE_ENTITY_NOT_FOUND = "Entity not found in graph."
 CODE_MISSING_LOCATION = "Graph entry is missing location data."
 
+# (H) Tool operation errors
+WRITE_QUERY_MODE_BLOCKED = "Write operations are not allowed in query mode"
+
 # (H) File writer errors
 FILE_WRITER_SECURITY = (
     "Security risk: Attempted to create file outside of project root: {path}"

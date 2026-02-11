@@ -33,7 +33,7 @@ class FileWriter:
             return FileCreationResult(
                 file_path=str(file_path),
                 success=False,
-                error_message="Write operations are not allowed in query mode",
+                error_message=te.WRITE_QUERY_MODE_BLOCKED,
             )
 
         try:
