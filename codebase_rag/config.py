@@ -23,11 +23,11 @@ def _parse_frozenset_of_strings(value: str | frozenset[str] | None) -> frozenset
     if isinstance(value, frozenset):
         return frozenset(Path(path) for path in value)
     if isinstance(value, str):
-        if not value.strip():
-            return frozenset()
-        return frozenset(
-            Path(path.strip()) for path in value.split(",") if path.strip()
-        )
+        if value.strip():
+            return frozenset(
+                Path(path.strip()) for path in value.split(",") if path.strip()
+            )
+    return frozenset()
 
 
 class ApiKeyInfoEntry(TypedDict):
