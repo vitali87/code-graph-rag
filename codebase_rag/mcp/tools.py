@@ -407,14 +407,8 @@ class MCPToolsRegistry:
         try:
             if offset is not None or limit is not None:
                 project_root_path = Path(self.project_root).resolve()
-                allowed_roots: set[Path] = {project_root_path}
-                if settings.allowed_project_roots_set:
-                    allowed_roots.update(
-                        root.resolve() for root in settings.allowed_project_roots_set
-                    )
-
                 safe_path = validate_allowed_path(
-                    file_path, project_root_path, frozenset(allowed_roots)
+                    file_path, project_root_path, self.file_reader.allowed_roots
                 )
 
                 start = offset if offset is not None else 0
