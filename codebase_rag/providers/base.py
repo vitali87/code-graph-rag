@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 import httpx
 from loguru import logger
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
@@ -24,7 +24,7 @@ class ModelProvider(ABC):
     @abstractmethod
     def create_model(
         self, model_id: str, **kwargs: str | int | None
-    ) -> GoogleModel | OpenAIChatModel:
+    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel:
         pass
 
     @abstractmethod
@@ -118,11 +118,11 @@ class OpenAIProvider(ModelProvider):
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIChatModel:
+    ) -> OpenAIResponsesModel:
         self.validate_config()
 
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
-        return OpenAIChatModel(model_id, provider=provider)
+        return OpenAIResponsesModel(model_id, provider=provider)
 
 
 class OllamaProvider(ModelProvider):
