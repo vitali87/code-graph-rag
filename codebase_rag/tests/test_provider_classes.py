@@ -4,8 +4,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic_ai.models.google import GoogleModel, OpenAIResponsesModel
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
 from codebase_rag.constants import GoogleProviderType, Provider
 from codebase_rag.providers.base import (
