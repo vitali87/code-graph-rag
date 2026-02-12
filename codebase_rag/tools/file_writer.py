@@ -14,8 +14,10 @@ from . import tool_descriptions as td
 
 
 class FileWriter:
-    def __init__(self, project_root: str = "."):
+    def __init__(self, project_root: str = ".", mode: str = "edit"):
         self.project_root = Path(project_root).resolve()
+        self.mode = mode
+        self.allowed_roots: frozenset[Path] | None = None
         logger.info(ls.FILE_WRITER_INIT.format(root=self.project_root))
 
     async def create_file(self, file_path: str, content: str) -> FileCreationResult:
@@ -26,6 +28,14 @@ class FileWriter:
     async def _create_validated(
         self, file_path: Path, content: str
     ) -> FileCreationResult:
+        if self.mode == "query":
+            logger.error(ls.QUERY_MODE_WRITE_BLOCKED.format(path=file_path))
+            return FileCreationResult(
+                file_path=str(file_path),
+                success=False,
+                error_message=te.WRITE_QUERY_MODE_BLOCKED,
+            )
+
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding=cs.ENCODING_UTF8)

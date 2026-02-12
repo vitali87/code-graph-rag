@@ -513,16 +513,69 @@ The agent will incorporate the guidance from your reference documents when sugge
 
 Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seamless integration with Claude Code and other MCP clients.
 
+### MCP Dual Mode System (v0.0.60+)
+
+The MCP server now supports two distinct modes with different capabilities and security profiles:
+
+#### Query Mode (Production Recommended)
+**Read-only access** for safe codebase exploration and analysis.
+
+**Available Tools:**
+- `list_projects` - List all indexed projects
+- `query_code_graph` - Natural language graph queries
+- `get_code_snippet` - Retrieve source code by qualified name
+- `list_directory` - Browse directory structure
+
+**Use Cases:**
+- Production environments where code modification is not allowed
+- Code review and exploration
+- Documentation generation
+- Architecture analysis
+
+#### Edit Mode (Development)
+**Full access** including file editing and database management.
+
+**Additional Tools (beyond Query mode):**
+- `read_file` / `write_file` - File operations
+- `surgical_replace_code` - Precise code editing
+- `delete_project` - Remove projects from graph
+- `wipe_database` - Complete database reset (dangerous!)
+- `index_repository` - Build/update knowledge graph
+
+**Use Cases:**
+- Local development environments
+- Code refactoring assistance
+- Automated code generation
+- Database maintenance
+
 ### Quick Setup
+
+#### Query Mode (Recommended for Production)
 
 ```bash
 claude mcp add --transport stdio code-graph-rag \
-  --env TARGET_REPO_PATH=/absolute/path/to/your/project \
+  --env TARGET_REPO_PATH="$(pwd)" \
+  --env MCP_MODE=query \
   --env CYPHER_PROVIDER=openai \
   --env CYPHER_MODEL=gpt-4 \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
+
+#### Edit Mode (For Development)
+
+```bash
+claude mcp add --transport stdio code-graph-rag \
+  --env TARGET_REPO_PATH="$(pwd)" \
+  --env MCP_MODE=edit \
+  --env ALLOWED_PROJECT_ROOTS="$(pwd)" \
+  --env CYPHER_PROVIDER=openai \
+  --env CYPHER_MODEL=gpt-4 \
+  --env CYPHER_API_KEY=your-api-key \
+  -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
+```
+
+**Important:** Always set `ALLOWED_PROJECT_ROOTS` in Edit mode to restrict file operations to specific directories.
 
 ### Available Tools
 
@@ -543,13 +596,48 @@ claude mcp add --transport stdio code-graph-rag \
 
 ### Example Usage
 
+#### Query Mode
 ```
-> Index this repository
 > What functions call UserService.create_user?
-> Update the login function to add rate limiting
+> Show me all classes that implement Repository
+> List all modules in the utils package
+> Get the source code for AuthService.login
 ```
 
-For detailed setup, see [Claude Code Setup Guide](docs/claude-code-setup.md).
+#### Edit Mode
+```
+> Index this repository
+> Update the login function to add rate limiting
+> Refactor this class to use dependency injection
+> Delete the deprecated project from the graph
+```
+
+### Security Configuration
+
+For Edit mode, always restrict access with `ALLOWED_PROJECT_ROOTS`:
+
+```bash
+# Single project
+--env ALLOWED_PROJECT_ROOTS="/path/to/project"
+
+# Multiple projects (comma-separated)
+--env ALLOWED_PROJECT_ROOTS="/path/to/project1,/path/to/project2"
+```
+
+This ensures file operations cannot modify files outside the specified directories.
+
+### Mode Selection Guide
+
+| Scenario | Recommended Mode | Reasoning |
+|----------|-----------------|-----------|
+| Production code review | Query | Prevents accidental modifications |
+| Development work | Edit | Allows code generation and editing |
+| CI/CD pipelines | Query | Read-only analysis is sufficient |
+| Local experimentation | Edit | Full control for testing |
+| Multi-project analysis | Query | Safe exploration across projects |
+| Code refactoring | Edit | Requires write access |
+
+For detailed setup and configuration examples, see [Claude Code Setup Guide](docs/claude-code-setup.md) and [Security Best Practices](docs/security-best-practices.md).
 
 ## 📊 Graph Schema
 
@@ -560,20 +648,20 @@ The knowledge graph uses the following node types and relationships:
 <!-- SECTION:node_schemas -->
 | Label | Properties |
 |-----|----------|
-| Project | `{name: string}` |
-| Package | `{qualified_name: string, name: string, path: string}` |
-| Folder | `{path: string, name: string}` |
-| File | `{path: string, name: string, extension: string}` |
-| Module | `{qualified_name: string, name: string, path: string}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Interface | `{qualified_name: string, name: string}` |
-| Enum | `{qualified_name: string, name: string}` |
-| Type | `{qualified_name: string, name: string}` |
-| Union | `{qualified_name: string, name: string}` |
-| ModuleInterface | `{qualified_name: string, name: string, path: string}` |
-| ModuleImplementation | `{qualified_name: string, name: string, path: string, implements_module: string}` |
+| Project | `{name: string, absolute_path: string, project_name: string}` |
+| Package | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| Folder | `{path: string, name: string, absolute_path: string, project_name: string}` |
+| File | `{path: string, name: string, extension: string, absolute_path: string, project_name: string}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| Class | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, decorators: list[string]}` |
+| Function | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, decorators: list[string]}` |
+| Method | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, decorators: list[string]}` |
+| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| Type | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| Union | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}` |
+| ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, implements_module: string}` |
 | ExternalPackage | `{name: string, version_spec: string}` |
 <!-- /SECTION:node_schemas -->
 
@@ -652,6 +740,10 @@ Configuration is managed through environment variables in `.env` file:
 - `MEMGRAPH_BATCH_SIZE`: Batch size for Memgraph operations (default: `1000`)
 - `TARGET_REPO_PATH`: Default repository path (default: `.`)
 - `LOCAL_MODEL_ENDPOINT`: Fallback endpoint for Ollama (default: `http://localhost:11434/v1`)
+
+### MCP Server Configuration
+- `MCP_MODE`: MCP server operation mode - `query` (read-only) or `edit` (full access). Default: `edit`. **Recommended: Use `query` mode for production environments.**
+- `ALLOWED_PROJECT_ROOTS`: Comma-separated list of allowed project root paths for file operations in Edit mode. This is a critical security setting that restricts file read/write operations to specified directories. Example: `/path/to/project1,/path/to/project2`
 
 ### Custom Ignore Patterns
 

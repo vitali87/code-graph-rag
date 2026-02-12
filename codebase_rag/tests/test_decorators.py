@@ -162,6 +162,7 @@ class TestValidateProjectPath:
 
         class MockService:
             project_root = Path("/project")
+            allowed_roots: frozenset[Path] | None = None
 
             @validate_project_path(ResultType, "file_path")
             async def read(self, file_path: Path) -> ResultType:
@@ -183,6 +184,7 @@ class TestValidateProjectPath:
 
         class MockService:
             project_root = Path("/project")
+            allowed_roots: frozenset[Path] | None = None
 
             @validate_project_path(ResultType, "file_path")
             async def read(self, file_path: Path) -> ResultType:
@@ -204,6 +206,7 @@ class TestValidateProjectPath:
 
         class MockService:
             project_root = Path("/project")
+            allowed_roots: frozenset[Path] | None = None
 
             @validate_project_path(ResultType, "file_path")
             async def read(self, file_path: Path) -> ResultType:
@@ -224,6 +227,7 @@ class TestValidateProjectPath:
 
         class MockService:
             project_root = Path("/project")
+            allowed_roots: frozenset[Path] | None = None
 
             @validate_project_path(ResultType, "file_path")
             async def save(self, content: str, file_path: Path) -> ResultType:

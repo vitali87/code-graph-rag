@@ -6,7 +6,7 @@ from .. import constants as cs
 from .. import logs
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
-from ..utils.path_utils import should_skip_path
+from ..utils.path_utils import calculate_paths, should_skip_path
 
 
 class StructureProcessor:
@@ -73,12 +73,20 @@ class StructureProcessor:
                 logger.info(
                     logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn)
                 )
+
+                paths = calculate_paths(
+                    file_path=root,
+                    repo_path=self.repo_path,
+                )
+
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.PACKAGE,
                     {
                         cs.KEY_QUALIFIED_NAME: package_qn,
                         cs.KEY_NAME: root.name,
-                        cs.KEY_PATH: relative_root.as_posix(),
+                        cs.KEY_PATH: paths["relative_path"],
+                        cs.KEY_ABSOLUTE_PATH: paths["absolute_path"],
+                        cs.KEY_PROJECT_NAME: self.project_name,
                     },
                 )
                 parent_identifier = self._get_parent_identifier(
@@ -94,9 +102,20 @@ class StructureProcessor:
                 logger.info(
                     logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root)
                 )
+
+                paths = calculate_paths(
+                    file_path=root,
+                    repo_path=self.repo_path,
+                )
+
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.FOLDER,
-                    {cs.KEY_PATH: relative_root.as_posix(), cs.KEY_NAME: root.name},
+                    {
+                        cs.KEY_PATH: paths["relative_path"],
+                        cs.KEY_ABSOLUTE_PATH: paths["absolute_path"],
+                        cs.KEY_NAME: root.name,
+                        cs.KEY_PROJECT_NAME: self.project_name,
+                    },
                 )
                 parent_identifier = self._get_parent_identifier(
                     parent_rel_path, parent_container_qn
@@ -108,7 +127,6 @@ class StructureProcessor:
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
-        relative_filepath = file_path.relative_to(self.repo_path).as_posix()
         relative_root = file_path.parent.relative_to(self.repo_path)
 
         parent_container_qn = self.structural_elements.get(relative_root)
@@ -116,17 +134,24 @@ class StructureProcessor:
             relative_root, parent_container_qn
         )
 
+        paths = calculate_paths(
+            file_path=file_path,
+            repo_path=self.repo_path,
+        )
+
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.FILE,
             {
-                cs.KEY_PATH: relative_filepath,
+                cs.KEY_PATH: paths["relative_path"],
+                cs.KEY_ABSOLUTE_PATH: paths["absolute_path"],
                 cs.KEY_NAME: file_name,
                 cs.KEY_EXTENSION: file_path.suffix,
+                cs.KEY_PROJECT_NAME: self.project_name,
             },
         )
 
         self.ingestor.ensure_relationship_batch(
             parent_identifier,
             cs.RelationshipType.CONTAINS_FILE,
-            (cs.NodeLabel.FILE, cs.KEY_PATH, relative_filepath),
+            (cs.NodeLabel.FILE, cs.KEY_PATH, paths["relative_path"]),
         )

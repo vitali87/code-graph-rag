@@ -100,7 +100,7 @@ def get_function_source_code(node_id: int) -> str | None:
                 return None
 
             result = results[0]
-            file_path = result.get("path")
+            file_path = result.get("absolute_path") or result.get("relative_path")
             start_line = result.get("start_line")
             end_line = result.get("end_line")
 

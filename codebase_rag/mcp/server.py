@@ -67,6 +67,9 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     logger.info(lg.MCP_SERVER_INIT_SERVICES)
 
+    mode = settings.MCP_MODE
+    logger.info(lg.MCP_SERVER_MODE.format(mode=mode))
+
     ingestor = MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
@@ -79,6 +82,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         project_root=str(project_root),
         ingestor=ingestor,
         cypher_gen=cypher_generator,
+        mode=mode,
     )
 
     logger.info(lg.MCP_SERVER_INIT_SUCCESS)

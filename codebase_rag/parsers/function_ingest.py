@@ -14,10 +14,12 @@ from ..types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
+    PathInfo,
     PropertyDict,
     SimpleNameLookup,
 )
 from ..utils.fqn_resolver import resolve_fqn_from_ast
+from ..utils.path_utils import calculate_paths
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
@@ -160,6 +162,8 @@ class FunctionIngestMixin:
         )
         class_qn = f"{module_qn}.{class_name_normalized}"
 
+        file_path = self.module_qn_to_file_path.get(module_qn)
+
         ingest_method(
             method_node=func_node,
             container_qn=class_qn,
@@ -170,6 +174,9 @@ class FunctionIngestMixin:
             get_docstring_func=self._get_docstring,
             language=cs.SupportedLanguage.CPP,
             extract_decorators_func=self._extract_decorators,
+            file_path=file_path,
+            repo_path=self.repo_path if file_path else None,
+            project_name=self.project_name,
         )
 
         return True
@@ -238,7 +245,15 @@ class FunctionIngestMixin:
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
-        func_props = self._build_function_props(func_node, resolution)
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        paths = None
+        if file_path:
+            paths = calculate_paths(
+                file_path=file_path,
+                repo_path=self.repo_path,
+            )
+
+        func_props = self._build_function_props(func_node, resolution, paths)
         logger.info(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
@@ -253,9 +268,12 @@ class FunctionIngestMixin:
         )
 
     def _build_function_props(
-        self, func_node: Node, resolution: FunctionResolution
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        paths: PathInfo | None = None,
     ) -> PropertyDict:
-        return {
+        props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,
             cs.KEY_DECORATORS: self._extract_decorators(func_node),
@@ -264,6 +282,13 @@ class FunctionIngestMixin:
             cs.KEY_DOCSTRING: self._get_docstring(func_node),
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
+
+        if paths:
+            props[cs.KEY_PATH] = paths["relative_path"]
+            props[cs.KEY_ABSOLUTE_PATH] = paths["absolute_path"]
+            props[cs.KEY_PROJECT_NAME] = self.project_name
+
+        return props
 
     def _create_function_relationships(
         self,

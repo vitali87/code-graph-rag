@@ -181,6 +181,8 @@ KEY_TO_VAL = "to_val"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+KEY_ABSOLUTE_PATH = "absolute_path"
+EXTERNAL_PROJECT_NAME = "__external__"
 KEY_IS_EXTERNAL = "is_external"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
@@ -419,11 +421,10 @@ CYPHER_DEFAULT_LIMIT = 50
 
 CYPHER_QUERY_EMBEDDINGS = """
 MATCH (m:Module)-[:DEFINES]->(n)
-WHERE (n:Function OR n:Method)
-  AND m.qualified_name STARTS WITH $project_name + '.'
+WHERE n.project_name = $project_name
 RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
        n.start_line AS start_line, n.end_line AS end_line,
-       m.path AS path
+       n.path AS path
 """
 
 

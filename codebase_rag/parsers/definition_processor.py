@@ -8,6 +8,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
+from ..utils.path_utils import calculate_paths
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
@@ -94,12 +95,19 @@ class DefinitionProcessor(
                 )
             self.module_qn_to_file_path[module_qn] = file_path
 
+            paths = calculate_paths(
+                file_path=file_path,
+                repo_path=self.repo_path,
+            )
+
             self.ingestor.ensure_node_batch(
                 cs.NodeLabel.MODULE,
                 {
                     cs.KEY_QUALIFIED_NAME: module_qn,
                     cs.KEY_NAME: file_path.name,
-                    cs.KEY_PATH: relative_path_str,
+                    cs.KEY_PATH: paths["relative_path"],
+                    cs.KEY_ABSOLUTE_PATH: paths["absolute_path"],
+                    cs.KEY_PROJECT_NAME: self.project_name,
                 },
             )
 
@@ -109,7 +117,7 @@ class DefinitionProcessor(
                 (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
                 if parent_container_qn
                 else (
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, str(parent_rel_path))
+                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
                     if parent_rel_path != Path(".")
                     else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
                 )

@@ -6,7 +6,7 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -15,6 +15,19 @@ from . import logs
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 load_dotenv()
+
+
+def _parse_frozenset_of_strings(value: str | frozenset[str] | None) -> frozenset[Path]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, frozenset):
+        return frozenset(Path(path) for path in value)
+    if isinstance(value, str):
+        if value.strip():
+            return frozenset(
+                Path(path.strip()) for path in value.split(",") if path.strip()
+            )
+    return frozenset()
 
 
 class ApiKeyInfoEntry(TypedDict):
@@ -171,7 +184,21 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
+    ALLOWED_PROJECT_ROOTS: str = ""
     SHELL_COMMAND_TIMEOUT: int = 30
+    MCP_MODE: str = "edit"
+
+    @field_validator("MCP_MODE")
+    @classmethod
+    def _validate_mcp_mode(cls, v: str) -> str:
+        if v not in ("query", "edit"):
+            raise ValueError("MCP_MODE must be 'query' or 'edit'")
+        return v
+
+    @property
+    def allowed_project_roots_set(self) -> frozenset[Path]:
+        return _parse_frozenset_of_strings(self.ALLOWED_PROJECT_ROOTS)
+
     SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
         {
             "ls",

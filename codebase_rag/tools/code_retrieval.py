@@ -11,13 +11,24 @@ from ..constants import ENCODING_UTF8
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
+from ..utils.path_utils import validate_allowed_path
 from . import tool_descriptions as td
 
 
 class CodeRetriever:
-    def __init__(self, project_root: str, ingestor: QueryProtocol):
+    def __init__(
+        self,
+        project_root: str,
+        ingestor: QueryProtocol,
+        allowed_roots: frozenset[Path] | None = None,
+    ):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
+        self.allowed_roots = (
+            frozenset(root.resolve() for root in allowed_roots)
+            if allowed_roots
+            else None
+        )
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
@@ -39,23 +50,38 @@ class CodeRetriever:
                 )
 
             res = results[0]
-            file_path_str = res.get("path")
+            project_name = res.get("project_name")
             start_line = res.get("start")
             end_line = res.get("end")
 
-            if not all([file_path_str, start_line, end_line]):
+            absolute_path_str = res.get("absolute_path")
+            relative_path_str = res.get("relative_path")
+
+            if absolute_path_str:
+                file_path_obj = Path(absolute_path_str)
+            elif relative_path_str:
+                file_path_obj = validate_allowed_path(
+                    relative_path_str, self.project_root, self.allowed_roots
+                )
+                logger.warning(ls.NO_ABSOLUTE_PATH_FALLBACK.format(qn=qualified_name))
+            else:
+                file_path_obj = None
+
+            if not (file_path_obj and start_line and end_line):
                 return CodeSnippet(
                     qualified_name=qualified_name,
                     source_code="",
-                    file_path=file_path_str or "",
+                    file_path=str(file_path_obj) if file_path_obj else "",
+                    project_name=project_name,
                     line_start=0,
                     line_end=0,
                     found=False,
                     error_message=te.CODE_MISSING_LOCATION,
                 )
 
-            full_path = self.project_root / file_path_str
-            with full_path.open("r", encoding=ENCODING_UTF8) as f:
+            assert file_path_obj is not None
+
+            with file_path_obj.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
             snippet_lines = all_lines[start_line - 1 : end_line]
@@ -64,7 +90,8 @@ class CodeRetriever:
             return CodeSnippet(
                 qualified_name=qualified_name,
                 source_code=source_code,
-                file_path=file_path_str,
+                file_path=str(file_path_obj),
+                project_name=project_name,
                 line_start=start_line,
                 line_end=end_line,
                 docstring=res.get("docstring"),

@@ -262,8 +262,14 @@ class GraphUpdater:
         )
 
     def run(self) -> None:
+        absolute_path = str(self.repo_path.resolve())
+
         self.ingestor.ensure_node_batch(
-            cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
+            cs.NODE_PROJECT,
+            {
+                cs.KEY_NAME: self.project_name,
+                cs.KEY_ABSOLUTE_PATH: absolute_path,
+            },
         )
         logger.info(ls.ENSURING_PROJECT.format(name=self.project_name))
 
@@ -369,7 +375,7 @@ class GraphUpdater:
             logger.info(ls.PASS_4_EMBEDDINGS)
 
             results = self.ingestor.fetch_all(
-                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name + "."}
+                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
             )
 
             if not results:

@@ -238,6 +238,7 @@ class ImportProcessor:
                 cs.KEY_QUALIFIED_NAME: module_path,
                 cs.KEY_PATH: full_name,
                 cs.KEY_IS_EXTERNAL: True,
+                cs.KEY_PROJECT_NAME: cs.EXTERNAL_PROJECT_NAME,
             },
         )
 

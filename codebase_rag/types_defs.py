@@ -133,6 +133,9 @@ class PathValidatorProtocol(Protocol):
     @property
     def project_root(self) -> Path: ...
 
+    @property
+    def allowed_roots(self) -> frozenset[Path] | None: ...
+
 
 class TreeSitterNodeProtocol(Protocol):
     @property
@@ -379,6 +382,8 @@ class CodeSnippetResultDict(TypedDict, total=False):
     qualified_name: str
     source_code: str
     file_path: str
+    relative_path: str | None
+    project_name: str | None
     line_start: int
     line_end: int
     docstring: str | None
@@ -437,38 +442,60 @@ class RelationshipSchema(NamedTuple):
 
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
-    NodeSchema(NodeLabel.PROJECT, "{name: string}"),
     NodeSchema(
-        NodeLabel.PACKAGE, "{qualified_name: string, name: string, path: string}"
+        NodeLabel.PROJECT, "{name: string, absolute_path: string, project_name: string}"
     ),
-    NodeSchema(NodeLabel.FOLDER, "{path: string, name: string}"),
-    NodeSchema(NodeLabel.FILE, "{path: string, name: string, extension: string}"),
     NodeSchema(
-        NodeLabel.MODULE, "{qualified_name: string, name: string, path: string}"
+        NodeLabel.PACKAGE,
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}",
+    ),
+    NodeSchema(
+        NodeLabel.FOLDER,
+        "{path: string, name: string, absolute_path: string, project_name: string}",
+    ),
+    NodeSchema(
+        NodeLabel.FILE,
+        "{path: string, name: string, extension: string, absolute_path: string, project_name: string}",
+    ),
+    NodeSchema(
+        NodeLabel.MODULE,
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, decorators: list[string]}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, decorators: list[string]}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, decorators: list[string]}",
     ),
-    NodeSchema(NodeLabel.INTERFACE, "{qualified_name: string, name: string}"),
-    NodeSchema(NodeLabel.ENUM, "{qualified_name: string, name: string}"),
-    NodeSchema(NodeLabel.TYPE, "{qualified_name: string, name: string}"),
-    NodeSchema(NodeLabel.UNION, "{qualified_name: string, name: string}"),
+    NodeSchema(
+        NodeLabel.INTERFACE,
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}",
+    ),
+    NodeSchema(
+        NodeLabel.ENUM,
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}",
+    ),
+    NodeSchema(
+        NodeLabel.TYPE,
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}",
+    ),
+    NodeSchema(
+        NodeLabel.UNION,
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}",
+    ),
     NodeSchema(
         NodeLabel.MODULE_INTERFACE,
-        "{qualified_name: string, name: string, path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string}",
     ),
     NodeSchema(
         NodeLabel.MODULE_IMPLEMENTATION,
-        "{qualified_name: string, name: string, path: string, implements_module: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, project_name: string, implements_module: string}",
     ),
     NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version_spec: string}"),
 )
@@ -556,3 +583,8 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.FUNCTION, NodeLabel.METHOD),
     ),
 )
+
+
+class PathInfo(TypedDict):
+    relative_path: str
+    absolute_path: str

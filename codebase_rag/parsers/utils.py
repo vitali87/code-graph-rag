@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -17,6 +18,7 @@ from ..types_defs import (
     SimpleNameLookup,
     TreeSitterNodeProtocol,
 )
+from ..utils.path_utils import calculate_paths
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
@@ -83,6 +85,9 @@ def ingest_method(
     language: cs.SupportedLanguage | None = None,
     extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
     method_qualified_name: str | None = None,
+    file_path: Path | str | None = None,
+    repo_path: Path | str | None = None,
+    project_name: str | None = None,
 ) -> None:
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
@@ -109,6 +114,18 @@ def ingest_method(
         cs.KEY_END_LINE: method_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
     }
+
+    if file_path and repo_path and project_name:
+        try:
+            paths = calculate_paths(
+                file_path=file_path,
+                repo_path=repo_path,
+            )
+            method_props[cs.KEY_PATH] = paths["relative_path"]
+            method_props[cs.KEY_ABSOLUTE_PATH] = paths["absolute_path"]
+            method_props[cs.KEY_PROJECT_NAME] = project_name
+        except (ValueError, TypeError) as e:
+            logger.warning(logs.METHOD_PATH_CALC_FAILED.format(qn=method_qn, error=e))
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)

@@ -593,6 +593,7 @@ MCP_WRITE_FILE = "[MCP] write_file: {path}"
 MCP_ERROR_WRITE = "[MCP] Error writing file: {error}"
 MCP_LIST_DIR = "[MCP] list_directory: {path}"
 MCP_ERROR_LIST_DIR = "[MCP] Error listing directory: {error}"
+QUERY_MODE_WRITE_BLOCKED = "[MCP] Write operation blocked in query mode for: {path}"
 
 # (H) MCP server logs
 MCP_SERVER_INFERRED_ROOT = "[GraphCode MCP] Using inferred project root: {path}"
@@ -608,10 +609,14 @@ MCP_SERVER_CALLING_TOOL = "[GraphCode MCP] Calling tool: {name}"
 MCP_SERVER_UNKNOWN_TOOL = "[GraphCode MCP] Unknown tool: {name}"
 MCP_SERVER_TOOL_ERROR = "[GraphCode MCP] Error executing tool '{name}': {error}"
 MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
+MCP_SERVER_MODE = "[GraphCode MCP] Server running in mode: {mode}"
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
+MCP_TOOLS_REGISTRY_MODE = (
+    "[GraphCode MCP] MCPToolsRegistry initialized in '{mode}' mode"
+)
 
 # (H) Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
@@ -621,3 +626,9 @@ EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
 MODEL_SWITCHED = "Model switched to: {model}"
 MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
 MODEL_CURRENT = "Current model: {model}"
+
+# (H) Path parse logs
+METHOD_PATH_CALC_FAILED = "Failed to calculate paths for method {qn}: {error}"
+NO_ABSOLUTE_PATH_FALLBACK = (
+    "No absolute_path found for {qn}, falling back to relative path"
+)

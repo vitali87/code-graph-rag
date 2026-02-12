@@ -16,12 +16,15 @@ from ..language_spec import get_language_for_extension, get_language_spec
 from ..parser_loader import load_parsers
 from ..schemas import EditResult
 from ..types_defs import FunctionMatch
+from ..utils.path_utils import validate_allowed_path
 from . import tool_descriptions as td
 
 
 class FileEditor:
-    def __init__(self, project_root: str = ".") -> None:
+    def __init__(self, project_root: str = ".", mode: str = "edit") -> None:
         self.project_root = Path(project_root).resolve()
+        self.mode = mode
+        self.allowed_roots: frozenset[Path] | None = None
         self.dmp = diff_match_patch.diff_match_patch()
         self.parsers, _ = load_parsers()
         logger.info(ls.FILE_EDITOR_INIT.format(root=self.project_root))
@@ -204,10 +207,15 @@ class FileEditor:
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> bool:
+        if self.mode == "query":
+            logger.error(ls.QUERY_MODE_WRITE_BLOCKED.format(path=file_path))
+            return False
+
         logger.info(ls.TOOL_FILE_EDIT_SURGICAL.format(path=file_path))
         try:
-            full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root)
+            full_path = validate_allowed_path(
+                file_path, self.project_root, self.allowed_roots
+            )
 
             if not full_path.is_file():
                 logger.error(ls.EDITOR_FILE_NOT_FOUND.format(path=file_path))
@@ -245,7 +253,7 @@ class FileEditor:
             logger.success(ls.TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
             return True
 
-        except ValueError:
+        except PermissionError:
             logger.error(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
             return False
         except Exception as e:

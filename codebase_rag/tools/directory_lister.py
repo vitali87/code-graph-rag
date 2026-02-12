@@ -13,8 +13,11 @@ from . import tool_descriptions as td
 
 
 class DirectoryLister:
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str, allowed_roots: frozenset[Path] | None = None):
         self.project_root = Path(project_root).resolve()
+        self.allowed_roots = frozenset(
+            {self.project_root} | ({root.resolve() for root in allowed_roots or []})
+        )
 
     def list_directory_contents(self, directory_path: str) -> str:
         target_path = self._get_safe_path(directory_path)
@@ -38,12 +41,16 @@ class DirectoryLister:
         else:
             safe_path = (self.project_root / file_path).resolve()
 
-        try:
-            safe_path.relative_to(self.project_root.resolve())
-        except ValueError as e:
-            raise PermissionError(ex.ACCESS_DENIED) from e
+        is_allowed = False
+        for allowed_root in self.allowed_roots:
+            try:
+                safe_path.relative_to(allowed_root)
+                is_allowed = True
+                break
+            except ValueError:
+                continue
 
-        if not str(safe_path).startswith(str(self.project_root.resolve())):
+        if not is_allowed:
             raise PermissionError(ex.ACCESS_DENIED)
 
         return safe_path

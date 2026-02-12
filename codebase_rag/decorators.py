@@ -13,6 +13,7 @@ from .types_defs import (
     LoadableProtocol,
     PathValidatorProtocol,
 )
+from .utils.path_utils import validate_allowed_path
 
 
 def ensure_loaded[T](func: Callable[..., T]) -> Callable[..., T]:
@@ -70,10 +71,10 @@ def validate_project_path[T](
                     file_path=str(file_path_str), error_message=ex.ACCESS_DENIED
                 )
             try:
-                full_path = (self.project_root / file_path_str).resolve()
-                project_root = self.project_root.resolve()
-                full_path.relative_to(project_root)
-            except (ValueError, RuntimeError):
+                full_path = validate_allowed_path(
+                    file_path_str, self.project_root, self.allowed_roots
+                )
+            except PermissionError:
                 return result_factory(
                     file_path=file_path_str,
                     error_message=ls.FILE_OUTSIDE_ROOT.format(action="access"),

@@ -71,7 +71,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             return
 
         path = Path(src_path)
-        relative_path_str = str(path.relative_to(self.updater.repo_path))
+        relative_path_str = path.relative_to(self.updater.repo_path).as_posix()
 
         logger.warning(
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)

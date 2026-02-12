@@ -38,6 +38,7 @@ class CodeSnippet(BaseModel):
     qualified_name: str
     source_code: str
     file_path: str
+    project_name: str | None = None
     line_start: int
     line_end: int
     docstring: str | None = None

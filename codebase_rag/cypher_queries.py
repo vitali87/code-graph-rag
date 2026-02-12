@@ -13,47 +13,58 @@ DETACH DELETE p, container, defined
 
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = f"""MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type,
+       n.path AS relative_path, n.absolute_path AS absolute_path, n.project_name AS project_name
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_CONTENT_BY_PATH = f"""MATCH (n)
 WHERE n.path IS NOT NULL AND n.path STARTS WITH 'workflows'
-RETURN n.name AS name, n.path AS path, labels(n) AS type
+RETURN n.name AS name, n.path AS relative_path, n.absolute_path AS absolute_path,
+       n.project_name AS project_name, labels(n) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_KEYWORD_SEARCH = f"""MATCH (n)
 WHERE toLower(n.name) CONTAINS 'database' OR (n.qualified_name IS NOT NULL AND toLower(n.qualified_name) CONTAINS 'database')
-RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type
+RETURN n.name AS name, n.qualified_name AS qualified_name, labels(n) AS type,
+       n.path AS relative_path, n.absolute_path AS absolute_path, n.project_name AS project_name
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_FIND_FILE = """MATCH (f:File) WHERE toLower(f.name) = 'readme.md' AND f.path = 'README.md'
-RETURN f.path as path, f.name as name, labels(f) as type"""
+RETURN f.path AS relative_path, f.absolute_path AS absolute_path, f.project_name AS project_name,
+       f.name as name, labels(f) as type"""
 
 CYPHER_EXAMPLE_README = f"""MATCH (f:File)
 WHERE toLower(f.name) CONTAINS 'readme'
-RETURN f.path AS path, f.name AS name, labels(f) AS type
+RETURN f.path AS relative_path, f.absolute_path AS absolute_path, f.project_name AS project_name,
+       f.name AS name, labels(f) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_PYTHON_FILES = f"""MATCH (f:File)
 WHERE f.extension = '.py'
-RETURN f.path AS path, f.name AS name, labels(f) AS type
+RETURN f.path AS relative_path, f.absolute_path AS absolute_path, f.project_name AS project_name,
+       f.name AS name, labels(f) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_TASKS = f"""MATCH (n:Function|Method)
 WHERE 'task' IN n.decorators
-RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type
+RETURN n.qualified_name AS qualified_name, n.name AS name, labels(n) AS type,
+       n.path AS relative_path, n.absolute_path AS absolute_path, n.project_name AS project_name
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_FILES_IN_FOLDER = f"""MATCH (f:File)
 WHERE f.path STARTS WITH 'services'
-RETURN f.path AS path, f.name AS name, labels(f) AS type
+RETURN f.path AS relative_path, f.absolute_path AS absolute_path, f.project_name AS project_name,
+       f.name AS name, labels(f) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
+CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File)
+RETURN f.path AS relative_path, f.absolute_path AS absolute_path, f.project_name AS project_name,
+       f.name as name, labels(f) as type LIMIT 1"""
 
 CYPHER_EXAMPLE_CLASS_METHODS = f"""MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
 WHERE c.qualified_name ENDS WITH '.UserService'
-RETURN m.name AS name, m.qualified_name AS qualified_name, labels(m) AS type
+RETURN m.name AS name, m.qualified_name AS qualified_name, labels(m) AS type,
+       m.path AS relative_path, m.absolute_path AS absolute_path, m.project_name AS project_name
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXPORT_NODES = """
@@ -70,16 +81,18 @@ CYPHER_RETURN_COUNT = "RETURN count(r) as created"
 CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
 
 CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
-MATCH (m:Module)-[:DEFINES]->(n)
+MATCH (n)
 WHERE id(n) = $node_id
 RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-       n.end_line AS end_line, m.path AS path
+       n.end_line AS end_line, n.path AS relative_path,
+       n.absolute_path AS absolute_path, n.project_name AS project_name
 """
 
 CYPHER_FIND_BY_QUALIFIED_NAME = """
 MATCH (n) WHERE n.qualified_name = $qn
-OPTIONAL MATCH (m:Module)-[*]-(n)
-RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path, n.docstring AS docstring
+RETURN n.name AS name, n.start_line AS start, n.end_line AS end,
+       n.path AS relative_path, n.absolute_path AS absolute_path,
+       n.project_name AS project_name, n.docstring AS docstring
 LIMIT 1
 """
 
@@ -94,7 +107,9 @@ def build_nodes_by_ids_query(node_ids: list[int]) -> str:
 MATCH (n)
 WHERE id(n) IN [{placeholders}]
 RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
-       labels(n) AS type, n.name AS name
+       labels(n) AS type, n.name AS name,
+       n.path AS relative_path, n.absolute_path AS absolute_path,
+       n.project_name AS project_name
 ORDER BY n.qualified_name
 """
 
@@ -126,3 +141,11 @@ def build_merge_relationship_query(
     )
     query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
     return query
+
+
+def build_project_name_indexes() -> list[str]:
+    return [
+        build_index_query("Function", "project_name"),
+        build_index_query("Method", "project_name"),
+        build_index_query("Class", "project_name"),
+    ]
