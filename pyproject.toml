@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.60"
+version = "0.0.61"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "README.md"
 requires-python = ">=3.12"
