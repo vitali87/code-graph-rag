@@ -18,5 +18,12 @@ if result.returncode != 0:
     sys.stderr.write(result.stderr)
     sys.exit(result.returncode)
 
-subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+diff_result = subprocess.run(
+    ["git", "diff", "--quiet", "README.md"],
+    cwd=repo_root,
+    check=False,
+)
+if diff_result.returncode != 0:
+    subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+    sys.exit(1)
 sys.exit(0)
