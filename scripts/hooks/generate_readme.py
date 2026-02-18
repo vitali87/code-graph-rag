@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
 
 repo_root = Path(__file__).parent.parent.parent
 readme_path = repo_root / "README.md"
+
+before = hashlib.sha256(readme_path.read_bytes()).hexdigest()
 
 result = subprocess.run(
     ["uv", "run", "python", "scripts/generate_readme.py"],
@@ -18,12 +21,9 @@ if result.returncode != 0:
     sys.stderr.write(result.stderr)
     sys.exit(result.returncode)
 
-diff_result = subprocess.run(
-    ["git", "diff", "--quiet", "README.md"],
-    cwd=repo_root,
-    check=False,
-)
-if diff_result.returncode != 0:
+after = hashlib.sha256(readme_path.read_bytes()).hexdigest()
+
+if before != after:
     subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
     sys.exit(1)
 sys.exit(0)
