@@ -196,6 +196,14 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     - CORRECT: `MATCH (c:Class) RETURN count(c) AS total`
     - WRONG: `MATCH (c:Class) RETURN c.name, count(c) AS total` (returns all items!)
 
+**VALUE PATTERN RULES (CRITICAL FOR NAME MATCHING):**
+- The `qualified_name` property contains FULL paths like: `'Project.folder.subfolder.ClassName'`
+- When users mention a class or function by SHORT NAME (e.g., "VatManager", "UserService"), you MUST match using the `name` property, NOT `qualified_name`.
+- CORRECT: `WHERE c.name = 'VatManager'`
+- WRONG: `WHERE c.qualified_name = 'VatManager'` (will never match!)
+- Use `DEFINES_METHOD` relationship to find methods of a class.
+- Use `DEFINES` relationship to find functions/classes defined in a module.
+
 **Examples:**
 
 *   **Natural Language:** "How many classes are there?"
@@ -235,7 +243,7 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     ```
 
 *   **Natural Language:** "What methods does UserService have?" or "Show me methods in UserService" or "List UserService methods"
-*   **Cypher Query (Use ENDS WITH to match class by short name):**
+*   **Cypher Query (Note: match by `name` property, use `DEFINES_METHOD` relationship):**
     ```cypher
     {CYPHER_EXAMPLE_CLASS_METHODS}
     ```
