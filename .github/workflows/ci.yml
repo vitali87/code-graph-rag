@@ -7,6 +7,8 @@ on:
     branches: [main, master, develop]
   workflow_dispatch:
 
+permissions: read-all
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

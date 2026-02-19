@@ -16,6 +16,8 @@ on:
           - minor
           - major
 
+permissions: read-all
+
 jobs:
   bump-version:
     name: Auto Version Bump

@@ -4,8 +4,10 @@ on:
   pull_request_target:
     types: [labeled]
   schedule:
-    - cron: "0 9 * * *" # Daily at 9 AM UTC
+    - cron: "0 9 * * *"
   workflow_dispatch:
+
+permissions: read-all
 
 jobs:
   notify-poor-quality:

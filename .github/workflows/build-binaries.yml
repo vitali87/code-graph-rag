@@ -8,10 +8,14 @@ on:
   release:
     types: [created]
 
+permissions: read-all
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     timeout-minutes: 30
     strategy:
       fail-fast: false

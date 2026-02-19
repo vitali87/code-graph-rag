@@ -10,6 +10,8 @@ on:
       - "*.py"
       - "pyproject.toml"
 
+permissions: read-all
+
 jobs:
   claude-review:
     name: AI Code Review

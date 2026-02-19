@@ -9,8 +9,9 @@ on:
       - ".github/workflows/label-sync.yml"
   workflow_dispatch:
   schedule:
-    # Run weekly on Mondays at 00:00 UTC to ensure labels stay in sync
     - cron: "0 0 * * 1"
+
+permissions: read-all
 
 jobs:
   sync-labels:
