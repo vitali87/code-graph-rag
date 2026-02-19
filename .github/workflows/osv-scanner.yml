@@ -1,0 +1,48 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+# A sample workflow which sets up periodic OSV-Scanner scanning for vulnerabilities,
+# in addition to a PR check which fails if new vulnerabilities are introduced.
+#
+# For more examples and options, including how to ignore specific vulnerabilities,
+# see https://google.github.io/osv-scanner/github-action/
+
+name: OSV-Scanner                                                                                                                                                                                               
+ 
+on:                                                                                                                                                                                                             
+  pull_request:                                                                                                                                                                                               
+    branches: [ "main" ]                                                                                                                                                                                      
+  merge_group:
+    branches: [ "main" ]
+  schedule:
+    - cron: '29 2 * * 4'
+  push:
+    branches: [ "main" ]
+
+permissions: read-all
+
+jobs:
+  scan-scheduled:
+    if: ${{ github.event_name == 'push' || github.event_name == 'schedule' }}
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@c5996e0193a3df57d695c1b8a1dec2a4c62e8730" # v2.3.3
+    permissions:
+      security-events: write
+      contents: read
+    with:
+      scan-args: |-
+        -r
+        --skip-git
+        ./
+  scan-pr:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@c5996e0193a3df57d695c1b8a1dec2a4c62e8730" # v2.3.3
+    permissions:
+      security-events: write
+      contents: read
+    with:
+      scan-args: |-
+        -r
+        --skip-git
+        ./
