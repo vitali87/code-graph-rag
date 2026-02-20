@@ -105,7 +105,7 @@ class ModelConfig:
     endpoint: str | None = None
     project_id: str | None = None
     region: str | None = None
-    provider_type: cs.GoogleProviderType | None = None
+    provider_type: str | None = None
     thinking_budget: int | None = None
     service_account_file: str | None = None
 
