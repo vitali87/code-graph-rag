@@ -114,9 +114,10 @@ class ModelConfig:
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
         local_providers = {cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM}
-        if self.provider.lower() in local_providers:
-            return
-        if self.provider_type == cs.GoogleProviderType.VERTEX:
+        if (
+            self.provider.lower() in local_providers
+            or self.provider_type == cs.GoogleProviderType.VERTEX
+        ):
             return
         if (
             not self.api_key
