@@ -153,7 +153,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_ENDPOINT: str | None = None
     ORCHESTRATOR_PROJECT_ID: str | None = None
     ORCHESTRATOR_REGION: str = cs.DEFAULT_REGION
-    ORCHESTRATOR_PROVIDER_TYPE: str | None = None
+    ORCHESTRATOR_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
 
@@ -163,7 +163,7 @@ class AppConfig(BaseSettings):
     CYPHER_ENDPOINT: str | None = None
     CYPHER_PROJECT_ID: str | None = None
     CYPHER_REGION: str = cs.DEFAULT_REGION
-    CYPHER_PROVIDER_TYPE: str | None = None
+    CYPHER_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
