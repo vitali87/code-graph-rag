@@ -83,8 +83,14 @@ class MemgraphIngestor:
     ) -> None:
         if exc_type:
             logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-        else:
+        # (H) Best-effort flush: attempt to persist buffered nodes/relationships even
+        # (H) when an exception occurred (e.g. a KeyError in processing logic, not a dead
+        # (H) connection). Wrapped in try/except so a secondary flush failure never masks
+        # (H) the original exception.
+        try:
             self.flush_all()
+        except Exception as flush_err:
+            logger.error(ls.MG_FLUSH_ERROR.format(error=flush_err))
         if self.conn:
             self.conn.close()
             logger.info(ls.MG_DISCONNECTED)
