@@ -135,7 +135,7 @@ jobs:
           docker run -d --name memgraph -p 7687:7687 memgraph/memgraph-platform:latest
           echo "Waiting for Memgraph to start..."
           for i in {1..30}; do
-            if docker exec memgraph echo "SELECT 1;" 2>/dev/null; then
+            if docker exec memgraph mgconsole --no-history -c "RETURN 1;" 2>/dev/null; then
               echo "Memgraph is ready!"
               break
             fi
