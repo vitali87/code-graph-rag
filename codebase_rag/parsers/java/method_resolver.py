@@ -240,8 +240,10 @@ class JavaMethodResolverMixin:
         parts = method_call.split(cs.SEPARATOR_DOT)
         if len(parts) < 2:
             method_name = method_call
-            if current_class_qn := self._get_current_class_name(module_qn):
-                return self._find_method_return_type(current_class_qn, method_name)
+            if (current_class_qn := self._get_current_class_name(module_qn)) and (
+                result := self._find_method_return_type(current_class_qn, method_name)
+            ):
+                return result
         else:
             object_part = cs.SEPARATOR_DOT.join(parts[:-1])
             method_name = parts[-1]
