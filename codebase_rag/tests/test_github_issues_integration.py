@@ -2,6 +2,7 @@ import os
 from unittest.mock import patch
 
 from codebase_rag.config import AppConfig
+from codebase_rag.constants import GoogleProviderType
 
 
 class TestGitHubIssuesIntegration:
@@ -159,7 +160,7 @@ class TestGitHubIssuesIntegration:
             assert orchestrator.model_id == "gemini-2.5-pro"
             assert orchestrator.project_id == "my-enterprise-project"
             assert orchestrator.region == "us-central1"
-            assert orchestrator.provider_type == "vertex"
+            assert orchestrator.provider_type == GoogleProviderType.VERTEX
             assert orchestrator.service_account_file == "/path/to/service-account.json"
 
     def test_vertex_ai_skips_api_key_validation(self) -> None:
