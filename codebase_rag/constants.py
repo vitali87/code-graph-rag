@@ -131,6 +131,9 @@ DEFAULT_API_KEY = "ollama"
 
 ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
 ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
+ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+ENV_ANTHROPIC_BASE_URL = "ANTHROPIC_BASE_URL"
+ENV_ANTHROPIC_CUSTOM_HEADERS = "ANTHROPIC_CUSTOM_HEADERS"
 
 HELP_ARG = "help"
 
@@ -142,6 +145,9 @@ class GoogleProviderType(StrEnum):
 
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
+ANTHROPIC_DEFAULT_ENDPOINT = "https://api.anthropic.com/v1"
+OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
+OLLAMA_DEFAULT_ENDPOINT = f"{OLLAMA_DEFAULT_BASE_URL}/v1"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"

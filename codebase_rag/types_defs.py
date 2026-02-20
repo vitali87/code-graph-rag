@@ -151,6 +151,7 @@ class ModelConfigKwargs(TypedDict, total=False):
     provider_type: str | None
     thinking_budget: int | None
     service_account_file: str | None
+    custom_headers: dict[str, str] | None
 
 
 class GraphMetadata(TypedDict):

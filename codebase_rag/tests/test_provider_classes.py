@@ -9,6 +9,7 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
 from codebase_rag.constants import GoogleProviderType, Provider
 from codebase_rag.providers.base import (
+    AnthropicProvider,
     GoogleProvider,
     ModelProvider,
     OllamaProvider,
@@ -46,7 +47,8 @@ class TestProviderRegistry:
         assert Provider.GOOGLE in providers
         assert Provider.OPENAI in providers
         assert Provider.OLLAMA in providers
-        assert len(providers) >= 3
+        assert Provider.ANTHROPIC in providers
+        assert len(providers) >= 4
 
     def test_register_custom_provider(self) -> None:
         class CustomProvider(ModelProvider):
@@ -275,3 +277,117 @@ class TestModelCreation:
             mock_openai_provider.assert_called_once_with(
                 api_key="ollama", base_url="http://localhost:11434/v1"
             )
+
+
+class TestAnthropicProvider:
+    def test_anthropic_with_api_key(self) -> None:
+        provider = AnthropicProvider(api_key="sk-ant-test-key")
+        assert provider.provider_name == Provider.ANTHROPIC
+        assert provider.api_key == "sk-ant-test-key"
+
+        provider.validate_config()
+
+    def test_anthropic_with_proxy_headers(self) -> None:
+        headers = {
+            "x-portkey-api-key": "pk-test",
+            "x-portkey-config": "pc-test",
+        }
+        provider = AnthropicProvider(
+            endpoint="https://portkey.example.com",
+            custom_headers=headers,
+        )
+        assert provider.provider_name == Provider.ANTHROPIC
+        assert provider.custom_headers == headers
+        assert provider.endpoint == "https://portkey.example.com"
+
+        provider.validate_config()
+
+    def test_anthropic_validation_error_no_auth(self) -> None:
+        with patch(
+            "codebase_rag.providers.base.get_anthropic_config_from_claude_settings"
+        ) as mock:
+            mock.return_value = (None, {})
+            provider = AnthropicProvider()
+
+            with pytest.raises(
+                ValueError,
+                match="Anthropic provider requires either api_key or custom_headers",
+            ):
+                provider.validate_config()
+
+    def test_anthropic_custom_endpoint(self) -> None:
+        custom_endpoint = "https://custom-anthropic.example.com/v1"
+        provider = AnthropicProvider(
+            api_key="sk-ant-test-key",
+            endpoint=custom_endpoint,
+        )
+        assert provider.endpoint == custom_endpoint
+
+    def test_anthropic_loads_claude_settings(self) -> None:
+        with patch(
+            "codebase_rag.providers.base.get_anthropic_config_from_claude_settings"
+        ) as mock:
+            mock.return_value = (
+                "https://portkey.example.com",
+                {"x-portkey-api-key": "pk-from-settings"},
+            )
+            provider = AnthropicProvider()
+            assert provider.endpoint == "https://portkey.example.com"
+            assert provider.custom_headers == {"x-portkey-api-key": "pk-from-settings"}
+
+            provider.validate_config()
+
+    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
+    @patch("codebase_rag.providers.base.AnthropicModel")
+    def test_anthropic_model_creation_with_api_key(
+        self, mock_anthropic_model: Any, mock_anthropic_provider: Any
+    ) -> None:
+        provider = AnthropicProvider(api_key="sk-ant-test-key")
+
+        mock_model = MagicMock()
+        mock_anthropic_model.return_value = mock_model
+
+        provider.create_model("claude-sonnet-4.5-20250929")
+
+        mock_anthropic_provider.assert_called_once_with(
+            api_key="sk-ant-test-key",
+            base_url="https://api.anthropic.com/v1",
+            http_client=None,
+        )
+        mock_anthropic_model.assert_called_once()
+        call_kwargs = mock_anthropic_model.call_args[1]
+        assert call_kwargs["model_name"] == "claude-sonnet-4.5-20250929"
+        assert call_kwargs["provider"] == mock_anthropic_provider.return_value
+
+    @patch("codebase_rag.providers.base.httpx.AsyncClient")
+    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
+    @patch("codebase_rag.providers.base.AnthropicModel")
+    def test_anthropic_model_creation_with_custom_headers(
+        self,
+        mock_anthropic_model: Any,
+        mock_anthropic_provider: Any,
+        mock_http_client: Any,
+    ) -> None:
+        headers = {"x-portkey-api-key": "pk-test"}
+        provider = AnthropicProvider(
+            endpoint="https://portkey.example.com",
+            custom_headers=headers,
+        )
+
+        mock_model = MagicMock()
+        mock_anthropic_model.return_value = mock_model
+        mock_client = MagicMock()
+        mock_http_client.return_value = mock_client
+
+        provider.create_model("claude-haiku-4-20250514")
+
+        mock_http_client.assert_called_once_with(headers=headers, timeout=30.0)
+        mock_anthropic_provider.assert_called_once_with(
+            api_key="proxy-auth-via-headers",
+            base_url="https://portkey.example.com",
+            http_client=mock_client,
+        )
+        mock_anthropic_model.assert_called_once()
+        call_kwargs = mock_anthropic_model.call_args[1]
+        assert call_kwargs["model_name"] == "claude-haiku-4-20250514"
+        assert call_kwargs["provider"] == mock_anthropic_provider.return_value
