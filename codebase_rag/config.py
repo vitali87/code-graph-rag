@@ -94,6 +94,9 @@ def format_missing_api_key_errors(
     return error_msg
 
 
+LOCAL_PROVIDERS = frozenset({cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM})
+
+
 @dataclass
 class ModelConfig:
     provider: str
@@ -113,9 +116,9 @@ class ModelConfig:
         return ModelConfigKwargs(**result)
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
-        local_providers = {cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM}
-        if self.provider.lower() in local_providers or (
-            self.provider.lower() == cs.Provider.GOOGLE
+        provider_lower = self.provider.lower()
+        if provider_lower in LOCAL_PROVIDERS or (
+            provider_lower == cs.Provider.GOOGLE
             and self.provider_type == cs.GoogleProviderType.VERTEX
         ):
             return
