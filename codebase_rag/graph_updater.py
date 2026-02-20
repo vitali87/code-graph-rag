@@ -368,8 +368,9 @@ class GraphUpdater:
 
             logger.info(ls.PASS_4_EMBEDDINGS)
 
+            project_name = str(self.project_name).rstrip(".")
             results = self.ingestor.fetch_all(
-                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name + "."}
+                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": project_name}
             )
 
             if not results:
