@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
 
 from prompt_toolkit.styles import Style
 
-from .constants import NodeLabel, RelationshipType, SupportedLanguage
+from .constants import (
+    GoogleProviderType,
+    NodeLabel,
+    RelationshipType,
+    SupportedLanguage,
+)
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Node, Parser, Query
@@ -148,7 +153,7 @@ class ModelConfigKwargs(TypedDict, total=False):
     endpoint: str | None
     project_id: str | None
     region: str | None
-    provider_type: str | None
+    provider_type: GoogleProviderType | None
     thinking_budget: int | None
     service_account_file: str | None
 
