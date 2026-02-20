@@ -8,6 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...decorators import recursion_guard
 from ...types_defs import ASTNode, NodeType
 from ..utils import safe_decode_text
 from .utils import extract_method_call_info, get_class_context_from_qn
@@ -202,6 +203,10 @@ class JavaMethodResolverMixin:
             or member == f"{method_name}{cs.EMPTY_PARENS}"
         )
 
+    @recursion_guard(
+        key_func=lambda self, class_qn, *_, **__: class_qn,
+        guard_name=cs.GUARD_INHERITED_METHOD,
+    )
     def _find_inherited_method(
         self, class_qn: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:

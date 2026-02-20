@@ -2134,8 +2134,9 @@ PY_SCORE_CONTAINS_BASE = 80
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
-# (H) Type inference guard attribute
+# (H) Recursion guard attributes
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
+GUARD_INHERITED_METHOD = "_inherited_method_guard"
 
 # (H) JS/TS ingest node types
 TS_PAIR = "pair"
