@@ -94,6 +94,9 @@ def format_missing_api_key_errors(
     return error_msg
 
 
+LOCAL_PROVIDERS = frozenset({cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM})
+
+
 @dataclass
 class ModelConfig:
     provider: str
@@ -102,7 +105,7 @@ class ModelConfig:
     endpoint: str | None = None
     project_id: str | None = None
     region: str | None = None
-    provider_type: str | None = None
+    provider_type: cs.GoogleProviderType | None = None
     thinking_budget: int | None = None
     service_account_file: str | None = None
 
@@ -113,8 +116,11 @@ class ModelConfig:
         return ModelConfigKwargs(**result)
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
-        local_providers = {cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM}
-        if self.provider.lower() in local_providers:
+        provider_lower = self.provider.lower()
+        if provider_lower in LOCAL_PROVIDERS or (
+            provider_lower == cs.Provider.GOOGLE
+            and self.provider_type == cs.GoogleProviderType.VERTEX
+        ):
             return
         if (
             not self.api_key
@@ -150,7 +156,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_ENDPOINT: str | None = None
     ORCHESTRATOR_PROJECT_ID: str | None = None
     ORCHESTRATOR_REGION: str = cs.DEFAULT_REGION
-    ORCHESTRATOR_PROVIDER_TYPE: str | None = None
+    ORCHESTRATOR_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
 
@@ -160,7 +166,7 @@ class AppConfig(BaseSettings):
     CYPHER_ENDPOINT: str | None = None
     CYPHER_PROJECT_ID: str | None = None
     CYPHER_REGION: str = cs.DEFAULT_REGION
-    CYPHER_PROVIDER_TYPE: str | None = None
+    CYPHER_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
