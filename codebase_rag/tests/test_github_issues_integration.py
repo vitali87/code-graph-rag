@@ -1,6 +1,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from codebase_rag.config import AppConfig
 from codebase_rag.constants import GoogleProviderType
 
@@ -187,6 +189,35 @@ class TestGitHubIssuesIntegration:
 
             cypher = config.active_cypher_config
             cypher.validate_api_key("cypher")
+
+    def test_vertex_ai_with_google_api_key_env_does_not_error(self) -> None:
+        env_content = {
+            "ORCHESTRATOR_PROVIDER": "google",
+            "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
+            "ORCHESTRATOR_PROJECT_ID": "my-project",
+            "ORCHESTRATOR_PROVIDER_TYPE": "vertex",
+            "ORCHESTRATOR_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
+            "GOOGLE_API_KEY": "stray-key-from-env",
+        }
+
+        with patch.dict(os.environ, env_content):
+            config = AppConfig()
+            orchestrator = config.active_orchestrator_config
+            orchestrator.validate_api_key("orchestrator")
+
+    def test_google_gla_without_api_key_raises(self) -> None:
+        env_content = {
+            "ORCHESTRATOR_PROVIDER": "google",
+            "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
+            "ORCHESTRATOR_PROVIDER_TYPE": "gla",
+            "ORCHESTRATOR_API_KEY": "",
+        }
+
+        with patch.dict(os.environ, env_content):
+            config = AppConfig()
+            orchestrator = config.active_orchestrator_config
+            with pytest.raises(ValueError, match="API Key Missing"):
+                orchestrator.validate_api_key("orchestrator")
 
     def test_reasoning_model_thinking_budget(self) -> None:
         """
