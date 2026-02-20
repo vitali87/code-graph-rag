@@ -142,9 +142,6 @@ class TestGitHubIssuesIntegration:
             assert orchestrator.endpoint == "https://api.together.xyz/v1"
 
     def test_vertex_ai_enterprise_scenario(self) -> None:
-        """
-        Test enterprise Vertex AI configuration scenario.
-        """
         env_content = {
             "ORCHESTRATOR_PROVIDER": "google",
             "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
@@ -164,6 +161,31 @@ class TestGitHubIssuesIntegration:
             assert orchestrator.region == "us-central1"
             assert orchestrator.provider_type == "vertex"
             assert orchestrator.service_account_file == "/path/to/service-account.json"
+
+    def test_vertex_ai_skips_api_key_validation(self) -> None:
+        env_content = {
+            "ORCHESTRATOR_PROVIDER": "google",
+            "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
+            "ORCHESTRATOR_PROJECT_ID": "my-project",
+            "ORCHESTRATOR_REGION": "us-central1",
+            "ORCHESTRATOR_PROVIDER_TYPE": "vertex",
+            "ORCHESTRATOR_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
+            "CYPHER_PROVIDER": "google",
+            "CYPHER_MODEL": "gemini-2.5-flash",
+            "CYPHER_PROJECT_ID": "my-project",
+            "CYPHER_REGION": "us-central1",
+            "CYPHER_PROVIDER_TYPE": "vertex",
+            "CYPHER_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
+        }
+
+        with patch.dict(os.environ, env_content):
+            config = AppConfig()
+
+            orchestrator = config.active_orchestrator_config
+            orchestrator.validate_api_key("orchestrator")
+
+            cypher = config.active_cypher_config
+            cypher.validate_api_key("cypher")
 
     def test_reasoning_model_thinking_budget(self) -> None:
         """
