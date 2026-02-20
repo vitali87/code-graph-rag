@@ -83,7 +83,8 @@ class MemgraphIngestor:
     ) -> None:
         if exc_type:
             logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-        self.flush_all()
+        else:
+            self.flush_all()
         if self.conn:
             self.conn.close()
             logger.info(ls.MG_DISCONNECTED)
