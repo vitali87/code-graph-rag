@@ -62,7 +62,7 @@ cgr = "codebase_rag.cli:app"
 package = true
 
 [tool.setuptools]
-packages = ["codebase_rag", "codec"]
+packages = ["codebase_rag", "codec", "cgr"]
 
 [project.optional-dependencies]
 test = [
