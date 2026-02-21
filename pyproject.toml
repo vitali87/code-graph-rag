@@ -4,6 +4,30 @@ version = "0.0.76"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3.12",
+]
+keywords = [
+    "rag",
+    "retrieval-augmented-generation",
+    "knowledge-graph",
+    "code-analysis",
+    "tree-sitter",
+    "mcp",
+    "mcp-server",
+    "llm",
+    "graph-database",
+    "semantic-search",
+    "codebase",
+    "memgraph",
+    "developer-tools",
+    "monorepo",
+]
 dependencies = [
     "loguru>=0.7.3",
     "mcp>=1.21.1",
