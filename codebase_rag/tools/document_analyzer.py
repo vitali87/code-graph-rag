@@ -35,6 +35,8 @@ class DocumentAnalyzer:
         if orchestrator_provider == cs.Provider.GOOGLE:
             if orchestrator_config.provider_type == cs.GoogleProviderType.VERTEX:
                 self.client = genai.Client(
+                    vertexai=True,
+                    credentials=orchestrator_config.service_account_file,
                     project=orchestrator_config.project_id,
                     location=orchestrator_config.region,
                 )
