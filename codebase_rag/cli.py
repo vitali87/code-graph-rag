@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from importlib.metadata import version as get_version
 from pathlib import Path
 
 import typer
@@ -36,6 +37,15 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        app_context.console.print(
+            cs.CLI_MSG_VERSION.format(version=get_version("code-graph-rag")),
+            highlight=False,
+        )
+        raise typer.Exit()
+
+
 def validate_models_early() -> None:
     try:
         orchestrator_config = settings.active_orchestrator_config
@@ -60,6 +70,14 @@ def _update_and_validate_models(orchestrator: str | None, cypher: str | None) ->
 
 @app.callback()
 def _global_options(
+    version: bool | None = typer.Option(
+        None,
+        "--version",
+        "-v",
+        help=ch.HELP_VERSION,
+        callback=_version_callback,
+        is_eager=True,
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
