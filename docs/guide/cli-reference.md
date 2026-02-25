@@ -31,7 +31,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 Export the knowledge graph to JSON.
 
 ```bash
-cgr export -o my_graph.json [--batch-size 5000]
+cgr export -o my_graph.json
 ```
 
 ### `cgr optimize`

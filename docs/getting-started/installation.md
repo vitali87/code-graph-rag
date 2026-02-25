@@ -56,6 +56,12 @@ With semantic code search (UniXcoder embeddings):
 pip install 'code-graph-rag[semantic]'
 ```
 
+With both full language support and semantic search:
+
+```bash
+pip install 'code-graph-rag[treesitter-full,semantic]'
+```
+
 ## Install from Source
 
 ```bash

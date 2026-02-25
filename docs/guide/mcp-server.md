@@ -8,6 +8,19 @@ Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seaml
 
 ## Quick Setup
 
+**If installed via pip** (and `code-graph-rag` is on your PATH):
+
+```bash
+claude mcp add --transport stdio code-graph-rag \
+  --env TARGET_REPO_PATH=/absolute/path/to/your/project \
+  --env CYPHER_PROVIDER=openai \
+  --env CYPHER_MODEL=gpt-4 \
+  --env CYPHER_API_KEY=your-api-key \
+  -- code-graph-rag mcp-server
+```
+
+**If installed from source:**
+
 ```bash
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
