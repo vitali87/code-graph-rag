@@ -69,6 +69,21 @@ class TestCreateQueryTool:
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
         assert tool is not None
 
+    async def test_default_console_writes_to_stderr(
+        self,
+        mock_ingestor: MagicMock,
+        mock_cypher_gen: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_cypher_gen.generate = AsyncMock(return_value="MATCH (n) RETURN n")
+        mock_ingestor.fetch_all.return_value = [{"name": "example"}]
+
+        tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=None)
+        await tool.function(natural_language_query="Find all functions")
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
 
 class TestQueryCodebaseKnowledgeGraph:
     async def test_successful_query_returns_results(
