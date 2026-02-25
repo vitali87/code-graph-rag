@@ -48,6 +48,10 @@ LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 # (H) Graph service errors
 BATCH_SIZE = "batch_size must be a positive integer"
 CONN = "Not connected to Memgraph."
+AUTH_INCOMPLETE = (
+    "Both username and password are required for authentication. "
+    "Either provide both or neither."
+)
 
 # (H) Access control errors (used with raise)
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."

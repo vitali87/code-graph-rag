@@ -51,9 +51,20 @@ from ..types_defs import (
 
 
 class MemgraphIngestor:
-    def __init__(self, host: str, port: int, batch_size: int = 1000):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        batch_size: int = 1000,
+        username: str | None = None,
+        password: str | None = None,
+    ):
         self._host = host
         self._port = port
+        self._username = username.strip() if username and username.strip() else None
+        self._password = password.strip() if password and password.strip() else None
+        if (self._username is None) != (self._password is None):
+            raise ValueError(ex.AUTH_INCOMPLETE)
         if batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)
         self.batch_size = batch_size
@@ -70,7 +81,15 @@ class MemgraphIngestor:
 
     def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        self.conn = mgclient.connect(host=self._host, port=self._port)
+        if self._username is not None:
+            self.conn = mgclient.connect(
+                host=self._host,
+                port=self._port,
+                username=self._username,
+                password=self._password,
+            )
+        else:
+            self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
         logger.info(ls.MG_CONNECTED)
         return self
