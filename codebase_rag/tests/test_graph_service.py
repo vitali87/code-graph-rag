@@ -45,6 +45,28 @@ class TestMemgraphIngestorInit:
 
         assert ingestor.conn is None
 
+    def test_init_stores_auth_credentials(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username="user", password="pass"
+        )
+
+        assert ingestor._username == "user"
+        assert ingestor._password == "pass"
+
+    def test_init_defaults_auth_to_none(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        assert ingestor._username is None
+        assert ingestor._password is None
+
+    def test_init_raises_for_username_without_password(self) -> None:
+        with pytest.raises(ValueError, match="Both username and password"):
+            MemgraphIngestor(host="localhost", port=7687, username="user")
+
+    def test_init_raises_for_password_without_username(self) -> None:
+        with pytest.raises(ValueError, match="Both username and password"):
+            MemgraphIngestor(host="localhost", port=7687, password="pass")
+
 
 class TestContextManager:
     def test_enter_connects_to_memgraph(self) -> None:
@@ -59,6 +81,30 @@ class TestContextManager:
             assert ingestor.conn == mock_conn
             assert mock_conn.autocommit is True
             assert result is ingestor
+
+    def test_enter_passes_auth_when_provided(self) -> None:
+        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+            mock_conn = MagicMock()
+            mock_mgclient.connect.return_value = mock_conn
+
+            ingestor = MemgraphIngestor(
+                host="testhost", port=1234, username="user", password="pass"
+            )
+            ingestor.__enter__()
+
+            mock_mgclient.connect.assert_called_once_with(
+                host="testhost", port=1234, username="user", password="pass"
+            )
+
+    def test_enter_omits_auth_when_not_provided(self) -> None:
+        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+            mock_conn = MagicMock()
+            mock_mgclient.connect.return_value = mock_conn
+
+            ingestor = MemgraphIngestor(host="testhost", port=1234)
+            ingestor.__enter__()
+
+            mock_mgclient.connect.assert_called_once_with(host="testhost", port=1234)
 
     def test_exit_flushes_and_closes_connection(self) -> None:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
