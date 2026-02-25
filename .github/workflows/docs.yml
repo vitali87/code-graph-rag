@@ -23,15 +23,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install "mkdocs>=1.6.1,<2" mkdocs-material mkdocs-minify-plugin
+        run: uv sync --group docs
 
       - name: Build site
-        run: mkdocs build --strict
+        run: uv run mkdocs build --strict
 
       - uses: actions/upload-pages-artifact@v3
         with:
