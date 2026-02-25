@@ -67,6 +67,34 @@ class TestMemgraphIngestorInit:
         with pytest.raises(ValueError, match="Both username and password"):
             MemgraphIngestor(host="localhost", port=7687, password="pass")
 
+    def test_init_normalizes_empty_strings_to_none(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username="", password=""
+        )
+
+        assert ingestor._username is None
+        assert ingestor._password is None
+
+    def test_init_normalizes_whitespace_only_to_none(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username="  ", password="  "
+        )
+
+        assert ingestor._username is None
+        assert ingestor._password is None
+
+    def test_init_strips_whitespace_from_credentials(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username=" user ", password=" pass "
+        )
+
+        assert ingestor._username == "user"
+        assert ingestor._password == "pass"
+
+    def test_init_raises_for_empty_password_with_valid_username(self) -> None:
+        with pytest.raises(ValueError, match="Both username and password"):
+            MemgraphIngestor(host="localhost", port=7687, username="user", password="")
+
 
 class TestContextManager:
     def test_enter_connects_to_memgraph(self) -> None:

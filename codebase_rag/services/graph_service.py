@@ -61,8 +61,8 @@ class MemgraphIngestor:
     ):
         self._host = host
         self._port = port
-        self._username = username
-        self._password = password
+        self._username = username.strip() if username and username.strip() else None
+        self._password = password.strip() if password and password.strip() else None
         if (self._username is None) != (self._password is None):
             raise ValueError(ex.AUTH_INCOMPLETE)
         if batch_size < 1:
