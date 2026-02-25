@@ -1,0 +1,78 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.vitali87/code-graph-rag",
+  "title": "Code-Graph-RAG",
+  "description": "Graph-based RAG system for multi-language codebases. Parse, index, query, and edit code using knowledge graphs and natural language.",
+  "websiteUrl": "https://code-graph-rag.com",
+  "repository": {
+    "url": "https://github.com/vitali87/code-graph-rag",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "code-graph-rag",
+      "version": "0.0.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp-server"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "ORCHESTRATOR_PROVIDER",
+          "description": "LLM provider for the orchestrator agent (openai, anthropic, google, azure, cohere, ollama)",
+          "default": "anthropic"
+        },
+        {
+          "name": "ORCHESTRATOR_MODEL",
+          "description": "Model name for the orchestrator agent",
+          "default": "claude-sonnet-4-20250514"
+        },
+        {
+          "name": "ORCHESTRATOR_API_KEY",
+          "description": "API key for the orchestrator LLM provider",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "CYPHER_PROVIDER",
+          "description": "LLM provider for Cypher query generation (openai, anthropic, google, azure, cohere, ollama)",
+          "default": "anthropic"
+        },
+        {
+          "name": "CYPHER_MODEL",
+          "description": "Model name for Cypher query generation",
+          "default": "claude-sonnet-4-20250514"
+        },
+        {
+          "name": "CYPHER_API_KEY",
+          "description": "API key for the Cypher LLM provider",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "MEMGRAPH_HOST",
+          "description": "Hostname of the Memgraph database",
+          "default": "localhost"
+        },
+        {
+          "name": "MEMGRAPH_PORT",
+          "description": "Port of the Memgraph database",
+          "default": "7687"
+        },
+        {
+          "name": "TARGET_REPO_PATH",
+          "description": "Path to the repository to analyze (auto-detected from working directory if not set)"
+        }
+      ]
+    }
+  ]
+}

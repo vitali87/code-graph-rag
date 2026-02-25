@@ -92,12 +92,17 @@ jobs:
         run: |
           sed -i 's/^version = ".*"/version = "${{ steps.bump_version.outputs.new }}"/' pyproject.toml
 
+      - name: Update server.json
+        if: steps.check_manual.outputs.skip == 'false'
+        run: |
+          sed -i 's/"version": "[^"]*"/"version": "${{ steps.bump_version.outputs.new }}"/g' server.json
+
       - name: Commit version bump
         if: steps.check_manual.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml
+          git add pyproject.toml server.json
           git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new }}"
           git push
 
