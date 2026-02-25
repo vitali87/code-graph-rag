@@ -81,12 +81,15 @@ class MemgraphIngestor:
 
     def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        self.conn = mgclient.connect(
-            host=self._host,
-            port=self._port,
-            username=self._username,
-            password=self._password,
-        )
+        if self._username is not None:
+            self.conn = mgclient.connect(
+                host=self._host,
+                port=self._port,
+                username=self._username,
+                password=self._password,
+            )
+        else:
+            self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
         logger.info(ls.MG_CONNECTED)
         return self
