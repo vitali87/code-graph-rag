@@ -63,12 +63,8 @@ class MemgraphIngestor:
         self._port = port
         self._username = username
         self._password = password
-        # Validate authentication: both username and password must be provided together
         if (self._username is None) != (self._password is None):
-            raise ValueError(
-                "Both username and password are required for authentication. "
-                "Either provide both or neither."
-            )
+            raise ValueError(ex.AUTH_INCOMPLETE)
         if batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)
         self.batch_size = batch_size
