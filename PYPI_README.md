@@ -25,6 +25,7 @@ pip install 'code-graph-rag[semantic]'
 - Python 3.12+
 - Docker (for Memgraph)
 - `cmake` (for building pymgclient)
+- `ripgrep` (`rg`) (for shell command text searching)
 
 ## CLI Quick Start
 
@@ -141,10 +142,10 @@ Configure via `.env` or environment variables:
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `ORCHESTRATOR_PROVIDER` | | Provider: `google`, `openai`, `ollama` |
 | `ORCHESTRATOR_MODEL` | | Model ID (e.g. `gpt-4o`, `gemini-2.5-pro`) |
-| `ORCHESTRATOR_API_KEY` | | API key for the provider |
+| `ORCHESTRATOR_API_KEY` | | API key for the provider (not needed for `ollama`) |
 | `CYPHER_PROVIDER` | | Provider for Cypher generation |
 | `CYPHER_MODEL` | | Model ID for Cypher generation |
-| `CYPHER_API_KEY` | | API key for Cypher provider |
+| `CYPHER_API_KEY` | | API key for Cypher provider (not needed for `ollama`) |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
 
 ## Documentation
