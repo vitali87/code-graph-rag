@@ -156,3 +156,5 @@ Full documentation, architecture details, and contribution guide:
 ## License
 
 MIT
+
+<!-- mcp-name: io.github.vitali87/code-graph-rag -->
