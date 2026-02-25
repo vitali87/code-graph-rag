@@ -123,6 +123,8 @@ def start_watcher(
         host=host,
         port=port,
         batch_size=effective_batch_size,
+        username=settings.MEMGRAPH_USERNAME,
+        password=settings.MEMGRAPH_PASSWORD,
     ) as ingestor:
         _run_watcher_loop(ingestor, repo_path_obj, parsers, queries)
 
