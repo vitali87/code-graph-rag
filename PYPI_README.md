@@ -144,7 +144,7 @@ Configure via `.env` or environment variables:
 | `ORCHESTRATOR_MODEL` | | Model ID (e.g. `gpt-4o`, `gemini-2.5-pro`) |
 | `ORCHESTRATOR_API_KEY` | | API key for the provider (not needed for `ollama`) |
 | `CYPHER_PROVIDER` | | Provider for Cypher generation |
-| `CYPHER_MODEL` | | Model ID for Cypher generation |
+| `CYPHER_MODEL` | | Model ID for Cypher generation (e.g. `codellama`, `gpt-4o-mini`) |
 | `CYPHER_API_KEY` | | API key for Cypher provider (not needed for `ollama`) |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
 
