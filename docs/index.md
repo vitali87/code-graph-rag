@@ -1,5 +1,5 @@
 ---
-description: "Graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs, and enables natural language querying."
+description: "Graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs, and enables natural language querying, editing, and optimization."
 ---
 
 # Code-Graph-RAG
