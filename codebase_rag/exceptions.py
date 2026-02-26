@@ -11,6 +11,18 @@ OPENAI_NO_KEY = (
     "OpenAI provider requires api_key. "
     "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
 )
+ANTHROPIC_NO_AUTH = (
+    "Anthropic provider requires either api_key or custom_headers (for proxy auth). "
+    "Set ORCHESTRATOR_API_KEY/CYPHER_API_KEY, or configure ORCHESTRATOR_CUSTOM_HEADERS/CYPHER_CUSTOM_HEADERS, "
+    "or set up ~/.claude/settings.json with ANTHROPIC_BASE_URL and ANTHROPIC_CUSTOM_HEADERS."
+)
+ANTHROPIC_CLAUDE_SETTINGS_ERROR = (
+    "Failed to read Claude Code settings from ~/.claude/settings.json: {error}"
+)
+ANTHROPIC_MALFORMED_HEADER = (
+    "Malformed custom header line: '{line}'. "
+    "Expected format 'Header-Name: value'. Each header must contain a colon separator."
+)
 OLLAMA_NOT_RUNNING = (
     "Ollama server not responding at {endpoint}. "
     "Make sure Ollama is running: ollama serve"

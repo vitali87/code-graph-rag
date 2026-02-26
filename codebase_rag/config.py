@@ -13,6 +13,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
+from .utils.claude_settings import parse_custom_headers
 
 load_dotenv()
 
@@ -108,6 +109,7 @@ class ModelConfig:
     provider_type: str | None = None
     thinking_budget: int | None = None
     service_account_file: str | None = None
+    custom_headers: dict[str, str] | None = None
 
     def to_update_kwargs(self) -> ModelConfigKwargs:
         result = asdict(self)
@@ -161,6 +163,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
+    ORCHESTRATOR_CUSTOM_HEADERS: str | None = None
 
     CYPHER_PROVIDER: str = ""
     CYPHER_MODEL: str = ""
@@ -171,6 +174,7 @@ class AppConfig(BaseSettings):
     CYPHER_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
+    CYPHER_CUSTOM_HEADERS: str | None = None
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
@@ -268,6 +272,11 @@ class AppConfig(BaseSettings):
         model = getattr(self, f"{role_upper}_MODEL", None)
 
         if provider and model:
+            custom_headers_str = getattr(self, f"{role_upper}_CUSTOM_HEADERS", None)
+            custom_headers = (
+                parse_custom_headers(custom_headers_str) if custom_headers_str else None
+            )
+
             return ModelConfig(
                 provider=provider.lower(),
                 model_id=model,
@@ -280,6 +289,7 @@ class AppConfig(BaseSettings):
                 service_account_file=getattr(
                     self, f"{role_upper}_SERVICE_ACCOUNT_FILE", None
                 ),
+                custom_headers=custom_headers,
             )
 
         return ModelConfig(

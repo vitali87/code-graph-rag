@@ -60,8 +60,8 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
 - **🗣️ Natural Language Querying**: Ask questions about your codebase in plain English
-- **🤖 AI-Powered Cypher Generation**: Supports both cloud models (Google Gemini), local models (Ollama), and OpenAI models for natural language to Cypher translation
-- **🤖 OpenAI Integration**: Leverage OpenAI models to enhance AI functionalities.
+- **🤖 AI-Powered Cypher Generation**: Supports cloud models (Google Gemini, Anthropic Claude), local models (Ollama), and OpenAI models for natural language to Cypher translation
+- **🤖 Multiple LLM Providers**: Supports OpenAI, Anthropic Claude, Google Gemini, and Ollama with flexible authentication (direct API keys, Claude Code settings, or proxy services like Portkey)
 - **📝 Code Snippet Retrieval**: Retrieves actual source code snippets for found functions/methods
 - **✍️ Advanced File Editing**: Surgical code replacement with AST-based function targeting, visual diff previews, and exact code block modifications
 - **⚡️ Shell Command Execution**: Can execute terminal commands for tasks like running tests or using CLI tools.
@@ -196,6 +196,55 @@ CYPHER_PROVIDER=ollama
 CYPHER_MODEL=codellama
 CYPHER_ENDPOINT=http://localhost:11434/v1
 ```
+
+#### Option 5: Anthropic Claude Models
+
+Anthropic Claude is now supported with multiple authentication methods:
+
+**5a. Direct API Key (recommended for development)**:
+```bash
+# .env file
+ORCHESTRATOR_PROVIDER=anthropic
+ORCHESTRATOR_MODEL=claude-sonnet-4.5-20250929
+ORCHESTRATOR_API_KEY=sk-ant-your-key
+
+CYPHER_PROVIDER=anthropic
+CYPHER_MODEL=claude-haiku-4-20250514
+CYPHER_API_KEY=sk-ant-your-key
+```
+
+**5b. Claude Code Settings (automatic)**:
+If you're using Claude Code CLI, the provider will automatically read from `~/.claude/settings.json`. Just set the provider and model:
+```bash
+# .env file
+ORCHESTRATOR_PROVIDER=anthropic
+ORCHESTRATOR_MODEL=claude-sonnet-4.5-20250929
+
+CYPHER_PROVIDER=anthropic
+CYPHER_MODEL=claude-haiku-4-20250514
+# No API key needed - uses ANTHROPIC_BASE_URL and ANTHROPIC_CUSTOM_HEADERS from settings
+```
+
+**5c. Portkey or Other Proxies (for enterprise)**:
+For centralized key management systems like Portkey:
+```bash
+# .env file
+ORCHESTRATOR_PROVIDER=anthropic
+ORCHESTRATOR_MODEL=claude-sonnet-4.5-20250929
+ORCHESTRATOR_ENDPOINT=https://your-portkey-gateway.com
+ORCHESTRATOR_CUSTOM_HEADERS="x-portkey-api-key: pk-xxx\nx-portkey-config: pc-xxx"
+
+CYPHER_PROVIDER=anthropic
+CYPHER_MODEL=claude-haiku-4-20250514
+CYPHER_ENDPOINT=https://your-portkey-gateway.com
+CYPHER_CUSTOM_HEADERS="x-portkey-api-key: pk-xxx\nx-portkey-config: pc-xxx"
+```
+
+**Recommended Anthropic Models**:
+- **Orchestrator**: `claude-opus-4.5-20251101` (most capable) or `claude-sonnet-4.5-20250929` (balanced)
+- **Cypher**: `claude-sonnet-4.5-20250929` or `claude-haiku-4-20250514` (faster, cheaper)
+
+Get your Anthropic API key from [Anthropic Console](https://console.anthropic.com/).
 
 Get your Google API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
