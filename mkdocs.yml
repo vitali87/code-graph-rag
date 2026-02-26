@@ -1,0 +1,112 @@
+site_name: Code-Graph-RAG
+site_url: https://docs.code-graph-rag.com
+site_description: >-
+  Graph-based RAG system that parses multi-language codebases with Tree-sitter,
+  builds knowledge graphs, and enables natural language querying, editing,
+  and optimization.
+site_author: Vitali Avagyan
+
+repo_name: vitali87/code-graph-rag
+repo_url: https://github.com/vitali87/code-graph-rag
+edit_uri: edit/main/docs/
+
+copyright: Copyright &copy; 2024 Vitali Avagyan
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  logo: assets/logo-dark-any.png
+  favicon: assets/logo-dark-any.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+    - Quick Start: getting-started/quickstart.md
+  - User Guide:
+    - CLI Reference: guide/cli-reference.md
+    - Interactive Querying: guide/interactive-querying.md
+    - Code Optimization: guide/code-optimization.md
+    - Graph Export: guide/graph-export.md
+    - Real-Time Updates: guide/realtime-updates.md
+    - MCP Server: guide/mcp-server.md
+  - Python SDK:
+    - Overview: sdk/overview.md
+    - Graph Loader: sdk/graph-loader.md
+    - Cypher Generator: sdk/cypher-generator.md
+    - Semantic Search: sdk/semantic-search.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Graph Schema: architecture/graph-schema.md
+    - Language Support: architecture/language-support.md
+  - Advanced:
+    - Adding Languages: advanced/adding-languages.md
+    - Ignore Patterns: advanced/ignore-patterns.md
+    - Building Binaries: advanced/building-binaries.md
+    - Troubleshooting: advanced/troubleshooting.md
+  - Contributing: contributing.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/vitali87/code-graph-rag
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/code-graph-rag/
+  generator: false
