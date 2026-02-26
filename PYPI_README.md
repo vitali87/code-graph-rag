@@ -151,7 +151,7 @@ Configure via `.env` or environment variables:
 ## Documentation
 
 Full documentation, architecture details, and contribution guide:
-[GitHub Repository](https://github.com/vitali87/code-graph-rag)
+[docs.code-graph-rag.com](https://docs.code-graph-rag.com)
 
 ## License
 
