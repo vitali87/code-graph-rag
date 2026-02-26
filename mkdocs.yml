@@ -15,21 +15,19 @@ copyright: Copyright &copy; 2024 Vitali Avagyan
 theme:
   name: material
   custom_dir: docs/overrides
-  logo: assets/logo-dark-any.png
+  logo: assets/logo-icon.png
   favicon: assets/favicon.png
   font:
     text: Inter
     code: JetBrains Mono
   palette:
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: slate
       primary: custom
       accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
+    - scheme: default
       primary: custom
       accent: custom
       toggle:
