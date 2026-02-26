@@ -252,8 +252,12 @@
   transition: color 0.2s ease;
 }
 
-.md-typeset a:hover {
+[data-md-color-scheme="slate"] .md-typeset a:hover {
   color: var(--cgr-brand-light);
+}
+
+[data-md-color-scheme="default"] .md-typeset a:hover {
+  color: var(--cgr-indigo-700);
 }
 
 .md-header__title {
@@ -278,7 +282,7 @@
   font-weight: 500;
   border-radius: 8px;
   padding: 0.6em 1.4em;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .md-button--primary {
