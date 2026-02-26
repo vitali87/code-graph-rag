@@ -59,11 +59,7 @@
   --md-shadow-z3: 0 0 0 transparent;
 }
 
-[data-md-color-scheme="slate"] .md-header {
-  background-color: var(--cgr-surface);
-  border-bottom: 1px solid var(--cgr-gray-800);
-}
-
+[data-md-color-scheme="slate"] .md-header,
 [data-md-color-scheme="slate"] .md-tabs {
   background-color: var(--cgr-surface);
   border-bottom: 1px solid var(--cgr-gray-800);
@@ -118,10 +114,6 @@
   background-color: var(--cgr-surface);
   border: 1px solid var(--cgr-gray-800);
   color: var(--cgr-brand-light);
-}
-
-[data-md-color-scheme="slate"] .md-typeset pre > code {
-  border: 1px solid var(--cgr-gray-800);
 }
 
 [data-md-color-scheme="slate"] .md-typeset .admonition,
@@ -210,10 +202,6 @@
   color: var(--cgr-brand-dark);
 }
 
-[data-md-color-scheme="default"] .md-typeset pre > code {
-  border: 1px solid #e2e8f0;
-}
-
 [data-md-color-scheme="default"] .md-search__form {
   background-color: #f1f5f9;
   border: 1px solid #e2e8f0;
@@ -260,25 +248,32 @@
   color: var(--cgr-indigo-700);
 }
 
+.md-header__title,
+.md-tabs__link,
+.md-nav__link,
+.md-button,
+.md-typeset .admonition-title,
+.md-typeset summary,
+.md-footer,
+.md-typeset table:not([class]) th {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
 .md-header__title {
-  font-family: "Inter", sans-serif;
   font-weight: 600;
 }
 
 .md-tabs__link {
-  font-family: "Inter", sans-serif;
   font-weight: 500;
   font-size: 0.78rem;
   letter-spacing: 0.01em;
 }
 
 .md-nav__link {
-  font-family: "Inter", sans-serif;
   font-size: 0.76rem;
 }
 
 .md-button {
-  font-family: "Inter", sans-serif;
   font-weight: 500;
   border-radius: 8px;
   padding: 0.6em 1.4em;
@@ -318,16 +313,11 @@
 
 .md-typeset .admonition-title,
 .md-typeset summary {
-  font-family: "Inter", sans-serif;
   font-weight: 600;
 }
 
 .md-search__form {
   border-radius: 8px;
-}
-
-.md-footer {
-  font-family: "Inter", sans-serif;
 }
 
 .md-typeset table:not([class]) {
@@ -338,7 +328,6 @@
 
 .md-typeset table:not([class]) th {
   font-weight: 600;
-  font-family: "Inter", sans-serif;
 }
 
 @media screen and (min-width: 76.25em) {
