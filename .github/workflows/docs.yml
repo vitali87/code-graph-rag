@@ -7,6 +7,8 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+  # (H) Rebuilds periodically so the GitHub repo widget (version, stars, forks)
+  # stays current; MkDocs Material fetches these stats at build time.
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
