@@ -369,7 +369,7 @@ class GraphUpdater:
             logger.info(ls.PASS_4_EMBEDDINGS)
 
             results = self.ingestor.fetch_all(
-                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name + "."}
+                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
             )
 
             if not results:
