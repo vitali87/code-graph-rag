@@ -21,8 +21,7 @@ theme:
     text: Inter
     code: JetBrains Mono
   palette:
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: slate
       primary: custom
       accent: custom
       toggle:
