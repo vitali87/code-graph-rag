@@ -15,7 +15,7 @@ copyright: Copyright &copy; 2024 Vitali Avagyan
 theme:
   name: material
   custom_dir: docs/overrides
-  logo: assets/logo-dark-any.png
+  logo: assets/logo-icon.png
   favicon: assets/favicon.png
   font:
     text: Inter
