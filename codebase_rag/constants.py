@@ -880,7 +880,10 @@ PYINSTALLER_ARG_CLEAN = "--clean"
 PYINSTALLER_ARG_COLLECT_ALL = "--collect-all"
 PYINSTALLER_ARG_COLLECT_DATA = "--collect-data"
 PYINSTALLER_ARG_HIDDEN_IMPORT = "--hidden-import"
+PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
 PYINSTALLER_ENTRY_POINT = "main.py"
+
+PYINSTALLER_EXCLUDED_MODULES = ["logfire", "logfire_api"]
 
 # (H) TOML parsing constants
 TOML_KEY_PROJECT = "project"
