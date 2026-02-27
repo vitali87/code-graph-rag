@@ -15,7 +15,6 @@ from loguru import logger
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
 
 if TYPE_CHECKING:
     pass  # ty: ignore[unresolved-import]
@@ -97,12 +96,33 @@ def temp_repo() -> Generator[Path, None, None]:
     shutil.rmtree(temp_dir)
 
 
+class _MockIngestor:
+    def __init__(self) -> None:
+        self.fetch_all = MagicMock()
+        self.execute_write = MagicMock()
+        self.ensure_node_batch = MagicMock()
+        self.ensure_relationship_batch = MagicMock()
+        self.flush_all = MagicMock()
+        self._fallback = MagicMock()
+
+    def reset_mock(self) -> None:
+        for attr in (
+            self.fetch_all,
+            self.execute_write,
+            self.ensure_node_batch,
+            self.ensure_relationship_batch,
+            self.flush_all,
+            self._fallback,
+        ):
+            attr.reset_mock()
+
+    def __getattr__(self, name: str) -> MagicMock:
+        return getattr(self._fallback, name)
+
+
 @pytest.fixture
-def mock_ingestor() -> MagicMock:
-    mock = MagicMock(spec=MemgraphIngestor)
-    mock.fetch_all = MagicMock()
-    mock.execute_write = MagicMock()
-    return mock
+def mock_ingestor() -> _MockIngestor:
+    return _MockIngestor()
 
 
 def run_updater(
