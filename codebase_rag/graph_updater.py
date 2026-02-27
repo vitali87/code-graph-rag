@@ -429,7 +429,7 @@ class GraphUpdater:
 
             processed_since_flush += 1
             if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
-                logger.info(ls.PERIODIC_FLUSH, count=processed_since_flush)
+                logger.info(ls.PERIODIC_FLUSH.format(count=processed_since_flush))
                 self.ingestor.flush_all()
                 processed_since_flush = 0
 

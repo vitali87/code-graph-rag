@@ -330,7 +330,9 @@ class MemgraphIngestor:
         for props in props_list:
             if id_key not in props:
                 logger.warning(
-                    ls.MG_MISSING_PROP.format(label=label, key=id_key, props=props)
+                    ls.MG_MISSING_PROP.format(
+                        label=label, key=id_key, prop_keys=list(props.keys())
+                    )
                 )
                 skipped += 1
                 continue

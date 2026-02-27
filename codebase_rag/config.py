@@ -249,8 +249,8 @@ class AppConfig(BaseSettings):
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
 
-    FLUSH_THREAD_POOL_SIZE: int = 4
-    FILE_FLUSH_INTERVAL: int = 500
+    FLUSH_THREAD_POOL_SIZE: int = Field(default=4, gt=0)
+    FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
 
     CACHE_MAX_ENTRIES: int = 1000
     CACHE_MAX_MEMORY_MB: int = 500

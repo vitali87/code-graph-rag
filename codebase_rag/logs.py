@@ -182,7 +182,9 @@ MG_REL_BUFFER_FLUSH = (
     "Relationship buffer reached batch size ({size}). Performing incremental flush."
 )
 MG_NO_CONSTRAINT = "No unique constraint defined for label '{label}'. Skipping flush."
-MG_MISSING_PROP = "Skipping {label} node missing required '{key}' property: {props}"
+MG_MISSING_PROP = (
+    "Skipping {label} node missing required '{key}' property (keys: {prop_keys})"
+)
 MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 MG_NODES_SKIPPED = (
     "Skipped {count} buffered nodes due to missing identifiers or constraints."
