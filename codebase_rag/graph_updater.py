@@ -463,7 +463,7 @@ class GraphUpdater:
 
         try:
             from .embedder import embed_code, get_embedding_cache
-            from .vector_store import store_embedding
+            from .vector_store import close_qdrant_client, store_embedding
 
             logger.info(ls.PASS_4_EMBEDDINGS)
 
@@ -515,6 +515,7 @@ class GraphUpdater:
                     logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
             get_embedding_cache().save()
+            close_qdrant_client()
 
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
