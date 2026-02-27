@@ -1575,6 +1575,9 @@ GOMOD_COMMENT_PREFIX = "//"
 # (H) Gemfile parsing patterns
 GEMFILE_GEM_PREFIX = "gem "
 
+# (H) Incremental update hash cache
+HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
+
 # (H) Import processor cache config
 IMPORT_CACHE_TTL = 3600
 IMPORT_CACHE_DIR = ".cache/codebase_rag"
