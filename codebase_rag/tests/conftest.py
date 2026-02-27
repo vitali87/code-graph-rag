@@ -96,7 +96,24 @@ def temp_repo() -> Generator[Path, None, None]:
     shutil.rmtree(temp_dir)
 
 
-class _MockIngestor:
+class _IngestorStub:
+    def fetch_all(self, query: str, params: object = None) -> list:
+        return []
+
+    def execute_write(self, query: str, params: object = None) -> None:
+        pass
+
+    def ensure_node_batch(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def ensure_relationship_batch(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def flush_all(self) -> None:
+        pass
+
+
+class _MockIngestor(_IngestorStub):
     _TRACKED = (
         "fetch_all",
         "execute_write",
@@ -106,39 +123,23 @@ class _MockIngestor:
     )
 
     def __init__(self) -> None:
-        object.__setattr__(self, "_mocks", {n: MagicMock() for n in self._TRACKED})
-        object.__setattr__(self, "_fallback", MagicMock())
-
-    @property
-    def fetch_all(self) -> MagicMock:
-        return self._mocks["fetch_all"]
-
-    @property
-    def execute_write(self) -> MagicMock:
-        return self._mocks["execute_write"]
-
-    @property
-    def ensure_node_batch(self) -> MagicMock:
-        return self._mocks["ensure_node_batch"]
-
-    @property
-    def ensure_relationship_batch(self) -> MagicMock:
-        return self._mocks["ensure_relationship_batch"]
-
-    @property
-    def flush_all(self) -> MagicMock:
-        return self._mocks["flush_all"]
+        self.fetch_all = MagicMock()
+        self.execute_write = MagicMock()
+        self.ensure_node_batch = MagicMock()
+        self.ensure_relationship_batch = MagicMock()
+        self.flush_all = MagicMock()
+        self._fallback = MagicMock()
 
     def reset_mock(self) -> None:
-        for m in self._mocks.values():
-            m.reset_mock()
-        self._fallback.reset_mock()
+        for name in (*self._TRACKED, "_fallback"):
+            getattr(self, name).reset_mock()
 
     @property
     def method_calls(self) -> list:
         result = []
-        for name, mock in self._mocks.items():
-            for c in mock.call_args_list:
+        for name in self._TRACKED:
+            mock_attr = self.__dict__[name]
+            for c in mock_attr.call_args_list:
                 result.append(getattr(call, name)(*c.args, **c.kwargs))
         result.extend(self._fallback.method_calls)
         return result
