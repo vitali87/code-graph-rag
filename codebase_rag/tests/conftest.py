@@ -8,7 +8,7 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, Self
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 from loguru import logger
@@ -105,16 +105,27 @@ class _MockIngestor:
         self.flush_all = MagicMock()
         self._fallback = MagicMock()
 
+    _TRACKED_ATTRS = (
+        "fetch_all",
+        "execute_write",
+        "ensure_node_batch",
+        "ensure_relationship_batch",
+        "flush_all",
+    )
+
     def reset_mock(self) -> None:
-        for attr in (
-            self.fetch_all,
-            self.execute_write,
-            self.ensure_node_batch,
-            self.ensure_relationship_batch,
-            self.flush_all,
-            self._fallback,
-        ):
-            attr.reset_mock()
+        for attr in (*self._TRACKED_ATTRS, "_fallback"):
+            getattr(self, attr).reset_mock()
+
+    @property
+    def method_calls(self) -> list:
+        result = []
+        for name in self._TRACKED_ATTRS:
+            mock_attr = object.__getattribute__(self, name)
+            for c in mock_attr.call_args_list:
+                result.append(getattr(call, name)(*c.args, **c.kwargs))
+        result.extend(self._fallback.method_calls)
+        return result
 
     def __getattr__(self, name: str) -> MagicMock:
         return getattr(self._fallback, name)
