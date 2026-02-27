@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import deque
 
 from loguru import logger
 from tree_sitter import Node
@@ -12,8 +13,18 @@ from .import_processor import ImportProcessor
 from .py import resolve_class_name
 from .type_inference import TypeInferenceEngine
 
+_SEPARATOR_PATTERN = re.compile(r"[.:]|::")
+_CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
+
 
 class CallResolver:
+    __slots__ = (
+        "function_registry",
+        "import_processor",
+        "type_inference",
+        "class_inheritance",
+    )
+
     def __init__(
         self,
         function_registry: FunctionRegistryTrieProtocol,
@@ -119,9 +130,7 @@ class CallResolver:
             return None
         imported_qn = import_map[call_name]
         if imported_qn in self.function_registry:
-            logger.debug(
-                ls.CALL_DIRECT_IMPORT.format(call_name=call_name, qn=imported_qn)
-            )
+            logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
         return None
 
@@ -187,9 +196,7 @@ class CallResolver:
 
         for wildcard_qn in potential_qns:
             if wildcard_qn in self.function_registry:
-                logger.debug(
-                    ls.CALL_WILDCARD.format(call_name=call_name, qn=wildcard_qn)
-                )
+                logger.debug(ls.CALL_WILDCARD, call_name=call_name, qn=wildcard_qn)
                 return self.function_registry[wildcard_qn], wildcard_qn
         return None
 
@@ -199,7 +206,7 @@ class CallResolver:
         same_module_func_qn = f"{module_qn}.{call_name}"
         if same_module_func_qn in self.function_registry:
             logger.debug(
-                ls.CALL_SAME_MODULE.format(call_name=call_name, qn=same_module_func_qn)
+                ls.CALL_SAME_MODULE, call_name=call_name, qn=same_module_func_qn
             )
             return self.function_registry[same_module_func_qn], same_module_func_qn
         return None
@@ -207,19 +214,17 @@ class CallResolver:
     def _try_resolve_via_trie(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        search_name = re.split(r"[.:]|::", call_name)[-1]
+        search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
         possible_matches = self.function_registry.find_ending_with(search_name)
         if not possible_matches:
-            logger.debug(ls.CALL_UNRESOLVED.format(call_name=call_name))
+            logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
 
         possible_matches.sort(
             key=lambda qn: self._calculate_import_distance(qn, module_qn)
         )
         best_candidate_qn = possible_matches[0]
-        logger.debug(
-            ls.CALL_TRIE_FALLBACK.format(call_name=call_name, qn=best_candidate_qn)
-        )
+        logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         return self.function_registry[best_candidate_qn], best_candidate_qn
 
     def _resolve_two_part_call(
@@ -293,23 +298,21 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             logger.debug(
-                ls.CALL_TYPE_INFERRED.format(
-                    call_name=call_name,
-                    method_qn=method_qn,
-                    obj=object_name,
-                    var_type=var_type,
-                )
+                ls.CALL_TYPE_INFERRED,
+                call_name=call_name,
+                method_qn=method_qn,
+                obj=object_name,
+                var_type=var_type,
             )
             return self.function_registry[method_qn], method_qn
 
         if inherited := self._resolve_inherited_method(class_qn, method_name):
             logger.debug(
-                ls.CALL_TYPE_INFERRED_INHERITED.format(
-                    call_name=call_name,
-                    method_qn=inherited[1],
-                    obj=object_name,
-                    var_type=var_type,
-                )
+                ls.CALL_TYPE_INFERRED_INHERITED,
+                call_name=call_name,
+                method_qn=inherited[1],
+                obj=object_name,
+                var_type=var_type,
             )
             return inherited
         return None
@@ -336,7 +339,7 @@ class CallResolver:
 
         if method_qn in self.function_registry:
             logger.debug(
-                ls.CALL_IMPORT_STATIC.format(call_name=call_name, method_qn=method_qn)
+                ls.CALL_IMPORT_STATIC, call_name=call_name, method_qn=method_qn
             )
             return self.function_registry[method_qn], method_qn
         return None
@@ -377,7 +380,7 @@ class CallResolver:
         method_qn = f"{module_qn}.{method_name}"
         if method_qn in self.function_registry:
             logger.debug(
-                ls.CALL_OBJECT_METHOD.format(call_name=call_name, method_qn=method_qn)
+                ls.CALL_OBJECT_METHOD, call_name=call_name, method_qn=method_qn
             )
             return self.function_registry[method_qn], method_qn
         return None
@@ -401,12 +404,11 @@ class CallResolver:
                 method_qn = f"{class_qn}.{method_name}"
                 if method_qn in self.function_registry:
                     logger.debug(
-                        ls.CALL_INSTANCE_ATTR.format(
-                            call_name=call_name,
-                            method_qn=method_qn,
-                            attr_ref=attribute_ref,
-                            var_type=var_type,
-                        )
+                        ls.CALL_INSTANCE_ATTR,
+                        call_name=call_name,
+                        method_qn=method_qn,
+                        attr_ref=attribute_ref,
+                        var_type=var_type,
                     )
                     return self.function_registry[method_qn], method_qn
 
@@ -414,12 +416,11 @@ class CallResolver:
                     class_qn, method_name
                 ):
                     logger.debug(
-                        ls.CALL_INSTANCE_ATTR_INHERITED.format(
-                            call_name=call_name,
-                            method_qn=inherited_method[1],
-                            attr_ref=attribute_ref,
-                            var_type=var_type,
-                        )
+                        ls.CALL_INSTANCE_ATTR_INHERITED,
+                        call_name=call_name,
+                        method_qn=inherited_method[1],
+                        attr_ref=attribute_ref,
+                        var_type=var_type,
                     )
                     return inherited_method
 
@@ -441,9 +442,9 @@ class CallResolver:
             method_qn = f"{class_qn}.{method_name}"
             if method_qn in self.function_registry:
                 logger.debug(
-                    ls.CALL_IMPORT_QUALIFIED.format(
-                        call_name=call_name, method_qn=method_qn
-                    )
+                    ls.CALL_IMPORT_QUALIFIED,
+                    call_name=call_name,
+                    method_qn=method_qn,
                 )
                 return self.function_registry[method_qn], method_qn
 
@@ -455,12 +456,11 @@ class CallResolver:
                 method_qn = f"{class_qn}.{method_name}"
                 if method_qn in self.function_registry:
                     logger.debug(
-                        ls.CALL_INSTANCE_QUALIFIED.format(
-                            call_name=call_name,
-                            method_qn=method_qn,
-                            class_name=class_name,
-                            var_type=var_type,
-                        )
+                        ls.CALL_INSTANCE_QUALIFIED,
+                        call_name=call_name,
+                        method_qn=method_qn,
+                        class_name=class_name,
+                        var_type=var_type,
                     )
                     return self.function_registry[method_qn], method_qn
 
@@ -468,12 +468,11 @@ class CallResolver:
                     class_qn, method_name
                 ):
                     logger.debug(
-                        ls.CALL_INSTANCE_INHERITED.format(
-                            call_name=call_name,
-                            method_qn=inherited_method[1],
-                            class_name=class_name,
-                            var_type=var_type,
-                        )
+                        ls.CALL_INSTANCE_INHERITED,
+                        call_name=call_name,
+                        method_qn=inherited_method[1],
+                        class_name=class_name,
+                        var_type=var_type,
                     )
                     return inherited_method
 
@@ -536,7 +535,7 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, str] | None:
-        match = re.search(r"\.([^.()]+)$", call_name)
+        match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
             return None
 
@@ -559,12 +558,11 @@ class CallResolver:
 
             if method_qn in self.function_registry:
                 logger.debug(
-                    ls.CALL_CHAINED.format(
-                        call_name=call_name,
-                        method_qn=method_qn,
-                        obj_expr=object_expr,
-                        obj_type=object_type,
-                    )
+                    ls.CALL_CHAINED,
+                    call_name=call_name,
+                    method_qn=method_qn,
+                    obj_expr=object_expr,
+                    obj_type=object_type,
                 )
                 return self.function_registry[method_qn], method_qn
 
@@ -572,12 +570,11 @@ class CallResolver:
                 full_object_type, final_method
             ):
                 logger.debug(
-                    ls.CALL_CHAINED_INHERITED.format(
-                        call_name=call_name,
-                        method_qn=inherited_method[1],
-                        obj_expr=object_expr,
-                        obj_type=object_type,
-                    )
+                    ls.CALL_CHAINED_INHERITED,
+                    call_name=call_name,
+                    method_qn=inherited_method[1],
+                    obj_expr=object_expr,
+                    obj_type=object_type,
                 )
                 return inherited_method
 
@@ -596,31 +593,31 @@ class CallResolver:
 
         current_class_qn = class_context
         if not current_class_qn:
-            logger.debug(ls.CALL_SUPER_NO_CONTEXT.format(call_name=call_name))
+            logger.debug(ls.CALL_SUPER_NO_CONTEXT, call_name=call_name)
             return None
 
         if current_class_qn not in self.class_inheritance:
-            logger.debug(ls.CALL_SUPER_NO_INHERITANCE.format(class_qn=current_class_qn))
+            logger.debug(ls.CALL_SUPER_NO_INHERITANCE, class_qn=current_class_qn)
             return None
 
         parent_classes = self.class_inheritance[current_class_qn]
         if not parent_classes:
-            logger.debug(ls.CALL_SUPER_NO_PARENTS.format(class_qn=current_class_qn))
+            logger.debug(ls.CALL_SUPER_NO_PARENTS, class_qn=current_class_qn)
             return None
 
         if result := self._resolve_inherited_method(current_class_qn, method_name):
             callee_type, parent_method_qn = result
             logger.debug(
-                ls.CALL_SUPER_RESOLVED.format(
-                    call_name=call_name, method_qn=parent_method_qn
-                )
+                ls.CALL_SUPER_RESOLVED,
+                call_name=call_name,
+                method_qn=parent_method_qn,
             )
             return callee_type, parent_method_qn
 
         logger.debug(
-            ls.CALL_SUPER_UNRESOLVED.format(
-                call_name=call_name, class_qn=current_class_qn
-            )
+            ls.CALL_SUPER_UNRESOLVED,
+            call_name=call_name,
+            class_qn=current_class_qn,
         )
         return None
 
@@ -630,11 +627,11 @@ class CallResolver:
         if class_qn not in self.class_inheritance:
             return None
 
-        queue = list(self.class_inheritance.get(class_qn, []))
-        visited = set(queue)
+        bfs_queue = deque(self.class_inheritance.get(class_qn, []))
+        visited = set(bfs_queue)
 
-        while queue:
-            parent_class_qn = queue.pop(0)
+        while bfs_queue:
+            parent_class_qn = bfs_queue.popleft()
             parent_method_qn = f"{parent_class_qn}.{method_name}"
 
             if parent_method_qn in self.function_registry:
@@ -647,7 +644,7 @@ class CallResolver:
                 for grandparent_qn in self.class_inheritance[parent_class_qn]:
                     if grandparent_qn not in visited:
                         visited.add(grandparent_qn)
-                        queue.append(grandparent_qn)
+                        bfs_queue.append(grandparent_qn)
 
         return None
 
@@ -697,7 +694,7 @@ class CallResolver:
                 else cs.TEXT_UNKNOWN
             )
             logger.debug(
-                ls.CALL_JAVA_RESOLVED.format(call_text=call_text, method_qn=result[1])
+                ls.CALL_JAVA_RESOLVED, call_text=call_text, method_qn=result[1]
             )
 
         return result
