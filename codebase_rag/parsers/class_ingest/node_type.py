@@ -16,19 +16,24 @@ def determine_node_type(
     language: cs.SupportedLanguage,
 ) -> NodeType:
     match class_node.type:
-        case cs.TS_INTERFACE_DECLARATION:
+        case cs.TS_INTERFACE_DECLARATION | cs.TS_RS_TRAIT_ITEM:
             logger.info(logs.CLASS_FOUND_INTERFACE.format(name=class_name, qn=class_qn))
             return NodeType.INTERFACE
-        case cs.TS_ENUM_DECLARATION | cs.TS_ENUM_SPECIFIER | cs.TS_ENUM_CLASS_SPECIFIER:
+        case (
+            cs.TS_ENUM_DECLARATION
+            | cs.TS_ENUM_SPECIFIER
+            | cs.TS_ENUM_CLASS_SPECIFIER
+            | cs.TS_RS_ENUM_ITEM
+        ):
             logger.info(logs.CLASS_FOUND_ENUM.format(name=class_name, qn=class_qn))
             return NodeType.ENUM
-        case cs.TS_TYPE_ALIAS_DECLARATION:
+        case cs.TS_TYPE_ALIAS_DECLARATION | cs.TS_RS_TYPE_ITEM:
             logger.info(logs.CLASS_FOUND_TYPE.format(name=class_name, qn=class_qn))
             return NodeType.TYPE
-        case cs.TS_STRUCT_SPECIFIER:
+        case cs.TS_STRUCT_SPECIFIER | cs.TS_RS_STRUCT_ITEM:
             logger.info(logs.CLASS_FOUND_STRUCT.format(name=class_name, qn=class_qn))
             return NodeType.CLASS
-        case cs.TS_UNION_SPECIFIER:
+        case cs.TS_UNION_SPECIFIER | cs.TS_RS_UNION_ITEM:
             logger.info(logs.CLASS_FOUND_UNION.format(name=class_name, qn=class_qn))
             return NodeType.UNION
         case cs.CppNodeType.TEMPLATE_DECLARATION:
