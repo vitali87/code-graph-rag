@@ -52,10 +52,8 @@ void freeFunction() {
     return test_file
 
 
-def test_single_file_repo_path_produces_graph(
-    cpp_single_file: Path,
-    mock_ingestor: MagicMock,
-) -> None:
+@pytest.fixture
+def ran_single_file_updater(cpp_single_file: Path, mock_ingestor: MagicMock) -> None:
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
 
@@ -68,6 +66,11 @@ def test_single_file_repo_path_produces_graph(
     )
     updater.run()
 
+
+def test_single_file_repo_path_produces_graph(
+    ran_single_file_updater: None,
+    mock_ingestor: MagicMock,
+) -> None:
     functions = get_node_names(mock_ingestor, "Function")
     methods = get_node_names(mock_ingestor, "Method")
     classes = get_node_names(mock_ingestor, "Class")
@@ -87,21 +90,9 @@ def test_single_file_repo_path_produces_graph(
 
 
 def test_single_file_repo_path_static_functions(
-    cpp_single_file: Path,
+    ran_single_file_updater: None,
     mock_ingestor: MagicMock,
 ) -> None:
-    from codebase_rag.graph_updater import GraphUpdater
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_single_file,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
     functions = get_node_names(mock_ingestor, "Function")
 
     assert any("helperFunc" in qn for qn in functions), (
@@ -114,21 +105,9 @@ def test_single_file_repo_path_static_functions(
 
 
 def test_single_file_repo_path_out_of_class_methods(
-    cpp_single_file: Path,
+    ran_single_file_updater: None,
     mock_ingestor: MagicMock,
 ) -> None:
-    from codebase_rag.graph_updater import GraphUpdater
-    from codebase_rag.parser_loader import load_parsers
-
-    parsers, queries = load_parsers()
-    updater = GraphUpdater(
-        ingestor=mock_ingestor,
-        repo_path=cpp_single_file,
-        parsers=parsers,
-        queries=queries,
-    )
-    updater.run()
-
     methods = get_node_names(mock_ingestor, "Method")
     defines_method_rels = get_relationships(mock_ingestor, "DEFINES_METHOD")
 

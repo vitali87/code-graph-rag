@@ -273,8 +273,9 @@ class GraphUpdater:
         self.ingestor = ingestor
         self._single_file: Path | None = None
         if repo_path.is_file():
-            self._single_file = repo_path.resolve()
-            repo_path = repo_path.resolve().parent
+            resolved = repo_path.resolve()
+            self._single_file = resolved
+            repo_path = resolved.parent
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries
@@ -362,7 +363,14 @@ class GraphUpdater:
 
     def _collect_eligible_files(self) -> list[Path]:
         if self._single_file is not None:
-            return [self._single_file]
+            if not should_skip_path(
+                self._single_file,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                return [self._single_file]
+            return []
 
         eligible: list[Path] = []
         for filepath in self.repo_path.rglob("*"):
