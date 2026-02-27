@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 
 class RustHandler(BaseLanguageHandler):
+    __slots__ = ()
+
     def extract_decorators(self, node: ASTNode) -> list[str]:
         outer_decorators: list[str] = []
         sibling = node.prev_named_sibling

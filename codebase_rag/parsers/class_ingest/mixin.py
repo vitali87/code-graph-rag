@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 
 class ClassIngestMixin:
+    __slots__ = ()
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str

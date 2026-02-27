@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 
 class JsTsHandler(BaseLanguageHandler):
+    __slots__ = ()
+
     def extract_decorators(self, node: ASTNode) -> list[str]:
         return [
             decorator_text
