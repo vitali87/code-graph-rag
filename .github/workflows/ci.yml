@@ -106,17 +106,17 @@ jobs:
           uv sync --extra treesitter-full --extra test --extra semantic --group dev
 
       - name: Run unit tests (parallel, with coverage)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'macos-latest'
         run: |
           uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Run unit tests (parallel, no coverage)
-        if: matrix.os != 'ubuntu-latest'
+        if: matrix.os != 'macos-latest'
         run: |
           uv run pytest -n auto -m "not integration" --tb=short
 
       - name: Upload coverage to Codecov
-        if: always() && matrix.os == 'ubuntu-latest'
+        if: always() && matrix.os == 'macos-latest'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
