@@ -50,6 +50,10 @@ EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
+EMBEDDING_CACHE_HIT = "Embedding cache hit for {count} snippets"
+EMBEDDING_CACHE_LOADED = "Loaded embedding cache with {count} entries from {path}"
+EMBEDDING_CACHE_SAVE_FAILED = "Failed to save embedding cache to {path}: {error}"
+EMBEDDING_CACHE_LOAD_FAILED = "Failed to load embedding cache from {path}: {error}"
 
 # (H) Image logs
 IMAGE_COPIED = "Copied image to temporary path: {path}"
