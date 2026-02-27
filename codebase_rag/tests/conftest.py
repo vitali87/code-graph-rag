@@ -15,7 +15,6 @@ from loguru import logger
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services import QueryProtocol
 
 if TYPE_CHECKING:
     pass  # ty: ignore[unresolved-import]
