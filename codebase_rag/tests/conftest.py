@@ -99,8 +99,10 @@ def temp_repo() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def mock_ingestor() -> MagicMock:
-    """Provides a mocked MemgraphIngestor instance."""
-    return MagicMock(spec=MemgraphIngestor)
+    mock = MagicMock(spec=MemgraphIngestor)
+    mock.fetch_all = MagicMock()
+    mock.execute_write = MagicMock()
+    return mock
 
 
 def run_updater(

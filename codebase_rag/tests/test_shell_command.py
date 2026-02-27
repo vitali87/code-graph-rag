@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -386,6 +387,9 @@ class TestPipedCommandExecution:
         assert result.return_code == 0
         assert "5" in result.stdout
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="Unix find not available on Windows"
+    )
     async def test_find_with_wc(
         self, shell_commander: ShellCommander, temp_project_root: Path
     ) -> None:
