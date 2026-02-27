@@ -883,7 +883,7 @@ PYINSTALLER_ARG_HIDDEN_IMPORT = "--hidden-import"
 PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
 PYINSTALLER_ENTRY_POINT = "main.py"
 
-PYINSTALLER_EXCLUDED_MODULES = ["logfire", "logfire_api"]
+PYINSTALLER_EXCLUDED_MODULES = ["logfire"]
 
 # (H) TOML parsing constants
 TOML_KEY_PROJECT = "project"
@@ -908,6 +908,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     PyInstallerPackage(name="loguru", collect_all=True),
     PyInstallerPackage(name="toml", collect_all=True),
     PyInstallerPackage(name="protobuf", collect_all=True),
+    PyInstallerPackage(name="genai_prices", collect_all=True),
 ]
 
 ALLOWED_COMMENT_MARKERS = frozenset(
