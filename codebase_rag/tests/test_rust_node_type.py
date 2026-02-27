@@ -59,7 +59,8 @@ def test_rust_enum_label(
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
     enum_names = get_node_names(mock_ingestor, NodeType.ENUM)
-    assert any("Color" in n for n in enum_names)
+    assert len(enum_names) == 1
+    assert enum_names.pop().endswith(".Color")
 
 
 def test_rust_trait_label(
@@ -67,7 +68,8 @@ def test_rust_trait_label(
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
     interface_names = get_node_names(mock_ingestor, NodeType.INTERFACE)
-    assert any("Drawable" in n for n in interface_names)
+    assert len(interface_names) == 1
+    assert interface_names.pop().endswith(".Drawable")
 
 
 def test_rust_type_alias_label(
@@ -75,7 +77,8 @@ def test_rust_type_alias_label(
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
     type_names = get_node_names(mock_ingestor, NodeType.TYPE)
-    assert any("Pair" in n for n in type_names)
+    assert len(type_names) == 1
+    assert type_names.pop().endswith(".Pair")
 
 
 def test_rust_union_label(
@@ -83,7 +86,8 @@ def test_rust_union_label(
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
     union_names = get_node_names(mock_ingestor, NodeType.UNION)
-    assert any("IntOrFloat" in n for n in union_names)
+    assert len(union_names) == 1
+    assert union_names.pop().endswith(".IntOrFloat")
 
 
 def test_rust_struct_label(
@@ -91,4 +95,5 @@ def test_rust_struct_label(
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
     class_names = get_node_names(mock_ingestor, NodeType.CLASS)
-    assert any("Point" in n for n in class_names)
+    assert len(class_names) == 1
+    assert class_names.pop().endswith(".Point")
