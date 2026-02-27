@@ -462,7 +462,7 @@ class GraphUpdater:
             return
 
         try:
-            from .embedder import embed_code
+            from .embedder import embed_code, get_embedding_cache
             from .vector_store import store_embedding
 
             logger.info(ls.PASS_4_EMBEDDINGS)
@@ -514,6 +514,7 @@ class GraphUpdater:
                 else:
                     logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
+            get_embedding_cache().save()
 
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
