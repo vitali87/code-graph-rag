@@ -97,6 +97,9 @@ def temp_repo() -> Generator[Path, None, None]:
 
 
 class _MockIngestor:
+    fetch_all: MagicMock
+    execute_write: MagicMock
+
     def __init__(self) -> None:
         self.fetch_all = MagicMock()
         self.execute_write = MagicMock()
