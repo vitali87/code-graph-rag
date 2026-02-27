@@ -98,18 +98,7 @@ def temp_repo() -> Generator[Path, None, None]:
 
 
 class _MockIngestor:
-    fetch_all: MagicMock
-    execute_write: MagicMock
-
-    def __init__(self) -> None:
-        self.fetch_all = MagicMock()
-        self.execute_write = MagicMock()
-        self.ensure_node_batch = MagicMock()
-        self.ensure_relationship_batch = MagicMock()
-        self.flush_all = MagicMock()
-        self._fallback = MagicMock()
-
-    _TRACKED_ATTRS = (
+    _TRACKED = (
         "fetch_all",
         "execute_write",
         "ensure_node_batch",
@@ -117,25 +106,46 @@ class _MockIngestor:
         "flush_all",
     )
 
+    def __init__(self) -> None:
+        object.__setattr__(self, "_mocks", {n: MagicMock() for n in self._TRACKED})
+        object.__setattr__(self, "_fallback", MagicMock())
+
+    @property
+    def fetch_all(self) -> MagicMock:
+        return self._mocks["fetch_all"]
+
+    @property
+    def execute_write(self) -> MagicMock:
+        return self._mocks["execute_write"]
+
+    @property
+    def ensure_node_batch(self) -> MagicMock:
+        return self._mocks["ensure_node_batch"]
+
+    @property
+    def ensure_relationship_batch(self) -> MagicMock:
+        return self._mocks["ensure_relationship_batch"]
+
+    @property
+    def flush_all(self) -> MagicMock:
+        return self._mocks["flush_all"]
+
     def reset_mock(self) -> None:
-        for attr in (*self._TRACKED_ATTRS, "_fallback"):
-            getattr(self, attr).reset_mock()
+        for m in self._mocks.values():
+            m.reset_mock()
+        self._fallback.reset_mock()
 
     @property
     def method_calls(self) -> list:
         result = []
-        for name in self._TRACKED_ATTRS:
-            mock_attr = object.__getattribute__(self, name)
-            for c in mock_attr.call_args_list:
+        for name, mock in self._mocks.items():
+            for c in mock.call_args_list:
                 result.append(getattr(call, name)(*c.args, **c.kwargs))
         result.extend(self._fallback.method_calls)
         return result
 
     def __getattr__(self, name: str) -> MagicMock:
         return getattr(self._fallback, name)
-
-
-QueryProtocol.register(_MockIngestor)
 
 
 @pytest.fixture
