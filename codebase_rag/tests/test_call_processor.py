@@ -1153,8 +1153,10 @@ class TestProcessCallsInFileErrorHandling:
         tree = parser.parse(b"def foo(): pass")
         root_node = tree.root_node
 
+        from codebase_rag.parsers.call_processor import CallProcessor
+
         with patch.object(
-            call_processor,
+            CallProcessor,
             "_process_calls_in_functions",
             side_effect=RuntimeError("Simulated failure"),
         ):
@@ -1166,9 +1168,9 @@ class TestProcessCallsInFileErrorHandling:
                     queries,
                 )
                 mock_logger.error.assert_called_once()
-                error_call_args = mock_logger.error.call_args[0][0]
-                assert "test_module.py" in error_call_args
-                assert "Simulated failure" in error_call_args
+                error_call_args = mock_logger.error.call_args
+                assert "test_module.py" in str(error_call_args)
+                assert "Simulated failure" in str(error_call_args)
 
     def test_continues_after_error_in_single_file(
         self,
@@ -1195,8 +1197,10 @@ class TestProcessCallsInFileErrorHandling:
         tree = parser.parse(b"def foo(): pass")
         root_node = tree.root_node
 
+        from codebase_rag.parsers.call_processor import CallProcessor
+
         with patch.object(
-            call_processor,
+            CallProcessor,
             "_process_calls_in_functions",
             side_effect=ValueError("Test exception"),
         ):
@@ -1206,3 +1210,23 @@ class TestProcessCallsInFileErrorHandling:
                 cs.SupportedLanguage.PYTHON,
                 queries,
             )
+
+
+class TestCallProcessorSlots:
+    def test_has_slots(self) -> None:
+        from codebase_rag.parsers.call_processor import CallProcessor
+
+        assert hasattr(CallProcessor, "__slots__")
+
+    def test_no_instance_dict(self, call_processor: CallProcessor) -> None:
+        assert not hasattr(call_processor, "__dict__")
+
+    def test_rejects_arbitrary_attribute(self, call_processor: CallProcessor) -> None:
+        with pytest.raises(AttributeError):
+            call_processor.nonexistent_attr = 42
+
+    def test_slot_attributes_accessible(self, call_processor: CallProcessor) -> None:
+        assert hasattr(call_processor, "ingestor")
+        assert hasattr(call_processor, "repo_path")
+        assert hasattr(call_processor, "project_name")
+        assert hasattr(call_processor, "_resolver")

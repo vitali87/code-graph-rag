@@ -18,6 +18,8 @@ from .utils import get_function_captures, is_method_node
 
 
 class CallProcessor:
+    __slots__ = ("ingestor", "repo_path", "project_name", "_resolver")
+
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -54,7 +56,7 @@ class CallProcessor:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         relative_path = file_path.relative_to(self.repo_path)
-        logger.debug(ls.CALL_PROCESSING_FILE.format(path=relative_path))
+        logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
         try:
             module_qn = cs.SEPARATOR_DOT.join(
@@ -70,7 +72,7 @@ class CallProcessor:
             self._process_module_level_calls(root_node, module_qn, language, queries)
 
         except Exception as e:
-            logger.error(ls.CALL_PROCESSING_FAILED.format(path=file_path, error=e))
+            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 
     def _process_calls_in_functions(
         self,
@@ -274,9 +276,10 @@ class CallProcessor:
         call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
         logger.debug(
-            ls.CALL_FOUND_NODES.format(
-                count=len(call_nodes), language=language, caller=caller_qn
-            )
+            ls.CALL_FOUND_NODES,
+            count=len(call_nodes),
+            language=language,
+            caller=caller_qn,
         )
 
         for call_node in call_nodes:
@@ -311,12 +314,11 @@ class CallProcessor:
             else:
                 continue
             logger.debug(
-                ls.CALL_FOUND.format(
-                    caller=caller_qn,
-                    call_name=call_name,
-                    callee_type=callee_type,
-                    callee_qn=callee_qn,
-                )
+                ls.CALL_FOUND,
+                caller=caller_qn,
+                call_name=call_name,
+                callee_type=callee_type,
+                callee_qn=callee_qn,
             )
 
             self.ingestor.ensure_relationship_batch(
@@ -337,9 +339,7 @@ class CallProcessor:
 
         if not isinstance(current, Node):
             logger.warning(
-                ls.CALL_UNEXPECTED_PARENT.format(
-                    node=func_node, parent_type=type(current)
-                )
+                ls.CALL_UNEXPECTED_PARENT, node=func_node, parent_type=type(current)
             )
             return None
 
