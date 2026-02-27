@@ -77,7 +77,7 @@ def test_relationship_batch_flushes_after_threshold_and_respects_node_flush() ->
             "CONTAINS_FILE",
             ("File", "path", "file1"),
         )
-        assert len(ingestor.relationship_buffer) == 1
+        assert ingestor._rel_count == 1
         cursor_mock.execute.assert_not_called()
 
         ingestor.ensure_relationship_batch(
@@ -88,7 +88,7 @@ def test_relationship_batch_flushes_after_threshold_and_respects_node_flush() ->
 
         assert flush_nodes_spy.call_count == 1
 
-    assert len(ingestor.relationship_buffer) == 0
+    assert ingestor._rel_count == 0
     cursor_mock.execute.assert_called_once()
     executed_query = cursor_mock.execute.call_args[0][0]
     assert "UNWIND $batch" in executed_query

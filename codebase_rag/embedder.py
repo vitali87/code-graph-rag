@@ -50,9 +50,7 @@ class EmbeddingCache:
             with self._path.open("w", encoding="utf-8") as f:
                 json.dump(self._cache, f)
         except Exception as e:
-            logger.warning(
-                ls.EMBEDDING_CACHE_SAVE_FAILED.format(path=self._path, error=e)
-            )
+            logger.warning(ls.EMBEDDING_CACHE_SAVE_FAILED, path=self._path, error=e)
 
     def load(self) -> None:
         if self._path is None or not self._path.exists():
@@ -61,14 +59,10 @@ class EmbeddingCache:
             with self._path.open("r", encoding="utf-8") as f:
                 self._cache = json.load(f)
             logger.debug(
-                ls.EMBEDDING_CACHE_LOADED.format(
-                    count=len(self._cache), path=self._path
-                )
+                ls.EMBEDDING_CACHE_LOADED, count=len(self._cache), path=self._path
             )
         except Exception as e:
-            logger.warning(
-                ls.EMBEDDING_CACHE_LOAD_FAILED.format(path=self._path, error=e)
-            )
+            logger.warning(ls.EMBEDDING_CACHE_LOAD_FAILED, path=self._path, error=e)
             self._cache = {}
 
     def clear(self) -> None:
@@ -146,7 +140,7 @@ if has_torch() and has_transformers():
         cached_results = cache.get_many(snippets)
 
         if len(cached_results) == len(snippets):
-            logger.debug(ls.EMBEDDING_CACHE_HIT.format(count=len(snippets)))
+            logger.debug(ls.EMBEDDING_CACHE_HIT, count=len(snippets))
             return [cached_results[i] for i in range(len(snippets))]
 
         uncached_indices = [i for i in range(len(snippets)) if i not in cached_results]

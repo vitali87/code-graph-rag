@@ -44,7 +44,7 @@ class TestMemgraphIngestorInit:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
 
         assert ingestor.node_buffer == []
-        assert ingestor.relationship_buffer == []
+        assert ingestor._rel_count == 0
 
     def test_init_conn_is_none(self) -> None:
         ingestor = MemgraphIngestor(host="localhost", port=7687)

@@ -59,11 +59,11 @@ class MemgraphIngestor:
         "_username",
         "_password",
         "_use_merge",
+        "_rel_count",
         "_rel_groups",
         "batch_size",
         "conn",
         "node_buffer",
-        "relationship_buffer",
     )
 
     def __init__(
@@ -87,14 +87,7 @@ class MemgraphIngestor:
         self._use_merge = use_merge
         self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
-        self.relationship_buffer: list[
-            tuple[
-                tuple[str, str, PropertyValue],
-                str,
-                tuple[str, str, PropertyValue],
-                dict[str, PropertyValue] | None,
-            ]
-        ] = []
+        self._rel_count = 0
         self._rel_groups: defaultdict[
             tuple[str, str, str, str, str], list[RelBatchRow]
         ] = defaultdict(list)
@@ -267,19 +260,12 @@ class MemgraphIngestor:
     ) -> None:
         from_label, from_key, from_val = from_spec
         to_label, to_key, to_val = to_spec
-        self.relationship_buffer.append(
-            (
-                (from_label, from_key, from_val),
-                rel_type,
-                (to_label, to_key, to_val),
-                properties,
-            )
-        )
         pattern = (from_label, from_key, rel_type, to_label, to_key)
         self._rel_groups[pattern].append(
             RelBatchRow(from_val=from_val, to_val=to_val, props=properties or {})
         )
-        if len(self.relationship_buffer) >= self.batch_size:
+        self._rel_count += 1
+        if self._rel_count >= self.batch_size:
             logger.debug(ls.MG_REL_BUFFER_FLUSH, size=self.batch_size)
             self.flush_nodes()
             self.flush_relationships()
@@ -336,7 +322,7 @@ class MemgraphIngestor:
         self.node_buffer.clear()
 
     def flush_relationships(self) -> None:
-        if not self.relationship_buffer:
+        if not self._rel_count:
             return
 
         build_rel_query = (
@@ -381,12 +367,12 @@ class MemgraphIngestor:
 
         logger.info(
             ls.MG_RELS_FLUSHED.format(
-                total=len(self.relationship_buffer),
+                total=self._rel_count,
                 success=total_successful,
                 failed=total_attempted - total_successful,
             )
         )
-        self.relationship_buffer.clear()
+        self._rel_count = 0
         self._rel_groups.clear()
 
     def flush_all(self) -> None:

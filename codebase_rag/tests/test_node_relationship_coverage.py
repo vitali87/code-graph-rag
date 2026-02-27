@@ -144,7 +144,7 @@ class TestFlushRelationshipsForAllTypes:
         ingestor.flush_relationships()
 
         mock_cursor.execute.assert_called_once()
-        assert ingestor.relationship_buffer == []
+        assert ingestor._rel_count == 0
 
 
 class TestUniqueKeyPropertyNames:
@@ -231,7 +231,9 @@ class TestEnsureConstraintsForAllLabels:
             executed_queries.append(query)
             return []
 
-        with patch.object(MemgraphIngestor, "_execute_query", side_effect=capture_query):
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=capture_query
+        ):
             ingestor.ensure_constraints()
 
         for label in NodeLabel:
@@ -251,7 +253,9 @@ class TestEnsureConstraintsForAllLabels:
             executed_queries.append(query)
             return []
 
-        with patch.object(MemgraphIngestor, "_execute_query", side_effect=capture_query):
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=capture_query
+        ):
             ingestor.ensure_constraints()
 
         for label in NodeLabel:
