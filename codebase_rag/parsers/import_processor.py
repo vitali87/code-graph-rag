@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
@@ -23,6 +24,17 @@ from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
 
 class ImportProcessor:
+    __slots__ = (
+        "repo_path",
+        "project_name",
+        "ingestor",
+        "function_registry",
+        "import_mapping",
+        "stdlib_extractor",
+        "_is_local_module_cached",
+        "_is_local_java_import_cached",
+    )
+
     def __init__(
         self,
         repo_path: Path,
@@ -38,6 +50,22 @@ class ImportProcessor:
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
         )
+
+        @lru_cache(maxsize=4096)
+        def _is_local_module_cached(module_name: str) -> bool:
+            return (
+                (repo_path / module_name).is_dir()
+                or (repo_path / f"{module_name}{cs.EXT_PY}").is_file()
+                or (repo_path / module_name / cs.INIT_PY).is_file()
+            )
+
+        @lru_cache(maxsize=4096)
+        def _is_local_java_import_cached(import_path: str) -> bool:
+            top_level = import_path.split(cs.SEPARATOR_DOT)[0]
+            return (repo_path / top_level).is_dir()
+
+        self._is_local_module_cached = _is_local_module_cached
+        self._is_local_java_import_cached = _is_local_java_import_cached
 
         load_persistent_cache()
 
@@ -99,9 +127,9 @@ class ImportProcessor:
                     self._parse_generic_imports(captures, module_qn, lang_config)
 
             logger.debug(
-                ls.IMP_PARSED_COUNT.format(
-                    count=len(self.import_mapping[module_qn]), module=module_qn
-                )
+                ls.IMP_PARSED_COUNT,
+                count=len(self.import_mapping[module_qn]),
+                module=module_qn,
             )
 
             if self.ingestor:
@@ -124,15 +152,14 @@ class ImportProcessor:
                         ),
                     )
                     logger.debug(
-                        ls.IMP_CREATED_RELATIONSHIP.format(
-                            from_module=module_qn,
-                            to_module=module_path,
-                            full_name=full_name,
-                        )
+                        ls.IMP_CREATED_RELATIONSHIP,
+                        from_module=module_qn,
+                        to_module=module_path,
+                        full_name=full_name,
                     )
 
         except Exception as e:
-            logger.warning(ls.IMP_PARSE_FAILED.format(module=module_qn, error=e))
+            logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
 
     def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
@@ -159,7 +186,7 @@ class ImportProcessor:
         local_name = module_name.split(cs.SEPARATOR_DOT)[0]
         full_name = self._resolve_import_full_name(module_name, local_name)
         self.import_mapping[module_qn][local_name] = full_name
-        logger.debug(ls.IMP_IMPORT.format(local=local_name, full=full_name))
+        logger.debug(ls.IMP_IMPORT, local=local_name, full=full_name)
 
     def _handle_aliased_import(self, child: Node, module_qn: str) -> None:
         module_name_node = child.child_by_field_name(cs.FIELD_NAME)
@@ -175,7 +202,7 @@ class ImportProcessor:
         top_level = module_name.split(cs.SEPARATOR_DOT)[0]
         full_name = self._resolve_import_full_name(module_name, top_level)
         self.import_mapping[module_qn][alias] = full_name
-        logger.debug(ls.IMP_ALIASED_IMPORT.format(alias=alias, full=full_name))
+        logger.debug(ls.IMP_ALIASED_IMPORT, alias=alias, full=full_name)
 
     def _resolve_import_full_name(self, module_name: str, top_level: str) -> str:
         if self._is_local_module(top_level):
@@ -183,15 +210,10 @@ class ImportProcessor:
         return module_name
 
     def _is_local_module(self, module_name: str) -> bool:
-        return (
-            (self.repo_path / module_name).is_dir()
-            or (self.repo_path / f"{module_name}{cs.EXT_PY}").is_file()
-            or (self.repo_path / module_name / cs.INIT_PY).is_file()
-        )
+        return self._is_local_module_cached(module_name)
 
     def _is_local_java_import(self, import_path: str) -> bool:
-        top_level = import_path.split(cs.SEPARATOR_DOT)[0]
-        return (self.repo_path / top_level).is_dir()
+        return self._is_local_java_import_cached(import_path)
 
     def _resolve_java_import_path(self, import_path: str) -> str:
         if self._is_local_java_import(import_path):
@@ -364,13 +386,13 @@ class ImportProcessor:
         if is_wildcard:
             wildcard_key = f"*{base_module}"
             self.import_mapping[module_qn][wildcard_key] = base_module
-            logger.debug(ls.IMP_WILDCARD_IMPORT.format(module=base_module))
+            logger.debug(ls.IMP_WILDCARD_IMPORT, module=base_module)
             return
 
         for local_name, original_name in imported_items:
             full_name = f"{base_module}{cs.SEPARATOR_DOT}{original_name}"
             self.import_mapping[module_qn][local_name] = full_name
-            logger.debug(ls.IMP_FROM_IMPORT.format(local=local_name, full=full_name))
+            logger.debug(ls.IMP_FROM_IMPORT, local=local_name, full=full_name)
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
@@ -446,7 +468,7 @@ class ImportProcessor:
                     f"{source_module}{cs.IMPORT_DEFAULT_SUFFIX}"
                 )
                 logger.debug(
-                    ls.IMP_JS_DEFAULT.format(name=imported_name, module=source_module)
+                    ls.IMP_JS_DEFAULT, name=imported_name, module=source_module
                 )
 
             elif child.type == cs.TS_NAMED_IMPORTS:
@@ -465,11 +487,10 @@ class ImportProcessor:
                                 f"{source_module}{cs.SEPARATOR_DOT}{imported_name}"
                             )
                             logger.debug(
-                                ls.IMP_JS_NAMED.format(
-                                    local=local_name,
-                                    module=source_module,
-                                    name=imported_name,
-                                )
+                                ls.IMP_JS_NAMED,
+                                local=local_name,
+                                module=source_module,
+                                name=imported_name,
                             )
 
             elif child.type == cs.TS_NAMESPACE_IMPORT:
@@ -480,9 +501,9 @@ class ImportProcessor:
                             source_module
                         )
                         logger.debug(
-                            ls.IMP_JS_NAMESPACE.format(
-                                name=namespace_name, module=source_module
-                            )
+                            ls.IMP_JS_NAMESPACE,
+                            name=namespace_name,
+                            module=source_module,
                         )
                         break
 
@@ -521,9 +542,9 @@ class ImportProcessor:
                                     resolved_module
                                 )
                                 logger.debug(
-                                    ls.IMP_JS_REQUIRE.format(
-                                        var=var_name, module=resolved_module
-                                    )
+                                    ls.IMP_JS_REQUIRE,
+                                    var=var_name,
+                                    module=resolved_module,
                                 )
                                 break
 
@@ -544,7 +565,7 @@ class ImportProcessor:
             if child.type == cs.TS_ASTERISK:
                 wildcard_key = f"*{source_module}"
                 self.import_mapping[current_module][wildcard_key] = source_module
-                logger.debug(ls.IMP_JS_NAMESPACE_REEXPORT.format(module=source_module))
+                logger.debug(ls.IMP_JS_NAMESPACE_REEXPORT, module=source_module)
             elif child.type == cs.TS_EXPORT_CLAUSE:
                 for grandchild in child.children:
                     if grandchild.type == cs.TS_EXPORT_SPECIFIER:
@@ -561,11 +582,10 @@ class ImportProcessor:
                                 f"{source_module}{cs.SEPARATOR_DOT}{original_name}"
                             )
                             logger.debug(
-                                ls.IMP_JS_REEXPORT.format(
-                                    exported=exported_name,
-                                    module=source_module,
-                                    original=original_name,
-                                )
+                                ls.IMP_JS_REEXPORT,
+                                exported=exported_name,
+                                module=source_module,
+                                original=original_name,
                             )
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
@@ -589,22 +609,22 @@ class ImportProcessor:
                 resolved_path = self._resolve_java_import_path(imported_path)
 
                 if is_wildcard:
-                    logger.debug(ls.IMP_JAVA_WILDCARD.format(path=resolved_path))
+                    logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
                     self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
                 elif parts := resolved_path.split(cs.SEPARATOR_DOT):
                     imported_name = parts[-1]
                     self.import_mapping[module_qn][imported_name] = resolved_path
                     if is_static:
                         logger.debug(
-                            ls.IMP_JAVA_STATIC.format(
-                                name=imported_name, path=resolved_path
-                            )
+                            ls.IMP_JAVA_STATIC,
+                            name=imported_name,
+                            path=resolved_path,
                         )
                     else:
                         logger.debug(
-                            ls.IMP_JAVA_IMPORT.format(
-                                name=imported_name, path=resolved_path
-                            )
+                            ls.IMP_JAVA_IMPORT,
+                            name=imported_name,
+                            path=resolved_path,
                         )
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
@@ -617,7 +637,7 @@ class ImportProcessor:
 
         for imported_name, full_path in imports.items():
             self.import_mapping[module_qn][imported_name] = full_path
-            logger.debug(ls.IMP_RUST.format(name=imported_name, path=full_path))
+            logger.debug(ls.IMP_RUST, name=imported_name, path=full_path)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
@@ -646,7 +666,7 @@ class ImportProcessor:
         if import_path:
             package_name = alias_name or import_path.split(cs.SEPARATOR_SLASH)[-1]
             self.import_mapping[module_qn][package_name] = import_path
-            logger.debug(ls.IMP_GO.format(package=package_name, path=import_path))
+            logger.debug(ls.IMP_GO, package=package_name, path=import_path)
 
     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
@@ -692,9 +712,10 @@ class ImportProcessor:
 
             self.import_mapping[module_qn][local_name] = full_name
             logger.debug(
-                ls.IMP_CPP_INCLUDE.format(
-                    local=local_name, full=full_name, system=is_system_include
-                )
+                ls.IMP_CPP_INCLUDE,
+                local=local_name,
+                full=full_name,
+                system=is_system_include,
             )
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
@@ -727,7 +748,7 @@ class ImportProcessor:
                 full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
 
                 self.import_mapping[module_qn][local_name] = full_name
-                logger.debug(ls.IMP_CPP_MODULE.format(local=local_name, full=full_name))
+                logger.debug(ls.IMP_CPP_MODULE, local=local_name, full=full_name)
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
         decoded_text = safe_decode_text(decl_node)
@@ -757,9 +778,9 @@ class ImportProcessor:
                     full_name = f"{self.project_name}{cs.SEPARATOR_DOT}{partition_part}"
                     self.import_mapping[module_qn][partition_name] = full_name
                     logger.debug(
-                        ls.IMP_CPP_PARTITION.format(
-                            partition=partition_name, full=full_name
-                        )
+                        ls.IMP_CPP_PARTITION,
+                        partition=partition_name,
+                        full=full_name,
                     )
 
     def _register_cpp_module_mapping(
@@ -769,16 +790,16 @@ class ImportProcessor:
         self.import_mapping[module_qn][module_name] = (
             f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
         )
-        logger.debug(log_template.format(name=module_name))
+        logger.debug(log_template, name=module_name)
 
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageSpec
     ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             logger.debug(
-                ls.IMP_GENERIC.format(
-                    language=lang_config.language, node_type=import_node.type
-                )
+                ls.IMP_GENERIC,
+                language=lang_config.language,
+                node_type=import_node.type,
             )
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
