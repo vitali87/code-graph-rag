@@ -154,12 +154,12 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
         resolved_str = str(resolved)
         if resolved == resolved.parent:
             return True, "rm targeting root directory"
-        parts = resolved.parts
-        if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
-            return True, f"rm targeting system directory: {resolved_str}"
         try:
             resolved.relative_to(project_root)
         except ValueError:
+            parts = resolved.parts
+            if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
+                return True, f"rm targeting system directory: {resolved_str}"
             return True, f"rm targeting path outside project: {resolved_str}"
     return False, ""
 
