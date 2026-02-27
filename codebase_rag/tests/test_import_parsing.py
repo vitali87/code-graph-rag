@@ -475,3 +475,103 @@ class TestProjectPrefixMatching:
 
         assert result == "myapp.utils.Helper"
         assert len(mock_ingestor.nodes_created) == 0
+
+
+class TestIsLocalModuleCache:
+    def test_is_local_module_cache_returns_correct_result(self, tmp_path: Path) -> None:
+        (tmp_path / "utils").mkdir()
+        (tmp_path / "utils" / "__init__.py").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        assert processor._is_local_module("utils") is True
+        assert processor._is_local_module("nonexistent") is False
+
+    def test_is_local_module_cache_hits_on_repeated_calls(self, tmp_path: Path) -> None:
+        (tmp_path / "models").mkdir()
+        (tmp_path / "models" / "__init__.py").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        processor._is_local_module("models")
+        processor._is_local_module("models")
+        processor._is_local_module("models")
+
+        info = processor._is_local_module_cached.cache_info()
+        assert info.hits >= 2
+        assert info.misses == 1
+
+    def test_is_local_module_detects_py_file(self, tmp_path: Path) -> None:
+        (tmp_path / "helpers.py").touch()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        assert processor._is_local_module("helpers") is True
+
+    def test_is_local_module_detects_directory(self, tmp_path: Path) -> None:
+        (tmp_path / "services").mkdir()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        assert processor._is_local_module("services") is True
+
+    def test_is_local_java_import_cache_hits(self, tmp_path: Path) -> None:
+        (tmp_path / "com").mkdir()
+
+        processor = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="myproject",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        processor._is_local_java_import("com.example.Service")
+        processor._is_local_java_import("com.example.Service")
+        processor._is_local_java_import("com.example.Service")
+
+        info = processor._is_local_java_import_cached.cache_info()
+        assert info.hits >= 2
+        assert info.misses == 1
+
+    def test_separate_instances_have_independent_caches(self, tmp_path: Path) -> None:
+        (tmp_path / "shared").mkdir()
+
+        p1 = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="project1",
+            ingestor=None,
+            function_registry=None,
+        )
+        p2 = ImportProcessor(
+            repo_path=tmp_path,
+            project_name="project2",
+            ingestor=None,
+            function_registry=None,
+        )
+
+        p1._is_local_module("shared")
+        p1._is_local_module("shared")
+
+        info2 = p2._is_local_module_cached.cache_info()
+        assert info2.hits == 0
+        assert info2.misses == 0

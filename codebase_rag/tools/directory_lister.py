@@ -13,6 +13,8 @@ from . import tool_descriptions as td
 
 
 class DirectoryLister:
+    __slots__ = ("project_root",)
+
     def __init__(self, project_root: str):
         self.project_root = Path(project_root).resolve()
 

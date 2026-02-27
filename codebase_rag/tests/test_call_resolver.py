@@ -1024,3 +1024,91 @@ class TestResolveFunctionCallIntegration:
     def test_returns_none_for_unknown(self, call_resolver: CallResolver) -> None:
         result = call_resolver.resolve_function_call("unknown_func", "proj.module")
         assert result is None
+
+
+class TestDequeBfs:
+    def test_bfs_order_prefers_closer_parent(self, call_resolver: CallResolver) -> None:
+        call_resolver.function_registry["proj.base.ParentA.method"] = NodeType.METHOD
+        call_resolver.function_registry["proj.base.ParentB.method"] = NodeType.METHOD
+        call_resolver.class_inheritance["proj.module.Child"] = [
+            "proj.base.ParentA",
+            "proj.base.ParentB",
+        ]
+
+        result = call_resolver._resolve_inherited_method("proj.module.Child", "method")
+        assert result is not None
+        assert result[1] == "proj.base.ParentA.method"
+
+    def test_bfs_finds_deep_ancestor_method(self, call_resolver: CallResolver) -> None:
+        call_resolver.function_registry["proj.base.Root.deep_method"] = NodeType.METHOD
+        call_resolver.class_inheritance["proj.module.Child"] = ["proj.mid.Middle"]
+        call_resolver.class_inheritance["proj.mid.Middle"] = ["proj.base.Root"]
+
+        result = call_resolver._resolve_inherited_method(
+            "proj.module.Child", "deep_method"
+        )
+        assert result is not None
+        assert result[1] == "proj.base.Root.deep_method"
+
+    def test_bfs_no_infinite_loop_on_cycle(self, call_resolver: CallResolver) -> None:
+        call_resolver.class_inheritance["proj.A"] = ["proj.B"]
+        call_resolver.class_inheritance["proj.B"] = ["proj.A"]
+
+        result = call_resolver._resolve_inherited_method("proj.A", "missing")
+        assert result is None
+
+
+class TestSeparatorPattern:
+    def test_splits_on_dot(self) -> None:
+        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+
+        assert _SEPARATOR_PATTERN.split("a.b.c") == ["a", "b", "c"]
+
+    def test_splits_on_colon(self) -> None:
+        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+
+        assert _SEPARATOR_PATTERN.split("module:func") == ["module", "func"]
+
+    def test_splits_on_double_colon(self) -> None:
+        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+
+        assert _SEPARATOR_PATTERN.split("crate::module::func") == [
+            "crate",
+            "",
+            "module",
+            "",
+            "func",
+        ]
+
+    def test_no_separator_returns_single_element(self) -> None:
+        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+
+        assert _SEPARATOR_PATTERN.split("simple") == ["simple"]
+
+    def test_last_element_matches_function_name(self) -> None:
+        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+
+        assert _SEPARATOR_PATTERN.split("a.b.func")[-1] == "func"
+        assert _SEPARATOR_PATTERN.split("module:method")[-1] == "method"
+
+
+class TestChainedMethodPattern:
+    def test_matches_final_method(self) -> None:
+        from codebase_rag.parsers.call_resolver import _CHAINED_METHOD_PATTERN
+
+        match = _CHAINED_METHOD_PATTERN.search("obj.method().next")
+        assert match is not None
+        assert match[1] == "next"
+
+    def test_no_match_on_parenthesized_suffix(self) -> None:
+        from codebase_rag.parsers.call_resolver import _CHAINED_METHOD_PATTERN
+
+        match = _CHAINED_METHOD_PATTERN.search("obj.method()")
+        assert match is None
+
+    def test_matches_deeply_chained(self) -> None:
+        from codebase_rag.parsers.call_resolver import _CHAINED_METHOD_PATTERN
+
+        match = _CHAINED_METHOD_PATTERN.search("a.b().c().final_method")
+        assert match is not None
+        assert match[1] == "final_method"

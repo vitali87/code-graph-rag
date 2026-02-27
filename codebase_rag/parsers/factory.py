@@ -16,6 +16,24 @@ from .type_inference import TypeInferenceEngine
 
 
 class ProcessorFactory:
+    __slots__ = (
+        "ingestor",
+        "repo_path",
+        "project_name",
+        "queries",
+        "function_registry",
+        "simple_name_lookup",
+        "ast_cache",
+        "unignore_paths",
+        "exclude_paths",
+        "module_qn_to_file_path",
+        "_import_processor",
+        "_structure_processor",
+        "_definition_processor",
+        "_type_inference",
+        "_call_processor",
+    )
+
     def __init__(
         self,
         ingestor: IngestorProtocol,

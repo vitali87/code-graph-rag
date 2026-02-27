@@ -150,6 +150,8 @@ V1_PATH = "/v1"
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
+EMBEDDING_DEFAULT_BATCH_SIZE = 32
+EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
 KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
@@ -1572,6 +1574,9 @@ GOMOD_COMMENT_PREFIX = "//"
 
 # (H) Gemfile parsing patterns
 GEMFILE_GEM_PREFIX = "gem "
+
+# (H) Incremental update hash cache
+HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 
 # (H) Import processor cache config
 IMPORT_CACHE_TTL = 3600

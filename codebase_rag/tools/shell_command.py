@@ -58,6 +58,8 @@ def _has_subshell(command: str) -> str | None:
 
 
 class CommandGroup:
+    __slots__ = ("commands", "operator")
+
     def __init__(self, commands: list[str], operator: str | None = None):
         self.commands = commands
         self.operator = operator
@@ -263,6 +265,8 @@ def _requires_approval(command: str) -> bool:
 
 
 class ShellCommander:
+    __slots__ = ("project_root", "timeout")
+
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout

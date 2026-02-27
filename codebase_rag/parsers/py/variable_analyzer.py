@@ -23,6 +23,7 @@ else:
 
 
 class PythonVariableAnalyzerMixin(_VarBase):
+    __slots__ = ()
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
 
@@ -61,9 +62,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         ):
             return
         local_var_types[param_name] = inferred_type
-        logger.debug(
-            lg.PY_PARAM_TYPE_INFERRED.format(param=param_name, type=inferred_type)
-        )
+        logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=inferred_type)
 
     def _process_typed_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -102,11 +101,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
     ) -> str | None:
-        logger.debug(
-            lg.PY_TYPE_INFER_ATTEMPT.format(param=param_name, module=module_qn)
-        )
+        logger.debug(lg.PY_TYPE_INFER_ATTEMPT, param=param_name, module=module_qn)
         available_class_names = self._collect_available_classes(module_qn)
-        logger.debug(lg.PY_AVAILABLE_CLASSES.format(classes=available_class_names))
+        logger.debug(lg.PY_AVAILABLE_CLASSES, classes=available_class_names)
         return self._find_best_class_match(param_name, available_class_names)
 
     def _collect_available_classes(self, module_qn: str) -> list[str]:
@@ -142,9 +139,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 best_match = class_name
 
         logger.debug(
-            lg.PY_BEST_MATCH.format(
-                param=param_name, match=best_match, score=highest_score
-            )
+            lg.PY_BEST_MATCH, param=param_name, match=best_match, score=highest_score
         )
         return best_match
 
@@ -195,9 +190,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             right_node, local_var_types, module_qn
         ):
             local_var_types[loop_var] = element_type
-            logger.debug(
-                lg.PY_LOOP_VAR_INFERRED.format(var=loop_var, type=element_type)
-            )
+            logger.debug(lg.PY_LOOP_VAR_INFERRED, var=loop_var, type=element_type)
 
     def _infer_iterable_element_type(
         self, iterable_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -256,9 +249,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         ):
             return
         local_var_types[attr_name] = assigned_type
-        logger.debug(
-            lg.PY_INSTANCE_VAR_INFERRED.format(attr=attr_name, type=assigned_type)
-        )
+        logger.debug(lg.PY_INSTANCE_VAR_INFERRED, attr=attr_name, type=assigned_type)
 
     def _analyze_self_assignments(
         self, node: ASTNode, local_var_types: dict[str, str], module_qn: str

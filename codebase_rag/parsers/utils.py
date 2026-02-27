@@ -45,7 +45,7 @@ def get_function_captures(
     return FunctionCapturesResult(lang_config, captures)
 
 
-@lru_cache(maxsize=10000)
+@lru_cache(maxsize=50000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(cs.ENCODING_UTF8)
 

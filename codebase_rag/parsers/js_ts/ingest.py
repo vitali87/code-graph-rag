@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 
 class JsTsIngestMixin(JsTsModuleSystemMixin):
+    __slots__ = ()
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -88,7 +89,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 language_obj, root_node, module_qn
             )
         except Exception as e:
-            logger.debug(lg.JS_PROTOTYPE_INHERITANCE_FAILED.format(error=e))
+            logger.debug(lg.JS_PROTOTYPE_INHERITANCE_FAILED, error=e)
 
     def _process_prototype_inheritance_captures(
         self, language_obj, root_node, module_qn
@@ -122,9 +123,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 )
 
                 logger.debug(
-                    lg.JS_PROTOTYPE_INHERITANCE.format(
-                        child_qn=child_qn, parent_qn=parent_qn
-                    )
+                    lg.JS_PROTOTYPE_INHERITANCE, child_qn=child_qn, parent_qn=parent_qn
                 )
 
     def _ingest_prototype_method_assignments(
@@ -143,7 +142,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         try:
             self._process_prototype_method_captures(language_obj, root_node, module_qn)
         except Exception as e:
-            logger.debug(lg.JS_PROTOTYPE_METHODS_FAILED.format(error=e))
+            logger.debug(lg.JS_PROTOTYPE_METHODS_FAILED, error=e)
 
     def _process_prototype_method_captures(self, language_obj, root_node, module_qn):
         method_query = Query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
@@ -174,9 +173,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     cs.KEY_DOCSTRING: self._get_docstring(func_node),
                 }
                 logger.info(
-                    lg.JS_PROTOTYPE_METHOD_FOUND.format(
-                        method_name=method_name, method_qn=method_qn
-                    )
+                    lg.JS_PROTOTYPE_METHOD_FOUND,
+                    method_name=method_name,
+                    method_qn=method_qn,
                 )
                 self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
 
@@ -190,9 +189,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 )
 
                 logger.debug(
-                    lg.JS_PROTOTYPE_METHOD_DEFINES.format(
-                        constructor_qn=constructor_qn, method_qn=method_qn
-                    )
+                    lg.JS_PROTOTYPE_METHOD_DEFINES,
+                    constructor_qn=constructor_qn,
+                    method_qn=method_qn,
                 )
 
     def _ingest_object_literal_methods(
@@ -213,7 +212,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     language_obj, query_text, root_node, module_qn, lang_config
                 )
         except Exception as e:
-            logger.debug(lg.JS_OBJECT_METHODS_DETECT_FAILED.format(error=e))
+            logger.debug(lg.JS_OBJECT_METHODS_DETECT_FAILED, error=e)
 
     def _process_object_method_query(
         self,
@@ -250,7 +249,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     method_name_node, method_func_node, module_qn, lang_config
                 )
         except Exception as e:
-            logger.debug(lg.JS_OBJECT_METHODS_PROCESS_FAILED.format(error=e))
+            logger.debug(lg.JS_OBJECT_METHODS_PROCESS_FAILED, error=e)
 
     def _process_single_object_method(
         self,
@@ -314,9 +313,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             cs.KEY_DOCSTRING: self._get_docstring(method_func_node),
         }
         logger.info(
-            lg.JS_OBJECT_METHOD_FOUND.format(
-                method_name=method_name, method_qn=method_qn
-            )
+            lg.JS_OBJECT_METHOD_FOUND, method_name=method_name, method_qn=method_qn
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
 
@@ -352,7 +349,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     lang_query, query_text, root_node, module_qn, lang_config
                 )
         except Exception as e:
-            logger.debug(lg.JS_ASSIGNMENT_ARROW_DETECT_FAILED.format(error=e))
+            logger.debug(lg.JS_ASSIGNMENT_ARROW_DETECT_FAILED, error=e)
 
     def _process_arrow_query(
         self,
@@ -390,7 +387,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 lg.JS_ASSIGNMENT_FUNC_EXPR_FOUND,
             )
         except Exception as e:
-            logger.debug(lg.JS_ASSIGNMENT_ARROW_QUERY_FAILED.format(error=e))
+            logger.debug(lg.JS_ASSIGNMENT_ARROW_QUERY_FAILED, error=e)
 
     def _process_direct_arrow_functions(
         self,
@@ -506,9 +503,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             cs.KEY_DOCSTRING: self._get_docstring(function_node),
         }
 
-        logger.debug(
-            log_message.format(function_name=function_name, function_qn=function_qn)
-        )
+        logger.debug(log_message, function_name=function_name, function_qn=function_qn)
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
         self.function_registry[function_qn] = NodeType.FUNCTION
         self.simple_name_lookup[function_name].add(function_qn)

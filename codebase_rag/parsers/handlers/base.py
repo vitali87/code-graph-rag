@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 
 class BaseLanguageHandler:
+    __slots__ = ()
+
     def is_inside_method_with_object_literals(self, node: ASTNode) -> bool:
         return False
 

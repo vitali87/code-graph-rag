@@ -42,7 +42,7 @@ def _is_tool_available(tool_name: str) -> bool:
         subprocess.CalledProcessError,
     ):
         _EXTERNAL_TOOLS[tool_name] = False
-        logger.debug(ls.IMP_TOOL_NOT_AVAILABLE.format(tool=tool_name))
+        logger.debug(ls.IMP_TOOL_NOT_AVAILABLE, tool=tool_name)
         return False
 
 
@@ -77,9 +77,9 @@ def load_persistent_cache() -> None:
                 data = json.load(f)
                 _STDLIB_CACHE.update(data.get(cs.IMPORT_CACHE_KEY, {}))
                 _CACHE_TIMESTAMPS.update(data.get(cs.IMPORT_TIMESTAMPS_KEY, {}))
-            logger.debug(ls.IMP_CACHE_LOADED.format(path=cache_file))
+            logger.debug(ls.IMP_CACHE_LOADED, path=cache_file)
     except (json.JSONDecodeError, OSError) as e:
-        logger.debug(ls.IMP_CACHE_LOAD_ERROR.format(error=e))
+        logger.debug(ls.IMP_CACHE_LOAD_ERROR, error=e)
 
 
 def save_persistent_cache() -> None:
@@ -97,9 +97,9 @@ def save_persistent_cache() -> None:
                 f,
                 indent=2,
             )
-        logger.debug(ls.IMP_CACHE_SAVED.format(path=cache_file))
+        logger.debug(ls.IMP_CACHE_SAVED, path=cache_file)
     except OSError as e:
-        logger.debug(ls.IMP_CACHE_SAVE_ERROR.format(error=e))
+        logger.debug(ls.IMP_CACHE_SAVE_ERROR, error=e)
 
 
 def flush_stdlib_cache() -> None:
@@ -115,7 +115,7 @@ def clear_stdlib_cache() -> None:
             cache_file.unlink()
             logger.debug(ls.IMP_CACHE_CLEARED)
     except OSError as e:
-        logger.debug(ls.IMP_CACHE_CLEAR_ERROR.format(error=e))
+        logger.debug(ls.IMP_CACHE_CLEAR_ERROR, error=e)
 
 
 def get_stdlib_cache_stats() -> StdlibCacheStats:
@@ -130,6 +130,8 @@ def get_stdlib_cache_stats() -> StdlibCacheStats:
 
 
 class StdlibExtractor:
+    __slots__ = ("function_registry", "repo_path", "project_name")
+
     def __init__(
         self,
         function_registry: FunctionRegistryTrieProtocol | None = None,

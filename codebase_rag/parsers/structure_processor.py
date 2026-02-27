@@ -10,6 +10,16 @@ from ..utils.path_utils import should_skip_path
 
 
 class StructureProcessor:
+    __slots__ = (
+        "ingestor",
+        "repo_path",
+        "project_name",
+        "queries",
+        "structural_elements",
+        "unignore_paths",
+        "exclude_paths",
+    )
+
     def __init__(
         self,
         ingestor: IngestorProtocol,

@@ -19,6 +19,22 @@ if TYPE_CHECKING:
 
 
 class TypeInferenceEngine:
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "repo_path",
+        "project_name",
+        "ast_cache",
+        "queries",
+        "module_qn_to_file_path",
+        "class_inheritance",
+        "simple_name_lookup",
+        "_java_type_inference",
+        "_lua_type_inference",
+        "_js_type_inference",
+        "_python_type_inference",
+    )
+
     def __init__(
         self,
         import_processor: ImportProcessor,

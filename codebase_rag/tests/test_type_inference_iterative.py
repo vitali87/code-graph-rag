@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -88,15 +88,16 @@ def test_analyze_self_assignments_handles_deep_tree_without_recursion_error() ->
     engine = _make_engine()
     py_engine = engine.python_type_inference
 
-    py_engine._infer_type_from_expression = MagicMock(return_value="MockType")  # type: ignore[method-assign]
+    mock_infer = MagicMock(return_value="MockType")
 
     root = _build_deep_assignment_chain(depth=1500)
     local_types: dict[str, Any] = {}
 
-    py_engine._analyze_self_assignments(root, local_types, "proj.module")  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
+    with patch.object(type(py_engine), "_infer_type_from_expression", mock_infer):
+        py_engine._analyze_self_assignments(root, local_types, "proj.module")  # ty: ignore[invalid-argument-type]  # (H) NodeStub not Node
 
     assert local_types, "Expected at least one inferred instance variable"
-    assert py_engine._infer_type_from_expression.call_count == 1500  # type: ignore[attr-defined]
+    assert mock_infer.call_count == 1500
 
 
 def test_find_return_statements_handles_deep_tree_without_recursion_error() -> None:
@@ -162,86 +163,91 @@ class TestBuildLocalVariableTypeMapDispatch:
         self, engine: TypeInferenceEngine, mock_node: MagicMock
     ) -> None:
         expected = {"var1": "str"}
-        engine.python_type_inference.build_local_variable_type_map = MagicMock(
-            return_value=expected
-        )
+        mock_method = MagicMock(return_value=expected)
 
-        result = engine.build_local_variable_type_map(
-            mock_node, "proj.module", cs.SupportedLanguage.PYTHON
-        )
+        with patch.object(
+            PythonTypeInferenceEngine,
+            "build_local_variable_type_map",
+            mock_method,
+        ):
+            result = engine.build_local_variable_type_map(
+                mock_node, "proj.module", cs.SupportedLanguage.PYTHON
+            )
 
         assert result == expected
-        engine.python_type_inference.build_local_variable_type_map.assert_called_once_with(
-            mock_node, "proj.module"
-        )
+        mock_method.assert_called_once_with(mock_node, "proj.module")
 
     def test_dispatches_to_js_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock
     ) -> None:
         expected = {"jsVar": "number"}
-        engine.js_type_inference.build_local_variable_type_map = MagicMock(
-            return_value=expected
-        )
+        mock_method = MagicMock(return_value=expected)
 
-        result = engine.build_local_variable_type_map(
-            mock_node, "proj.module", cs.SupportedLanguage.JS
-        )
+        with patch.object(
+            JsTypeInferenceEngine,
+            "build_local_variable_type_map",
+            mock_method,
+        ):
+            result = engine.build_local_variable_type_map(
+                mock_node, "proj.module", cs.SupportedLanguage.JS
+            )
 
         assert result == expected
-        engine.js_type_inference.build_local_variable_type_map.assert_called_once_with(
-            mock_node, "proj.module"
-        )
+        mock_method.assert_called_once_with(mock_node, "proj.module")
 
     def test_dispatches_to_ts_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock
     ) -> None:
         expected = {"tsVar": "string"}
-        engine.js_type_inference.build_local_variable_type_map = MagicMock(
-            return_value=expected
-        )
+        mock_method = MagicMock(return_value=expected)
 
-        result = engine.build_local_variable_type_map(
-            mock_node, "proj.module", cs.SupportedLanguage.TS
-        )
+        with patch.object(
+            JsTypeInferenceEngine,
+            "build_local_variable_type_map",
+            mock_method,
+        ):
+            result = engine.build_local_variable_type_map(
+                mock_node, "proj.module", cs.SupportedLanguage.TS
+            )
 
         assert result == expected
-        engine.js_type_inference.build_local_variable_type_map.assert_called_once_with(
-            mock_node, "proj.module"
-        )
+        mock_method.assert_called_once_with(mock_node, "proj.module")
 
     def test_dispatches_to_java_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock
     ) -> None:
         expected = {"javaVar": "String"}
-        engine.java_type_inference.build_variable_type_map = MagicMock(
-            return_value=expected
-        )
+        mock_method = MagicMock(return_value=expected)
 
-        result = engine.build_local_variable_type_map(
-            mock_node, "proj.module", cs.SupportedLanguage.JAVA
-        )
+        with patch.object(
+            JavaTypeInferenceEngine,
+            "build_variable_type_map",
+            mock_method,
+        ):
+            result = engine.build_local_variable_type_map(
+                mock_node, "proj.module", cs.SupportedLanguage.JAVA
+            )
 
         assert result == expected
-        engine.java_type_inference.build_variable_type_map.assert_called_once_with(
-            mock_node, "proj.module"
-        )
+        mock_method.assert_called_once_with(mock_node, "proj.module")
 
     def test_dispatches_to_lua_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock
     ) -> None:
         expected = {"luaVar": "table"}
-        engine.lua_type_inference.build_local_variable_type_map = MagicMock(
-            return_value=expected
-        )
+        mock_method = MagicMock(return_value=expected)
 
-        result = engine.build_local_variable_type_map(
-            mock_node, "proj.module", cs.SupportedLanguage.LUA
-        )
+        with patch.object(
+            LuaTypeInferenceEngine,
+            "build_local_variable_type_map",
+            mock_method,
+        ):
+            result = engine.build_local_variable_type_map(
+                mock_node, "proj.module", cs.SupportedLanguage.LUA
+            )
 
         assert result == expected
-        engine.lua_type_inference.build_local_variable_type_map.assert_called_once_with(
-            mock_node, "proj.module"
-        )
+        mock_method.assert_called_once_with(mock_node, "proj.module")
 
     @pytest.mark.parametrize(
         "language",
@@ -320,13 +326,16 @@ class TestBuildJavaVariableTypeMap:
         engine = _make_engine()
         mock_node = MagicMock()
         expected = {"javaVar": "String", "count": "int"}
-        engine.java_type_inference.build_variable_type_map = MagicMock(
-            return_value=expected
-        )
+        mock_method = MagicMock(return_value=expected)
 
-        result = engine._build_java_variable_type_map(mock_node, "com.example.Module")
+        with patch.object(
+            JavaTypeInferenceEngine,
+            "build_variable_type_map",
+            mock_method,
+        ):
+            result = engine._build_java_variable_type_map(
+                mock_node, "com.example.Module"
+            )
 
         assert result == expected
-        engine.java_type_inference.build_variable_type_map.assert_called_once_with(
-            mock_node, "com.example.Module"
-        )
+        mock_method.assert_called_once_with(mock_node, "com.example.Module")

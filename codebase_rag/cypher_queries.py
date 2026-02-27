@@ -126,3 +126,24 @@ def build_merge_relationship_query(
     )
     query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
     return query
+
+
+def build_create_node_query(label: str, id_key: str) -> str:
+    return f"CREATE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
+
+
+def build_create_relationship_query(
+    from_label: str,
+    from_key: str,
+    rel_type: str,
+    to_label: str,
+    to_key: str,
+    has_props: bool = False,
+) -> str:
+    query = (
+        f"MATCH (a:{from_label} {{{from_key}: row.from_val}}), "
+        f"(b:{to_label} {{{to_key}: row.to_val}})\n"
+        f"CREATE (a)-[r:{rel_type}]->(b)\n"
+    )
+    query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
+    return query

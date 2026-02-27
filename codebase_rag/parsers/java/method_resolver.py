@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 
 class JavaMethodResolverMixin:
+    __slots__ = ()
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
     project_name: str
@@ -355,34 +356,32 @@ class JavaMethodResolverMixin:
             logger.debug(ls.JAVA_NO_METHOD_NAME)
             return None
 
-        logger.debug(
-            ls.JAVA_RESOLVING_CALL.format(method=method_name, object=object_ref)
-        )
+        logger.debug(ls.JAVA_RESOLVING_CALL, method=method_name, object=object_ref)
 
         if not object_ref:
-            logger.debug(ls.JAVA_RESOLVING_STATIC.format(method=method_name))
+            logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
             result = self._resolve_static_or_local_method(str(method_name), module_qn)
             if result:
-                logger.debug(ls.JAVA_FOUND_STATIC.format(result=result))
+                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
             else:
-                logger.debug(ls.JAVA_STATIC_NOT_FOUND.format(method=method_name))
+                logger.debug(ls.JAVA_STATIC_NOT_FOUND, method=method_name)
             return result
 
-        logger.debug(ls.JAVA_RESOLVING_OBJ_TYPE.format(object=object_ref))
+        logger.debug(ls.JAVA_RESOLVING_OBJ_TYPE, object=object_ref)
         if not (
             object_type := self._resolve_java_object_type(
                 str(object_ref), local_var_types, module_qn
             )
         ):
-            logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN.format(object=object_ref))
+            logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN, object=object_ref)
             return None
 
-        logger.debug(ls.JAVA_OBJ_TYPE_RESOLVED.format(type=object_type))
+        logger.debug(ls.JAVA_OBJ_TYPE_RESOLVED, type=object_type)
         result = self._resolve_instance_method(object_type, str(method_name), module_qn)
         if result:
-            logger.debug(ls.JAVA_FOUND_INSTANCE.format(result=result))
+            logger.debug(ls.JAVA_FOUND_INSTANCE, result=result)
         else:
             logger.debug(
-                ls.JAVA_INSTANCE_NOT_FOUND.format(type=object_type, method=method_name)
+                ls.JAVA_INSTANCE_NOT_FOUND, type=object_type, method=method_name
             )
         return result

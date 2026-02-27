@@ -20,6 +20,8 @@ from . import tool_descriptions as td
 
 
 class FileEditor:
+    __slots__ = ("project_root", "dmp", "parsers")
+
     def __init__(self, project_root: str = ".") -> None:
         self.project_root = Path(project_root).resolve()
         self.dmp = diff_match_patch.diff_match_patch()
@@ -218,7 +220,7 @@ class FileEditor:
 
             if target_block not in original_content:
                 logger.error(ls.EDITOR_BLOCK_NOT_FOUND.format(path=file_path))
-                logger.debug(ls.EDITOR_LOOKING_FOR.format(block=repr(target_block)))
+                logger.debug(ls.EDITOR_LOOKING_FOR, block=repr(target_block))
                 return False
 
             modified_content = original_content.replace(

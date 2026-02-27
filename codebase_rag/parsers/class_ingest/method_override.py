@@ -66,9 +66,9 @@ def check_method_overrides(
                     (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
                 )
                 logger.debug(
-                    logs.CLASS_METHOD_OVERRIDE.format(
-                        method_qn=method_qn, parent_method_qn=parent_method_qn
-                    )
+                    logs.CLASS_METHOD_OVERRIDE,
+                    method_qn=method_qn,
+                    parent_method_qn=parent_method_qn,
                 )
                 return
 

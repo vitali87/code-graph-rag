@@ -14,6 +14,8 @@ from . import tool_descriptions as td
 
 
 class FileWriter:
+    __slots__ = ("project_root",)
+
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
         logger.info(ls.FILE_WRITER_INIT.format(root=self.project_root))

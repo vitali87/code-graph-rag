@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 
 class CppHandler(BaseLanguageHandler):
+    __slots__ = ()
+
     def extract_function_name(self, node: ASTNode) -> str | None:
         if func_name := cpp_utils.extract_function_name(node):
             return func_name

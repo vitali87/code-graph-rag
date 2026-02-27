@@ -56,7 +56,7 @@ def extract_source_with_fallback(
             if ast_result := ast_extractor(qualified_name, file_path):
                 return str(ast_result)
         except Exception as e:
-            logger.debug(ls.SOURCE_AST_FAILED.format(name=qualified_name, error=e))
+            logger.debug(ls.SOURCE_AST_FAILED, name=qualified_name, error=e)
 
     return extract_source_lines(file_path, start_line, end_line, encoding)
 
