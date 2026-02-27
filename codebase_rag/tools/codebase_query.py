@@ -27,8 +27,7 @@ def create_query_tool(
     console: Console | None = None,
 ) -> Tool:
     if console is None:
-        # Keep protocol stdout clean for MCP stdio transport.
-        console = Console(width=None, stderr=True, force_terminal=False)
+        console = Console(width=None, stderr=True, force_terminal=True)
 
     async def query_codebase_knowledge_graph(
         natural_language_query: str,

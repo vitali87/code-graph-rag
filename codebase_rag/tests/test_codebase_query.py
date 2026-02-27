@@ -83,6 +83,7 @@ class TestCreateQueryTool:
 
         captured = capsys.readouterr()
         assert captured.out == ""
+        assert captured.err != ""
 
 
 class TestQueryCodebaseKnowledgeGraph:
