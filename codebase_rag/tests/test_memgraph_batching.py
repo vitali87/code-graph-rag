@@ -64,8 +64,13 @@ def test_node_batch_preserves_per_row_properties() -> None:
 def test_relationship_batch_flushes_after_threshold_and_respects_node_flush() -> None:
     ingestor, cursor_mock = _create_ingestor_with_mocked_connection()
 
+    col = MagicMock()
+    col.name = "created"
+    cursor_mock.description = [col]
+    cursor_mock.fetchall.return_value = [(1,), (1,)]
+
     with patch.object(
-        ingestor, "flush_nodes", wraps=ingestor.flush_nodes
+        MemgraphIngestor, "flush_nodes", wraps=ingestor.flush_nodes
     ) as flush_nodes_spy:
         ingestor.ensure_relationship_batch(
             ("Module", "qualified_name", "proj.module1"),
