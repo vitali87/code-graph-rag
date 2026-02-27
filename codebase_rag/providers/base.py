@@ -18,6 +18,8 @@ from ..config import ModelConfig, settings
 
 
 class ModelProvider(ABC):
+    __slots__ = ("config",)
+
     def __init__(self, **config: str | int | None) -> None:
         self.config = config
 
@@ -38,6 +40,15 @@ class ModelProvider(ABC):
 
 
 class GoogleProvider(ModelProvider):
+    __slots__ = (
+        "api_key",
+        "provider_type",
+        "project_id",
+        "region",
+        "service_account_file",
+        "thinking_budget",
+    )
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -98,6 +109,8 @@ class GoogleProvider(ModelProvider):
 
 
 class OpenAIProvider(ModelProvider):
+    __slots__ = ("api_key", "endpoint")
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -126,6 +139,8 @@ class OpenAIProvider(ModelProvider):
 
 
 class OllamaProvider(ModelProvider):
+    __slots__ = ("endpoint", "api_key")
+
     def __init__(
         self,
         endpoint: str | None = None,

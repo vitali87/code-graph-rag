@@ -33,7 +33,7 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 
             setup_py_path = submodule_path / cs.SETUP_PY
             if setup_py_path.exists():
-                logger.debug(ls.BUILDING_BINDINGS.format(lang=lang_name))
+                logger.debug(ls.BUILDING_BINDINGS, lang=lang_name)
                 result = subprocess.run(
                     [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
                     check=False,
@@ -44,14 +44,15 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 
                 if result.returncode != 0:
                     logger.debug(
-                        ls.BUILD_FAILED.format(
-                            lang=lang_name, stdout=result.stdout, stderr=result.stderr
-                        )
+                        ls.BUILD_FAILED,
+                        lang=lang_name,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
                     )
                     return None
-                logger.debug(ls.BUILD_SUCCESS.format(lang=lang_name))
+                logger.debug(ls.BUILD_SUCCESS, lang=lang_name)
 
-            logger.debug(ls.IMPORTING_MODULE.format(module=module_name))
+            logger.debug(ls.IMPORTING_MODULE, module=module_name)
             module = importlib.import_module(module_name)
 
             language_attrs: list[str] = [
@@ -63,21 +64,19 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
             for attr_name in language_attrs:
                 if hasattr(module, attr_name):
                     logger.debug(
-                        ls.LOADED_FROM_SUBMODULE.format(lang=lang_name, attr=attr_name)
+                        ls.LOADED_FROM_SUBMODULE, lang=lang_name, attr=attr_name
                     )
                     loader: LanguageLoader = getattr(module, attr_name)
                     return loader
 
-            logger.debug(
-                ls.NO_LANG_ATTR.format(module=module_name, available=dir(module))
-            )
+            logger.debug(ls.NO_LANG_ATTR, module=module_name, available=dir(module))
 
         finally:
             if python_bindings_str in sys.path:
                 sys.path.remove(python_bindings_str)
 
     except Exception as e:
-        logger.debug(ls.SUBMODULE_LOAD_FAILED.format(lang=lang_name, error=e))
+        logger.debug(ls.SUBMODULE_LOAD_FAILED, lang=lang_name, error=e)
 
     return None
 
@@ -215,7 +214,7 @@ def _create_locals_query(
     try:
         return Query(language, locals_pattern)
     except Exception as e:
-        logger.debug(ls.LOCALS_QUERY_FAILED.format(lang=lang_name, error=e))
+        logger.debug(ls.LOCALS_QUERY_FAILED, lang=lang_name, error=e)
         return None
 
 
@@ -256,7 +255,7 @@ def _process_language(
 ) -> bool:
     lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
     if not lang_lib:
-        logger.debug(ls.LIB_NOT_AVAILABLE.format(lang=lang_name))
+        logger.debug(ls.LIB_NOT_AVAILABLE, lang=lang_name)
         return False
 
     try:

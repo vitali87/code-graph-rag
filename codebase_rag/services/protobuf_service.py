@@ -33,6 +33,8 @@ NAME_BASED_LABELS = frozenset({cs.NodeLabel.EXTERNAL_PACKAGE, cs.NodeLabel.PROJE
 
 
 class ProtobufFileIngestor:
+    __slots__ = ("output_dir", "_nodes", "_relationships", "split_index")
+
     def __init__(self, output_path: str, split_index: bool = False):
         self.output_dir = Path(output_path)
         self._nodes: dict[str, pb.Node] = {}
