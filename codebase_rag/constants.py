@@ -908,6 +908,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     PyInstallerPackage(name="loguru", collect_all=True),
     PyInstallerPackage(name="toml", collect_all=True),
     PyInstallerPackage(name="protobuf", collect_all=True),
+    PyInstallerPackage(name="genai_prices", collect_all=True),
 ]
 
 ALLOWED_COMMENT_MARKERS = frozenset(
