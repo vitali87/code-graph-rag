@@ -176,12 +176,30 @@ class MemgraphIngestor:
                     logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
                 raise
 
-    def _execute_batch(self, query: str, params_list: Sequence[BatchParams]) -> None:
-        if not self.conn or not params_list:
+    def _create_connection(self) -> mgclient.Connection:
+        if self._username is not None:
+            conn = mgclient.connect(
+                host=self._host,
+                port=self._port,
+                username=self._username,
+                password=self._password,
+            )
+        else:
+            conn = mgclient.connect(host=self._host, port=self._port)
+        conn.autocommit = True
+        return conn
+
+    def _execute_batch_on(
+        self,
+        conn: mgclient.Connection,
+        query: str,
+        params_list: Sequence[BatchParams],
+    ) -> None:
+        if not params_list:
             return
         cursor = None
         try:
-            cursor = self.conn.cursor()
+            cursor = conn.cursor()
             cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
         except Exception as e:
             if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
@@ -200,14 +218,22 @@ class MemgraphIngestor:
             if cursor:
                 cursor.close()
 
-    def _execute_batch_with_return(
-        self, query: str, params_list: Sequence[BatchParams]
+    def _execute_batch(self, query: str, params_list: Sequence[BatchParams]) -> None:
+        if not self.conn:
+            return
+        self._execute_batch_on(self.conn, query, params_list)
+
+    def _execute_batch_with_return_on(
+        self,
+        conn: mgclient.Connection,
+        query: str,
+        params_list: Sequence[BatchParams],
     ) -> list[ResultRow]:
-        if not self.conn or not params_list:
+        if not params_list:
             return []
         cursor = None
         try:
-            cursor = self.conn.cursor()
+            cursor = conn.cursor()
             cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
             return self._cursor_to_results(cursor)
         except Exception as e:
@@ -217,6 +243,13 @@ class MemgraphIngestor:
         finally:
             if cursor:
                 cursor.close()
+
+    def _execute_batch_with_return(
+        self, query: str, params_list: Sequence[BatchParams]
+    ) -> list[ResultRow]:
+        if not self.conn:
+            return []
+        return self._execute_batch_with_return_on(self.conn, query, params_list)
 
     def clean_database(self) -> None:
         logger.info(ls.MG_CLEANING_DB)
@@ -282,6 +315,7 @@ class MemgraphIngestor:
         self,
         label: str,
         props_list: list[dict[str, PropertyValue]],
+        conn: mgclient.Connection | None = None,
     ) -> tuple[int, int]:
         if not props_list:
             return 0, 0
@@ -310,8 +344,33 @@ class MemgraphIngestor:
             build_merge_node_query if self._use_merge else build_create_node_query
         )
         query = build_query(label, id_key)
-        self._execute_batch(query, batch_rows)
+        if conn is not None:
+            self._execute_batch_on(conn, query, batch_rows)
+        else:
+            self._execute_batch(query, batch_rows)
         return len(batch_rows), skipped
+
+    def _flush_node_group_with_own_conn(
+        self,
+        label: str,
+        props_list: list[dict[str, PropertyValue]],
+    ) -> tuple[int, int]:
+        conn = self._create_connection()
+        try:
+            return self._flush_node_label_group(label, props_list, conn=conn)
+        finally:
+            conn.close()
+
+    def _flush_rel_group_with_own_conn(
+        self,
+        pattern: tuple[str, str, str, str, str],
+        params_list: list[RelBatchRow],
+    ) -> tuple[int, int]:
+        conn = self._create_connection()
+        try:
+            return self._flush_rel_pattern_group(pattern, params_list, conn=conn)
+        finally:
+            conn.close()
 
     def flush_nodes(self) -> None:
         if not self.node_buffer:
@@ -336,7 +395,7 @@ class MemgraphIngestor:
             )
             futures = {
                 self._executor.submit(
-                    self._flush_node_label_group, label, props_list
+                    self._flush_node_group_with_own_conn, label, props_list
                 ): label
                 for label, props_list in nodes_by_label.items()
             }
@@ -368,6 +427,7 @@ class MemgraphIngestor:
         self,
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
+        conn: mgclient.Connection | None = None,
     ) -> tuple[int, int]:
         from_label, from_key, rel_type, to_label, to_key = pattern
         build_rel_query = (
@@ -380,7 +440,10 @@ class MemgraphIngestor:
             from_label, from_key, rel_type, to_label, to_key, has_props
         )
 
-        results = self._execute_batch_with_return(query, params_list)
+        if conn is not None:
+            results = self._execute_batch_with_return_on(conn, query, params_list)
+        else:
+            results = self._execute_batch_with_return(query, params_list)
         batch_successful = 0
         for r in results:
             created = r.get(KEY_CREATED, 0)
@@ -420,7 +483,7 @@ class MemgraphIngestor:
             )
             futures = {
                 self._executor.submit(
-                    self._flush_rel_pattern_group, pattern, params_list
+                    self._flush_rel_group_with_own_conn, pattern, params_list
                 ): pattern
                 for pattern, params_list in self._rel_groups.items()
             }
