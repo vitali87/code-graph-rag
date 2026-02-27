@@ -115,10 +115,7 @@ class TestExtractSourceLines:
 
     def test_counts_blank_lines(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text(
-            encoding="utf-8",
-            data="line1\n\nline3\n\nline5\n",
-        )
+        file_path.write_bytes(b"line1\n\nline3\n\nline5\n")
 
         result = extract_source_lines(file_path, 1, 5)
 
@@ -126,9 +123,8 @@ class TestExtractSourceLines:
 
     def test_extracts_across_blank_lines(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text(
-            encoding="utf-8",
-            data="def func1():\n    pass\n\ndef func2():\n    return 42\n",
+        file_path.write_bytes(
+            b"def func1():\n    pass\n\ndef func2():\n    return 42\n"
         )
 
         result = extract_source_lines(file_path, 4, 5)
@@ -137,9 +133,8 @@ class TestExtractSourceLines:
 
     def test_preserves_internal_blank_lines(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text(
-            encoding="utf-8",
-            data="def func():\n    x = 1\n\n    y = 2\n\n    return x + y\n",
+        file_path.write_bytes(
+            b"def func():\n    x = 1\n\n    y = 2\n\n    return x + y\n"
         )
 
         result = extract_source_lines(file_path, 1, 6)
@@ -148,8 +143,7 @@ class TestExtractSourceLines:
 
     def test_line_count_matches_with_many_blank_lines(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        content = "a\n\n\n\nb\n\n\n\nc\n"
-        file_path.write_text(encoding="utf-8", data=content)
+        file_path.write_bytes(b"a\n\n\n\nb\n\n\n\nc\n")
 
         result = extract_source_lines(file_path, 5, 5)
 
@@ -157,10 +151,7 @@ class TestExtractSourceLines:
 
     def test_clamps_end_line_returns_partial_content(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"
-        file_path.write_text(
-            encoding="utf-8",
-            data="def func():\n    pass\n\ndef other():\n    return 1\n",
-        )
+        file_path.write_bytes(b"def func():\n    pass\n\ndef other():\n    return 1\n")
 
         result = extract_source_lines(file_path, 4, 100)
 
