@@ -332,11 +332,7 @@ class StdlibExtractor:
             ):
                 pass
 
-        result = (
-            cs.SEPARATOR_DOT.join(parts[:-1])
-            if entity_name[:1].isupper()
-            else full_qualified_name
-        )
+        result = cs.SEPARATOR_DOT.join(parts[:-1])
         _cache_stdlib_result(cs.SupportedLanguage.JS, full_qualified_name, result)
         return result
 
