@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -269,19 +270,27 @@ class TestNegationIntegration:
         assert "custom" in result
 
 
+@pytest.fixture
+def mock_memgraph_connect() -> Generator[MagicMock, None, None]:
+    with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
+        mock_ingestor = MagicMock()
+        mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
+        mock_connect.return_value.__exit__ = MagicMock(return_value=False)
+        yield mock_connect
+
+
 class TestCgrignoreLoadedWithoutInteractiveSetup:
     runner = CliRunner()
 
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.connect_memgraph")
     @patch("codebase_rag.cli.load_cgrignore_patterns")
     def test_start_loads_cgrignore_without_interactive_setup(
         self,
         mock_load_cgrignore: MagicMock,
-        mock_connect: MagicMock,
         mock_load_parsers: MagicMock,
         mock_graph_updater: MagicMock,
+        mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
         cgrignore_patterns = CgrignorePatterns(
@@ -290,10 +299,6 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
         )
         mock_load_cgrignore.return_value = cgrignore_patterns
 
-        mock_ingestor = MagicMock()
-        mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
-        mock_connect.return_value.__exit__ = MagicMock(return_value=False)
-
         result = self.runner.invoke(
             app,
             ["start", "--update-graph", "--repo-path", str(tmp_path)],
@@ -301,12 +306,10 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
 
         assert result.exit_code == 0, result.output
         mock_load_cgrignore.assert_called_once_with(tmp_path)
-        updater_call = mock_graph_updater.call_args
-        passed_unignore = updater_call.args[4]
-        passed_exclude = updater_call.args[5]
-        assert passed_unignore == frozenset({"vendor/important"})
-        assert "vendor" in passed_exclude
-        assert "build" in passed_exclude
+        updater_kwargs = mock_graph_updater.call_args.kwargs
+        assert updater_kwargs["unignore_paths"] == frozenset({"vendor/important"})
+        assert "vendor" in updater_kwargs["exclude_paths"]
+        assert "build" in updater_kwargs["exclude_paths"]
 
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
@@ -335,22 +338,19 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
 
         assert result.exit_code == 0, result.output
         mock_load_cgrignore.assert_called_once_with(tmp_path)
-        updater_call = mock_graph_updater.call_args
-        passed_unignore = updater_call.args[4]
-        passed_exclude = updater_call.args[5]
-        assert passed_unignore == frozenset({"dist/assets"})
-        assert "dist" in passed_exclude
+        updater_kwargs = mock_graph_updater.call_args.kwargs
+        assert updater_kwargs["unignore_paths"] == frozenset({"dist/assets"})
+        assert "dist" in updater_kwargs["exclude_paths"]
 
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.connect_memgraph")
     @patch("codebase_rag.cli.load_cgrignore_patterns")
     def test_start_merges_cli_excludes_with_cgrignore(
         self,
         mock_load_cgrignore: MagicMock,
-        mock_connect: MagicMock,
         mock_load_parsers: MagicMock,
         mock_graph_updater: MagicMock,
+        mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
         cgrignore_patterns = CgrignorePatterns(
@@ -358,10 +358,6 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
             unignore=frozenset(),
         )
         mock_load_cgrignore.return_value = cgrignore_patterns
-
-        mock_ingestor = MagicMock()
-        mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
-        mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
         result = self.runner.invoke(
             app,
@@ -376,33 +372,27 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
         )
 
         assert result.exit_code == 0, result.output
-        updater_call = mock_graph_updater.call_args
-        passed_exclude = updater_call.args[5]
-        assert "from_cgrignore" in passed_exclude
-        assert "from_cli" in passed_exclude
+        updater_kwargs = mock_graph_updater.call_args.kwargs
+        assert "from_cgrignore" in updater_kwargs["exclude_paths"]
+        assert "from_cli" in updater_kwargs["exclude_paths"]
 
     @patch("codebase_rag.cli.prompt_for_unignored_directories")
     @patch("codebase_rag.cli.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
-    @patch("codebase_rag.cli.connect_memgraph")
     @patch("codebase_rag.cli.load_cgrignore_patterns")
     def test_start_does_not_prompt_without_interactive_setup(
         self,
         mock_load_cgrignore: MagicMock,
-        mock_connect: MagicMock,
         mock_load_parsers: MagicMock,
         mock_graph_updater: MagicMock,
         mock_prompt: MagicMock,
+        mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
         mock_load_cgrignore.return_value = CgrignorePatterns(
             exclude=frozenset({"vendor"}),
             unignore=frozenset({"vendor/keep"}),
         )
-
-        mock_ingestor = MagicMock()
-        mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
-        mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
         result = self.runner.invoke(
             app,
