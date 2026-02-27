@@ -169,12 +169,12 @@ def start(
             parsers, queries = load_parsers()
 
             updater = GraphUpdater(
-                ingestor,
-                repo_to_update,
-                parsers,
-                queries,
-                unignore_paths,
-                exclude_paths,
+                ingestor=ingestor,
+                repo_path=repo_to_update,
+                parsers=parsers,
+                queries=queries,
+                unignore_paths=unignore_paths,
+                exclude_paths=exclude_paths,
             )
             updater.run()
 
@@ -245,7 +245,12 @@ def index(
         )
         parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor, repo_to_index, parsers, queries, unignore_paths, exclude_paths
+            ingestor=ingestor,
+            repo_path=repo_to_index,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=unignore_paths,
+            exclude_paths=exclude_paths,
         )
 
         updater.run()
