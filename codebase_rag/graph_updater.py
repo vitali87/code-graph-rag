@@ -400,6 +400,8 @@ class GraphUpdater:
 
         current_file_keys: set[str] = set()
 
+        processed_since_flush = 0
+
         for filepath in eligible_files:
             file_key = str(filepath.relative_to(self.repo_path))
             current_file_keys.add(file_key)
@@ -424,6 +426,12 @@ class GraphUpdater:
 
             changed_count += 1
             self._process_single_file(filepath)
+
+            processed_since_flush += 1
+            if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
+                logger.info(ls.PERIODIC_FLUSH, count=changed_count)
+                self.ingestor.flush_all()
+                processed_since_flush = 0
 
         deleted_keys = set(old_hashes.keys()) - current_file_keys
         if deleted_keys:

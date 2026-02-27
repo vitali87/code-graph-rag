@@ -194,6 +194,14 @@ MG_RELS_FLUSHED = (
 )
 MG_FLUSH_START = "--- Flushing all pending writes to database... ---"
 MG_FLUSH_COMPLETE = "--- Flushing complete. ---"
+MG_PARALLEL_FLUSH_NODES = (
+    "Parallel flushing {count} label groups with {workers} workers"
+)
+MG_PARALLEL_FLUSH_RELS = (
+    "Parallel flushing {count} relationship groups with {workers} workers"
+)
+MG_PARALLEL_LABEL_ERROR = "Error flushing label group '{label}': {error}"
+MG_PARALLEL_REL_ERROR = "Error flushing relationship group '{pattern}': {error}"
 MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
 MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
@@ -623,6 +631,7 @@ HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
 HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
 HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
 HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
+PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
