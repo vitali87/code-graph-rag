@@ -96,24 +96,7 @@ def temp_repo() -> Generator[Path, None, None]:
     shutil.rmtree(temp_dir)
 
 
-class _IngestorStub:
-    def fetch_all(self, query: str, params: object = None) -> list:
-        return []
-
-    def execute_write(self, query: str, params: object = None) -> None:
-        pass
-
-    def ensure_node_batch(self, *args: object, **kwargs: object) -> None:
-        pass
-
-    def ensure_relationship_batch(self, *args: object, **kwargs: object) -> None:
-        pass
-
-    def flush_all(self) -> None:
-        pass
-
-
-class _MockIngestor(_IngestorStub):
+class _MockIngestor:
     _TRACKED = (
         "fetch_all",
         "execute_write",

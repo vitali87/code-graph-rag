@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,9 +15,18 @@ from watchdog.events import (
 from realtime_updater import CodeChangeEventHandler
 
 
+@runtime_checkable
+class _AnyProtocol(Protocol):
+    pass
+
+
+@pytest.fixture(autouse=True)
+def _bypass_protocol_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("realtime_updater.QueryProtocol", _AnyProtocol)
+
+
 @pytest.fixture
 def event_handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
-    """Provides a CodeChangeEventHandler instance with a mocked updater."""
     return CodeChangeEventHandler(mock_updater)
 
 
