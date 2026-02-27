@@ -162,6 +162,11 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
         return False
 
     while current and current.type not in lang_config.module_node_types:
+        if (
+            current.type in lang_config.function_node_types
+            and current.child_by_field_name(cs.FIELD_BODY) is not None
+        ):
+            return False
         if current.type in lang_config.class_node_types:
             return True
         current = current.parent

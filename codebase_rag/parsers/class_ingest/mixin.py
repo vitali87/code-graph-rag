@@ -9,6 +9,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs
+from ...language_spec import LanguageSpec
 from ...types_defs import ASTNode, PropertyDict
 from ..java import utils as java_utils
 from ..py import resolve_class_name
@@ -21,7 +22,6 @@ from . import node_type as nt
 from . import relationships as rel
 
 if TYPE_CHECKING:
-    from ...language_spec import LanguageSpec
     from ...services import IngestorProtocol
     from ...types_defs import (
         FunctionRegistryTrieProtocol,
@@ -29,6 +29,20 @@ if TYPE_CHECKING:
         SimpleNameLookup,
     )
     from ..import_processor import ImportProcessor
+
+
+def _is_nested_inside_function(
+    node: Node, class_body: Node, lang_config: LanguageSpec
+) -> bool:
+    current = node.parent
+    while current and current is not class_body:
+        if (
+            current.type in lang_config.function_node_types
+            and current.child_by_field_name(cs.FIELD_BODY) is not None
+        ):
+            return True
+        current = current.parent
+    return False
 
 
 class ClassIngestMixin:
@@ -180,20 +194,24 @@ class ClassIngestMixin:
         if not body_node or not method_query:
             return
 
+        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
-            if isinstance(method_node, Node):
-                ingest_method(
-                    method_node,
-                    class_qn,
-                    cs.NodeLabel.CLASS,
-                    self.ingestor,
-                    self.function_registry,
-                    self.simple_name_lookup,
-                    self._get_docstring,
-                    language,
-                )
+            if not isinstance(method_node, Node):
+                continue
+            if _is_nested_inside_function(method_node, body_node, lang_config):
+                continue
+            ingest_method(
+                method_node,
+                class_qn,
+                cs.NodeLabel.CLASS,
+                self.ingestor,
+                self.function_registry,
+                self.simple_name_lookup,
+                self._get_docstring,
+                language,
+            )
 
     def _ingest_class_methods(
         self,
@@ -207,10 +225,13 @@ class ClassIngestMixin:
         if not body_node or not method_query:
             return
 
+        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(method_node, Node):
+                continue
+            if _is_nested_inside_function(method_node, body_node, lang_config):
                 continue
 
             method_qualified_name = None

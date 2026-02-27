@@ -234,7 +234,7 @@ class MyClass:
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
         result = definition_processor._is_method(inner_func, lang_config)
-        assert result is True
+        assert result is False
 
 
 class TestFormatNestedQn:
