@@ -40,6 +40,7 @@ else:
 
 
 class PythonExpressionAnalyzerMixin(_ExprBase):
+    __slots__ = ()
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
@@ -243,7 +244,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 return self._analyze_method_return_statements(method_node, method_qn)
             return None
         except Exception as e:
-            logger.debug(lg.PY_INFER_RETURN_FAILED.format(method=method_call, error=e))
+            logger.debug(lg.PY_INFER_RETURN_FAILED, method=method_call, error=e)
             return None
 
     def _resolve_method_qualified_name(
@@ -305,11 +306,10 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         for qn in self.simple_name_lookup.get(class_name, []):
             if result := self._try_resolve_method(qn, method_name):
                 logger.debug(
-                    lg.PY_RESOLVED_METHOD.format(
-                        class_name=class_name,
-                        method_name=method_name,
-                        method_qn=result,
-                    )
+                    lg.PY_RESOLVED_METHOD,
+                    class_name=class_name,
+                    method_name=method_name,
+                    method_qn=result,
                 )
                 return result
 
@@ -355,7 +355,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             return instance_vars.get(full_attr_name)
 
         except Exception as e:
-            logger.debug(lg.PY_INFER_ATTR_FAILED.format(attr=attribute_name, error=e))
+            logger.debug(lg.PY_INFER_ATTR_FAILED, attr=attribute_name, error=e)
             return None
 
     def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None:

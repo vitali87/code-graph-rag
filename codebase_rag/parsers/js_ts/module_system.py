@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 
 class JsTsModuleSystemMixin:
+    __slots__ = ("_processed_imports",)
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -71,10 +72,10 @@ class JsTsModuleSystemMixin:
                     )
 
             except Exception as e:
-                logger.debug(ls.JS_COMMONJS_DESTRUCTURE_FAILED.format(error=e))
+                logger.debug(ls.JS_COMMONJS_DESTRUCTURE_FAILED, error=e)
 
         except Exception as e:
-            logger.debug(ls.JS_MISSING_IMPORT_PATTERNS_FAILED.format(error=e))
+            logger.debug(ls.JS_MISSING_IMPORT_PATTERNS_FAILED, error=e)
 
     def _extract_require_module_name(self, declarator: ASTNode) -> str | None:
         name_node = declarator.child_by_field_name(cs.FIELD_NAME)
@@ -148,7 +149,7 @@ class JsTsModuleSystemMixin:
                 self._process_destructured_child(child, module_name, module_qn)
 
         except Exception as e:
-            logger.debug(ls.JS_COMMONJS_VAR_DECLARATOR_FAILED.format(error=e))
+            logger.debug(ls.JS_COMMONJS_VAR_DECLARATOR_FAILED, error=e)
 
     def _process_commonjs_import(
         self, imported_name: str, module_name: str, module_qn: str
@@ -179,20 +180,17 @@ class JsTsModuleSystemMixin:
                 )
 
                 logger.debug(
-                    ls.JS_MISSING_IMPORT_PATTERN.format(
-                        module_qn=module_qn,
-                        imported_name=imported_name,
-                        resolved_source_module=resolved_source_module,
-                    )
+                    ls.JS_MISSING_IMPORT_PATTERN,
+                    module_qn=module_qn,
+                    imported_name=imported_name,
+                    resolved_source_module=resolved_source_module,
                 )
 
                 self._processed_imports.add(import_key)
 
         except Exception as e:
             logger.debug(
-                ls.JS_COMMONJS_IMPORT_FAILED.format(
-                    imported_name=imported_name, error=e
-                )
+                ls.JS_COMMONJS_IMPORT_FAILED, imported_name=imported_name, error=e
             )
 
     def _ingest_export_function(
@@ -302,7 +300,7 @@ class JsTsModuleSystemMixin:
                 )
 
             except Exception as e:
-                logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED.format(error=e))
+                logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED, error=e)
 
     def _ingest_es6_exports(
         self,
@@ -365,7 +363,7 @@ class JsTsModuleSystemMixin:
                                             )
 
                 except Exception as e:
-                    logger.debug(ls.JS_ES6_EXPORTS_QUERY_FAILED.format(error=e))
+                    logger.debug(ls.JS_ES6_EXPORTS_QUERY_FAILED, error=e)
 
         except Exception as e:
-            logger.debug(ls.JS_ES6_EXPORTS_DETECT_FAILED.format(error=e))
+            logger.debug(ls.JS_ES6_EXPORTS_DETECT_FAILED, error=e)

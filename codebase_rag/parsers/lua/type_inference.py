@@ -14,6 +14,12 @@ if TYPE_CHECKING:
 
 
 class LuaTypeInferenceEngine:
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "project_name",
+    )
+
     def __init__(
         self,
         import_processor: ImportProcessor,
@@ -36,7 +42,7 @@ class LuaTypeInferenceEngine:
                 self._process_variable_declaration(current, module_qn, local_var_types)
             stack.extend(reversed(current.children))
 
-        logger.debug(ls.LUA_VAR_TYPE_MAP_BUILT.format(count=len(local_var_types)))
+        logger.debug(ls.LUA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
         return local_var_types
 
     def _process_variable_declaration(
@@ -62,9 +68,7 @@ class LuaTypeInferenceEngine:
                 func_calls[i], module_qn
             ):
                 local_var_types[var_name] = var_type
-                logger.debug(
-                    ls.LUA_VAR_INFERRED.format(var_name=var_name, var_type=var_type)
-                )
+                logger.debug(ls.LUA_VAR_INFERRED, var_name=var_name, var_type=var_type)
 
     def _extract_var_names(self, assignment: TreeSitterNodeProtocol) -> list[str]:
         names: list[str] = []
@@ -110,11 +114,10 @@ class LuaTypeInferenceEngine:
                             class_name, module_qn
                         ):
                             logger.debug(
-                                ls.LUA_TYPE_INFERENCE_RETURN.format(
-                                    class_name=class_name,
-                                    method_name=method_name,
-                                    class_qn=class_qn,
-                                )
+                                ls.LUA_TYPE_INFERENCE_RETURN,
+                                class_name=class_name,
+                                method_name=method_name,
+                                class_qn=class_qn,
                             )
                             return class_qn
 

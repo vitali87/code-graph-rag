@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 
 class JavaTypeResolverMixin:
+    __slots__ = ()
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
     module_qn_to_file_path: dict[str, Path]
