@@ -302,25 +302,43 @@ fn demonstrate_types() {
 
     project_name = rust_project.name
 
-    expected_classes = [
+    expected_structs = [
         f"{project_name}.types.Point",
         f"{project_name}.types.Color",
         f"{project_name}.types.Unit",
         f"{project_name}.types.Container",
         f"{project_name}.types.Borrowed",
         f"{project_name}.types.GenericBorrowed",
-        f"{project_name}.types.Direction",
-        f"{project_name}.types.Message",
-        f"{project_name}.types.Option",
-        f"{project_name}.types.Cow",
-        f"{project_name}.types.FloatOrInt",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    missing_classes = set(expected_classes) - created_classes
-    assert not missing_classes, (
-        f"Missing expected types: {sorted(list(missing_classes))}"
+    missing_structs = set(expected_structs) - created_classes
+    assert not missing_structs, (
+        f"Missing expected structs: {sorted(list(missing_structs))}"
+    )
+
+    expected_enums = [
+        f"{project_name}.types.Direction",
+        f"{project_name}.types.Message",
+        f"{project_name}.types.Option",
+        f"{project_name}.types.Cow",
+    ]
+
+    created_enums = get_node_names(mock_ingestor, "Enum")
+
+    missing_enums = set(expected_enums) - created_enums
+    assert not missing_enums, f"Missing expected enums: {sorted(list(missing_enums))}"
+
+    expected_unions = [
+        f"{project_name}.types.FloatOrInt",
+    ]
+
+    created_unions = get_node_names(mock_ingestor, "Union")
+
+    missing_unions = set(expected_unions) - created_unions
+    assert not missing_unions, (
+        f"Missing expected unions: {sorted(list(missing_unions))}"
     )
 
     expected_methods = [
@@ -495,6 +513,13 @@ fn demonstrate_traits() {
         f"{project_name}.traits.Drawable",
     ]
 
+    created_interfaces = get_node_names(mock_ingestor, "Interface")
+
+    missing_traits = set(expected_traits) - created_interfaces
+    assert not missing_traits, (
+        f"Missing expected traits: {sorted(list(missing_traits))}"
+    )
+
     expected_structs = [
         f"{project_name}.traits.Point",
         f"{project_name}.traits.Circle",
@@ -502,10 +527,9 @@ fn demonstrate_traits() {
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    all_expected = expected_traits + expected_structs
-    missing_classes = set(all_expected) - created_classes
-    assert not missing_classes, (
-        f"Missing expected traits/structs: {sorted(list(missing_classes))}"
+    missing_structs = set(expected_structs) - created_classes
+    assert not missing_structs, (
+        f"Missing expected structs: {sorted(list(missing_structs))}"
     )
 
     expected_methods = [
@@ -1059,18 +1083,26 @@ fn demonstrate_patterns() {
 
     project_name = rust_project.name
 
-    expected_types = [
-        f"{project_name}.pattern_matching.Color",
-        f"{project_name}.pattern_matching.Message",
+    expected_structs = [
         f"{project_name}.pattern_matching.Point",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    found_types = set(expected_types) & created_classes
-    assert len(found_types) >= 3, (
-        f"Expected at least 3 types, found: {sorted(list(found_types))}"
+    missing_structs = set(expected_structs) - created_classes
+    assert not missing_structs, (
+        f"Missing expected structs: {sorted(list(missing_structs))}"
     )
+
+    expected_enums = [
+        f"{project_name}.pattern_matching.Color",
+        f"{project_name}.pattern_matching.Message",
+    ]
+
+    created_enums = get_node_names(mock_ingestor, "Enum")
+
+    missing_enums = set(expected_enums) - created_enums
+    assert not missing_enums, f"Missing expected enums: {sorted(list(missing_enums))}"
 
     expected_functions = [
         f"{project_name}.pattern_matching.match_color",
@@ -1535,18 +1567,24 @@ mod tests {
     )
 
     expected_structs = [
-        f"{project_name}.macros.Person",
-        f"{project_name}.macros.Point",
         f"{project_name}.macros.MacroStruct",
-        f"{project_name}.macros.MacroEnum",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    found_structs = set(expected_structs) & created_classes
-    assert len(found_structs) >= 2, (
-        f"Expected at least 2 macro structs, found: {sorted(list(found_structs))}"
+    missing_structs = set(expected_structs) - created_classes
+    assert not missing_structs, (
+        f"Missing expected structs: {sorted(list(missing_structs))}"
     )
+
+    expected_enums = [
+        f"{project_name}.macros.MacroEnum",
+    ]
+
+    created_enums = get_node_names(mock_ingestor, "Enum")
+
+    missing_enums = set(expected_enums) - created_enums
+    assert not missing_enums, f"Missing expected enums: {sorted(list(missing_enums))}"
 
 
 def test_rust_imports_and_use_statements(
@@ -2050,9 +2088,9 @@ fn demonstrate_error_handling() {
         f"{project_name}.error_handling.CustomError",
     ]
 
-    created_classes = get_node_names(mock_ingestor, "Class")
+    created_enums = get_node_names(mock_ingestor, "Enum")
 
-    found_enums = set(expected_enums) & created_classes
+    found_enums = set(expected_enums) & created_enums
     assert len(found_enums) >= 1, (
         f"Expected at least 1 custom error enum, found: {sorted(list(found_enums))}"
     )
@@ -2403,18 +2441,36 @@ fn demonstrate_comprehensive_rust() {
 
     project_name = rust_project.name
 
-    expected_types = [
+    expected_structs = [
         f"{project_name}.comprehensive.User",
-        f"{project_name}.comprehensive.RepositoryError",
         f"{project_name}.comprehensive.UserRepository",
-        f"{project_name}.comprehensive.Repository",
     ]
 
     created_classes = get_node_names(mock_ingestor, "Class")
 
-    found_types = set(expected_types) & created_classes
-    assert len(found_types) >= 3, (
-        f"Expected at least 3 comprehensive types, found: {sorted(list(found_types))}"
+    missing_structs = set(expected_structs) - created_classes
+    assert not missing_structs, (
+        f"Missing expected structs: {sorted(list(missing_structs))}"
+    )
+
+    expected_enums = [
+        f"{project_name}.comprehensive.RepositoryError",
+    ]
+
+    created_enums = get_node_names(mock_ingestor, "Enum")
+
+    missing_enums = set(expected_enums) - created_enums
+    assert not missing_enums, f"Missing expected enums: {sorted(list(missing_enums))}"
+
+    expected_interfaces = [
+        f"{project_name}.comprehensive.Repository",
+    ]
+
+    created_interfaces = get_node_names(mock_ingestor, "Interface")
+
+    missing_interfaces = set(expected_interfaces) - created_interfaces
+    assert not missing_interfaces, (
+        f"Missing expected traits: {sorted(list(missing_interfaces))}"
     )
 
 
