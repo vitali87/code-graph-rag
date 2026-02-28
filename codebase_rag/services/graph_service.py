@@ -118,23 +118,25 @@ class MemgraphIngestor:
         exc_val: Exception | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
-        if exc_type:
-            logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-            # (H) Best-effort flush: attempt to persist buffered nodes/relationships even
-            # (H) when an exception occurred. Wrapped in try/except so a secondary flush
-            # (H) failure never masks the original exception.
-            try:
+        try:
+            if exc_type:
+                logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                # (H) Best-effort flush: attempt to persist buffered nodes/relationships
+                # (H) even when an exception occurred. Catching broad Exception so a
+                # (H) secondary flush failure never masks the original exception.
+                try:
+                    self.flush_all()
+                except Exception as flush_err:
+                    logger.error(ls.MG_FLUSH_ERROR.format(error=flush_err))
+            else:
                 self.flush_all()
-            except Exception as flush_err:
-                logger.error(ls.MG_FLUSH_ERROR.format(error=flush_err))
-        else:
-            self.flush_all()
-        if self._executor:
-            self._executor.shutdown(wait=True)
-            self._executor = None
-        if self.conn:
-            self.conn.close()
-            logger.info(ls.MG_DISCONNECTED)
+        finally:
+            if self._executor:
+                self._executor.shutdown(wait=True)
+                self._executor = None
+            if self.conn:
+                self.conn.close()
+                logger.info(ls.MG_DISCONNECTED)
 
     @contextmanager
     def _get_cursor(self) -> Generator[CursorProtocol, None, None]:

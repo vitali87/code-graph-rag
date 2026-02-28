@@ -326,7 +326,8 @@ class MCPToolsRegistry:
     async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
-            graph_data = await self._query_tool.function(natural_language_query)
+            async with self._ingestor_lock:
+                graph_data = await self._query_tool.function(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
             logger.info(
                 lg.MCP_QUERY_RESULTS.format(
@@ -348,7 +349,8 @@ class MCPToolsRegistry:
     async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
-            snippet = await self._code_tool.function(qualified_name=qualified_name)
+            async with self._ingestor_lock:
+                snippet = await self._code_tool.function(qualified_name=qualified_name)
             result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:
                 return CodeSnippetResultDict(
