@@ -236,6 +236,7 @@ CLI_MSG_CONNECTING_MEMGRAPH = "Connecting to Memgraph to export graph..."
 CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
 CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
 CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
+CLI_MSG_VERSION = "code-graph-rag version {version}"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
