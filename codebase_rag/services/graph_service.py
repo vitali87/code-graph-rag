@@ -218,11 +218,6 @@ class MemgraphIngestor:
             if cursor:
                 cursor.close()
 
-    def _execute_batch(self, query: str, params_list: Sequence[BatchParams]) -> None:
-        if not self.conn:
-            return
-        self._execute_batch_on(self.conn, query, params_list)
-
     def _execute_batch_with_return_on(
         self,
         conn: mgclient.Connection,
@@ -243,13 +238,6 @@ class MemgraphIngestor:
         finally:
             if cursor:
                 cursor.close()
-
-    def _execute_batch_with_return(
-        self, query: str, params_list: Sequence[BatchParams]
-    ) -> list[ResultRow]:
-        if not self.conn:
-            return []
-        return self._execute_batch_with_return_on(self.conn, query, params_list)
 
     def clean_database(self) -> None:
         logger.info(ls.MG_CLEANING_DB)
@@ -346,10 +334,11 @@ class MemgraphIngestor:
             build_merge_node_query if self._use_merge else build_create_node_query
         )
         query = build_query(label, id_key)
-        if conn is not None:
-            self._execute_batch_on(conn, query, batch_rows)
-        else:
-            self._execute_batch(query, batch_rows)
+        target_conn = conn or self.conn
+        if not target_conn:
+            logger.warning(ls.MG_NO_CONN_NODES.format(label=label))
+            return 0, skipped + len(batch_rows)
+        self._execute_batch_on(target_conn, query, batch_rows)
         return len(batch_rows), skipped
 
     def _flush_node_group_with_own_conn(
@@ -442,10 +431,11 @@ class MemgraphIngestor:
             from_label, from_key, rel_type, to_label, to_key, has_props
         )
 
-        if conn is not None:
-            results = self._execute_batch_with_return_on(conn, query, params_list)
-        else:
-            results = self._execute_batch_with_return(query, params_list)
+        target_conn = conn or self.conn
+        if not target_conn:
+            logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
+            return len(params_list), 0
+        results = self._execute_batch_with_return_on(target_conn, query, params_list)
         batch_successful = 0
         for r in results:
             created = r.get(KEY_CREATED, 0)

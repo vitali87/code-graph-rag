@@ -286,19 +286,13 @@ class TestExecuteQuery:
             ingestor._execute_query("CREATE CONSTRAINT")
 
 
-class TestExecuteBatch:
-    def test_returns_early_when_not_connected(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
-        ingestor.conn = None
-
-        ingestor._execute_batch("MERGE (n:Test)", [{"id": 1}])
-
+class TestExecuteBatchOn:
     def test_returns_early_when_params_empty(self) -> None:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         ingestor.conn = mock_conn
 
-        ingestor._execute_batch("MERGE (n:Test)", [])
+        ingestor._execute_batch_on(mock_conn, "MERGE (n:Test)", [])
 
         mock_conn.cursor.assert_not_called()
 
@@ -309,7 +303,9 @@ class TestExecuteBatch:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor._execute_batch("MERGE (n:Test {id: row.id})", [{"id": 1}, {"id": 2}])
+        ingestor._execute_batch_on(
+            mock_conn, "MERGE (n:Test {id: row.id})", [{"id": 1}, {"id": 2}]
+        )
 
         call_args = mock_cursor.execute.call_args[0]
         assert call_args[0] == wrap_with_unwind("MERGE (n:Test {id: row.id})")
@@ -322,7 +318,7 @@ class TestExecuteBatch:
         mock_conn.cursor.return_value = mock_cursor
         ingestor.conn = mock_conn
 
-        ingestor._execute_batch("MERGE (n:Test)", [{"id": 1}])
+        ingestor._execute_batch_on(mock_conn, "MERGE (n:Test)", [{"id": 1}])
 
         mock_cursor.close.assert_called_once()
 

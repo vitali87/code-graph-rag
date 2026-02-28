@@ -57,7 +57,7 @@ def test_calls_failure_logging_single_batch(
 
     with patch.object(
         MemgraphIngestor,
-        "_execute_batch_with_return",
+        "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 0}, {"created": 0}],
     ):
         graph_service.flush_relationships()
@@ -97,14 +97,16 @@ def test_calls_failure_logging_multiple_batches(
     call_count = 0
 
     def mock_execute_batch(
-        query: str, params_list: list[dict[str, Any]]
+        conn: Any, query: str, params_list: list[dict[str, Any]]
     ) -> list[dict[str, int]]:
         nonlocal call_count
         call_count += 1
         return [{"created": 1}, {"created": 0}]
 
     with patch.object(
-        MemgraphIngestor, "_execute_batch_with_return", side_effect=mock_execute_batch
+        MemgraphIngestor,
+        "_execute_batch_with_return_on",
+        side_effect=mock_execute_batch,
     ):
         graph_service.flush_relationships()
 
@@ -133,7 +135,7 @@ def test_calls_success_no_failure_logging(
 
     with patch.object(
         MemgraphIngestor,
-        "_execute_batch_with_return",
+        "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 1}],
     ):
         graph_service.flush_relationships()
@@ -159,7 +161,7 @@ def test_non_calls_relationships_no_failure_logging(
 
     with patch.object(
         MemgraphIngestor,
-        "_execute_batch_with_return",
+        "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 0}],
     ):
         graph_service.flush_relationships()

@@ -204,6 +204,10 @@ MG_PARALLEL_FLUSH_RELS = (
 )
 MG_PARALLEL_LABEL_ERROR = "Error flushing label group '{label}': {error}"
 MG_PARALLEL_REL_ERROR = "Error flushing relationship group '{pattern}': {error}"
+MG_NO_CONN_NODES = "No database connection for label '{label}', skipping flush."
+MG_NO_CONN_RELS = (
+    "No database connection for relationship group '{pattern}', skipping flush."
+)
 MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
 MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
