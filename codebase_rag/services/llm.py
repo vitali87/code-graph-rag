@@ -35,8 +35,19 @@ def _clean_cypher_response(response_text: str) -> str:
     return query
 
 
+_COMMENT_OR_WS = r"(?:\s|/\*.*?\*/)+"
+
+
+def _build_keyword_pattern(keyword: str) -> re.Pattern[str]:
+    parts = keyword.split()
+    if len(parts) == 1:
+        return re.compile(rf"\b{re.escape(parts[0])}\b")
+    joined = _COMMENT_OR_WS.join(re.escape(p) for p in parts)
+    return re.compile(rf"\b{joined}\b", re.DOTALL)
+
+
 _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    (kw, re.compile(rf"\b{re.escape(kw)}\b")) for kw in cs.CYPHER_DANGEROUS_KEYWORDS
+    (kw, _build_keyword_pattern(kw)) for kw in cs.CYPHER_DANGEROUS_KEYWORDS
 ]
 
 

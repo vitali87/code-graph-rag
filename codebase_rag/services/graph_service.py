@@ -5,7 +5,7 @@ import types
 from collections import defaultdict
 from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 
 import mgclient  # ty: ignore[unresolved-import]
@@ -344,10 +344,8 @@ class MemgraphIngestor:
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_NODES.format(label=label))
             return 0, skipped + len(batch_rows)
-        if conn is None:
-            with self._conn_lock:
-                self._execute_batch_on(target_conn, query, batch_rows)
-        else:
+        lock = self._conn_lock if conn is None else nullcontext()
+        with lock:
             self._execute_batch_on(target_conn, query, batch_rows)
         return len(batch_rows), skipped
 
@@ -458,12 +456,8 @@ class MemgraphIngestor:
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
             return len(params_list), 0
-        if conn is None:
-            with self._conn_lock:
-                results = self._execute_batch_with_return_on(
-                    target_conn, query, params_list
-                )
-        else:
+        lock = self._conn_lock if conn is None else nullcontext()
+        with lock:
             results = self._execute_batch_with_return_on(
                 target_conn, query, params_list
             )
