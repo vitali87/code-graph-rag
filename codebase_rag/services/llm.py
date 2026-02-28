@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -34,12 +35,17 @@ def _clean_cypher_response(response_text: str) -> str:
     return query
 
 
+_CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    (kw, re.compile(rf"\b{re.escape(kw)}\b")) for kw in cs.CYPHER_DANGEROUS_KEYWORDS
+]
+
+
 def _validate_cypher_read_only(query: str) -> None:
     upper_query = query.upper()
-    for keyword in cs.CYPHER_DANGEROUS_KEYWORDS:
-        if keyword in upper_query:
+    for keyword, pattern in _CYPHER_DANGEROUS_PATTERNS:
+        if pattern.search(upper_query):
             raise ex.LLMGenerationError(
-                ex.LLM_DANGEROUS_QUERY.format(keyword=keyword.strip(), query=query)
+                ex.LLM_DANGEROUS_QUERY.format(keyword=keyword, query=query)
             )
 
 

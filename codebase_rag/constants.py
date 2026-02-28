@@ -428,6 +428,13 @@ RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
        m.path AS path
 """
 
+CYPHER_QUERY_PROJECT_NODE_IDS = """
+MATCH (m:Module)-[:DEFINES]->(n)
+WHERE (n:Function OR n:Method)
+  AND m.qualified_name STARTS WITH ($project_name + '.')
+RETURN id(n) AS node_id
+"""
+
 
 class SupportedLanguage(StrEnum):
     PYTHON = "python"
@@ -975,10 +982,10 @@ CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
         "CREATE INDEX",
         "CREATE CONSTRAINT",
         "REMOVE",
-        "SET ",
+        "SET",
         "MERGE",
-        "CREATE ",
-        "CALL ",
+        "CREATE",
+        "CALL",
         "LOAD CSV",
         "FOREACH",
     }

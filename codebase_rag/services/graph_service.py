@@ -416,9 +416,16 @@ class MemgraphIngestor:
                         first_error = e
         else:
             for label, props_list in nodes_by_label.items():
-                flushed, skipped = self._flush_node_label_group(label, props_list)
-                flushed_total += flushed
-                skipped_total += skipped
+                try:
+                    flushed, skipped = self._flush_node_label_group(label, props_list)
+                    flushed_total += flushed
+                    skipped_total += skipped
+                except Exception as e:
+                    logger.error(
+                        ls.MG_PARALLEL_LABEL_ERROR.format(label=label, error=e)
+                    )
+                    if first_error is None:
+                        first_error = e
 
         logger.info(
             ls.MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
@@ -518,11 +525,18 @@ class MemgraphIngestor:
                         first_error = e
         else:
             for pattern, params_list in self._rel_groups.items():
-                attempted, successful = self._flush_rel_pattern_group(
-                    pattern, params_list
-                )
-                total_attempted += attempted
-                total_successful += successful
+                try:
+                    attempted, successful = self._flush_rel_pattern_group(
+                        pattern, params_list
+                    )
+                    total_attempted += attempted
+                    total_successful += successful
+                except Exception as e:
+                    logger.error(
+                        ls.MG_PARALLEL_REL_ERROR.format(pattern=pattern, error=e)
+                    )
+                    if first_error is None:
+                        first_error = e
 
         logger.info(
             ls.MG_RELS_FLUSHED.format(
