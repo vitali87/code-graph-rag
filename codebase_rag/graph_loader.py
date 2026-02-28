@@ -13,6 +13,18 @@ from .types_defs import GraphData, GraphMetadata, GraphSummary, PropertyValue
 
 
 class GraphLoader:
+    __slots__ = (
+        "file_path",
+        "_data",
+        "_nodes",
+        "_relationships",
+        "_nodes_by_id",
+        "_nodes_by_label",
+        "_outgoing_rels",
+        "_incoming_rels",
+        "_property_indexes",
+    )
+
     def __init__(self, file_path: str):
         self.file_path = Path(file_path)
         self._data: GraphData | None = None

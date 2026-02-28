@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 
 class JavaVariableAnalyzerMixin:
+    __slots__ = ()
     ast_cache: ASTCacheProtocol
     module_qn_to_file_path: dict[str, Path]
     _lookup_cache: dict[str, str | None]
@@ -84,7 +85,7 @@ class JavaVariableAnalyzerMixin:
         if param_name and param_type:
             resolved_type = self._resolve_java_type_name(param_type, module_qn)
             local_var_types[param_name] = resolved_type
-            logger.debug(ls.JAVA_PARAM.format(name=param_name, type=resolved_type))
+            logger.debug(ls.JAVA_PARAM, name=param_name, type=resolved_type)
 
     def _process_spread_parameter(
         self, param_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -103,9 +104,7 @@ class JavaVariableAnalyzerMixin:
         if param_name and param_type:
             resolved_type = self._resolve_java_type_name(param_type, module_qn)
             local_var_types[param_name] = resolved_type
-            logger.debug(
-                ls.JAVA_VARARGS_PARAM.format(name=param_name, type=resolved_type)
-            )
+            logger.debug(ls.JAVA_VARARGS_PARAM, name=param_name, type=resolved_type)
 
     def _analyze_java_local_variables(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -164,15 +163,13 @@ class JavaVariableAnalyzerMixin:
                 resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
                 local_var_types[var_name] = resolved_type
                 logger.debug(
-                    ls.JAVA_LOCAL_VAR_INFERRED.format(name=var_name, type=resolved_type)
+                    ls.JAVA_LOCAL_VAR_INFERRED, name=var_name, type=resolved_type
                 )
                 return
 
         resolved_type = self._resolve_java_type_name(declared_type, module_qn)
         local_var_types[var_name] = resolved_type
-        logger.debug(
-            ls.JAVA_LOCAL_VAR_DECLARED.format(name=var_name, type=resolved_type)
-        )
+        logger.debug(ls.JAVA_LOCAL_VAR_DECLARED, name=var_name, type=resolved_type)
 
     def _analyze_java_class_fields(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -201,7 +198,7 @@ class JavaVariableAnalyzerMixin:
                     if str(field_name) not in local_var_types:
                         local_var_types[str(field_name)] = resolved_type
                     logger.debug(
-                        ls.JAVA_CLASS_FIELD.format(name=field_name, type=resolved_type)
+                        ls.JAVA_CLASS_FIELD, name=field_name, type=resolved_type
                     )
 
     def _analyze_java_constructor_assignments(
@@ -235,7 +232,7 @@ class JavaVariableAnalyzerMixin:
         ):
             resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
             local_var_types[var_name] = resolved_type
-            logger.debug(ls.JAVA_ASSIGNMENT.format(name=var_name, type=resolved_type))
+            logger.debug(ls.JAVA_ASSIGNMENT, name=var_name, type=resolved_type)
 
     def _extract_java_variable_reference(self, node: ASTNode) -> str | None:
         match node.type:
@@ -297,9 +294,7 @@ class JavaVariableAnalyzerMixin:
         ):
             resolved_type = self._resolve_java_type_name(var_type, module_qn)
             local_var_types[var_name] = resolved_type
-            logger.debug(
-                ls.JAVA_ENHANCED_FOR_VAR.format(name=var_name, type=resolved_type)
-            )
+            logger.debug(ls.JAVA_ENHANCED_FOR_VAR, name=var_name, type=resolved_type)
 
     def _extract_for_loop_variable_from_children(
         self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -325,9 +320,9 @@ class JavaVariableAnalyzerMixin:
                         )
                         local_var_types[var_name] = resolved_type
                         logger.debug(
-                            ls.JAVA_ENHANCED_FOR_VAR_ALT.format(
-                                name=var_name, type=resolved_type
-                            )
+                            ls.JAVA_ENHANCED_FOR_VAR_ALT,
+                            name=var_name,
+                            type=resolved_type,
                         )
                         break
 

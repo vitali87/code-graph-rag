@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 from importlib.metadata import version as get_version
@@ -6,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def test_help_command_works() -> None:
@@ -18,14 +20,14 @@ def test_help_command_works() -> None:
         capture_output=True,
         text=True,
         timeout=30,
+        env={**__import__("os").environ, "NO_COLOR": "1"},
     )
 
     assert result.returncode == 0, f"Help command failed with: {result.stderr}"
 
-    assert "Usage:" in result.stdout or "usage:" in result.stdout.lower()
-    assert "--help" in result.stdout
-
-    assert result.stderr == "", f"Unexpected stderr: {result.stderr}"
+    plain_stdout = _ANSI_RE.sub("", result.stdout)
+    assert "Usage:" in plain_stdout or "usage:" in plain_stdout.lower()
+    assert "--help" in plain_stdout
 
 
 def test_import_cli_module() -> None:

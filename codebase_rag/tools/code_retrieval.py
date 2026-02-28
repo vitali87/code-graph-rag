@@ -15,6 +15,8 @@ from . import tool_descriptions as td
 
 
 class CodeRetriever:
+    __slots__ = ("project_root", "ingestor")
+
     def __init__(self, project_root: str, ingestor: QueryProtocol):
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor

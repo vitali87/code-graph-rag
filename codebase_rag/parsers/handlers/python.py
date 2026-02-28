@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class PythonHandler(BaseLanguageHandler):
+    __slots__ = ()
+
     def extract_decorators(self, node: ASTNode) -> list[str]:
         if not node.parent or node.parent.type != cs.TS_PY_DECORATED_DEFINITION:
             return []

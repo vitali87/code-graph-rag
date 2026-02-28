@@ -90,9 +90,9 @@ def parse_cpp_base_classes(
                 )
                 parent_classes.append(parent_qn)
                 logger.debug(
-                    logs.CLASS_CPP_INHERITANCE.format(
-                        parent_name=parent_name, parent_qn=parent_qn
-                    )
+                    logs.CLASS_CPP_INHERITANCE,
+                    parent_name=parent_name,
+                    parent_qn=parent_qn,
                 )
 
     return parent_classes

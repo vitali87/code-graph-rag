@@ -1,8 +1,8 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.79"
+version = "0.0.98"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
-readme = "README.md"
+readme = "PYPI_README.md"
 requires-python = ">=3.12"
 license = "MIT"
 classifiers = [
@@ -149,6 +149,11 @@ dev = [
     "types-protobuf>=5.0.0",
     "types-toml>=0.10.8.20240310",
     "vulture>=2.14",
+]
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.3",
+    "mkdocs-minify-plugin>=0.8.0",
 ]
 
 [tool.bandit]

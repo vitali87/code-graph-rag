@@ -11,6 +11,12 @@ if has_qdrant_client():
 
     _CLIENT: QdrantClient | None = None
 
+    def close_qdrant_client() -> None:
+        global _CLIENT
+        if _CLIENT is not None:
+            _CLIENT.close()
+            _CLIENT = None
+
     def get_qdrant_client() -> QdrantClient:
         global _CLIENT
         if _CLIENT is None:
@@ -68,6 +74,9 @@ if has_qdrant_client():
             return []
 
 else:
+
+    def close_qdrant_client() -> None:
+        pass
 
     def store_embedding(
         node_id: int, embedding: list[float], qualified_name: str

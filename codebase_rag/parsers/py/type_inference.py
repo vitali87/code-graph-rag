@@ -30,6 +30,21 @@ class PythonTypeInferenceEngine(
     PythonAstAnalyzerMixin,
     PythonVariableAnalyzerMixin,
 ):
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "repo_path",
+        "project_name",
+        "ast_cache",
+        "queries",
+        "module_qn_to_file_path",
+        "class_inheritance",
+        "simple_name_lookup",
+        "_js_type_inference_getter",
+        "_method_return_type_cache",
+        "_type_inference_in_progress",
+    )
+
     def __init__(
         self,
         import_processor: ImportProcessor,
@@ -68,6 +83,6 @@ class PythonTypeInferenceEngine(
             self._traverse_single_pass(caller_node, local_var_types, module_qn)
 
         except Exception as e:
-            logger.debug(lg.PY_BUILD_VAR_MAP_FAILED.format(error=e))
+            logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
 
         return local_var_types

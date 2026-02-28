@@ -58,6 +58,8 @@ def _has_subshell(command: str) -> str | None:
 
 
 class CommandGroup:
+    __slots__ = ("commands", "operator")
+
     def __init__(self, commands: list[str], operator: str | None = None):
         self.commands = commands
         self.operator = operator
@@ -152,12 +154,12 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
         resolved_str = str(resolved)
         if resolved == resolved.parent:
             return True, "rm targeting root directory"
-        parts = resolved.parts
-        if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
-            return True, f"rm targeting system directory: {resolved_str}"
         try:
             resolved.relative_to(project_root)
         except ValueError:
+            parts = resolved.parts
+            if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
+                return True, f"rm targeting system directory: {resolved_str}"
             return True, f"rm targeting path outside project: {resolved_str}"
     return False, ""
 
@@ -263,6 +265,8 @@ def _requires_approval(command: str) -> bool:
 
 
 class ShellCommander:
+    __slots__ = ("project_root", "timeout")
+
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout

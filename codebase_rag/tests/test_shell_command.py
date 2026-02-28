@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -386,6 +387,9 @@ class TestPipedCommandExecution:
         assert result.return_code == 0
         assert "5" in result.stdout
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="Unix find not available on Windows"
+    )
     async def test_find_with_wc(
         self, shell_commander: ShellCommander, temp_project_root: Path
     ) -> None:
@@ -398,6 +402,10 @@ class TestPipedCommandExecution:
     async def test_rg_in_pipeline(
         self, shell_commander: ShellCommander, temp_project_root: Path
     ) -> None:
+        import shutil
+
+        if not shutil.which("rg"):
+            pytest.skip("rg (ripgrep) not installed")
         (temp_project_root / "data.txt").write_text("foo\nbar\nbaz\n", encoding="utf-8")
         result = await shell_commander.execute("cat data.txt | rg bar")
         assert result.return_code == 0
@@ -630,11 +638,11 @@ class TestDangerousRmPath:
             ["rm", "-rf", "../other"], project_root
         )
         assert is_dangerous
-        assert "outside project" in reason
+        assert "outside project" in reason or "system directory" in reason
 
     def test_safe_path_inside_project(self, tmp_path: Path) -> None:
-        project_root = tmp_path / "project"
-        project_root.mkdir()
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
         is_dangerous, _ = _is_dangerous_rm_path(
             ["rm", "-rf", "subdir/file.txt"], project_root
         )
@@ -741,7 +749,8 @@ class TestSecurityIntegration:
     ) -> None:
         result = await shell_commander.execute("rm ../outside_project")
         assert result.return_code == -1
-        assert "outside project" in result.stderr.lower()
+        stderr_lower = result.stderr.lower()
+        assert "outside project" in stderr_lower or "system directory" in stderr_lower
 
 
 class TestAwkSedXargsPatterns:

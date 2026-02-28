@@ -12,6 +12,8 @@ from ..schemas import HealthCheckResult
 
 
 class HealthChecker:
+    __slots__ = ("results",)
+
     def __init__(self):
         self.results: list[HealthCheckResult] = []
 

@@ -45,7 +45,7 @@ def get_function_captures(
     return FunctionCapturesResult(lang_config, captures)
 
 
-@lru_cache(maxsize=10000)
+@lru_cache(maxsize=50000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(cs.ENCODING_UTF8)
 
@@ -162,6 +162,11 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
         return False
 
     while current and current.type not in lang_config.module_node_types:
+        if (
+            current.type in lang_config.function_node_types
+            and current.child_by_field_name(cs.FIELD_BODY) is not None
+        ):
+            return False
         if current.type in lang_config.class_node_types:
             return True
         current = current.parent

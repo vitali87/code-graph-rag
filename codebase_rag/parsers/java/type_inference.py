@@ -26,6 +26,21 @@ class JavaTypeInferenceEngine(
     JavaVariableAnalyzerMixin,
     JavaMethodResolverMixin,
 ):
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "repo_path",
+        "project_name",
+        "ast_cache",
+        "queries",
+        "module_qn_to_file_path",
+        "class_inheritance",
+        "simple_name_lookup",
+        "_lookup_cache",
+        "_lookup_in_progress",
+        "_fqn_to_module_qn",
+    )
+
     def __init__(
         self,
         import_processor: ImportProcessor,
@@ -83,10 +98,10 @@ class JavaTypeInferenceEngine(
 
         try:
             self._collect_all_variable_types(scope_node, local_var_types, module_qn)
-            logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT.format(count=len(local_var_types)))
+            logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
 
         except Exception as e:
-            logger.error(ls.JAVA_VAR_TYPE_MAP_FAILED.format(error=e))
+            logger.error(ls.JAVA_VAR_TYPE_MAP_FAILED, error=e)
 
         return local_var_types
 

@@ -306,7 +306,7 @@ class TestStdlibExtractorWithMockedSubprocesses:
                 "fs.readFile", cs.SupportedLanguage.JS
             )
 
-            assert result == "fs.readFile"
+            assert result == "fs"
 
     def test_ts_uses_js_extraction_uppercase(self, extractor: StdlibExtractor) -> None:
         with patch.object(se, "_is_tool_available", return_value=False):
@@ -314,11 +314,11 @@ class TestStdlibExtractorWithMockedSubprocesses:
 
             assert result == "path"
 
-    def test_ts_lowercase_returns_unchanged(self, extractor: StdlibExtractor) -> None:
+    def test_ts_lowercase_strips_entity(self, extractor: StdlibExtractor) -> None:
         with patch.object(se, "_is_tool_available", return_value=False):
             result = extractor.extract_module_path("path.join", cs.SupportedLanguage.TS)
 
-            assert result == "path.join"
+            assert result == "path"
 
 
 class TestEdgeCases:
@@ -704,7 +704,7 @@ class TestJsExtractorWithMockedNode:
                 "fs.nonexistent", cs.SupportedLanguage.JS
             )
 
-            assert result == "fs.nonexistent"
+            assert result == "fs"
 
     def test_js_extractor_fallback_on_json_decode_error(
         self, extractor: StdlibExtractor
@@ -719,7 +719,7 @@ class TestJsExtractorWithMockedNode:
         ):
             result = extractor.extract_module_path("path.join", cs.SupportedLanguage.JS)
 
-            assert result == "path.join"
+            assert result == "path"
 
     def test_js_extractor_fallback_on_timeout(self, extractor: StdlibExtractor) -> None:
         import subprocess
@@ -732,4 +732,4 @@ class TestJsExtractorWithMockedNode:
                 "http.createServer", cs.SupportedLanguage.JS
             )
 
-            assert result == "http.createServer"
+            assert result == "http"

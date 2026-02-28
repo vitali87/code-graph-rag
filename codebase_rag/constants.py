@@ -150,6 +150,8 @@ V1_PATH = "/v1"
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
+EMBEDDING_DEFAULT_BATCH_SIZE = 32
+EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
 KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
@@ -421,7 +423,7 @@ CYPHER_DEFAULT_LIMIT = 50
 CYPHER_QUERY_EMBEDDINGS = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE (n:Function OR n:Method)
-  AND m.qualified_name STARTS WITH $project_name + '.'
+  AND m.qualified_name STARTS WITH ($project_name + '.')
 RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
        n.start_line AS start_line, n.end_line AS end_line,
        m.path AS path
@@ -881,7 +883,10 @@ PYINSTALLER_ARG_CLEAN = "--clean"
 PYINSTALLER_ARG_COLLECT_ALL = "--collect-all"
 PYINSTALLER_ARG_COLLECT_DATA = "--collect-data"
 PYINSTALLER_ARG_HIDDEN_IMPORT = "--hidden-import"
+PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
 PYINSTALLER_ENTRY_POINT = "main.py"
+
+PYINSTALLER_EXCLUDED_MODULES = ["logfire"]
 
 # (H) TOML parsing constants
 TOML_KEY_PROJECT = "project"
@@ -906,6 +911,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     PyInstallerPackage(name="loguru", collect_all=True),
     PyInstallerPackage(name="toml", collect_all=True),
     PyInstallerPackage(name="protobuf", collect_all=True),
+    PyInstallerPackage(name="genai_prices", collect_all=True),
 ]
 
 ALLOWED_COMMENT_MARKERS = frozenset(
@@ -1569,6 +1575,9 @@ GOMOD_COMMENT_PREFIX = "//"
 
 # (H) Gemfile parsing patterns
 GEMFILE_GEM_PREFIX = "gem "
+
+# (H) Incremental update hash cache
+HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 
 # (H) Import processor cache config
 IMPORT_CACHE_TTL = 3600

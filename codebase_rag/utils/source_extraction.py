@@ -21,22 +21,28 @@ def extract_source_lines(
         return None
 
     try:
-        with open(file_path, encoding=encoding) as f:
-            lines = f.readlines()
+        raw_bytes = file_path.read_bytes()
+        text = raw_bytes.decode(encoding)
+        lines = text.splitlines(keepends=True)
 
-            if start_line > len(lines) or end_line > len(lines):
-                logger.warning(
-                    ls.SOURCE_RANGE_EXCEEDS.format(
-                        start=start_line,
-                        end=end_line,
-                        length=len(lines),
-                        path=file_path,
-                    )
+        if not lines:
+            return None
+
+        if start_line > len(lines) or end_line > len(lines):
+            logger.warning(
+                ls.SOURCE_RANGE_EXCEEDS.format(
+                    start=start_line,
+                    end=end_line,
+                    length=len(lines),
+                    path=file_path,
                 )
+            )
+            end_line = min(end_line, len(lines))
+            if start_line > len(lines):
                 return None
 
-            extracted_lines = lines[start_line - 1 : end_line]
-            return "".join(extracted_lines).strip()
+        extracted_lines = lines[start_line - 1 : end_line]
+        return "".join(extracted_lines).strip()
 
     except Exception as e:
         logger.warning(ls.SOURCE_EXTRACT_FAILED.format(path=file_path, error=e))
@@ -56,7 +62,7 @@ def extract_source_with_fallback(
             if ast_result := ast_extractor(qualified_name, file_path):
                 return str(ast_result)
         except Exception as e:
-            logger.debug(ls.SOURCE_AST_FAILED.format(name=qualified_name, error=e))
+            logger.debug(ls.SOURCE_AST_FAILED, name=qualified_name, error=e)
 
     return extract_source_lines(file_path, start_line, end_line, encoding)
 

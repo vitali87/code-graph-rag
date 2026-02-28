@@ -11,10 +11,10 @@ class TestStandardLibraryImports:
     """Test import resolution for standard library vs local modules."""
 
     @pytest.fixture
-    def mock_updater(self) -> GraphUpdater:
+    def mock_updater(self, tmp_path: Path) -> GraphUpdater:
         mock_ingestor = MagicMock()
 
-        test_repo = Path("/tmp/myproject")
+        test_repo = tmp_path / "myproject"
         test_repo.mkdir(exist_ok=True)
 
         (test_repo / "utils").mkdir(exist_ok=True)

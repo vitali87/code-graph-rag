@@ -64,15 +64,20 @@ def test_node_batch_preserves_per_row_properties() -> None:
 def test_relationship_batch_flushes_after_threshold_and_respects_node_flush() -> None:
     ingestor, cursor_mock = _create_ingestor_with_mocked_connection()
 
+    col = MagicMock()
+    col.name = "created"
+    cursor_mock.description = [col]
+    cursor_mock.fetchall.return_value = [(1,), (1,)]
+
     with patch.object(
-        ingestor, "flush_nodes", wraps=ingestor.flush_nodes
+        MemgraphIngestor, "flush_nodes", wraps=ingestor.flush_nodes
     ) as flush_nodes_spy:
         ingestor.ensure_relationship_batch(
             ("Module", "qualified_name", "proj.module1"),
             "CONTAINS_FILE",
             ("File", "path", "file1"),
         )
-        assert len(ingestor.relationship_buffer) == 1
+        assert ingestor._rel_count == 1
         cursor_mock.execute.assert_not_called()
 
         ingestor.ensure_relationship_batch(
@@ -83,7 +88,7 @@ def test_relationship_batch_flushes_after_threshold_and_respects_node_flush() ->
 
         assert flush_nodes_spy.call_count == 1
 
-    assert len(ingestor.relationship_buffer) == 0
+    assert ingestor._rel_count == 0
     cursor_mock.execute.assert_called_once()
     executed_query = cursor_mock.execute.call_args[0][0]
     assert "UNWIND $batch" in executed_query

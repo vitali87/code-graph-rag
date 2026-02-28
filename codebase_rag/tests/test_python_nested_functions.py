@@ -318,10 +318,6 @@ def main():
 def test_function_in_class_method(
     nested_functions_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    """Test that functions inside class methods are properly handled.
-
-    Note: Functions inside methods are currently treated as methods rather than nested functions.
-    """
     parsers, queries = load_parsers()
 
     updater = GraphUpdater(
@@ -333,21 +329,51 @@ def test_function_in_class_method(
     updater.run()
 
     project_name = nested_functions_project.name
-
-    expected_method_qn = f"{project_name}.nested_functions.OuterClass.nested_in_method"
-
     created_methods = get_node_names(mock_ingestor, "Method")
 
-    assert expected_method_qn in created_methods, (
-        f"Function in method not found as method: {expected_method_qn}"
+    assert (
+        f"{project_name}.nested_functions.OuterClass.method_with_nested"
+        in created_methods
     )
 
-    expected_class_methods = [
-        f"{project_name}.nested_functions.OuterClass.method_with_nested",
-        f"{project_name}.nested_functions.OuterClass.nested_in_method",
-    ]
+    nested_qn = f"{project_name}.nested_functions.OuterClass.nested_in_method"
+    assert nested_qn not in created_methods, (
+        f"Nested function inside method should not be ingested as class method: {nested_qn}"
+    )
 
-    for expected_method in expected_class_methods:
-        assert expected_method in created_methods, (
-            f"Expected method not found: {expected_method}"
+
+def test_nested_function_in_staticmethod_not_ingested_as_method(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project_path = temp_repo / "static_nested"
+    os.makedirs(project_path)
+    (project_path / "__init__.py").touch()
+
+    with open(project_path / "api.py", "w") as f:
+        f.write(
+            "class Api:\n"
+            "    @staticmethod\n"
+            "    def say_hello():\n"
+            "        def test_func():\n"
+            '            print("api")\n'
+            "        pass\n"
         )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project_path,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    project_name = project_path.name
+    created_methods = get_node_names(mock_ingestor, "Method")
+
+    assert f"{project_name}.api.Api.say_hello" in created_methods
+
+    bad_qn = f"{project_name}.api.Api.test_func"
+    assert bad_qn not in created_methods, (
+        f"Nested function inside staticmethod should not be ingested as class method: {bad_qn}"
+    )

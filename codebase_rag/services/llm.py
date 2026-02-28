@@ -35,6 +35,8 @@ def _clean_cypher_response(response_text: str) -> str:
 
 
 class CypherGenerator:
+    __slots__ = ("agent",)
+
     def __init__(self) -> None:
         try:
             config = settings.active_cypher_config

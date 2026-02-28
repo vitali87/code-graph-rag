@@ -617,29 +617,29 @@ class TestRustNodeLabels:
         func_names = {n["name"] for n in functions}
         assert "standalone_fn" in func_names
 
-    def test_rust_creates_class_nodes_for_enums(
+    def test_rust_creates_enum_nodes_for_enums(
         self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
     ) -> None:
         index_project(memgraph_ingestor, rust_project)
 
         labels = get_node_labels(memgraph_ingestor)
-        assert NodeLabel.CLASS.value in labels
+        assert NodeLabel.ENUM.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
-        class_names = {n["name"] for n in classes}
-        assert "Status" in class_names
+        enums = get_nodes_by_label(memgraph_ingestor, NodeLabel.ENUM.value)
+        enum_names = {n["name"] for n in enums}
+        assert "Status" in enum_names
 
-    def test_rust_creates_class_nodes_for_traits(
+    def test_rust_creates_interface_nodes_for_traits(
         self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
     ) -> None:
         index_project(memgraph_ingestor, rust_project)
 
         labels = get_node_labels(memgraph_ingestor)
-        assert NodeLabel.CLASS.value in labels
+        assert NodeLabel.INTERFACE.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
-        class_names = {n["name"] for n in classes}
-        assert "MyTrait" in class_names
+        interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
+        interface_names = {n["name"] for n in interfaces}
+        assert "MyTrait" in interface_names
 
 
 @pytest.mark.skip(reason=SKIP_GO)

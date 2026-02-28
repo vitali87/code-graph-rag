@@ -511,3 +511,22 @@ class TestMultipleLanguages:
         ]
         qualified_names = {c[0][1]["qualified_name"] for c in package_calls}
         assert qualified_names == {"multi_lang.pypkg", "multi_lang.rustpkg"}
+
+
+class TestStructureProcessorSlots:
+    def test_has_slots(self) -> None:
+        assert hasattr(StructureProcessor, "__slots__")
+
+    def test_no_instance_dict(self, processor: StructureProcessor) -> None:
+        assert not hasattr(processor, "__dict__")
+
+    def test_rejects_arbitrary_attribute(self, processor: StructureProcessor) -> None:
+        with pytest.raises(AttributeError):
+            processor.nonexistent_attr = 42
+
+    def test_slot_attributes_accessible(self, processor: StructureProcessor) -> None:
+        assert hasattr(processor, "ingestor")
+        assert hasattr(processor, "repo_path")
+        assert hasattr(processor, "project_name")
+        assert hasattr(processor, "queries")
+        assert hasattr(processor, "structural_elements")

@@ -70,6 +70,9 @@ def build_binary() -> bool:
     for pkg in cs.PYINSTALLER_PACKAGES:
         cmd.extend(_build_package_args(pkg))
 
+    for mod in cs.PYINSTALLER_EXCLUDED_MODULES:
+        cmd.extend([cs.PYINSTALLER_ARG_EXCLUDE_MODULE, mod])
+
     cmd.append(cs.PYINSTALLER_ENTRY_POINT)
 
     logger.info(logs.BUILD_BINARY.format(name=binary_name))

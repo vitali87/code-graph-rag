@@ -26,11 +26,15 @@ def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
 
 
 class DependencyParser:
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         raise NotImplementedError
 
 
 class PyProjectTomlParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
@@ -72,6 +76,8 @@ class PyProjectTomlParser(DependencyParser):
 
 
 class RequirementsTxtParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
@@ -92,6 +98,8 @@ class RequirementsTxtParser(DependencyParser):
 
 
 class PackageJsonParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
@@ -120,6 +128,8 @@ class PackageJsonParser(DependencyParser):
 
 
 class CargoTomlParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
@@ -148,6 +158,8 @@ class CargoTomlParser(DependencyParser):
 
 
 class GoModParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
@@ -186,6 +198,8 @@ class GoModParser(DependencyParser):
 
 
 class GemfileParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
@@ -206,6 +220,8 @@ class GemfileParser(DependencyParser):
 
 
 class ComposerJsonParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
@@ -229,6 +245,8 @@ class ComposerJsonParser(DependencyParser):
 
 
 class CsprojParser(DependencyParser):
+    __slots__ = ()
+
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:

@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class LuaHandler(BaseLanguageHandler):
+    __slots__ = ()
+
     def extract_function_name(self, node: ASTNode) -> str | None:
         if (name_node := node.child_by_field_name(cs.TS_FIELD_NAME)) and name_node.text:
             from ..utils import safe_decode_text

@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
 
 class LanguageHandler(Protocol):
+    __slots__ = ()
+
     def is_inside_method_with_object_literals(self, node: ASTNode) -> bool: ...
 
     def is_class_method(self, node: ASTNode) -> bool: ...

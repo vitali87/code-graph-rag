@@ -32,6 +32,8 @@ from ..cypher_queries import (
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
     build_constraint_query,
+    build_create_node_query,
+    build_create_relationship_query,
     build_index_query,
     build_merge_node_query,
     build_merge_relationship_query,
@@ -51,26 +53,56 @@ from ..types_defs import (
 
 
 class MemgraphIngestor:
-    def __init__(self, host: str, port: int, batch_size: int = 1000):
+    __slots__ = (
+        "_host",
+        "_port",
+        "_username",
+        "_password",
+        "_use_merge",
+        "_rel_count",
+        "_rel_groups",
+        "batch_size",
+        "conn",
+        "node_buffer",
+    )
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        batch_size: int = 1000,
+        username: str | None = None,
+        password: str | None = None,
+        use_merge: bool = True,
+    ):
         self._host = host
         self._port = port
+        self._username = username.strip() if username and username.strip() else None
+        self._password = password.strip() if password and password.strip() else None
+        if (self._username is None) != (self._password is None):
+            raise ValueError(ex.AUTH_INCOMPLETE)
         if batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)
         self.batch_size = batch_size
+        self._use_merge = use_merge
         self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
-        self.relationship_buffer: list[
-            tuple[
-                tuple[str, str, PropertyValue],
-                str,
-                tuple[str, str, PropertyValue],
-                dict[str, PropertyValue] | None,
-            ]
-        ] = []
+        self._rel_count = 0
+        self._rel_groups: defaultdict[
+            tuple[str, str, str, str, str], list[RelBatchRow]
+        ] = defaultdict(list)
 
     def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        self.conn = mgclient.connect(host=self._host, port=self._port)
+        if self._username is not None:
+            self.conn = mgclient.connect(
+                host=self._host,
+                port=self._port,
+                username=self._username,
+                password=self._password,
+            )
+        else:
+            self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
         logger.info(ls.MG_CONNECTED)
         return self
@@ -216,7 +248,7 @@ class MemgraphIngestor:
     ) -> None:
         self.node_buffer.append((label, properties))
         if len(self.node_buffer) >= self.batch_size:
-            logger.debug(ls.MG_NODE_BUFFER_FLUSH.format(size=self.batch_size))
+            logger.debug(ls.MG_NODE_BUFFER_FLUSH, size=self.batch_size)
             self.flush_nodes()
 
     def ensure_relationship_batch(
@@ -228,16 +260,13 @@ class MemgraphIngestor:
     ) -> None:
         from_label, from_key, from_val = from_spec
         to_label, to_key, to_val = to_spec
-        self.relationship_buffer.append(
-            (
-                (from_label, from_key, from_val),
-                rel_type,
-                (to_label, to_key, to_val),
-                properties,
-            )
+        pattern = (from_label, from_key, rel_type, to_label, to_key)
+        self._rel_groups[pattern].append(
+            RelBatchRow(from_val=from_val, to_val=to_val, props=properties or {})
         )
-        if len(self.relationship_buffer) >= self.batch_size:
-            logger.debug(ls.MG_REL_BUFFER_FLUSH.format(size=self.batch_size))
+        self._rel_count += 1
+        if self._rel_count >= self.batch_size:
+            logger.debug(ls.MG_REL_BUFFER_FLUSH, size=self.batch_size)
             self.flush_nodes()
             self.flush_relationships()
 
@@ -280,7 +309,10 @@ class MemgraphIngestor:
 
             flushed_total += len(batch_rows)
 
-            query = build_merge_node_query(label, id_key)
+            build_query = (
+                build_merge_node_query if self._use_merge else build_create_node_query
+            )
+            query = build_query(label, id_key)
             self._execute_batch(query, batch_rows)
         logger.info(
             ls.MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
@@ -290,25 +322,22 @@ class MemgraphIngestor:
         self.node_buffer.clear()
 
     def flush_relationships(self) -> None:
-        if not self.relationship_buffer:
+        if not self._rel_count:
             return
 
-        rels_by_pattern: defaultdict[
-            tuple[str, str, str, str, str], list[RelBatchRow]
-        ] = defaultdict(list)
-        for from_node, rel_type, to_node, props in self.relationship_buffer:
-            pattern = (from_node[0], from_node[1], rel_type, to_node[0], to_node[1])
-            rels_by_pattern[pattern].append(
-                RelBatchRow(from_val=from_node[2], to_val=to_node[2], props=props or {})
-            )
+        build_rel_query = (
+            build_merge_relationship_query
+            if self._use_merge
+            else build_create_relationship_query
+        )
 
         total_attempted = 0
         total_successful = 0
 
-        for pattern, params_list in rels_by_pattern.items():
+        for pattern, params_list in self._rel_groups.items():
             from_label, from_key, rel_type, to_label, to_key = pattern
             has_props = any(p[KEY_PROPS] for p in params_list)
-            query = build_merge_relationship_query(
+            query = build_rel_query(
                 from_label, from_key, rel_type, to_label, to_key, has_props
             )
 
@@ -338,12 +367,13 @@ class MemgraphIngestor:
 
         logger.info(
             ls.MG_RELS_FLUSHED.format(
-                total=len(self.relationship_buffer),
+                total=self._rel_count,
                 success=total_successful,
                 failed=total_attempted - total_successful,
             )
         )
-        self.relationship_buffer.clear()
+        self._rel_count = 0
+        self._rel_groups.clear()
 
     def flush_all(self) -> None:
         logger.info(ls.MG_FLUSH_START)
@@ -354,13 +384,13 @@ class MemgraphIngestor:
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> list[ResultRow]:
-        logger.debug(ls.MG_FETCH_QUERY.format(query=query, params=params))
+        logger.debug(ls.MG_FETCH_QUERY, query=query, params=params)
         return self._execute_query(query, params)
 
     def execute_write(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> None:
-        logger.debug(ls.MG_WRITE_QUERY.format(query=query, params=params))
+        logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)
         self._execute_query(query, params)
 
     def export_graph_to_dict(self) -> GraphData:

@@ -50,6 +50,10 @@ EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
+EMBEDDING_CACHE_HIT = "Embedding cache hit for {count} snippets"
+EMBEDDING_CACHE_LOADED = "Loaded embedding cache with {count} entries from {path}"
+EMBEDDING_CACHE_SAVE_FAILED = "Failed to save embedding cache to {path}: {error}"
+EMBEDDING_CACHE_LOAD_FAILED = "Failed to load embedding cache from {path}: {error}"
 
 # (H) Image logs
 IMAGE_COPIED = "Copied image to temporary path: {path}"
@@ -613,6 +617,19 @@ MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
+
+# (H) Incremental update logs
+HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
+HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
+HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
+HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
+INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
+INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
+INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
+FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
+FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
+FILE_HASH_NEW = "New file detected: {path}"
 
 # (H) Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
