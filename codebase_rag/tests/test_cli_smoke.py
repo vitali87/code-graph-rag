@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
