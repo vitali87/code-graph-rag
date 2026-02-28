@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import types
 from collections import defaultdict
 from collections.abc import Generator, Sequence
@@ -56,6 +57,7 @@ from ..types_defs import (
 
 class MemgraphIngestor:
     __slots__ = (
+        "_conn_lock",
         "_executor",
         "_host",
         "_port",
@@ -88,6 +90,7 @@ class MemgraphIngestor:
             raise ValueError(ex.BATCH_SIZE)
         self.batch_size = batch_size
         self._use_merge = use_merge
+        self._conn_lock = threading.Lock()
         self._executor: ThreadPoolExecutor | None = None
         self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
@@ -142,13 +145,14 @@ class MemgraphIngestor:
     def _get_cursor(self) -> Generator[CursorProtocol, None, None]:
         if not self.conn:
             raise ConnectionError(ex.CONN)
-        cursor: CursorProtocol | None = None
-        try:
-            cursor = self.conn.cursor()
-            yield cursor
-        finally:
-            if cursor:
-                cursor.close()
+        with self._conn_lock:
+            cursor: CursorProtocol | None = None
+            try:
+                cursor = self.conn.cursor()
+                yield cursor
+            finally:
+                if cursor:
+                    cursor.close()
 
     def _cursor_to_results(self, cursor: CursorProtocol) -> list[ResultRow]:
         if not cursor.description:
@@ -340,7 +344,11 @@ class MemgraphIngestor:
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_NODES.format(label=label))
             return 0, skipped + len(batch_rows)
-        self._execute_batch_on(target_conn, query, batch_rows)
+        if conn is None:
+            with self._conn_lock:
+                self._execute_batch_on(target_conn, query, batch_rows)
+        else:
+            self._execute_batch_on(target_conn, query, batch_rows)
         return len(batch_rows), skipped
 
     def _flush_node_group_with_own_conn(
@@ -437,7 +445,15 @@ class MemgraphIngestor:
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
             return len(params_list), 0
-        results = self._execute_batch_with_return_on(target_conn, query, params_list)
+        if conn is None:
+            with self._conn_lock:
+                results = self._execute_batch_with_return_on(
+                    target_conn, query, params_list
+                )
+        else:
+            results = self._execute_batch_with_return_on(
+                target_conn, query, params_list
+            )
         batch_successful = 0
         for r in results:
             created = r.get(KEY_CREATED, 0)
