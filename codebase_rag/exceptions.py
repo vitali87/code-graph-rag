@@ -42,6 +42,7 @@ NO_LANGUAGES = "No Tree-sitter languages available."
 # (H) LLM errors
 LLM_INIT_CYPHER = "Failed to initialize CypherGenerator: {error}"
 LLM_INVALID_QUERY = "LLM did not generate a valid query. Output: {output}"
+LLM_DANGEROUS_QUERY = "LLM generated a destructive Cypher query (found '{keyword}'). Query rejected: {query}"
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
 LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 

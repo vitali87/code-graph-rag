@@ -253,8 +253,7 @@ class MCPToolsRegistry:
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
-            async with self._ingestor_lock:
-                projects = await asyncio.to_thread(self.ingestor.list_projects)
+            projects = await asyncio.to_thread(self.ingestor.list_projects)
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))

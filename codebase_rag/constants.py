@@ -967,6 +967,22 @@ CYPHER_PREFIX = "cypher"
 CYPHER_SEMICOLON = ";"
 CYPHER_BACKTICK = "`"
 CYPHER_MATCH_KEYWORD = "MATCH"
+CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "DELETE",
+        "DETACH",
+        "DROP",
+        "CREATE INDEX",
+        "CREATE CONSTRAINT",
+        "REMOVE",
+        "SET ",
+        "MERGE",
+        "CREATE ",
+        "CALL ",
+        "LOAD CSV",
+        "FOREACH",
+    }
+)
 
 # (H) Tool success messages
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"

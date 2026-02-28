@@ -34,6 +34,15 @@ def _clean_cypher_response(response_text: str) -> str:
     return query
 
 
+def _validate_cypher_read_only(query: str) -> None:
+    upper_query = query.upper()
+    for keyword in cs.CYPHER_DANGEROUS_KEYWORDS:
+        if keyword in upper_query:
+            raise ex.LLMGenerationError(
+                ex.LLM_DANGEROUS_QUERY.format(keyword=keyword.strip(), query=query)
+            )
+
+
 class CypherGenerator:
     __slots__ = ("agent",)
 
@@ -70,6 +79,7 @@ class CypherGenerator:
                 )
 
             query = _clean_cypher_response(result.output)
+            _validate_cypher_read_only(query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:
