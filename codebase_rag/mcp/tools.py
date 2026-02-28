@@ -48,6 +48,7 @@ class MCPToolsRegistry:
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
+        self._ingestor_lock = asyncio.Lock()
 
         self.parsers, self.queries = load_parsers()
 
@@ -252,7 +253,8 @@ class MCPToolsRegistry:
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
-            projects = await asyncio.to_thread(self.ingestor.list_projects)
+            async with self._ingestor_lock:
+                projects = await asyncio.to_thread(self.ingestor.list_projects)
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
@@ -277,7 +279,8 @@ class MCPToolsRegistry:
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
         logger.info(lg.MCP_DELETING_PROJECT.format(project_name=project_name))
         try:
-            return await asyncio.to_thread(self._delete_project_sync, project_name)
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._delete_project_sync, project_name)
         except Exception as e:
             logger.error(lg.MCP_ERROR_DELETE_PROJECT.format(error=e))
             return DeleteProjectErrorResult(success=False, error=str(e))
@@ -287,7 +290,8 @@ class MCPToolsRegistry:
             return cs.MCP_WIPE_CANCELLED
         logger.warning(lg.MCP_WIPING_DATABASE)
         try:
-            await asyncio.to_thread(self.ingestor.clean_database)
+            async with self._ingestor_lock:
+                await asyncio.to_thread(self.ingestor.clean_database)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
@@ -313,7 +317,8 @@ class MCPToolsRegistry:
     async def index_repository(self) -> str:
         logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
         try:
-            return await asyncio.to_thread(self._index_repository_sync)
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._index_repository_sync)
         except Exception as e:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)
