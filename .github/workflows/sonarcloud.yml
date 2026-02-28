@@ -1,0 +1,87 @@
+name: SonarCloud
+
+
+
+on:
+
+  push:
+
+    branches: [main]
+
+  pull_request:
+
+    branches: [main]
+
+
+
+permissions:
+
+  contents: read
+
+
+
+jobs:
+
+  sonarcloud:
+
+    name: SonarCloud Analysis
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 15
+
+
+
+    steps:
+
+      - name: Checkout code
+
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+        with:
+
+          fetch-depth: 0
+
+
+
+      - name: Install uv
+
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+        with:
+
+          enable-cache: true
+
+          cache-dependency-glob: "uv.lock"
+
+
+
+      - name: Set up Python
+
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+
+        with:
+
+          python-version: "3.12"
+
+
+
+      - name: Install dependencies
+
+        run: uv sync --extra treesitter-full --extra test --extra semantic --group dev
+
+
+
+      - name: Run tests with coverage
+
+        run: uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml
+
+
+
+      - name: SonarCloud Scan
+
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
+
+        env:
+
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
