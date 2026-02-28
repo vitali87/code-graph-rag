@@ -15,6 +15,12 @@
   <a href="https://github.com/vitali87/code-graph-rag/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/vitali87/code-graph-rag" alt="License" />
   </a>
+  <a href="https://codecov.io/gh/vitali87/code-graph-rag">
+    <img src="https://codecov.io/gh/vitali87/code-graph-rag/graph/badge.svg" alt="Codecov" />
+  </a>
+  <a href="https://sonarcloud.io/summary/overall?id=vitali87_code-graph-rag">
+    <img src="https://sonarcloud.io/api/project_badges/measure?project=vitali87_code-graph-rag&metric=alert_status" alt="Quality Gate Status" />
+  </a>
   <a href="https://mseep.ai/app/vitali87-code-graph-rag">
     <img src="https://mseep.net/pr/vitali87-code-graph-rag-badge.png" alt="MseeP.ai Security Assessment" height="20" />
   </a>
