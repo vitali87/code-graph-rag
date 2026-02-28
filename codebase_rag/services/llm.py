@@ -35,7 +35,7 @@ def _clean_cypher_response(response_text: str) -> str:
     return query
 
 
-_COMMENT_OR_WS = r"(?:\s|/\*.*?\*/)+"
+_COMMENT_OR_WS = r"(?:\s|//[^\n]*|/\*.*?\*/)+"
 
 
 def _build_keyword_pattern(keyword: str) -> re.Pattern[str]:
