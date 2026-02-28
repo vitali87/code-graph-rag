@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from loguru import logger
 from pydantic_ai import Tool
 from rich.console import Console
@@ -37,7 +39,7 @@ def create_query_tool(
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
 
-            results = ingestor.fetch_all(cypher_query)
+            results = await asyncio.to_thread(ingestor.fetch_all, cypher_query)
 
             if results:
                 table = Table(
