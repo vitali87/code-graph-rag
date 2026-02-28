@@ -49,7 +49,18 @@ NO_SOURCE_FOR = "No source code found for {name}"
 EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
+EMBEDDING_STORE_RETRY = "Qdrant upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
+EMBEDDING_BATCH_STORED = "Stored batch of {count} embeddings in Qdrant"
+EMBEDDING_BATCH_FAILED = "Failed to store embedding batch: {error}"
 EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
+EMBEDDING_RECONCILE_OK = "Qdrant reconciliation: all {count} expected embeddings found"
+EMBEDDING_RECONCILE_MISSING = "Qdrant reconciliation: {missing} of {expected} embeddings missing (IDs: {sample_ids})"
+EMBEDDING_RECONCILE_FAILED = "Qdrant reconciliation check failed: {error}"
+QDRANT_DELETE_PROJECT = "Deleting {count} Qdrant vectors for project '{project}'"
+QDRANT_DELETE_PROJECT_DONE = "Deleted Qdrant vectors for project '{project}'"
+QDRANT_DELETE_PROJECT_FAILED = (
+    "Failed to delete Qdrant vectors for project '{project}': {error}"
+)
 EMBEDDING_CACHE_HIT = "Embedding cache hit for {count} snippets"
 EMBEDDING_CACHE_LOADED = "Loaded embedding cache with {count} entries from {path}"
 EMBEDDING_CACHE_SAVE_FAILED = "Failed to save embedding cache to {path}: {error}"
@@ -182,7 +193,9 @@ MG_REL_BUFFER_FLUSH = (
     "Relationship buffer reached batch size ({size}). Performing incremental flush."
 )
 MG_NO_CONSTRAINT = "No unique constraint defined for label '{label}'. Skipping flush."
-MG_MISSING_PROP = "Skipping {label} node missing required '{key}' property: {props}"
+MG_MISSING_PROP = (
+    "Skipping {label} node missing required '{key}' property (keys: {prop_keys})"
+)
 MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 MG_NODES_SKIPPED = (
     "Skipped {count} buffered nodes due to missing identifiers or constraints."
@@ -194,6 +207,18 @@ MG_RELS_FLUSHED = (
 )
 MG_FLUSH_START = "--- Flushing all pending writes to database... ---"
 MG_FLUSH_COMPLETE = "--- Flushing complete. ---"
+MG_PARALLEL_FLUSH_NODES = (
+    "Parallel flushing {count} label groups with {workers} workers"
+)
+MG_PARALLEL_FLUSH_RELS = (
+    "Parallel flushing {count} relationship groups with {workers} workers"
+)
+MG_LABEL_FLUSH_ERROR = "Error flushing label group '{label}': {error}"
+MG_REL_FLUSH_ERROR = "Error flushing relationship group '{pattern}': {error}"
+MG_NO_CONN_NODES = "No database connection for label '{label}', skipping flush."
+MG_NO_CONN_RELS = (
+    "No database connection for relationship group '{pattern}', skipping flush."
+)
 MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
 MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
@@ -623,6 +648,7 @@ HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
 HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
 HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
 HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
+PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"

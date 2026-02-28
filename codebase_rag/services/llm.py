@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -32,6 +33,31 @@ def _clean_cypher_response(response_text: str) -> str:
     if not query.endswith(cs.CYPHER_SEMICOLON):
         query += cs.CYPHER_SEMICOLON
     return query
+
+
+_COMMENT_OR_WS = r"(?:\s|//[^\n]*|/\*.*?\*/)+"
+
+
+def _build_keyword_pattern(keyword: str) -> re.Pattern[str]:
+    parts = keyword.split()
+    if len(parts) == 1:
+        return re.compile(rf"\b{re.escape(parts[0])}\b")
+    joined = _COMMENT_OR_WS.join(re.escape(p) for p in parts)
+    return re.compile(rf"\b{joined}\b", re.DOTALL)
+
+
+_CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    (kw, _build_keyword_pattern(kw)) for kw in cs.CYPHER_DANGEROUS_KEYWORDS
+]
+
+
+def _validate_cypher_read_only(query: str) -> None:
+    upper_query = query.upper()
+    for keyword, pattern in _CYPHER_DANGEROUS_PATTERNS:
+        if pattern.search(upper_query):
+            raise ex.LLMGenerationError(
+                ex.LLM_DANGEROUS_QUERY.format(keyword=keyword, query=query)
+            )
 
 
 class CypherGenerator:
@@ -70,6 +96,7 @@ class CypherGenerator:
                 )
 
             query = _clean_cypher_response(result.output)
+            _validate_cypher_read_only(query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:

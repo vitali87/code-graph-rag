@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from loguru import logger
@@ -27,7 +28,9 @@ class CodeRetriever:
 
         params = {"qn": qualified_name}
         try:
-            results = self.ingestor.fetch_all(CYPHER_FIND_BY_QUALIFIED_NAME, params)
+            results = await asyncio.to_thread(
+                self.ingestor.fetch_all, CYPHER_FIND_BY_QUALIFIED_NAME, params
+            )
 
             if not results:
                 return CodeSnippet(

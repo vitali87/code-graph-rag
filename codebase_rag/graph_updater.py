@@ -400,6 +400,8 @@ class GraphUpdater:
 
         current_file_keys: set[str] = set()
 
+        processed_since_flush = 0
+
         for filepath in eligible_files:
             file_key = str(filepath.relative_to(self.repo_path))
             current_file_keys.add(file_key)
@@ -424,6 +426,12 @@ class GraphUpdater:
 
             changed_count += 1
             self._process_single_file(filepath)
+
+            processed_since_flush += 1
+            if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
+                logger.info(ls.PERIODIC_FLUSH.format(count=processed_since_flush))
+                self.ingestor.flush_all()
+                processed_since_flush = 0
 
         deleted_keys = set(old_hashes.keys()) - current_file_keys
         if deleted_keys:
@@ -478,7 +486,11 @@ class GraphUpdater:
 
         try:
             from .embedder import embed_code, get_embedding_cache
-            from .vector_store import close_qdrant_client, store_embedding
+            from .vector_store import (
+                close_qdrant_client,
+                store_embedding_batch,
+                verify_stored_ids,
+            )
 
             logger.info(ls.PASS_4_EMBEDDINGS)
 
@@ -493,6 +505,10 @@ class GraphUpdater:
             logger.info(ls.GENERATING_EMBEDDINGS, count=len(results))
 
             embedded_count = 0
+            expected_ids: set[int] = set()
+            batch_buffer: list[tuple[int, list[float], str]] = []
+            batch_size = settings.QDRANT_BATCH_SIZE
+
             for row in results:
                 parsed = self._parse_embedding_result(row)
                 if parsed is None:
@@ -506,16 +522,24 @@ class GraphUpdater:
 
                 if start_line is None or end_line is None or file_path is None:
                     logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
+                    continue
 
-                elif source_code := self._extract_source_code(
+                if source_code := self._extract_source_code(
                     qualified_name, file_path, start_line, end_line
                 ):
                     try:
                         embedding = embed_code(source_code)
-                        store_embedding(node_id, embedding, qualified_name)
-                        embedded_count += 1
+                        batch_buffer.append((node_id, embedding, qualified_name))
+                        expected_ids.add(node_id)
 
-                        if embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0:
+                        if len(batch_buffer) >= batch_size:
+                            embedded_count += store_embedding_batch(batch_buffer)
+                            batch_buffer = []
+
+                        if (
+                            embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0
+                            and embedded_count > 0
+                        ):
                             logger.debug(
                                 ls.EMBEDDING_PROGRESS,
                                 done=embedded_count,
@@ -528,12 +552,43 @@ class GraphUpdater:
                         )
                 else:
                     logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
+
+            if batch_buffer:
+                embedded_count += store_embedding_batch(batch_buffer)
+
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
+
+            self._reconcile_embeddings(expected_ids, verify_stored_ids)
+
             get_embedding_cache().save()
             close_qdrant_client()
 
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+
+    def _reconcile_embeddings(
+        self,
+        expected_ids: set[int],
+        verify_fn: Callable[[set[int]], set[int]],
+    ) -> None:
+        if not expected_ids:
+            return
+        try:
+            stored_ids = verify_fn(expected_ids)
+            missing = expected_ids - stored_ids
+            if missing:
+                sample = sorted(missing)[:10]
+                logger.warning(
+                    ls.EMBEDDING_RECONCILE_MISSING.format(
+                        missing=len(missing),
+                        expected=len(expected_ids),
+                        sample_ids=sample,
+                    )
+                )
+            else:
+                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected_ids)))
+        except Exception as e:
+            logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
 
     def _extract_source_code(
         self, qualified_name: str, file_path: str, start_line: int, end_line: int

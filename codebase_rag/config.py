@@ -246,8 +246,14 @@ class AppConfig(BaseSettings):
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5
+    QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
+    QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
+    QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
+
+    FLUSH_THREAD_POOL_SIZE: int = Field(default=4, gt=0)
+    FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
 
     CACHE_MAX_ENTRIES: int = 1000
     CACHE_MAX_MEMORY_MB: int = 500

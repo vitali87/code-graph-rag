@@ -15,7 +15,12 @@ _PATCH_DEPS = patch(
     "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
 )
 _PATCH_EMBED = patch("codebase_rag.embedder.embed_code", return_value=MOCK_EMBEDDING)
-_PATCH_STORE = patch("codebase_rag.vector_store.store_embedding")
+_PATCH_STORE_BATCH = patch(
+    "codebase_rag.vector_store.store_embedding_batch", side_effect=lambda pts: len(pts)
+)
+_PATCH_RECONCILE = patch(
+    "codebase_rag.vector_store.verify_stored_ids", side_effect=lambda ids: ids
+)
 
 
 @pytest.fixture
@@ -62,10 +67,12 @@ class TestCypherQueryEmbeddingsStructure:
 class TestGenerateSemanticEmbeddings:
     @_PATCH_DEPS
     @_PATCH_EMBED
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_passes_project_name_without_trailing_dot(
         self,
-        _mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        _mock_store_batch: MagicMock,
         _mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -82,10 +89,12 @@ class TestGenerateSemanticEmbeddings:
 
     @_PATCH_DEPS
     @_PATCH_EMBED
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_uses_cypher_query_embeddings_constant(
         self,
-        _mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        _mock_store_batch: MagicMock,
         _mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -109,10 +118,12 @@ class TestGenerateSemanticEmbeddings:
 
     @_PATCH_DEPS
     @_PATCH_EMBED
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_returns_early_on_empty_results(
         self,
-        mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
         _mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -120,14 +131,16 @@ class TestGenerateSemanticEmbeddings:
     ) -> None:
         query_ingestor.fetch_all.return_value = []
         updater_with_query._generate_semantic_embeddings()
-        mock_store.assert_not_called()
+        mock_store_batch.assert_not_called()
 
     @_PATCH_DEPS
     @_PATCH_EMBED
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_embeds_valid_function_with_source(
         self,
-        mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
         mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -147,14 +160,19 @@ class TestGenerateSemanticEmbeddings:
         updater_with_query._generate_semantic_embeddings()
 
         mock_embed.assert_called_once()
-        mock_store.assert_called_once_with(1, MOCK_EMBEDDING, "myproject.module.hello")
+        mock_store_batch.assert_called_once()
+        batch_arg = mock_store_batch.call_args[0][0]
+        assert len(batch_arg) == 1
+        assert batch_arg[0] == (1, MOCK_EMBEDDING, "myproject.module.hello")
 
     @_PATCH_DEPS
     @_PATCH_EMBED
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_skips_row_with_missing_source_info(
         self,
-        mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
         mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -169,14 +187,16 @@ class TestGenerateSemanticEmbeddings:
         updater_with_query._generate_semantic_embeddings()
 
         mock_embed.assert_not_called()
-        mock_store.assert_not_called()
+        mock_store_batch.assert_not_called()
 
     @patch("codebase_rag.graph_updater.has_semantic_dependencies", return_value=True)
     @patch("codebase_rag.embedder.embed_code", side_effect=RuntimeError("model error"))
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_handles_embed_failure_gracefully(
         self,
-        mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
         _mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -195,14 +215,16 @@ class TestGenerateSemanticEmbeddings:
 
         updater_with_query._generate_semantic_embeddings()
 
-        mock_store.assert_not_called()
+        mock_store_batch.assert_not_called()
 
     @_PATCH_DEPS
     @_PATCH_EMBED
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_skips_unparseable_rows(
         self,
-        mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
         mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -217,14 +239,16 @@ class TestGenerateSemanticEmbeddings:
         updater_with_query._generate_semantic_embeddings()
 
         mock_embed.assert_not_called()
-        mock_store.assert_not_called()
+        mock_store_batch.assert_not_called()
 
     @_PATCH_DEPS
     @_PATCH_EMBED
-    @_PATCH_STORE
+    @_PATCH_STORE_BATCH
+    @_PATCH_RECONCILE
     def test_counts_embedded_functions(
         self,
-        mock_store: MagicMock,
+        _mock_reconcile: MagicMock,
+        mock_store_batch: MagicMock,
         mock_embed: MagicMock,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
@@ -254,4 +278,6 @@ class TestGenerateSemanticEmbeddings:
         updater_with_query._generate_semantic_embeddings()
 
         assert mock_embed.call_count == 2
-        assert mock_store.call_count == 2
+        mock_store_batch.assert_called_once()
+        batch_arg = mock_store_batch.call_args[0][0]
+        assert len(batch_arg) == 2

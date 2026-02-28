@@ -1,3 +1,4 @@
+import asyncio
 import itertools
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
 )
+from codebase_rag.vector_store import delete_project_embeddings
 
 
 class MCPToolsRegistry:
@@ -47,6 +49,7 @@ class MCPToolsRegistry:
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
+        self._ingestor_lock = asyncio.Lock()
 
         self.parsers, self.queries = load_parsers()
 
@@ -251,29 +254,50 @@ class MCPToolsRegistry:
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
-            projects = self.ingestor.list_projects()
+            projects = await asyncio.to_thread(self.ingestor.list_projects)
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
+    def _get_project_node_ids(self, project_name: str) -> list[int]:
+        rows = self.ingestor.fetch_all(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
+        result: list[int] = []
+        for row in rows:
+            node_id = row.get(cs.KEY_NODE_ID)
+            if isinstance(node_id, int):
+                result.append(node_id)
+        return result
+
+    def _cleanup_project_embeddings(self, project_name: str) -> None:
+        node_ids = self._get_project_node_ids(project_name)
+        delete_project_embeddings(project_name, node_ids)
+
+    def _delete_project_sync(self, project_name: str) -> DeleteProjectResult:
+        projects = self.ingestor.list_projects()
+        if project_name not in projects:
+            return DeleteProjectErrorResult(
+                success=False,
+                error=te.MCP_PROJECT_NOT_FOUND.format(
+                    project_name=project_name, projects=projects
+                ),
+            )
+        self._cleanup_project_embeddings(project_name)
+        self.ingestor.delete_project(project_name)
+        return DeleteProjectSuccessResult(
+            success=True,
+            project=project_name,
+            message=cs.MCP_PROJECT_DELETED.format(project_name=project_name),
+        )
+
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
         logger.info(lg.MCP_DELETING_PROJECT.format(project_name=project_name))
         try:
-            projects = self.ingestor.list_projects()
-            if project_name not in projects:
-                return DeleteProjectErrorResult(
-                    success=False,
-                    error=te.MCP_PROJECT_NOT_FOUND.format(
-                        project_name=project_name, projects=projects
-                    ),
-                )
-            self.ingestor.delete_project(project_name)
-            return DeleteProjectSuccessResult(
-                success=True,
-                project=project_name,
-                message=cs.MCP_PROJECT_DELETED.format(project_name=project_name),
-            )
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._delete_project_sync, project_name)
         except Exception as e:
             logger.error(lg.MCP_ERROR_DELETE_PROJECT.format(error=e))
             return DeleteProjectErrorResult(success=False, error=str(e))
@@ -283,30 +307,36 @@ class MCPToolsRegistry:
             return cs.MCP_WIPE_CANCELLED
         logger.warning(lg.MCP_WIPING_DATABASE)
         try:
-            self.ingestor.clean_database()
+            async with self._ingestor_lock:
+                await asyncio.to_thread(self.ingestor.clean_database)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
+    def _index_repository_sync(self) -> str:
+        project_name = Path(self.project_root).resolve().name
+        logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
+        self._cleanup_project_embeddings(project_name)
+        self.ingestor.delete_project(project_name)
+
+        updater = GraphUpdater(
+            ingestor=self.ingestor,
+            repo_path=Path(self.project_root),
+            parsers=self.parsers,
+            queries=self.queries,
+        )
+        updater.run()
+
+        return cs.MCP_INDEX_SUCCESS_PROJECT.format(
+            path=self.project_root, project_name=project_name
+        )
+
     async def index_repository(self) -> str:
         logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
-        project_name = Path(self.project_root).resolve().name
         try:
-            logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
-            self.ingestor.delete_project(project_name)
-
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-            )
-            updater.run()
-
-            return cs.MCP_INDEX_SUCCESS_PROJECT.format(
-                path=self.project_root, project_name=project_name
-            )
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._index_repository_sync)
         except Exception as e:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)

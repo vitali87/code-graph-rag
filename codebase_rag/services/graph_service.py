@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import threading
 import types
 from collections import defaultdict
 from collections.abc import Generator, Sequence
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
+from codebase_rag.config import settings
 from codebase_rag.types_defs import CursorProtocol, ResultValue
 
 from .. import exceptions as ex
@@ -54,6 +57,8 @@ from ..types_defs import (
 
 class MemgraphIngestor:
     __slots__ = (
+        "_conn_lock",
+        "_executor",
         "_host",
         "_port",
         "_username",
@@ -85,6 +90,8 @@ class MemgraphIngestor:
             raise ValueError(ex.BATCH_SIZE)
         self.batch_size = batch_size
         self._use_merge = use_merge
+        self._conn_lock = threading.Lock()
+        self._executor: ThreadPoolExecutor | None = None
         self.conn: mgclient.Connection | None = None
         self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
         self._rel_count = 0
@@ -94,16 +101,8 @@ class MemgraphIngestor:
 
     def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        if self._username is not None:
-            self.conn = mgclient.connect(
-                host=self._host,
-                port=self._port,
-                username=self._username,
-                password=self._password,
-            )
-        else:
-            self.conn = mgclient.connect(host=self._host, port=self._port)
-        self.conn.autocommit = True
+        self.conn = self._create_connection()
+        self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
         logger.info(ls.MG_CONNECTED)
         return self
 
@@ -113,32 +112,38 @@ class MemgraphIngestor:
         exc_val: Exception | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
-        if exc_type:
-            logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-            # (H) Best-effort flush: attempt to persist buffered nodes/relationships even
-            # (H) when an exception occurred. Wrapped in try/except so a secondary flush
-            # (H) failure never masks the original exception.
-            try:
+        try:
+            if exc_type:
+                logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                # (H) Best-effort flush: attempt to persist buffered nodes/relationships
+                # (H) even when an exception occurred. Catching broad Exception so a
+                # (H) secondary flush failure never masks the original exception.
+                try:
+                    self.flush_all()
+                except Exception as flush_err:
+                    logger.error(ls.MG_FLUSH_ERROR.format(error=flush_err))
+            else:
                 self.flush_all()
-            except Exception as flush_err:
-                logger.error(ls.MG_FLUSH_ERROR.format(error=flush_err))
-        else:
-            self.flush_all()
-        if self.conn:
-            self.conn.close()
-            logger.info(ls.MG_DISCONNECTED)
+        finally:
+            if self._executor:
+                self._executor.shutdown(wait=True)
+                self._executor = None
+            if self.conn:
+                self.conn.close()
+                logger.info(ls.MG_DISCONNECTED)
 
     @contextmanager
     def _get_cursor(self) -> Generator[CursorProtocol, None, None]:
         if not self.conn:
             raise ConnectionError(ex.CONN)
-        cursor: CursorProtocol | None = None
-        try:
-            cursor = self.conn.cursor()
-            yield cursor
-        finally:
-            if cursor:
-                cursor.close()
+        with self._conn_lock:
+            cursor: CursorProtocol | None = None
+            try:
+                cursor = self.conn.cursor()
+                yield cursor
+            finally:
+                if cursor:
+                    cursor.close()
 
     def _cursor_to_results(self, cursor: CursorProtocol) -> list[ResultRow]:
         if not cursor.description:
@@ -168,12 +173,30 @@ class MemgraphIngestor:
                     logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
                 raise
 
-    def _execute_batch(self, query: str, params_list: Sequence[BatchParams]) -> None:
-        if not self.conn or not params_list:
+    def _create_connection(self) -> mgclient.Connection:
+        if self._username is not None:
+            conn = mgclient.connect(
+                host=self._host,
+                port=self._port,
+                username=self._username,
+                password=self._password,
+            )
+        else:
+            conn = mgclient.connect(host=self._host, port=self._port)
+        conn.autocommit = True
+        return conn
+
+    def _execute_batch_on(
+        self,
+        conn: mgclient.Connection,
+        query: str,
+        params_list: Sequence[BatchParams],
+    ) -> None:
+        if not params_list:
             return
         cursor = None
         try:
-            cursor = self.conn.cursor()
+            cursor = conn.cursor()
             cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
         except Exception as e:
             if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
@@ -192,14 +215,17 @@ class MemgraphIngestor:
             if cursor:
                 cursor.close()
 
-    def _execute_batch_with_return(
-        self, query: str, params_list: Sequence[BatchParams]
+    def _execute_batch_with_return_on(
+        self,
+        conn: mgclient.Connection,
+        query: str,
+        params_list: Sequence[BatchParams],
     ) -> list[ResultRow]:
-        if not self.conn or not params_list:
+        if not params_list:
             return []
         cursor = None
         try:
-            cursor = self.conn.cursor()
+            cursor = conn.cursor()
             cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
             return self._cursor_to_results(cursor)
         except Exception as e:
@@ -270,6 +296,72 @@ class MemgraphIngestor:
             self.flush_nodes()
             self.flush_relationships()
 
+    def _flush_node_label_group(
+        self,
+        label: str,
+        props_list: list[dict[str, PropertyValue]],
+        conn: mgclient.Connection | None = None,
+    ) -> tuple[int, int]:
+        if not props_list:
+            return 0, 0
+
+        id_key = NODE_UNIQUE_CONSTRAINTS.get(label)
+        if not id_key:
+            logger.warning(ls.MG_NO_CONSTRAINT.format(label=label))
+            return 0, len(props_list)
+
+        batch_rows: list[NodeBatchRow] = []
+        skipped = 0
+        for props in props_list:
+            if id_key not in props:
+                logger.warning(
+                    ls.MG_MISSING_PROP.format(
+                        label=label, key=id_key, prop_keys=list(props.keys())
+                    )
+                )
+                skipped += 1
+                continue
+            row_props: PropertyDict = {k: v for k, v in props.items() if k != id_key}
+            batch_rows.append(NodeBatchRow(id=props[id_key], props=row_props))
+
+        if not batch_rows:
+            return 0, skipped
+
+        build_query = (
+            build_merge_node_query if self._use_merge else build_create_node_query
+        )
+        query = build_query(label, id_key)
+        target_conn = conn or self.conn
+        if not target_conn:
+            logger.warning(ls.MG_NO_CONN_NODES.format(label=label))
+            return 0, skipped + len(batch_rows)
+        lock = self._conn_lock if conn is None else nullcontext()
+        with lock:
+            self._execute_batch_on(target_conn, query, batch_rows)
+        return len(batch_rows), skipped
+
+    def _flush_node_group_with_own_conn(
+        self,
+        label: str,
+        props_list: list[dict[str, PropertyValue]],
+    ) -> tuple[int, int]:
+        conn = self._create_connection()
+        try:
+            return self._flush_node_label_group(label, props_list, conn=conn)
+        finally:
+            conn.close()
+
+    def _flush_rel_group_with_own_conn(
+        self,
+        pattern: tuple[str, str, str, str, str],
+        params_list: list[RelBatchRow],
+    ) -> tuple[int, int]:
+        conn = self._create_connection()
+        try:
+            return self._flush_rel_pattern_group(pattern, params_list, conn=conn)
+        finally:
+            conn.close()
+
     def flush_nodes(self) -> None:
         if not self.node_buffer:
             return
@@ -280,40 +372,46 @@ class MemgraphIngestor:
         )
         for label, props in self.node_buffer:
             nodes_by_label[label].append(props)
+
         flushed_total = 0
         skipped_total = 0
-        for label, props_list in nodes_by_label.items():
-            if not props_list:
-                continue
-            id_key = NODE_UNIQUE_CONSTRAINTS.get(label)
-            if not id_key:
-                logger.warning(ls.MG_NO_CONSTRAINT.format(label=label))
-                skipped_total += len(props_list)
-                continue
 
-            batch_rows: list[NodeBatchRow] = []
-            for props in props_list:
-                if id_key not in props:
-                    logger.warning(
-                        ls.MG_MISSING_PROP.format(label=label, key=id_key, props=props)
-                    )
-                    skipped_total += 1
-                    continue
-                row_props: PropertyDict = {
-                    k: v for k, v in props.items() if k != id_key
-                }
-                batch_rows.append(NodeBatchRow(id=props[id_key], props=row_props))
+        first_error: Exception | None = None
 
-            if not batch_rows:
-                continue
-
-            flushed_total += len(batch_rows)
-
-            build_query = (
-                build_merge_node_query if self._use_merge else build_create_node_query
+        if self._executor and len(nodes_by_label) > 1:
+            logger.info(
+                ls.MG_PARALLEL_FLUSH_NODES.format(
+                    count=len(nodes_by_label),
+                    workers=settings.FLUSH_THREAD_POOL_SIZE,
+                )
             )
-            query = build_query(label, id_key)
-            self._execute_batch(query, batch_rows)
+            futures = {
+                self._executor.submit(
+                    self._flush_node_group_with_own_conn, label, props_list
+                ): label
+                for label, props_list in nodes_by_label.items()
+            }
+            for future in as_completed(futures):
+                label = futures[future]
+                try:
+                    flushed, skipped = future.result()
+                    flushed_total += flushed
+                    skipped_total += skipped
+                except Exception as e:
+                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
+                    if first_error is None:
+                        first_error = e
+        else:
+            for label, props_list in nodes_by_label.items():
+                try:
+                    flushed, skipped = self._flush_node_label_group(label, props_list)
+                    flushed_total += flushed
+                    skipped_total += skipped
+                except Exception as e:
+                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
+                    if first_error is None:
+                        first_error = e
+
         logger.info(
             ls.MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
         )
@@ -321,49 +419,101 @@ class MemgraphIngestor:
             logger.info(ls.MG_NODES_SKIPPED.format(count=skipped_total))
         self.node_buffer.clear()
 
-    def flush_relationships(self) -> None:
-        if not self._rel_count:
-            return
+        if first_error is not None:
+            raise first_error
 
+    def _flush_rel_pattern_group(
+        self,
+        pattern: tuple[str, str, str, str, str],
+        params_list: list[RelBatchRow],
+        conn: mgclient.Connection | None = None,
+    ) -> tuple[int, int]:
+        from_label, from_key, rel_type, to_label, to_key = pattern
         build_rel_query = (
             build_merge_relationship_query
             if self._use_merge
             else build_create_relationship_query
         )
+        has_props = any(p[KEY_PROPS] for p in params_list)
+        query = build_rel_query(
+            from_label, from_key, rel_type, to_label, to_key, has_props
+        )
+
+        target_conn = conn or self.conn
+        if not target_conn:
+            logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
+            return len(params_list), 0
+        lock = self._conn_lock if conn is None else nullcontext()
+        with lock:
+            results = self._execute_batch_with_return_on(
+                target_conn, query, params_list
+            )
+        batch_successful = 0
+        for r in results:
+            created = r.get(KEY_CREATED, 0)
+            if isinstance(created, int):
+                batch_successful += created
+
+        if rel_type == REL_TYPE_CALLS:
+            failed = len(params_list) - batch_successful
+            if failed > 0:
+                logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
+                for i, sample in enumerate(params_list[:3]):
+                    logger.warning(
+                        ls.MG_CALLS_SAMPLE.format(
+                            index=i + 1,
+                            from_label=from_label,
+                            from_val=sample[KEY_FROM_VAL],
+                            to_label=to_label,
+                            to_val=sample[KEY_TO_VAL],
+                        )
+                    )
+
+        return len(params_list), batch_successful
+
+    def flush_relationships(self) -> None:
+        if not self._rel_count:
+            return
 
         total_attempted = 0
         total_successful = 0
+        first_error: Exception | None = None
 
-        for pattern, params_list in self._rel_groups.items():
-            from_label, from_key, rel_type, to_label, to_key = pattern
-            has_props = any(p[KEY_PROPS] for p in params_list)
-            query = build_rel_query(
-                from_label, from_key, rel_type, to_label, to_key, has_props
+        if self._executor and len(self._rel_groups) > 1:
+            logger.info(
+                ls.MG_PARALLEL_FLUSH_RELS.format(
+                    count=len(self._rel_groups),
+                    workers=settings.FLUSH_THREAD_POOL_SIZE,
+                )
             )
-
-            total_attempted += len(params_list)
-            results = self._execute_batch_with_return(query, params_list)
-            batch_successful = 0
-            for r in results:
-                created = r.get(KEY_CREATED, 0)
-                if isinstance(created, int):
-                    batch_successful += created
-            total_successful += batch_successful
-
-            if rel_type == REL_TYPE_CALLS:
-                failed = len(params_list) - batch_successful
-                if failed > 0:
-                    logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
-                    for i, sample in enumerate(params_list[:3]):
-                        logger.warning(
-                            ls.MG_CALLS_SAMPLE.format(
-                                index=i + 1,
-                                from_label=from_label,
-                                from_val=sample[KEY_FROM_VAL],
-                                to_label=to_label,
-                                to_val=sample[KEY_TO_VAL],
-                            )
-                        )
+            futures = {
+                self._executor.submit(
+                    self._flush_rel_group_with_own_conn, pattern, params_list
+                ): pattern
+                for pattern, params_list in self._rel_groups.items()
+            }
+            for future in as_completed(futures):
+                pattern = futures[future]
+                try:
+                    attempted, successful = future.result()
+                    total_attempted += attempted
+                    total_successful += successful
+                except Exception as e:
+                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
+                    if first_error is None:
+                        first_error = e
+        else:
+            for pattern, params_list in self._rel_groups.items():
+                try:
+                    attempted, successful = self._flush_rel_pattern_group(
+                        pattern, params_list
+                    )
+                    total_attempted += attempted
+                    total_successful += successful
+                except Exception as e:
+                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
+                    if first_error is None:
+                        first_error = e
 
         logger.info(
             ls.MG_RELS_FLUSHED.format(
@@ -374,6 +524,9 @@ class MemgraphIngestor:
         )
         self._rel_count = 0
         self._rel_groups.clear()
+
+        if first_error is not None:
+            raise first_error
 
     def flush_all(self) -> None:
         logger.info(ls.MG_FLUSH_START)
