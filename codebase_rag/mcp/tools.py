@@ -36,6 +36,7 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
 )
+from codebase_rag.vector_store import delete_project_embeddings
 
 
 class MCPToolsRegistry:
@@ -259,6 +260,22 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
+    def _get_project_node_ids(self, project_name: str) -> list[int]:
+        rows = self.ingestor.fetch_all(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
+        result: list[int] = []
+        for row in rows:
+            node_id = row.get(cs.KEY_NODE_ID)
+            if isinstance(node_id, int):
+                result.append(node_id)
+        return result
+
+    def _cleanup_project_embeddings(self, project_name: str) -> None:
+        node_ids = self._get_project_node_ids(project_name)
+        delete_project_embeddings(project_name, node_ids)
+
     def _delete_project_sync(self, project_name: str) -> DeleteProjectResult:
         projects = self.ingestor.list_projects()
         if project_name not in projects:
@@ -268,6 +285,7 @@ class MCPToolsRegistry:
                     project_name=project_name, projects=projects
                 ),
             )
+        self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
         return DeleteProjectSuccessResult(
             success=True,
@@ -299,6 +317,7 @@ class MCPToolsRegistry:
     def _index_repository_sync(self) -> str:
         project_name = Path(self.project_root).resolve().name
         logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
+        self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
 
         updater = GraphUpdater(
