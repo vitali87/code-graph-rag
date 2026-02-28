@@ -387,6 +387,8 @@ class MemgraphIngestor:
         flushed_total = 0
         skipped_total = 0
 
+        first_error: Exception | None = None
+
         if self._executor and len(nodes_by_label) > 1:
             logger.info(
                 ls.MG_PARALLEL_FLUSH_NODES.format(
@@ -410,7 +412,8 @@ class MemgraphIngestor:
                     logger.error(
                         ls.MG_PARALLEL_LABEL_ERROR.format(label=label, error=e)
                     )
-                    raise
+                    if first_error is None:
+                        first_error = e
         else:
             for label, props_list in nodes_by_label.items():
                 flushed, skipped = self._flush_node_label_group(label, props_list)
@@ -423,6 +426,9 @@ class MemgraphIngestor:
         if skipped_total:
             logger.info(ls.MG_NODES_SKIPPED.format(count=skipped_total))
         self.node_buffer.clear()
+
+        if first_error is not None:
+            raise first_error
 
     def _flush_rel_pattern_group(
         self,
@@ -483,6 +489,7 @@ class MemgraphIngestor:
 
         total_attempted = 0
         total_successful = 0
+        first_error: Exception | None = None
 
         if self._executor and len(self._rel_groups) > 1:
             logger.info(
@@ -507,7 +514,8 @@ class MemgraphIngestor:
                     logger.error(
                         ls.MG_PARALLEL_REL_ERROR.format(pattern=pattern, error=e)
                     )
-                    raise
+                    if first_error is None:
+                        first_error = e
         else:
             for pattern, params_list in self._rel_groups.items():
                 attempted, successful = self._flush_rel_pattern_group(
@@ -525,6 +533,9 @@ class MemgraphIngestor:
         )
         self._rel_count = 0
         self._rel_groups.clear()
+
+        if first_error is not None:
+            raise first_error
 
     def flush_all(self) -> None:
         logger.info(ls.MG_FLUSH_START)
