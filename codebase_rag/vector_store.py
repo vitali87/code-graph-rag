@@ -8,6 +8,8 @@ from .config import settings
 from .constants import PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME
 from .utils.dependencies import has_qdrant_client
 
+_RETRIEVE_BATCH_SIZE = 1000
+
 if has_qdrant_client():
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams
@@ -109,13 +111,17 @@ if has_qdrant_client():
             return set()
         try:
             client = get_qdrant_client()
-            points = client.retrieve(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                ids=list(expected_ids),
-                with_payload=False,
-                with_vectors=False,
-            )
-            return {p.id for p in points if isinstance(p.id, int)}
+            found_ids: set[int] = set()
+            ids_list = list(expected_ids)
+            for i in range(0, len(ids_list), _RETRIEVE_BATCH_SIZE):
+                points = client.retrieve(
+                    collection_name=settings.QDRANT_COLLECTION_NAME,
+                    ids=ids_list[i : i + _RETRIEVE_BATCH_SIZE],
+                    with_payload=False,
+                    with_vectors=False,
+                )
+                found_ids.update(p.id for p in points if isinstance(p.id, int))
+            return found_ids
         except Exception as e:
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
             return set()
