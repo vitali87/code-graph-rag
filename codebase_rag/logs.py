@@ -213,8 +213,8 @@ MG_PARALLEL_FLUSH_NODES = (
 MG_PARALLEL_FLUSH_RELS = (
     "Parallel flushing {count} relationship groups with {workers} workers"
 )
-MG_PARALLEL_LABEL_ERROR = "Error flushing label group '{label}': {error}"
-MG_PARALLEL_REL_ERROR = "Error flushing relationship group '{pattern}': {error}"
+MG_LABEL_FLUSH_ERROR = "Error flushing label group '{label}': {error}"
+MG_REL_FLUSH_ERROR = "Error flushing relationship group '{pattern}': {error}"
 MG_NO_CONN_NODES = "No database connection for label '{label}', skipping flush."
 MG_NO_CONN_RELS = (
     "No database connection for relationship group '{pattern}', skipping flush."

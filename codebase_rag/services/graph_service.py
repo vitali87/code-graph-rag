@@ -101,16 +101,7 @@ class MemgraphIngestor:
 
     def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        if self._username is not None:
-            self.conn = mgclient.connect(
-                host=self._host,
-                port=self._port,
-                username=self._username,
-                password=self._password,
-            )
-        else:
-            self.conn = mgclient.connect(host=self._host, port=self._port)
-        self.conn.autocommit = True
+        self.conn = self._create_connection()
         self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
         logger.info(ls.MG_CONNECTED)
         return self
@@ -407,9 +398,7 @@ class MemgraphIngestor:
                     flushed_total += flushed
                     skipped_total += skipped
                 except Exception as e:
-                    logger.error(
-                        ls.MG_PARALLEL_LABEL_ERROR.format(label=label, error=e)
-                    )
+                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                     if first_error is None:
                         first_error = e
         else:
@@ -419,9 +408,7 @@ class MemgraphIngestor:
                     flushed_total += flushed
                     skipped_total += skipped
                 except Exception as e:
-                    logger.error(
-                        ls.MG_PARALLEL_LABEL_ERROR.format(label=label, error=e)
-                    )
+                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                     if first_error is None:
                         first_error = e
 
@@ -512,9 +499,7 @@ class MemgraphIngestor:
                     total_attempted += attempted
                     total_successful += successful
                 except Exception as e:
-                    logger.error(
-                        ls.MG_PARALLEL_REL_ERROR.format(pattern=pattern, error=e)
-                    )
+                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
                     if first_error is None:
                         first_error = e
         else:
@@ -526,9 +511,7 @@ class MemgraphIngestor:
                     total_attempted += attempted
                     total_successful += successful
                 except Exception as e:
-                    logger.error(
-                        ls.MG_PARALLEL_REL_ERROR.format(pattern=pattern, error=e)
-                    )
+                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
                     if first_error is None:
                         first_error = e
 

@@ -488,8 +488,8 @@ class GraphUpdater:
             from .embedder import embed_code, get_embedding_cache
             from .vector_store import (
                 close_qdrant_client,
-                get_stored_point_ids,
                 store_embedding_batch,
+                verify_stored_ids,
             )
 
             logger.info(ls.PASS_4_EMBEDDINGS)
@@ -558,7 +558,7 @@ class GraphUpdater:
 
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 
-            self._reconcile_embeddings(expected_ids, get_stored_point_ids)
+            self._reconcile_embeddings(expected_ids, verify_stored_ids)
 
             get_embedding_cache().save()
             close_qdrant_client()
@@ -569,12 +569,12 @@ class GraphUpdater:
     def _reconcile_embeddings(
         self,
         expected_ids: set[int],
-        get_stored_fn: Callable[[], set[int]],
+        verify_fn: Callable[[set[int]], set[int]],
     ) -> None:
         if not expected_ids:
             return
         try:
-            stored_ids = get_stored_fn()
+            stored_ids = verify_fn(expected_ids)
             missing = expected_ids - stored_ids
             if missing:
                 sample = sorted(missing)[:10]

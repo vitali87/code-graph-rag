@@ -58,23 +58,7 @@ if has_qdrant_client():
     def store_embedding(
         node_id: int, embedding: list[float], qualified_name: str
     ) -> None:
-        try:
-            _upsert_with_retry(
-                [
-                    PointStruct(
-                        id=node_id,
-                        vector=embedding,
-                        payload={
-                            PAYLOAD_NODE_ID: node_id,
-                            PAYLOAD_QUALIFIED_NAME: qualified_name,
-                        },
-                    )
-                ]
-            )
-        except Exception as e:
-            logger.warning(
-                ls.EMBEDDING_STORE_FAILED.format(name=qualified_name, error=e)
-            )
+        store_embedding_batch([(node_id, embedding, qualified_name)])
 
     def store_embedding_batch(
         points: Sequence[tuple[int, list[float], str]],
@@ -120,27 +104,18 @@ if has_qdrant_client():
                 ls.QDRANT_DELETE_PROJECT_FAILED.format(project=project_name, error=e)
             )
 
-    def get_stored_point_ids() -> set[int]:
+    def verify_stored_ids(expected_ids: set[int]) -> set[int]:
+        if not expected_ids:
+            return set()
         try:
             client = get_qdrant_client()
-            all_ids: set[int] = set()
-            offset = None
-            while True:
-                result = client.scroll(
-                    collection_name=settings.QDRANT_COLLECTION_NAME,
-                    limit=1000,
-                    offset=offset,
-                    with_payload=False,
-                    with_vectors=False,
-                )
-                points, next_offset = result
-                for point in points:
-                    if isinstance(point.id, int):
-                        all_ids.add(point.id)
-                if next_offset is None:
-                    break
-                offset = next_offset
-            return all_ids
+            points = client.retrieve(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                ids=list(expected_ids),
+                with_payload=False,
+                with_vectors=False,
+            )
+            return {p.id for p in points if isinstance(p.id, int)}
         except Exception as e:
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
             return set()
@@ -183,7 +158,7 @@ else:
     def delete_project_embeddings(project_name: str, node_ids: Sequence[int]) -> None:
         pass
 
-    def get_stored_point_ids() -> set[int]:
+    def verify_stored_ids(expected_ids: set[int]) -> set[int]:
         return set()
 
     def search_embeddings(

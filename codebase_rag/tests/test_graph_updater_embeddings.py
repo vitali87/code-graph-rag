@@ -19,7 +19,7 @@ _PATCH_STORE_BATCH = patch(
     "codebase_rag.vector_store.store_embedding_batch", side_effect=lambda pts: len(pts)
 )
 _PATCH_RECONCILE = patch(
-    "codebase_rag.vector_store.get_stored_point_ids", return_value=set()
+    "codebase_rag.vector_store.verify_stored_ids", side_effect=lambda ids: ids
 )
 
 
