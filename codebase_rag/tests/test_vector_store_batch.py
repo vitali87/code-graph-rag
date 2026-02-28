@@ -185,16 +185,17 @@ class TestVerifyStoredIds:
         result = verify_stored_ids(set())
         assert result == set()
 
-    def test_handles_exception_returns_empty(self) -> None:
+    def test_raises_on_exception(self) -> None:
         from codebase_rag.vector_store import verify_stored_ids
 
         mock_client = MagicMock()
         mock_client.retrieve.side_effect = Exception("fail")
 
-        with patch(_PATCH_CLIENT, return_value=mock_client):
-            result = verify_stored_ids({1, 2})
-
-        assert result == set()
+        with (
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            pytest.raises(Exception, match="fail"),
+        ):
+            verify_stored_ids({1, 2})
 
     def test_batches_large_id_sets(self) -> None:
         from codebase_rag.vector_store import _RETRIEVE_BATCH_SIZE, verify_stored_ids
