@@ -330,6 +330,8 @@ class GraphUpdater:
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
 
+        self._prune_orphan_nodes()
+
         self._generate_semantic_embeddings()
 
     def remove_file_from_state(self, file_path: Path) -> None:
@@ -442,6 +444,13 @@ class GraphUpdater:
             for deleted_key in deleted_keys:
                 deleted_path = self.repo_path / deleted_key
                 self.remove_file_from_state(deleted_path)
+                if isinstance(self.ingestor, QueryProtocol):
+                    self.ingestor.execute_write(
+                        cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: deleted_key}
+                    )
+                    self.ingestor.execute_write(
+                        cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: deleted_key}
+                    )
 
         if skipped_count > 0:
             logger.info(ls.INCREMENTAL_SKIPPED, count=skipped_count)
@@ -477,6 +486,43 @@ class GraphUpdater:
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )
+
+    def _prune_orphan_nodes(self) -> None:
+        """Remove graph nodes whose files/folders no longer exist on disk."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+
+        logger.info(ls.PRUNE_START)
+        total_pruned = 0
+
+        prune_specs: list[tuple[str, str, str]] = [
+            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
+            (cs.CYPHER_ALL_MODULE_PATHS, cs.CYPHER_DELETE_MODULE, "Module"),
+            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
+        ]
+
+        for query_all, delete_query, label in prune_specs:
+            rows = self.ingestor.fetch_all(query_all)
+            orphans = [
+                r["path"]
+                for r in rows
+                if r.get("path")
+                and not (self.repo_path / r["path"]).exists()
+            ]
+
+            if orphans:
+                logger.info(ls.PRUNE_FOUND, count=len(orphans), label=label)
+                for orphan_path in orphans:
+                    logger.debug(ls.PRUNE_DELETING, label=label, path=orphan_path)
+                    self.ingestor.execute_write(
+                        delete_query, {cs.KEY_PATH: orphan_path}
+                    )
+                total_pruned += len(orphans)
+
+        if total_pruned:
+            logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
+        else:
+            logger.info(ls.PRUNE_SKIP)
 
     def _generate_semantic_embeddings(self) -> None:
         if not has_semantic_dependencies():

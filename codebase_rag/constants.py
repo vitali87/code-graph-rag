@@ -879,7 +879,13 @@ class EventType(StrEnum):
 
 CYPHER_DELETE_MODULE = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
 CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
+CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
+
+# (H) Queries for orphan pruning — returns all paths stored in the graph
+CYPHER_ALL_FILE_PATHS = "MATCH (f:File) RETURN f.path AS path"
+CYPHER_ALL_MODULE_PATHS = "MATCH (m:Module) RETURN m.path AS path"
+CYPHER_ALL_FOLDER_PATHS = "MATCH (f:Folder) RETURN f.path AS path"
 
 REALTIME_LOGGER_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
