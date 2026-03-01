@@ -14,6 +14,7 @@ from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.constants import (
     CYPHER_DELETE_CALLS,
+    CYPHER_DELETE_FILE,
     CYPHER_DELETE_MODULE,
     IGNORE_PATTERNS,
     IGNORE_SUFFIXES,
