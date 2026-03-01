@@ -309,10 +309,21 @@ The system automatically detects and processes files for all supported languages
 
 ### Step 2: Query the Codebase
 
+**Interactive mode:**
+
 Start the interactive RAG CLI:
 
 ```bash
 cgr start --repo-path /path/to/your/repo
+```
+
+**Non-interactive mode (single query):**
+
+Run a single query and exit, with output sent to stdout (useful for scripting):
+
+```bash
+python -m codebase_rag.main start --repo-path /path/to/your/repo \
+  --ask-agent "What functions call UserService.create_user?"
 ```
 
 ### Step 2.5: Real-Time Graph Updates (Optional)
@@ -566,6 +577,7 @@ claude mcp add --transport stdio code-graph-rag \
 | `write_file` | Write content to a file, creating it if it doesn't exist. |
 | `list_directory` | List contents of a directory in the project. |
 | `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Requires the 'semantic' extra to be installed. |
+| `ask_agent` | Ask the RAG agent a question about the codebase. Wraps the full RAG pipeline (graph query, LLM response) as an MCP tool. |
 <!-- /SECTION:mcp_tools -->
 
 ### Example Usage
