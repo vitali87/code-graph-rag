@@ -78,7 +78,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         relevant_events = {
             EventType.MODIFIED,
             EventType.CREATED,
-            "deleted",  # watchdog deletion event
+            EventType.DELETED,  # watchdog deletion event
         }
         if event.event_type not in relevant_events:
             return
@@ -92,7 +92,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
         # Delete File node (for all files including non-code like .md, .json)
         ingestor.execute_write(
-            "MATCH (f:File {path: $path}) DETACH DELETE f", {KEY_PATH: relative_path_str}
+            CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str}
         )
         logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
