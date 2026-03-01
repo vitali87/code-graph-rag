@@ -653,6 +653,13 @@ INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
+
+# (H) Orphan pruning logs
+PRUNE_START = "--- Pruning orphan nodes from graph ---"
+PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
+PRUNE_DELETING = "Pruning orphan {label}: {path}"
+PRUNE_COMPLETE = "Pruning complete. Removed {count} orphan nodes."
+PRUNE_SKIP = "No orphan nodes found. Graph is clean."
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"
