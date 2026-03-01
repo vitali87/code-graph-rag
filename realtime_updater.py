@@ -75,11 +75,11 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
         # (H) Only process events that actually change file content
-        # Skip read-only events like "opened", "closed_no_write" that don't modify the file
+        # (H) Skip read-only events like "opened", "closed_no_write" that don't modify the file
         relevant_events = {
             EventType.MODIFIED,
             EventType.CREATED,
-            EventType.DELETED,  # watchdog deletion event
+            EventType.DELETED,  # (H) watchdog deletion event
         }
         if event.event_type not in relevant_events:
             return
@@ -89,9 +89,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         )
 
         # (H) Step 1: Delete existing nodes for this file path
-        # Delete Module node and its children (for code files)
+        # (H) Delete Module node and its children (for code files)
         ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
-        # Delete File node (for all files including non-code like .md, .json)
+        # (H) Delete File node (for all files including non-code like .md, .json)
         ingestor.execute_write(
             CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str}
         )
