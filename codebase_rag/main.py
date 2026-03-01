@@ -159,11 +159,21 @@ def is_edit_operation_response(response_text: str) -> bool:
     return tool_usage or content_indicators or pattern_match
 
 
-def _setup_common_initialization(repo_path: str) -> Path:
-    """Common setup logic for both main and optimize functions."""
+def _setup_common_initialization(repo_path: str, question_mode: bool = False) -> Path:
+    """Common setup logic for both main and optimize functions.
+
+    Args:
+        repo_path: Path to the repository
+        question_mode: If True, suppress INFO/DEBUG/WARNING logs (only show errors and direct output)
+    """
     # Logger initialization
     logger.remove()
-    logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
+    if question_mode:
+        # In question mode, only show ERROR level logs
+        logger.add(sys.stderr, level="ERROR", format="{message}")
+    else:
+        # In interactive mode, show all logs
+        logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}")
 
     # Temporary directory cleanup
     project_root = Path(repo_path).resolve()
@@ -774,6 +784,29 @@ def _initialize_services_and_agent(repo_path: str, ingestor: MemgraphIngestor) -
     return rag_agent
 
 
+async def main_async_single_query(
+    repo_path: str, batch_size: int, question: str
+) -> None:
+    """Initializes services and runs a single query in non-interactive mode."""
+    project_root = _setup_common_initialization(repo_path, question_mode=True)
+
+    with MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        batch_size=batch_size,
+    ) as ingestor:
+        rag_agent = _initialize_services_and_agent(repo_path, ingestor)
+
+        # Handle images in the question
+        question_with_context = _handle_chat_images(question, project_root)
+
+        # Run the query
+        response = await rag_agent.run(question_with_context, message_history=[])
+
+        # Output response to stdout
+        print(response.output)
+
+
 async def main_async(repo_path: str, batch_size: int) -> None:
     """Initializes services and runs the main application loop."""
     project_root = _setup_common_initialization(repo_path)
@@ -840,6 +873,12 @@ def start(
         min=1,
         help="Number of buffered nodes/relationships before flushing to Memgraph",
     ),
+    ask_agent: str | None = typer.Option(
+        None,
+        "-a",
+        "--ask-agent",
+        help="Run a single query and exit (non-interactive mode). Output is sent to stdout.",
+    ),
 ) -> None:
     """Starts the Codebase RAG CLI."""
     global confirm_edits_globally
@@ -892,7 +931,16 @@ def start(
         return
 
     try:
-        asyncio.run(main_async(target_repo_path, effective_batch_size))
+        if ask_agent:
+            # Non-interactive mode: run single query and exit
+            asyncio.run(
+                main_async_single_query(
+                    target_repo_path, effective_batch_size, ask_agent
+                )
+            )
+        else:
+            # Interactive mode: run chat loop
+            asyncio.run(main_async(target_repo_path, effective_batch_size))
     except KeyboardInterrupt:
         console.print("\n[bold red]Application terminated by user.[/bold red]")
     except ValueError as e:
