@@ -15,3 +15,8 @@ wheels/
 .pytest_cache/
 .claude/
 .qdrant_code_embeddings/
+
+# Popular VibeCoding Agents
+.roo/
+.augment
+.vscode
