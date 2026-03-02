@@ -4,9 +4,19 @@ services:
     ports:
       - "${MEMGRAPH_PORT:-7687}:7687"
       - "${MEMGRAPH_HTTP_PORT:-7444}:7444"
+    volumes:
+      - memgraph_lib:/var/lib/memgraph
+      - memgraph_log:/var/log/memgraph
+      - memgraph_etc:/etc/memgraph
+
   lab:
     image: memgraph/lab
     ports:
       - "${LAB_PORT:-3000}:3000"
     environment:
       QUICK_CONNECT_MG_HOST: memgraph
+
+volumes:
+  memgraph_lib:
+  memgraph_log:
+  memgraph_etc:
