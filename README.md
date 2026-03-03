@@ -12,9 +12,6 @@
   <a href="https://github.com/vitali87/code-graph-rag/network/members">
     <img src="https://img.shields.io/github/forks/vitali87/code-graph-rag?style=social" alt="GitHub forks" />
   </a>
-  <a href="https://github.com/vitali87/code-graph-rag/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/vitali87/code-graph-rag" alt="License" />
-  </a>
   <a href="https://codecov.io/gh/vitali87/code-graph-rag">
     <img src="https://codecov.io/gh/vitali87/code-graph-rag/graph/badge.svg" alt="Codecov" />
   </a>
