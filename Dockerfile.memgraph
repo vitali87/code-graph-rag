@@ -1,0 +1,16 @@
+FROM memgraph/memgraph-mage
+
+USER root
+
+# Cai gosu de switch user an toan (signal handling dung voi PID 1)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gosu && \
+    rm -rf /var/lib/apt/lists/* && \
+    gosu nobody true
+
+# Copy entrypoint script
+COPY memgraph-entrypoint.sh /usr/local/bin/memgraph-entrypoint.sh
+RUN chmod +x /usr/local/bin/memgraph-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/memgraph-entrypoint.sh"]
+CMD [""]
