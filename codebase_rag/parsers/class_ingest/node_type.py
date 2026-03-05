@@ -87,3 +87,33 @@ def extract_template_class_type(template_node: Node) -> NodeType | None:
             case cs.TS_UNION_SPECIFIER:
                 return NodeType.UNION
     return None
+
+
+# (H) Mapping from tree-sitter AST node types to human-readable class_kind values
+_CLASS_KIND_MAP: dict[str, str] = {
+    "struct_declaration": "struct",
+    "struct_specifier": "struct",
+    "struct_item": "struct",
+    "record_declaration": "record",
+    "delegate_declaration": "delegate",
+    "enum_declaration": "enum",
+    "enum_specifier": "enum",
+    "enum_class_specifier": "enum",
+    "interface_declaration": "interface",
+    "trait_declaration": "interface",
+    "trait_item": "interface",
+    "union_specifier": "union",
+    "union_item": "union",
+    "type_alias_declaration": "type_alias",
+    "type_item": "type_alias",
+}
+
+
+def determine_class_kind(class_node: Node) -> str:
+    """Return a human-readable sub-type for the class node.
+
+    This preserves the original C#/Java/Rust/C++ structure kind
+    (e.g. ``"struct"``, ``"record"``, ``"delegate"``) even when
+    the graph label is normalised to ``Class``.
+    """
+    return _CLASS_KIND_MAP.get(class_node.type, "class")

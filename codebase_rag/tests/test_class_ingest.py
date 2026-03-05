@@ -1706,6 +1706,42 @@ def test_csharp_abstract_class_methods(
     assert len(car_overrides) >= 0, "Car should override BaseVehicle methods"
 
 
+def test_csharp_struct_has_class_kind_struct(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c-sharp")
+
+    struct_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] in ("Class",) and "Point" in call[0][1].get("qualified_name", "")
+    ]
+
+    assert len(struct_nodes) >= 1, f"Should find Point struct node, got: {struct_nodes}"
+    for call in struct_nodes:
+        assert call[0][1].get("class_kind") == "struct", (
+            f"Point should have class_kind='struct', got: {call[0][1].get('class_kind')}"
+        )
+
+
+def test_csharp_class_has_class_kind_class(
+    csharp_class_project: Path, mock_ingestor: MagicMock
+) -> None:
+    run_updater(csharp_class_project, mock_ingestor, skip_if_missing="c-sharp")
+
+    dog_nodes = [
+        call
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if call[0][0] in ("Class",) and "Dog" in call[0][1].get("qualified_name", "")
+    ]
+
+    assert len(dog_nodes) >= 1, f"Should find Dog class node, got: {dog_nodes}"
+    for call in dog_nodes:
+        assert call[0][1].get("class_kind") == "class", (
+            f"Dog should have class_kind='class', got: {call[0][1].get('class_kind')}"
+        )
+
+
 class TestResolveToQn:
     @pytest.fixture
     def mixin_instance(self, temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:

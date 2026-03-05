@@ -136,6 +136,7 @@ class ClassIngestMixin:
         class_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: class_qn,
             cs.KEY_NAME: class_name,
+            cs.KEY_CLASS_KIND: nt.determine_class_kind(class_node),
             cs.KEY_DECORATORS: self._extract_decorators(class_node),
             cs.KEY_START_LINE: class_node.start_point[0] + 1,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,

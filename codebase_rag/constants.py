@@ -392,6 +392,7 @@ KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
+KEY_CLASS_KIND = "class_kind"
 
 # (H) Method signature formatting
 EMPTY_PARENS = "()"
