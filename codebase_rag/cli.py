@@ -28,7 +28,7 @@ from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 
 app = typer.Typer(
-    name="code-graph-rag",
+    name=cs.PACKAGE_NAME,
     help=ch.APP_DESCRIPTION,
     no_args_is_help=True,
     add_completion=False,
@@ -38,7 +38,7 @@ app = typer.Typer(
 def _version_callback(value: bool) -> None:
     if value:
         app_context.console.print(
-            cs.CLI_MSG_VERSION.format(version=get_version("code-graph-rag")),
+            cs.CLI_MSG_VERSION.format(package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)),
             highlight=False,
         )
         raise typer.Exit()
