@@ -56,7 +56,7 @@ def test_version_flag() -> None:
         assert result.returncode == 0, (
             f"{flag} exited with code {result.returncode}: {result.stderr}"
         )
-        expected = cs.CLI_MSG_VERSION.format(version=get_version("code-graph-rag"))
+        expected = cs.CLI_MSG_VERSION.format(package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME))
         assert result.stdout.strip() == expected, (
             f"{flag} output did not match expected format: {repr(result.stdout)}"
         )
