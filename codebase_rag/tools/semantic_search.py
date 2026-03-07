@@ -120,6 +120,7 @@ def get_function_source_code(node_id: int) -> str | None:
 
 def create_semantic_search_tool() -> Tool:
     async def semantic_search_functions(query: str, top_k: int = 5) -> str:
+        """Search for functions and classes in the codebase using semantic similarity."""
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
         results = semantic_code_search(query, top_k)
@@ -144,6 +145,7 @@ def create_semantic_search_tool() -> Tool:
 
 def create_get_function_source_tool() -> Tool:
     async def get_function_source_by_id(node_id: int) -> str:
+        """Retrieves the source code of a function or class by its graph node ID."""
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = get_function_source_code(node_id)
