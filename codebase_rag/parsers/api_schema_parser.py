@@ -190,5 +190,5 @@ def parse_proto_file(file_path: Path) -> ServiceSpec | None:
 
 
 def _sanitize_service_name(name: str) -> str:
-    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name.strip())
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name.strip()).strip("_-")
     return sanitized or "unknown_service"

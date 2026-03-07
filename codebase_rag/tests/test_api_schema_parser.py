@@ -720,7 +720,7 @@ class TestSanitizeServiceName:
         assert _sanitize_service_name("User Service") == "User_Service"
 
     def test_special_chars(self) -> None:
-        assert _sanitize_service_name("My API (v2)") == "My_API__v2_"
+        assert _sanitize_service_name("My API (v2)") == "My_API__v2"
 
     def test_empty_after_strip(self) -> None:
         assert _sanitize_service_name("   ") == "unknown_service"

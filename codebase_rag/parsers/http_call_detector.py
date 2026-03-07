@@ -72,18 +72,30 @@ def _find_http_calls_in_text(
 
     # Match patterns like: requests.get("url"), httpx.post(url), axios.get(url)
     # Also match: client.get("url") where client was imported from the module
+    # Allow optional TypeScript generics between method name and opening paren
     pattern = re.compile(
-        rf"(?:{escaped_mod}|[a-zA-Z_]\w*)\.{escaped_method}\s*\("
-        rf"[^)]*?"
-        rf"(?:[\"']([^\"']*)[\"'])?"
-        rf"[^)]*\)",
+        rf"(?:{escaped_mod}|[a-zA-Z_]\w*)\.{escaped_method}\s*(?:<[^>]*>)?\s*\("
+        rf"([^)]*)\)",
         re.MULTILINE,
     )
+
+    # Extract all quoted strings from an argument list
+    _quoted_re = re.compile(r"""["']([^"']*)["']""")
+
+    # HTTP method names that should be skipped when looking for URLs
+    _http_methods = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
 
     lines = source_text.split("\n")
     for line_num, line in enumerate(lines, start=1):
         for match in pattern.finditer(line):
-            url = match.group(1) or ""
+            args_text = match.group(1) or ""
+            # Find the first quoted string that looks like a URL (not an HTTP method)
+            url = ""
+            for qm in _quoted_re.finditer(args_text):
+                candidate = qm.group(1)
+                if candidate.upper() not in _http_methods:
+                    url = candidate
+                    break
             url_path = _extract_url_path(url)
             http_method = _normalize_http_method(method_name)
 
