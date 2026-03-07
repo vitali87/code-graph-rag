@@ -934,3 +934,745 @@ service OrderService {
         protocols = {c[0][1].get(cs.KEY_API_PROTOCOL) for c in endpoint_calls}
         assert "REST" in protocols
         assert "gRPC" in protocols
+
+
+# ────────────────────────────────────────────────────────────────────
+# Cross-language call tests
+#
+# These tests simulate realistic microservice architectures where
+# services written in different languages call each other's APIs.
+# The key scenario: Service A (language X) defines an OpenAPI spec,
+# and Service B (language Y) makes HTTP calls that resolve to A's
+# endpoints — across language boundaries.
+# ────────────────────────────────────────────────────────────────────
+
+
+class TestCrossLanguagePythonCallingJavaService:
+    """Python service calling a Java-defined REST API."""
+
+    def _setup(self, tmp_path: Path) -> tuple[CrossServiceLinker, MagicMock]:
+        # Java team publishes an OpenAPI spec for their user-service
+        java_svc = tmp_path / "services" / "user-service-java"
+        java_svc.mkdir(parents=True)
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "UserService"},
+            "paths": {
+                "/api/v1/users": {
+                    "get": {"operationId": "listUsers", "summary": "List all users"},
+                    "post": {"operationId": "createUser", "summary": "Create user"},
+                },
+                "/api/v1/users/{userId}": {
+                    "get": {"operationId": "getUser"},
+                    "put": {"operationId": "updateUser"},
+                    "delete": {"operationId": "deleteUser"},
+                },
+                "/api/v1/users/{userId}/roles": {
+                    "get": {"operationId": "getUserRoles"},
+                    "post": {"operationId": "assignRole"},
+                },
+            },
+        }
+        (java_svc / "openapi.json").write_text(json.dumps(spec))
+
+        ingestor = MagicMock()
+        linker = CrossServiceLinker(ingestor, tmp_path, "microservices")
+        linker.discover_api_specs()
+        ingestor.reset_mock()
+        return linker, ingestor
+
+    def test_python_requests_get_to_java_endpoint(self, tmp_path: Path) -> None:
+        linker, ingestor = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "python_gateway.client", "GET", "/api/v1/users",
+                "requests", 25, "client.py",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_python_requests_post_to_java_endpoint(self, tmp_path: Path) -> None:
+        linker, ingestor = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "python_gateway.client", "POST", "/api/v1/users",
+                "requests", 30, "client.py",
+            ),
+        ]
+        linked = linker.link_http_calls(calls)
+        assert linked == 1
+        # Verify it matched POST not GET
+        rel = [
+            c for c in ingestor.ensure_relationship_batch.call_args_list
+            if c[0][1] == cs.RelationshipType.CALLS_ENDPOINT
+        ][0]
+        assert rel[1]["properties"][cs.KEY_HTTP_METHOD] == "POST"
+
+    def test_python_httpx_to_java_parameterized_endpoint(self, tmp_path: Path) -> None:
+        linker, ingestor = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "python_gateway.user_client", "GET", "/api/v1/users/{user_id}",
+                "httpx", 42, "user_client.py",
+            ),
+        ]
+        # {user_id} and {userId} both normalize to {_}
+        assert linker.link_http_calls(calls) == 1
+
+    def test_python_aiohttp_delete_to_java_endpoint(self, tmp_path: Path) -> None:
+        linker, ingestor = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "python_gateway.admin", "DELETE", "/api/v1/users/{id}",
+                "aiohttp", 55, "admin.py",
+            ),
+        ]
+        linked = linker.link_http_calls(calls)
+        assert linked == 1
+
+    def test_python_calling_nested_java_endpoint(self, tmp_path: Path) -> None:
+        linker, ingestor = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "python_gateway.roles", "GET", "/api/v1/users/{uid}/roles",
+                "requests", 10, "roles.py",
+            ),
+            HTTPCallSite(
+                "python_gateway.roles", "POST", "/api/v1/users/{uid}/roles",
+                "requests", 15, "roles.py",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 2
+
+    def test_python_multiple_libraries_to_same_java_service(self, tmp_path: Path) -> None:
+        linker, ingestor = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("mod_a", "GET", "/api/v1/users", "requests", 1, "a.py"),
+            HTTPCallSite("mod_b", "GET", "/api/v1/users", "httpx", 2, "b.py"),
+            HTTPCallSite("mod_c", "GET", "/api/v1/users", "aiohttp", 3, "c.py"),
+        ]
+        linked = linker.link_http_calls(calls)
+        assert linked == 3
+
+        # Each linked with its own library
+        rels = [
+            c for c in ingestor.ensure_relationship_batch.call_args_list
+            if c[0][1] == cs.RelationshipType.CALLS_ENDPOINT
+        ]
+        libraries = {r[1]["properties"]["library"] for r in rels}
+        assert libraries == {"requests", "httpx", "aiohttp"}
+
+
+class TestCrossLanguageGoCallingPythonService:
+    """Go service calling a Python-defined REST API (e.g., Flask/FastAPI)."""
+
+    def _setup(self, tmp_path: Path) -> tuple[CrossServiceLinker, MagicMock]:
+        py_svc = tmp_path / "services" / "ml-service-python"
+        py_svc.mkdir(parents=True)
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "MLService"},
+            "paths": {
+                "/predict": {
+                    "post": {"operationId": "runPrediction", "summary": "Run ML prediction"},
+                },
+                "/models": {
+                    "get": {"operationId": "listModels"},
+                },
+                "/models/{modelId}/train": {
+                    "post": {"operationId": "trainModel"},
+                },
+                "/health": {
+                    "get": {"operationId": "healthCheck"},
+                },
+            },
+        }
+        (py_svc / "openapi.yaml").write_text(json.dumps(spec))  # JSON in .yaml is valid
+
+        ingestor = MagicMock()
+        linker = CrossServiceLinker(ingestor, tmp_path, "platform")
+        linker.discover_api_specs()
+        ingestor.reset_mock()
+        return linker, ingestor
+
+    def test_go_http_get_to_python_health(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("go_svc.main", "GET", "/health", "net/http", 10, "main.go"),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_go_http_post_to_python_predict(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("go_svc.client", "POST", "/predict", "net/http", 25, "client.go"),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_go_resty_to_python_models(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("go_svc.ml", "GET", "/models", "resty", 15, "ml.go"),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_go_calling_parameterized_python_endpoint(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "go_svc.trainer", "POST", "/models/{model_id}/train",
+                "net/http", 30, "trainer.go",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_go_unknown_method_to_python_endpoint(self, tmp_path: Path) -> None:
+        """Go http.Do() produces UNKNOWN method — should still match by path."""
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("go_svc.x", "UNKNOWN", "/predict", "net/http", 5, "x.go"),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+
+class TestCrossLanguageTypeScriptCallingGoService:
+    """TypeScript frontend calling a Go backend API."""
+
+    def _setup(self, tmp_path: Path) -> tuple[CrossServiceLinker, MagicMock]:
+        go_svc = tmp_path / "services" / "order-service-go"
+        go_svc.mkdir(parents=True)
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "OrderService"},
+            "paths": {
+                "/api/orders": {
+                    "get": {"operationId": "listOrders"},
+                    "post": {"operationId": "createOrder"},
+                },
+                "/api/orders/{orderId}": {
+                    "get": {"operationId": "getOrder"},
+                    "patch": {"operationId": "updateOrderStatus"},
+                    "delete": {"operationId": "cancelOrder"},
+                },
+                "/api/orders/{orderId}/items": {
+                    "get": {"operationId": "listOrderItems"},
+                    "post": {"operationId": "addOrderItem"},
+                },
+            },
+        }
+        (go_svc / "swagger.json").write_text(json.dumps(spec))
+
+        ingestor = MagicMock()
+        linker = CrossServiceLinker(ingestor, tmp_path, "ecommerce")
+        linker.discover_api_specs()
+        ingestor.reset_mock()
+        return linker, ingestor
+
+    def test_axios_get_to_go_orders(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("ts_app.orderApi", "GET", "/api/orders", "axios", 10, "orderApi.ts"),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_axios_post_to_go_create_order(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("ts_app.orderApi", "POST", "/api/orders", "axios", 20, "orderApi.ts"),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_axios_patch_to_go_update_order(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "ts_app.orderApi", "PATCH", "/api/orders/{orderId}",
+                "axios", 30, "orderApi.ts",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_got_delete_to_go_cancel_order(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "ts_app.admin", "DELETE", "/api/orders/{id}",
+                "got", 45, "admin.ts",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_typescript_calling_nested_go_endpoint(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "ts_app.cart", "GET", "/api/orders/{orderId}/items",
+                "axios", 10, "cart.ts",
+            ),
+            HTTPCallSite(
+                "ts_app.cart", "POST", "/api/orders/{orderId}/items",
+                "axios", 15, "cart.ts",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 2
+
+    def test_superagent_to_go_service(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "ts_app.legacy", "GET", "/api/orders",
+                "superagent", 5, "legacy.ts",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+
+class TestCrossLanguageJavaCallingRustService:
+    """Java service calling a Rust-defined REST API."""
+
+    def _setup(self, tmp_path: Path) -> tuple[CrossServiceLinker, MagicMock]:
+        rust_svc = tmp_path / "services" / "auth-service-rust"
+        rust_svc.mkdir(parents=True)
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "AuthService"},
+            "paths": {
+                "/auth/login": {
+                    "post": {"operationId": "login"},
+                },
+                "/auth/logout": {
+                    "post": {"operationId": "logout"},
+                },
+                "/auth/token/refresh": {
+                    "post": {"operationId": "refreshToken"},
+                },
+                "/auth/verify": {
+                    "get": {"operationId": "verifyToken"},
+                },
+            },
+        }
+        (rust_svc / "openapi.json").write_text(json.dumps(spec))
+
+        ingestor = MagicMock()
+        linker = CrossServiceLinker(ingestor, tmp_path, "platform")
+        linker.discover_api_specs()
+        ingestor.reset_mock()
+        return linker, ingestor
+
+    def test_resttemplate_post_to_rust_login(self, tmp_path: Path) -> None:
+        linker, ingestor = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "java_svc.AuthClient", "POST", "/auth/login",
+                "RestTemplate", 50, "AuthClient.java",
+            ),
+        ]
+        linked = linker.link_http_calls(calls)
+        assert linked == 1
+        rel = [
+            c for c in ingestor.ensure_relationship_batch.call_args_list
+            if c[0][1] == cs.RelationshipType.CALLS_ENDPOINT
+        ][0]
+        assert rel[1]["properties"]["library"] == "RestTemplate"
+
+    def test_webclient_get_to_rust_verify(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "java_svc.TokenVerifier", "GET", "/auth/verify",
+                "WebClient", 30, "TokenVerifier.java",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_httpclient_unknown_to_rust_refresh(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "java_svc.TokenRefresher", "UNKNOWN", "/auth/token/refresh",
+                "HttpClient", 20, "TokenRefresher.java",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_okhttp_to_rust_logout(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "java_svc.SessionManager", "POST", "/auth/logout",
+                "OkHttpClient", 15, "SessionManager.java",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+
+class TestCrossLanguageRustCallingTypeScriptService:
+    """Rust backend calling a TypeScript/Node.js service API."""
+
+    def _setup(self, tmp_path: Path) -> tuple[CrossServiceLinker, MagicMock]:
+        ts_svc = tmp_path / "services" / "notification-service-ts"
+        ts_svc.mkdir(parents=True)
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "NotificationService"},
+            "paths": {
+                "/notifications": {
+                    "post": {"operationId": "sendNotification"},
+                    "get": {"operationId": "listNotifications"},
+                },
+                "/notifications/{notifId}": {
+                    "get": {"operationId": "getNotification"},
+                    "delete": {"operationId": "deleteNotification"},
+                },
+                "/notifications/batch": {
+                    "post": {"operationId": "sendBatchNotifications"},
+                },
+            },
+        }
+        (ts_svc / "api-spec.json").write_text(json.dumps(spec))
+
+        ingestor = MagicMock()
+        linker = CrossServiceLinker(ingestor, tmp_path, "platform")
+        linker.discover_api_specs()
+        ingestor.reset_mock()
+        return linker, ingestor
+
+    def test_reqwest_post_to_ts_notification(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "rust_svc.notifier", "POST", "/notifications",
+                "reqwest", 10, "notifier.rs",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_reqwest_get_to_ts_list_notifications(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "rust_svc.reader", "GET", "/notifications",
+                "reqwest", 20, "reader.rs",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_reqwest_delete_parameterized_to_ts(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "rust_svc.cleanup", "DELETE", "/notifications/{id}",
+                "reqwest", 30, "cleanup.rs",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_hyper_to_ts_batch(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite(
+                "rust_svc.batch", "POST", "/notifications/batch",
+                "hyper", 15, "batch.rs",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+
+class TestCrossLanguageMultiServiceMesh:
+    """Multiple services in different languages all calling each other.
+
+    Simulates a realistic microservice topology:
+    - user-service (Java, OpenAPI)
+    - order-service (Go, OpenAPI)
+    - payment-service (Rust, OpenAPI)
+    - notification-service (TypeScript, OpenAPI)
+    - gateway (Python) calling all of them
+    """
+
+    def _setup(self, tmp_path: Path) -> tuple[CrossServiceLinker, MagicMock]:
+        # Java user service
+        java_dir = tmp_path / "services" / "user-svc"
+        java_dir.mkdir(parents=True)
+        (java_dir / "openapi.json").write_text(json.dumps({
+            "openapi": "3.0.0",
+            "info": {"title": "UserSvc"},
+            "paths": {
+                "/users": {"get": {"operationId": "listUsers"}, "post": {"operationId": "createUser"}},
+                "/users/{id}": {"get": {"operationId": "getUser"}},
+            },
+        }))
+
+        # Go order service
+        go_dir = tmp_path / "services" / "order-svc"
+        go_dir.mkdir(parents=True)
+        (go_dir / "swagger.json").write_text(json.dumps({
+            "swagger": "2.0",
+            "info": {"title": "OrderSvc"},
+            "paths": {
+                "/orders": {"get": {"operationId": "listOrders"}, "post": {"operationId": "createOrder"}},
+                "/orders/{id}": {"get": {"operationId": "getOrder"}, "delete": {"operationId": "cancelOrder"}},
+            },
+        }))
+
+        # Rust payment service
+        rust_dir = tmp_path / "services" / "payment-svc"
+        rust_dir.mkdir(parents=True)
+        (rust_dir / "openapi.yaml").write_text(json.dumps({
+            "openapi": "3.0.0",
+            "info": {"title": "PaymentSvc"},
+            "paths": {
+                "/payments": {"post": {"operationId": "processPayment"}},
+                "/payments/{id}/refund": {"post": {"operationId": "refundPayment"}},
+            },
+        }))
+
+        # TypeScript notification service
+        ts_dir = tmp_path / "services" / "notif-svc"
+        ts_dir.mkdir(parents=True)
+        (ts_dir / "api-spec.json").write_text(json.dumps({
+            "openapi": "3.0.0",
+            "info": {"title": "NotifSvc"},
+            "paths": {
+                "/notifications": {"post": {"operationId": "sendNotification"}},
+                "/notifications/{id}": {"get": {"operationId": "getNotification"}},
+            },
+        }))
+
+        ingestor = MagicMock()
+        linker = CrossServiceLinker(ingestor, tmp_path, "ecommerce")
+        linker.discover_api_specs()
+        ingestor.reset_mock()
+        return linker, ingestor
+
+    def test_discovers_all_four_services(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        assert len(linker.services) == 4
+        names = set(linker.services.keys())
+        assert names == {"UserSvc", "OrderSvc", "PaymentSvc", "NotifSvc"}
+
+    def test_python_gateway_calls_all_services(self, tmp_path: Path) -> None:
+        """Python API gateway calling endpoints across all 4 backend services."""
+        linker, ingestor = self._setup(tmp_path)
+
+        calls = [
+            # Python -> Java (user service)
+            HTTPCallSite("gateway.users", "GET", "/users", "requests", 10, "users.py"),
+            HTTPCallSite("gateway.users", "POST", "/users", "requests", 15, "users.py"),
+            HTTPCallSite("gateway.users", "GET", "/users/{id}", "requests", 20, "users.py"),
+            # Python -> Go (order service)
+            HTTPCallSite("gateway.orders", "GET", "/orders", "httpx", 10, "orders.py"),
+            HTTPCallSite("gateway.orders", "POST", "/orders", "httpx", 15, "orders.py"),
+            HTTPCallSite("gateway.orders", "DELETE", "/orders/{id}", "httpx", 25, "orders.py"),
+            # Python -> Rust (payment service)
+            HTTPCallSite("gateway.payments", "POST", "/payments", "aiohttp", 10, "payments.py"),
+            HTTPCallSite("gateway.payments", "POST", "/payments/{id}/refund", "aiohttp", 15, "payments.py"),
+            # Python -> TypeScript (notification service)
+            HTTPCallSite("gateway.notifs", "POST", "/notifications", "requests", 10, "notifs.py"),
+            HTTPCallSite("gateway.notifs", "GET", "/notifications/{id}", "requests", 15, "notifs.py"),
+        ]
+        linked = linker.link_http_calls(calls)
+        assert linked == 10
+
+    def test_go_order_service_calls_java_and_rust(self, tmp_path: Path) -> None:
+        """Go order-service calls user-service (Java) and payment-service (Rust)."""
+        linker, _ = self._setup(tmp_path)
+
+        calls = [
+            # Go -> Java user service
+            HTTPCallSite("order_svc.handler", "GET", "/users/{id}", "net/http", 30, "handler.go"),
+            # Go -> Rust payment service
+            HTTPCallSite("order_svc.checkout", "POST", "/payments", "net/http", 45, "checkout.go"),
+        ]
+        assert linker.link_http_calls(calls) == 2
+
+    def test_java_user_service_calls_ts_notifications(self, tmp_path: Path) -> None:
+        """Java user-service sends welcome notification via TypeScript service."""
+        linker, _ = self._setup(tmp_path)
+
+        calls = [
+            HTTPCallSite(
+                "user_svc.UserController", "POST", "/notifications",
+                "RestTemplate", 80, "UserController.java",
+            ),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_rust_payment_calls_go_order_and_ts_notif(self, tmp_path: Path) -> None:
+        """Rust payment-service updates order status and sends receipt notification."""
+        linker, _ = self._setup(tmp_path)
+
+        calls = [
+            # Rust -> Go order service (get order details)
+            HTTPCallSite("payment_svc.processor", "GET", "/orders/{id}", "reqwest", 50, "processor.rs"),
+            # Rust -> TypeScript notification service
+            HTTPCallSite("payment_svc.processor", "POST", "/notifications", "reqwest", 55, "processor.rs"),
+        ]
+        assert linker.link_http_calls(calls) == 2
+
+    def test_ts_frontend_calls_all_backend_services(self, tmp_path: Path) -> None:
+        """TypeScript SPA frontend calling all backend services via axios."""
+        linker, _ = self._setup(tmp_path)
+
+        calls = [
+            HTTPCallSite("frontend.userApi", "GET", "/users", "axios", 10, "userApi.ts"),
+            HTTPCallSite("frontend.orderApi", "GET", "/orders", "axios", 10, "orderApi.ts"),
+            HTTPCallSite("frontend.orderApi", "POST", "/orders", "axios", 15, "orderApi.ts"),
+            HTTPCallSite("frontend.notifApi", "GET", "/notifications/{id}", "axios", 10, "notifApi.ts"),
+        ]
+        assert linker.link_http_calls(calls) == 4
+
+    def test_cross_language_handler_linking(self, tmp_path: Path) -> None:
+        """Handler functions in different languages implement endpoints from different specs."""
+        linker, ingestor = self._setup(tmp_path)
+
+        registry = [
+            # Java handlers for user-service endpoints
+            ("user_svc.UserController.listUsers", cs.NodeLabel.METHOD),
+            ("user_svc.UserController.createUser", cs.NodeLabel.METHOD),
+            ("user_svc.UserController.getUser", cs.NodeLabel.METHOD),
+            # Go handlers for order-service endpoints
+            ("order_svc.handlers.listOrders", cs.NodeLabel.FUNCTION),
+            ("order_svc.handlers.createOrder", cs.NodeLabel.FUNCTION),
+            ("order_svc.handlers.getOrder", cs.NodeLabel.FUNCTION),
+            ("order_svc.handlers.cancelOrder", cs.NodeLabel.FUNCTION),
+            # Rust handlers for payment-service endpoints
+            ("payment_svc.routes.processPayment", cs.NodeLabel.FUNCTION),
+            ("payment_svc.routes.refundPayment", cs.NodeLabel.FUNCTION),
+            # TypeScript handlers for notification-service endpoints
+            ("notif_svc.controllers.NotifController.sendNotification", cs.NodeLabel.METHOD),
+            ("notif_svc.controllers.NotifController.getNotification", cs.NodeLabel.METHOD),
+            # Unrelated functions that should NOT match
+            ("utils.helpers.formatDate", cs.NodeLabel.FUNCTION),
+            ("common.logger.info", cs.NodeLabel.FUNCTION),
+        ]
+        linked = linker.link_handler_functions(registry)
+        assert linked == 11  # All handlers except 2 unrelated functions
+
+    def test_mixed_http_calls_and_handlers_full_mesh(self, tmp_path: Path) -> None:
+        """Combined: services call each other AND have handlers for their own endpoints."""
+        linker, ingestor = self._setup(tmp_path)
+
+        # Cross-service HTTP calls
+        http_calls = [
+            # Go -> Java
+            HTTPCallSite("order.h", "GET", "/users/{id}", "net/http", 1, "h.go"),
+            # Java -> Rust
+            HTTPCallSite("user.c", "POST", "/payments", "RestTemplate", 2, "c.java"),
+            # Rust -> TypeScript
+            HTTPCallSite("pay.p", "POST", "/notifications", "reqwest", 3, "p.rs"),
+            # TypeScript -> Go
+            HTTPCallSite("notif.w", "POST", "/orders", "axios", 4, "w.ts"),
+            # Python gateway -> all
+            HTTPCallSite("gw.a", "GET", "/users", "requests", 5, "a.py"),
+            HTTPCallSite("gw.b", "GET", "/orders", "requests", 6, "b.py"),
+            HTTPCallSite("gw.c", "POST", "/payments", "requests", 7, "c.py"),
+            HTTPCallSite("gw.d", "POST", "/notifications", "requests", 8, "d.py"),
+            # Non-matching
+            HTTPCallSite("gw.x", "GET", "/metrics", "requests", 99, "x.py"),
+        ]
+        linked_calls = linker.link_http_calls(http_calls)
+        assert linked_calls == 8  # All except /metrics
+
+        # Handler functions across languages
+        handlers = [
+            ("user_svc.listUsers", cs.NodeLabel.FUNCTION),
+            ("order_svc.createOrder", cs.NodeLabel.FUNCTION),
+            ("payment_svc.processPayment", cs.NodeLabel.FUNCTION),
+            ("notif_svc.sendNotification", cs.NodeLabel.FUNCTION),
+        ]
+        linked_handlers = linker.link_handler_functions(handlers)
+        assert linked_handlers == 4
+
+    def test_relationship_tracks_source_language_via_library(self, tmp_path: Path) -> None:
+        """Verify each cross-language call records the calling library (language indicator)."""
+        linker, ingestor = self._setup(tmp_path)
+
+        calls = [
+            HTTPCallSite("py.mod", "GET", "/users", "requests", 1, "mod.py"),       # Python
+            HTTPCallSite("go.mod", "GET", "/orders", "net/http", 1, "mod.go"),       # Go
+            HTTPCallSite("java.mod", "POST", "/payments", "RestTemplate", 1, "M.java"),  # Java
+            HTTPCallSite("rs.mod", "POST", "/notifications", "reqwest", 1, "m.rs"),  # Rust
+            HTTPCallSite("ts.mod", "GET", "/users", "axios", 1, "m.ts"),             # TypeScript
+        ]
+        linker.link_http_calls(calls)
+
+        rels = [
+            c for c in ingestor.ensure_relationship_batch.call_args_list
+            if c[0][1] == cs.RelationshipType.CALLS_ENDPOINT
+        ]
+        libraries = {r[1]["properties"]["library"] for r in rels}
+        assert libraries == {"requests", "net/http", "RestTemplate", "reqwest", "axios"}
+
+
+class TestCrossLanguageProtoServices:
+    """Cross-language calls involving gRPC services defined via .proto files."""
+
+    def _setup(self, tmp_path: Path) -> tuple[CrossServiceLinker, MagicMock]:
+        # gRPC service defined in proto
+        proto_dir = tmp_path / "proto"
+        proto_dir.mkdir()
+        proto = """
+syntax = "proto3";
+package analytics;
+
+service AnalyticsService {
+    rpc TrackEvent(TrackEventRequest) returns (TrackEventResponse);
+    rpc GetMetrics(GetMetricsRequest) returns (stream MetricsResponse);
+    rpc BatchIngest(BatchIngestRequest) returns (BatchIngestResponse);
+}
+"""
+        (proto_dir / "analytics.proto").write_text(proto)
+
+        # REST gateway for the same service
+        gateway_dir = tmp_path / "services" / "analytics-gateway"
+        gateway_dir.mkdir(parents=True)
+        (gateway_dir / "openapi.json").write_text(json.dumps({
+            "openapi": "3.0.0",
+            "info": {"title": "AnalyticsGateway"},
+            "paths": {
+                "/analytics/events": {"post": {"operationId": "trackEvent"}},
+                "/analytics/metrics": {"get": {"operationId": "getMetrics"}},
+                "/analytics/batch": {"post": {"operationId": "batchIngest"}},
+            },
+        }))
+
+        ingestor = MagicMock()
+        linker = CrossServiceLinker(ingestor, tmp_path, "platform")
+        linker.discover_api_specs()
+        ingestor.reset_mock()
+        return linker, ingestor
+
+    def test_discovers_both_proto_and_rest_gateway(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        assert len(linker.services) == 2
+        names = set(linker.services.keys())
+        assert "analytics" in names  # proto file stem
+        assert "AnalyticsGateway" in names
+
+    def test_python_calls_rest_gateway_of_grpc_service(self, tmp_path: Path) -> None:
+        """Python service calls the REST gateway that fronts a gRPC service."""
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("py_app.tracker", "POST", "/analytics/events", "requests", 10, "tracker.py"),
+            HTTPCallSite("py_app.dashboard", "GET", "/analytics/metrics", "requests", 20, "dashboard.py"),
+        ]
+        assert linker.link_http_calls(calls) == 2
+
+    def test_go_calls_rest_gateway(self, tmp_path: Path) -> None:
+        linker, _ = self._setup(tmp_path)
+        calls = [
+            HTTPCallSite("go_app.ingester", "POST", "/analytics/batch", "net/http", 15, "ingester.go"),
+        ]
+        assert linker.link_http_calls(calls) == 1
+
+    def test_handler_links_to_grpc_and_rest(self, tmp_path: Path) -> None:
+        """Functions named after operationIds link to both REST and gRPC definitions."""
+        linker, _ = self._setup(tmp_path)
+        registry = [
+            # These match REST gateway operationIds
+            ("analytics.gateway.trackEvent", cs.NodeLabel.FUNCTION),
+            ("analytics.gateway.getMetrics", cs.NodeLabel.FUNCTION),
+            ("analytics.gateway.batchIngest", cs.NodeLabel.FUNCTION),
+        ]
+        linked = linker.link_handler_functions(registry)
+        assert linked == 3
