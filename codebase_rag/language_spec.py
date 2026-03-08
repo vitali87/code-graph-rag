@@ -97,23 +97,21 @@ def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
-def _c_unwrap_declarator(declarator: Node) -> Node | None:
-    """Unwrap pointer_declarator chains to find the inner function_declarator."""
+def _c_unwrap_declarator(declarator: Node | None) -> Node | None:
     while declarator and declarator.type == cs.CppNodeType.POINTER_DECLARATOR:
         declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
     return declarator
 
 
 def _c_get_name(node: Node) -> str | None:
-    """Get name for C entities, handling pointer-return functions."""
-    if node.type in cs.CPP_NAME_NODE_TYPES:
+    if node.type in cs.C_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
     elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         declarator = _c_unwrap_declarator(declarator)
-        if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:  # "function_declarator"
+        if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
             name_node = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
             if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
                 return name_node.text.decode(cs.ENCODING_UTF8)

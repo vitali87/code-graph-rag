@@ -2659,6 +2659,13 @@ CPP_NAME_NODE_TYPES = (
     TS_ENUM_SPECIFIER,
 )
 
+# (H) Derived node types for _c_get_name
+C_NAME_NODE_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+
 # (H) LANGUAGE_SPECS node type tuples for Rust
 SPEC_RS_FUNCTION_TYPES = (
     TS_RS_FUNCTION_ITEM,

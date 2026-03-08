@@ -52,7 +52,6 @@ dependencies = [
     "protobuf>=5.27.0",
     "defusedxml>=0.7.1",
     "huggingface-hub[hf-xet]>=0.36.0",
-    "tree-sitter-c>=0.24.1",
 ]
 
 [project.scripts]
@@ -82,7 +81,7 @@ treesitter-full = [
     "tree-sitter-go>=0.23.4",
     "tree-sitter-scala>=0.24.0",
     "tree-sitter-java>=0.23.5",
-    "tree-sitter-c>=0.21.0",
+    "tree-sitter-c>=0.24.1",
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
 ]
