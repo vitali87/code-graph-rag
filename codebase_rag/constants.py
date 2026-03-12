@@ -89,6 +89,7 @@ EXT_HH = ".hh"
 EXT_IXX = ".ixx"
 EXT_CPPM = ".cppm"
 EXT_CCM = ".ccm"
+EXT_C = ".c"
 EXT_CS = ".cs"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
@@ -101,6 +102,7 @@ RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
 JAVA_EXTENSIONS = (EXT_JAVA,)
+C_EXTENSIONS = (EXT_C,)
 CPP_EXTENSIONS = (
     EXT_CPP,
     EXT_H,
@@ -444,6 +446,7 @@ class SupportedLanguage(StrEnum):
     GO = "go"
     SCALA = "scala"
     JAVA = "java"
+    C = "c"
     CPP = "cpp"
     CSHARP = "c-sharp"
     PHP = "php"
@@ -476,6 +479,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         LanguageStatus.FULL,
         "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
         "TypeScript",
+    ),
+    SupportedLanguage.C: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Functions, structs, unions, enums, preprocessor includes",
+        "C",
     ),
     SupportedLanguage.CPP: LanguageMetadata(
         LanguageStatus.FULL,
@@ -742,6 +750,7 @@ class TreeSitterModule(StrEnum):
     GO = "tree_sitter_go"
     SCALA = "tree_sitter_scala"
     JAVA = "tree_sitter_java"
+    C = "tree_sitter_c"
     CPP = "tree_sitter_cpp"
     LUA = "tree_sitter_lua"
 
@@ -2650,6 +2659,13 @@ CPP_NAME_NODE_TYPES = (
     TS_ENUM_SPECIFIER,
 )
 
+# (H) Derived node types for _c_get_name
+C_NAME_NODE_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+
 # (H) LANGUAGE_SPECS node type tuples for Rust
 SPEC_RS_FUNCTION_TYPES = (
     TS_RS_FUNCTION_ITEM,
@@ -2745,6 +2761,26 @@ SPEC_CPP_PACKAGE_INDICATORS = (
     PKG_VCXPROJ_GLOB,
     PKG_CONANFILE,
 )
+
+# (H) FQN node type tuples for C
+FQN_C_SCOPE_TYPES = (
+    TS_CPP_TRANSLATION_UNIT,
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+FQN_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
+
+# (H) LANGUAGE_SPECS node type tuples for C
+SPEC_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
+SPEC_C_CLASS_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+SPEC_C_MODULE_TYPES = (TS_CPP_TRANSLATION_UNIT,)
+SPEC_C_CALL_TYPES = (TS_CPP_CALL_EXPRESSION,)
+SPEC_C_PACKAGE_INDICATORS = (PKG_CMAKE_LISTS, PKG_MAKEFILE)
 
 # (H) LANGUAGE_SPECS node type tuples for C#
 SPEC_CS_FUNCTION_TYPES = (
