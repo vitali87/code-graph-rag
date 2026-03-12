@@ -44,8 +44,9 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## Latest News 🔥
 
-- **[NEW]** **MCP Server Integration**: Code-Graph-RAG now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
-- [2025/10/21] **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
+- **[NEW]** **Visualise any GitHub repo instantly!** Just change `github.com` to `gitcgr.com` in any repo URL — that's it, only 3 letters! Get an interactive graph of the entire codebase structure. Try it now: [gitcgr.com](https://gitcgr.com)
+- **MCP Server Integration**: Code-Graph-RAG now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
+- **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
 
 ## 🚀 Features
 
