@@ -50,6 +50,7 @@ HELP_REPO_PATH_RETRIEVAL = "Path to the target repository for code retrieval"
 HELP_REPO_PATH_INDEX = "Path to the target repository to index."
 HELP_REPO_PATH_OPTIMIZE = "Path to the repository to optimize"
 HELP_REPO_PATH_WATCH = "Path to the repository to watch."
+HELP_VERSION = "Show the version and exit."
 
 HELP_UPDATE_GRAPH = "Update the knowledge graph by parsing the repository"
 HELP_CLEAN_DB = "Clean the database before updating (use when adding first repo)"
