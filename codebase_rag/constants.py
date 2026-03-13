@@ -336,6 +336,8 @@ class NodeLabel(StrEnum):
     MODULE_INTERFACE = "ModuleInterface"
     MODULE_IMPLEMENTATION = "ModuleImplementation"
     EXTERNAL_PACKAGE = "ExternalPackage"
+    SERVICE = "Service"
+    API_ENDPOINT = "ApiEndpoint"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -354,6 +356,8 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.MODULE_INTERFACE: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
+    NodeLabel.SERVICE: UniqueKeyType.NAME,
+    NodeLabel.API_ENDPOINT: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -380,6 +384,9 @@ class RelationshipType(StrEnum):
     OVERRIDES = "OVERRIDES"
     CALLS = "CALLS"
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
+    EXPOSES_ENDPOINT = "EXPOSES_ENDPOINT"
+    HANDLES_ENDPOINT = "HANDLES_ENDPOINT"
+    CALLS_ENDPOINT = "CALLS_ENDPOINT"
 
 
 NODE_PROJECT = NodeLabel.PROJECT
@@ -1597,6 +1604,67 @@ GOMOD_COMMENT_PREFIX = "//"
 
 # (H) Gemfile parsing patterns
 GEMFILE_GEM_PREFIX = "gem "
+
+# (H) API schema file extensions and names
+API_SCHEMA_EXTENSIONS = (".yaml", ".yml", ".json")
+OPENAPI_FILE_PATTERNS = ("openapi", "swagger", "api-spec", "api_spec")
+PROTO_EXTENSION = ".proto"
+
+# (H) OpenAPI spec keys
+OPENAPI_KEY_OPENAPI = "openapi"
+OPENAPI_KEY_SWAGGER = "swagger"
+OPENAPI_KEY_PATHS = "paths"
+OPENAPI_KEY_INFO = "info"
+OPENAPI_KEY_TITLE = "title"
+OPENAPI_KEY_OPERATION_ID = "operationId"
+OPENAPI_KEY_SUMMARY = "summary"
+OPENAPI_KEY_TAGS = "tags"
+OPENAPI_KEY_SERVERS = "servers"
+OPENAPI_KEY_URL = "url"
+OPENAPI_HTTP_METHODS = frozenset({"get", "post", "put", "delete", "patch", "head", "options"})
+
+# (H) Protobuf service definition keys
+PROTO_SERVICE_KEYWORD = "service"
+PROTO_RPC_KEYWORD = "rpc"
+
+# (H) HTTP client library patterns per language for detecting cross-service calls
+HTTP_CLIENT_PATTERNS: dict[str, dict[str, list[str]]] = {
+    "python": {
+        "modules": ["requests", "httpx", "aiohttp", "urllib3", "urllib.request"],
+        "methods": ["get", "post", "put", "delete", "patch", "head", "options", "request"],
+    },
+    "javascript": {
+        "modules": ["axios", "fetch", "node-fetch", "got", "superagent", "undici"],
+        "methods": ["get", "post", "put", "delete", "patch", "head", "request", "fetch"],
+    },
+    "typescript": {
+        "modules": ["axios", "fetch", "node-fetch", "got", "superagent", "undici"],
+        "methods": ["get", "post", "put", "delete", "patch", "head", "request", "fetch"],
+    },
+    "java": {
+        "modules": ["HttpClient", "RestTemplate", "WebClient", "OkHttpClient", "Retrofit"],
+        "methods": ["send", "getForObject", "postForObject", "exchange", "execute", "newCall"],
+    },
+    "go": {
+        "modules": ["net/http", "resty"],
+        "methods": ["Get", "Post", "Do", "NewRequest"],
+    },
+    "rust": {
+        "modules": ["reqwest", "hyper", "surf"],
+        "methods": ["get", "post", "put", "delete", "send", "request"],
+    },
+}
+
+# (H) API endpoint property keys
+KEY_HTTP_METHOD = "http_method"
+KEY_URL_PATH = "url_path"
+KEY_SERVICE_NAME = "service_name"
+KEY_OPERATION_ID = "operation_id"
+KEY_API_PROTOCOL = "api_protocol"
+
+# (H) API protocol values
+API_PROTOCOL_REST = "REST"
+API_PROTOCOL_GRPC = "gRPC"
 
 # (H) Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"

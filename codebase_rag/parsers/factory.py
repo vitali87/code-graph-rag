@@ -9,6 +9,7 @@ from ..types_defs import (
     SimpleNameLookup,
 )
 from .call_processor import CallProcessor
+from .cross_service_linker import CrossServiceLinker
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
 from .structure_processor import StructureProcessor
@@ -32,6 +33,7 @@ class ProcessorFactory:
         "_definition_processor",
         "_type_inference",
         "_call_processor",
+        "_cross_service_linker",
     )
 
     def __init__(
@@ -63,6 +65,7 @@ class ProcessorFactory:
         self._definition_processor: DefinitionProcessor | None = None
         self._type_inference: TypeInferenceEngine | None = None
         self._call_processor: CallProcessor | None = None
+        self._cross_service_linker: CrossServiceLinker | None = None
 
     @property
     def import_processor(self) -> ImportProcessor:
@@ -131,3 +134,13 @@ class ProcessorFactory:
                 class_inheritance=self.definition_processor.class_inheritance,
             )
         return self._call_processor
+
+    @property
+    def cross_service_linker(self) -> CrossServiceLinker:
+        if self._cross_service_linker is None:
+            self._cross_service_linker = CrossServiceLinker(
+                ingestor=self.ingestor,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+            )
+        return self._cross_service_linker

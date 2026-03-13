@@ -24,6 +24,7 @@ from .types_defs import (
     SimpleNameLookup,
     TrieNode,
 )
+from .parsers.http_call_detector import HTTPCallSite, detect_http_calls_in_source
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import should_skip_path
@@ -324,6 +325,9 @@ class GraphUpdater:
 
         self.factory.definition_processor.process_all_method_overrides()
 
+        logger.info("--- Pass 3b: Cross-service API linking ---")
+        self._process_cross_service_calls()
+
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
 
@@ -474,6 +478,39 @@ class GraphUpdater:
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )
+
+    def _process_cross_service_calls(self) -> None:
+        linker = self.factory.cross_service_linker
+
+        linker.discover_api_specs()
+
+        if not linker.services:
+            logger.debug("No API specs found, skipping cross-service linking")
+            return
+
+        all_http_calls: list[HTTPCallSite] = []
+        for file_path, (root_node, language) in list(self.ast_cache.items()):
+            relative_path = file_path.relative_to(self.repo_path)
+            module_qn = cs.SEPARATOR_DOT.join(
+                [self.project_name] + list(relative_path.with_suffix("").parts)
+            )
+            if file_path.name in (cs.INIT_PY, cs.MOD_RS):
+                module_qn = cs.SEPARATOR_DOT.join(
+                    [self.project_name] + list(relative_path.parent.parts)
+                )
+
+            calls = detect_http_calls_in_source(
+                file_path, root_node, language, module_qn
+            )
+            all_http_calls.extend(calls)
+
+        if all_http_calls:
+            linker.link_http_calls(all_http_calls)
+
+        registry_items = [
+            (qn, node_type) for qn, node_type in self.function_registry.items()
+        ]
+        linker.link_handler_functions(registry_items)
 
     def _generate_semantic_embeddings(self) -> None:
         if not has_semantic_dependencies():
