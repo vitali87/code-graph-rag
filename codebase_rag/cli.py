@@ -363,7 +363,7 @@ def optimize(
 
 @app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
 def mcp_server(
-    transport: str = typer.Option(cs.MCPTransport.STDIO, help=ch.HELP_MCP_TRANSPORT),
+    transport: cs.MCPTransport = typer.Option(cs.MCPTransport.STDIO, help=ch.HELP_MCP_TRANSPORT),
     host: str = typer.Option(None, help=ch.HELP_MCP_HTTP_HOST),
     port: int = typer.Option(None, help=ch.HELP_MCP_HTTP_PORT),
 ) -> None:
