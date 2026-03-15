@@ -94,7 +94,7 @@ semantic = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-exclude = ["codec/"]
+exclude = ["codec/", "benchmarks/", "optimize/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "PL", "T201"]
@@ -112,6 +112,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["T201"]
+"benchmarks/**" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -120,7 +121,7 @@ quote-style = "double"
 python-version = "3.12"
 
 [tool.ty.src]
-exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py"]
+exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py", "benchmarks/", "optimize/"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -160,5 +161,5 @@ fuzz = [
 ]
 
 [tool.bandit]
-exclude_dirs = ["codebase_rag/tests", "scripts"]
+exclude_dirs = ["codebase_rag/tests", "scripts", "benchmarks", "optimize"]
 skips = ["B101"]
