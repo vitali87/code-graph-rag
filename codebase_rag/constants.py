@@ -2407,8 +2407,11 @@ class MCPEnvVar(StrEnum):
     TARGET_REPO_PATH = "TARGET_REPO_PATH"
     CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
     PWD = "PWD"
-    MCP_HTTP_HOST = "MCP_HTTP_HOST"
-    MCP_HTTP_PORT = "MCP_HTTP_PORT"
+# (H) MCP environment variables
+class MCPEnvVar(StrEnum):
+    TARGET_REPO_PATH = "TARGET_REPO_PATH"
+    CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
+    PWD = "PWD"
 
 
 # (H) MCP schema types
