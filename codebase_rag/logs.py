@@ -642,6 +642,10 @@ MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
+MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
+MCP_HTTP_SERVER_READY = (
+    "[GraphCode MCP] HTTP server ready. MCP endpoint: http://{host}:{port}/mcp"
+)
 
 # (H) Incremental update logs
 HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
