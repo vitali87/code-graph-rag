@@ -148,7 +148,10 @@ class CallProcessor:
         for method_node in method_nodes:
             if not isinstance(method_node, Node):
                 continue
-            method_name = self._get_node_name(method_node)
+            if language == cs.SupportedLanguage.CPP:
+                method_name = cpp_utils.extract_function_name(method_node)
+            else:
+                method_name = self._get_node_name(method_node)
             if not method_name:
                 continue
             method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
