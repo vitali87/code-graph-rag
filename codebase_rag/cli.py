@@ -86,7 +86,7 @@ def _delete_hash_cache(repo_path: Path) -> None:
                 cs.Color.YELLOW,
             )
         )
-        cache_path.unlink()
+        cache_path.unlink(missing_ok=True)
 
 
 @app.command(help=ch.CMD_START)
