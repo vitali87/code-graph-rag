@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
+from codebase_rag.config import CgrignorePatterns
 
 runner = CliRunner()
 
@@ -87,6 +88,20 @@ class TestCleanWithoutUpdateGraph:
         assert result.exit_code == 0, result.output
         mock_updater.assert_not_called()
 
+    def test_clean_alone_skips_model_validation(
+        self,
+        mock_memgraph_connect: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        with patch("codebase_rag.cli._update_and_validate_models") as mock_validate:
+            result = runner.invoke(
+                app,
+                ["start", "--clean", "--repo-path", str(tmp_path)],
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_validate.assert_not_called()
+
     def test_clean_alone_shows_clean_done_message(
         self,
         mock_memgraph_connect: MagicMock,
@@ -113,8 +128,6 @@ class TestCleanWithUpdateGraph:
         mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from codebase_rag.config import CgrignorePatterns
-
         mock_cgrignore.return_value = CgrignorePatterns(
             exclude=frozenset(), unignore=frozenset()
         )
@@ -141,8 +154,6 @@ class TestCleanWithUpdateGraph:
         mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from codebase_rag.config import CgrignorePatterns
-
         mock_cgrignore.return_value = CgrignorePatterns(
             exclude=frozenset(), unignore=frozenset()
         )
@@ -167,8 +178,6 @@ class TestCleanWithUpdateGraph:
         mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from codebase_rag.config import CgrignorePatterns
-
         mock_cgrignore.return_value = CgrignorePatterns(
             exclude=frozenset(), unignore=frozenset()
         )
