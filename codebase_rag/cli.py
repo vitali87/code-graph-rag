@@ -77,6 +77,18 @@ def _info(msg: str) -> None:
         app_context.console.print(msg)
 
 
+def _delete_hash_cache(repo_path: Path) -> None:
+    cache_path = repo_path / cs.HASH_CACHE_FILENAME
+    if cache_path.exists():
+        _info(
+            style(
+                cs.CLI_MSG_CLEANING_HASH_CACHE.format(path=cache_path),
+                cs.Color.YELLOW,
+            )
+        )
+        cache_path.unlink(missing_ok=True)
+
+
 @app.command(help=ch.CMD_START)
 def start(
     repo_path: str | None = typer.Option(
@@ -140,9 +152,19 @@ def start(
         )
         raise typer.Exit(1)
 
-    _update_and_validate_models(orchestrator, cypher)
-
     effective_batch_size = settings.resolve_batch_size(batch_size)
+
+    if clean and not update_graph:
+        repo_to_clean = Path(target_repo_path)
+        with connect_memgraph(effective_batch_size) as ingestor:
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
+
+        _delete_hash_cache(repo_to_clean)
+        _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
+        return
+
+    _update_and_validate_models(orchestrator, cypher)
 
     if update_graph:
         repo_to_update = Path(target_repo_path)
@@ -164,6 +186,8 @@ def start(
             if clean:
                 _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
                 ingestor.clean_database()
+                _delete_hash_cache(repo_to_update)
+
             ingestor.ensure_constraints()
 
             parsers, queries = load_parsers()
