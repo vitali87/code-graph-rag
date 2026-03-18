@@ -164,7 +164,7 @@ def main() -> None:
         print(f"\nSingle-suffix operations (on '{lookup_suffixes[0]}'):")
         r = run_benchmark(
             f"LINEAR SCAN endswith ({size} entries)",
-            bench_linear_scan_endswith, trie._entries, lookup_suffixes[0],
+            bench_linear_scan_endswith, dict(trie.items()), lookup_suffixes[0],
         )
         results.append(r)
 
@@ -185,7 +185,7 @@ def main() -> None:
 
         r = run_benchmark(
             f"LINEAR SCAN batch ({num_queries}q, {size} entries)",
-            bench_linear_scan_batch, trie._entries, lookup_suffixes,
+            bench_linear_scan_batch, dict(trie.items()), lookup_suffixes,
         )
         results.append(r)
 

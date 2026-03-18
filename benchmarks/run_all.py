@@ -6,11 +6,14 @@ from pathlib import Path
 BENCHMARKS = [
     "bench_string_ops.py",
     "bench_trie.py",
+    "bench_find_ending_with_fix.py",
+    "bench_dropin_replacements.py",
     "bench_graph_loader.py",
     "bench_file_hashing.py",
     "bench_embedding_cache.py",
     "bench_json_serialization.py",
     "bench_ast_cache.py",
+    "bench_pathlib_vs_string.py",
 ]
 
 
