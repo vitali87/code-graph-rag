@@ -35,8 +35,14 @@ class JsTypeInferenceEngine:
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
 
-        stack: list[ASTNode] = [caller_node]
+        if class_node := self._find_enclosing_class_node(caller_node):
+            self._collect_constructor_injected_types(
+                class_node, module_qn, local_var_types
+            )
 
+        self._collect_parameter_types(caller_node, module_qn, local_var_types)
+
+        stack: list[ASTNode] = [caller_node]
         declarator_count = 0
 
         while stack:
@@ -59,7 +65,7 @@ class JsTypeInferenceEngine:
                             )
 
                             if var_type := self._infer_js_variable_type_from_value(
-                                value_node, module_qn
+                                value_node, module_qn, local_var_types
                             ):
                                 local_var_types[var_name] = var_type
                                 logger.debug(
@@ -79,10 +85,137 @@ class JsTypeInferenceEngine:
         )
         return local_var_types
 
+    def _find_enclosing_class_node(self, node: ASTNode) -> ASTNode | None:
+        current = node
+        while current is not None:
+            if current.type == cs.TS_CLASS_DECLARATION:
+                return current
+            current = current.parent
+        return None
+
+    def _collect_constructor_injected_types(
+        self,
+        class_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> None:
+        body_node = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body_node is None:
+            return
+
+        for child in body_node.children:
+            if child.type != cs.TS_METHOD_DEFINITION:
+                continue
+
+            name_node = child.child_by_field_name(cs.FIELD_NAME)
+            if (
+                name_node is None
+                or name_node.text is None
+                or safe_decode_text(name_node) != cs.KEYWORD_CONSTRUCTOR
+            ):
+                continue
+
+            params_node = child.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+            if params_node is None:
+                return
+
+            for param in params_node.children:
+                self._collect_constructor_parameter_type(
+                    param, module_qn, local_var_types
+                )
+            return
+
+    def _collect_constructor_parameter_type(
+        self,
+        param_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> None:
+        if param_node.type not in {
+            "required_parameter",
+            "optional_parameter",
+            cs.TS_FORMAL_PARAMETER,
+        }:
+            return
+
+        has_accessibility_modifier = any(
+            child.type == "accessibility_modifier" for child in param_node.children
+        )
+        if not has_accessibility_modifier:
+            return
+
+        param_name = self._extract_parameter_name(param_node)
+        if not param_name:
+            return
+
+        if not (param_type := self._extract_type_annotation_name(param_node)):
+            return
+
+        resolved_type = self._resolve_js_class_name(param_type, module_qn) or param_type
+        local_var_types[param_name] = resolved_type
+        local_var_types[f"this.{param_name}"] = resolved_type
+
+    def _collect_parameter_types(
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> None:
+        params_node = caller_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+        if params_node is None:
+            return
+
+        for param in params_node.children:
+            if param.type not in {
+                "required_parameter",
+                "optional_parameter",
+                cs.TS_FORMAL_PARAMETER,
+            }:
+                continue
+
+            param_name = self._extract_parameter_name(param)
+            if not param_name or param_name in local_var_types:
+                continue
+
+            if not (param_type := self._extract_type_annotation_name(param)):
+                continue
+
+            resolved_type = self._resolve_js_class_name(param_type, module_qn) or param_type
+            local_var_types[param_name] = resolved_type
+
+    def _extract_parameter_name(self, param_node: ASTNode) -> str | None:
+        identifier_node = next(
+            (child for child in param_node.children if child.type == cs.TS_IDENTIFIER),
+            None,
+        )
+        return safe_decode_text(identifier_node) if identifier_node is not None else None
+
+    def _extract_type_annotation_name(self, node: ASTNode) -> str | None:
+        type_node = next(
+            (child for child in node.children if child.type == "type_annotation"),
+            None,
+        )
+        if type_node is None or type_node.text is None:
+            return None
+
+        type_text = safe_decode_text(type_node)
+        if not type_text:
+            return None
+
+        return type_text.lstrip(":").strip()
+
     def _infer_js_variable_type_from_value(
-        self, value_node: ASTNode, module_qn: str
+        self,
+        value_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str],
     ) -> str | None:
         logger.debug(ls.JS_INFER_VALUE_NODE, node_type=value_node.type)
+
+        if value_node.type == cs.TS_MEMBER_EXPRESSION:
+            expr_text = safe_decode_text(value_node)
+            if expr_text and expr_text in local_var_types:
+                return local_var_types[expr_text]
 
         if value_node.type == cs.TS_NEW_EXPRESSION:
             if class_name := ut.extract_constructor_name(value_node):

@@ -1112,3 +1112,62 @@ class TestChainedMethodPattern:
         match = _CHAINED_METHOD_PATTERN.search("a.b().c().final_method")
         assert match is not None
         assert match[1] == "final_method"
+
+
+class TestJsTsMemberResolution:
+    def test_resolves_injected_service_member_call_from_local_var_types(
+        self, call_resolver: CallResolver
+    ) -> None:
+        call_resolver.function_registry[
+            "proj.controllers.routes.RoutesController.saveRoute"
+        ] = NodeType.METHOD
+        call_resolver.function_registry[
+            "proj.services.RouteHistoryService.saveRoute"
+        ] = NodeType.METHOD
+
+        result = call_resolver.resolve_function_call(
+            "routeHistoryService.saveRoute",
+            "proj.controllers.routes",
+            local_var_types={"routeHistoryService": "proj.services.RouteHistoryService"},
+            class_context="proj.controllers.routes.RoutesController",
+        )
+
+        assert result == (
+            NodeType.METHOD,
+            "proj.services.RouteHistoryService.saveRoute",
+        )
+
+    def test_resolves_this_method_against_class_context(
+        self, call_resolver: CallResolver
+    ) -> None:
+        call_resolver.function_registry[
+            "proj.controllers.routes.RoutesController.saveRoute"
+        ] = NodeType.METHOD
+
+        result = call_resolver.resolve_function_call(
+            "this.saveRoute",
+            "proj.controllers.routes",
+            local_var_types={},
+            class_context="proj.controllers.routes.RoutesController",
+        )
+
+        assert result == (
+            NodeType.METHOD,
+            "proj.controllers.routes.RoutesController.saveRoute",
+        )
+
+    def test_does_not_guess_qualified_member_calls_via_trie_fallback(
+        self, call_resolver: CallResolver
+    ) -> None:
+        call_resolver.function_registry[
+            "proj.controllers.routes.RoutesController.saveRoute"
+        ] = NodeType.METHOD
+
+        result = call_resolver.resolve_function_call(
+            "routeHistoryService.saveRoute",
+            "proj.controllers.routes",
+            local_var_types={},
+            class_context="proj.controllers.routes.RoutesController",
+        )
+
+        assert result is None
