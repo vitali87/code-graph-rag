@@ -6,8 +6,13 @@ import tempfile
 import time
 from pathlib import Path
 
-import blake3
-import orjson
+try:
+    import blake3
+    import orjson
+except ImportError as e:
+    print(f"SKIP bench_dropin_replacements: {e}")
+    print("Install with: uv pip install blake3 orjson")
+    raise SystemExit(0)
 
 WARMUP_RUNS = 3
 BENCH_RUNS = 30
