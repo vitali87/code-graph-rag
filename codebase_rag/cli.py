@@ -144,6 +144,25 @@ def start(
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
+    if clean and not update_graph:
+        repo_to_clean = Path(target_repo_path)
+        with connect_memgraph(effective_batch_size) as ingestor:
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
+
+        cache_path = repo_to_clean / cs.HASH_CACHE_FILENAME
+        if cache_path.exists():
+            _info(
+                style(
+                    cs.CLI_MSG_CLEANING_HASH_CACHE.format(path=cache_path),
+                    cs.Color.YELLOW,
+                )
+            )
+            cache_path.unlink()
+
+        _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
+        return
+
     if update_graph:
         repo_to_update = Path(target_repo_path)
         _info(
@@ -164,6 +183,17 @@ def start(
             if clean:
                 _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
                 ingestor.clean_database()
+
+                cache_path = repo_to_update / cs.HASH_CACHE_FILENAME
+                if cache_path.exists():
+                    _info(
+                        style(
+                            cs.CLI_MSG_CLEANING_HASH_CACHE.format(path=cache_path),
+                            cs.Color.YELLOW,
+                        )
+                    )
+                    cache_path.unlink()
+
             ingestor.ensure_constraints()
 
             parsers, queries = load_parsers()
