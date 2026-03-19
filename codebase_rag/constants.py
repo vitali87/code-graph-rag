@@ -226,6 +226,8 @@ CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_CLEANING_DB = "Cleaning database..."
+CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
+CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."

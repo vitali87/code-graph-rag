@@ -1,0 +1,1482 @@
+{
+  "data_structures": {
+    "FunctionRegistryTrie_10k_insert": {
+      "label": "FunctionRegistryTrie: insert 10k qualified names",
+      "total_new_alloc": 3681520,
+      "total_new_alloc_human": "3.5 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:56",
+          "size_diff": 1079880,
+          "size_diff_human": "1.0 MiB",
+          "count_diff": 8999
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:51",
+          "size_diff": 1062648,
+          "size_diff_human": "1.0 MiB",
+          "count_diff": 13203
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:61",
+          "size_diff": 776790,
+          "size_diff_human": "758.6 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:46",
+          "size_diff": 553818,
+          "size_diff_human": "540.8 KiB",
+          "count_diff": 11101
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:44",
+          "size_diff": 207672,
+          "size_diff_human": "202.8 KiB",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 312,
+          "size_diff_human": "312.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 312,
+          "size_diff_human": "312.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:60",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ],
+      "entries_size": 207616,
+      "entry_count": 10000
+    },
+    "flat_dict_10k_baseline": {
+      "label": "Flat dict: 10k entries baseline",
+      "total_new_alloc": 985022,
+      "total_new_alloc_human": "961.9 KiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:78",
+          "size_diff": 776790,
+          "size_diff_human": "758.6 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:79",
+          "size_diff": 207552,
+          "size_diff_human": "202.7 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 296,
+          "size_diff_human": "296.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 296,
+          "size_diff_human": "296.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:77",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "SimpleNameLookup_10k": {
+      "label": "SimpleNameLookup: 10k entries, 500 unique names",
+      "total_new_alloc": 1935779,
+      "total_new_alloc_human": "1.8 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:94",
+          "size_diff": 1144992,
+          "size_diff_human": "1.1 MiB",
+          "count_diff": 1001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:93",
+          "size_diff": 765700,
+          "size_diff_human": "747.8 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:92",
+          "size_diff": 24439,
+          "size_diff_human": "23.9 KiB",
+          "count_diff": 501
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 280,
+          "size_diff_human": "280.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 280,
+          "size_diff_human": "280.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:91",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "BoundedASTCache_1k_entries": {
+      "label": "BoundedASTCache (OrderedDict): 1k entries",
+      "total_new_alloc": 585087,
+      "total_new_alloc_human": "571.4 KiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:404",
+          "size_diff": 141935,
+          "size_diff_human": "138.6 KiB",
+          "count_diff": 3001
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:1167",
+          "size_diff": 104000,
+          "size_diff_human": "101.6 KiB",
+          "count_diff": 1000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:113",
+          "size_diff": 85272,
+          "size_diff_human": "83.3 KiB",
+          "count_diff": 1002
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:111",
+          "size_diff": 64890,
+          "size_diff_human": "63.4 KiB",
+          "count_diff": 1000
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:432",
+          "size_diff": 64890,
+          "size_diff_human": "63.4 KiB",
+          "count_diff": 1000
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:359",
+          "size_diff": 55944,
+          "size_diff_human": "54.6 KiB",
+          "count_diff": 999
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:528",
+          "size_diff": 35540,
+          "size_diff_human": "34.7 KiB",
+          "count_diff": 1000
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:377",
+          "size_diff": 32000,
+          "size_diff_human": "31.2 KiB",
+          "count_diff": 1000
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 264,
+          "size_diff_human": "264.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 264,
+          "size_diff_human": "264.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:110",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "node_buffer_5k": {
+      "label": "node_buffer: 5k buffered nodes",
+      "total_new_alloc": 2460116,
+      "total_new_alloc_human": "2.3 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:128",
+          "size_diff": 920000,
+          "size_diff_human": "898.4 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:129",
+          "size_diff": 352290,
+          "size_diff_human": "344.0 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:126",
+          "size_diff": 321600,
+          "size_diff_human": "314.1 KiB",
+          "count_diff": 4997
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:133",
+          "size_diff": 308400,
+          "size_diff_human": "301.2 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:130",
+          "size_diff": 238890,
+          "size_diff_human": "233.3 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:132",
+          "size_diff": 159200,
+          "size_diff_human": "155.5 KiB",
+          "count_diff": 4975
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:131",
+          "size_diff": 159168,
+          "size_diff_human": "155.4 KiB",
+          "count_diff": 4974
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 240,
+          "size_diff_human": "240.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 240,
+          "size_diff_human": "240.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:125",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "rel_groups_10k": {
+      "label": "rel_groups: 10k buffered relationships",
+      "total_new_alloc": 3763656,
+      "total_new_alloc_human": "3.6 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:149",
+          "size_diff": 1925336,
+          "size_diff_human": "1.8 MiB",
+          "count_diff": 20003
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:152",
+          "size_diff": 640000,
+          "size_diff_human": "625.0 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:151",
+          "size_diff": 598894,
+          "size_diff_human": "584.9 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:150",
+          "size_diff": 598890,
+          "size_diff_human": "584.9 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 224,
+          "size_diff_human": "224.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 224,
+          "size_diff_human": "224.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:147",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "import_mapping_2k_modules": {
+      "label": "import_mapping: 2k modules x 20 imports each",
+      "total_new_alloc": 5839298,
+      "total_new_alloc_human": "5.6 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:169",
+          "size_diff": 5540000,
+          "size_diff_human": "5.3 MiB",
+          "count_diff": 82000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:167",
+          "size_diff": 128000,
+          "size_diff_human": "125.0 KiB",
+          "count_diff": 2000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:166",
+          "size_diff": 118890,
+          "size_diff_human": "116.1 KiB",
+          "count_diff": 2000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:170",
+          "size_diff": 51904,
+          "size_diff_human": "50.7 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 208,
+          "size_diff_human": "208.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 208,
+          "size_diff_human": "208.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:165",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "class_inheritance_3k": {
+      "label": "class_inheritance: 3k classes x 3 parents",
+      "total_new_alloc": 1202898,
+      "total_new_alloc_human": "1.1 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:184",
+          "size_diff": 893044,
+          "size_diff_human": "872.1 KiB",
+          "count_diff": 14999
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:183",
+          "size_diff": 205590,
+          "size_diff_human": "200.8 KiB",
+          "count_diff": 3000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:185",
+          "size_diff": 103792,
+          "size_diff_human": "101.4 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 192,
+          "size_diff_human": "192.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 192,
+          "size_diff_human": "192.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:182",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    }
+  },
+  "tree_sitter": {
+    "parse_all_project_files": {
+      "label": "Parse 343 Python files (5.4 MiB source)",
+      "total_new_alloc": 88243514,
+      "total_new_alloc_human": "84.2 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:224",
+          "size_diff": 82541776,
+          "size_diff_human": "78.7 MiB",
+          "count_diff": 903039
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:1020",
+          "size_diff": 5679234,
+          "size_diff_human": "5.4 MiB",
+          "count_diff": 337
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:225",
+          "size_diff": 22024,
+          "size_diff_human": "21.5 KiB",
+          "count_diff": 344
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 168,
+          "size_diff_human": "168.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 168,
+          "size_diff_human": "168.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:218",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:223",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ],
+      "file_count": 343,
+      "source_bytes": 5668113
+    },
+    "ast_node_retention": {
+      "label": "Retaining 343 AST root nodes",
+      "total_new_alloc": 25128,
+      "total_new_alloc_human": "24.5 KiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:243",
+          "size_diff": 24768,
+          "size_diff_human": "24.2 KiB",
+          "count_diff": 344
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 152,
+          "size_diff_human": "152.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 152,
+          "size_diff_human": "152.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "ast_walk_function_extraction": {
+      "label": "Walking ASTs, collected 5578 function/class nodes",
+      "total_new_alloc": 91566344,
+      "total_new_alloc_human": "87.3 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:263",
+          "size_diff": 91518856,
+          "size_diff_human": "87.3 MiB",
+          "count_diff": 1673834
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:262",
+          "size_diff": 47104,
+          "size_diff_human": "46.0 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 136,
+          "size_diff_human": "136.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 136,
+          "size_diff_human": "136.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:258",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        }
+      ],
+      "function_class_count": 5578
+    }
+  },
+  "graph_loader": {
+    "graph_loader_5k_nodes_8k_rels": {
+      "label": "GraphLoader: load 5k nodes + 8k relationships from JSON",
+      "total_new_alloc": 9476802,
+      "total_new_alloc_human": "9.0 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/json/decoder.py:353",
+          "size_diff": 6787632,
+          "size_diff_human": "6.5 MiB",
+          "count_diff": 111693
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:74",
+          "size_diff": 770760,
+          "size_diff_human": "752.7 KiB",
+          "count_diff": 16000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:83",
+          "size_diff": 587480,
+          "size_diff_human": "573.7 KiB",
+          "count_diff": 10001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:82",
+          "size_diff": 587480,
+          "size_diff_human": "573.7 KiB",
+          "count_diff": 10001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:61",
+          "size_diff": 443080,
+          "size_diff_human": "432.7 KiB",
+          "count_diff": 10001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:68",
+          "size_diff": 147480,
+          "size_diff_human": "144.0 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:80",
+          "size_diff": 67168,
+          "size_diff_human": "65.6 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:70",
+          "size_diff": 41880,
+          "size_diff_human": "40.9 KiB",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:66",
+          "size_diff": 41824,
+          "size_diff_human": "40.8 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/.venv/lib/python3.12/site-packages/loguru/_logger.py:2003",
+          "size_diff": 200,
+          "size_diff_human": "200.0 B",
+          "count_diff": 4
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 120,
+          "size_diff_human": "120.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 120,
+          "size_diff_human": "120.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/pathlib.py:404",
+          "size_diff": 120,
+          "size_diff_human": "120.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:52",
+          "size_diff": 120,
+          "size_diff_human": "120.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/.venv/lib/python3.12/site-packages/loguru/_handler.py:120",
+          "size_diff": 120,
+          "size_diff_human": "120.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "graph_loader_property_index": {
+      "label": "GraphLoader: build property index on qualified_name",
+      "total_new_alloc": 544224,
+      "total_new_alloc_human": "531.5 KiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:99",
+          "size_diff": 440120,
+          "size_diff_human": "429.8 KiB",
+          "count_diff": 10001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_loader.py:100",
+          "size_diff": 103856,
+          "size_diff_human": "101.4 KiB",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 96,
+          "size_diff_human": "96.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 96,
+          "size_diff_human": "96.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        }
+      ]
+    }
+  },
+  "embedding_cache": {
+    "embedding_cache_2k_768dim": {
+      "label": "EmbeddingCache: 2k entries x 768-dim embeddings",
+      "total_new_alloc": 50998237,
+      "total_new_alloc_human": "48.6 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:375",
+          "size_diff": 50736000,
+          "size_diff_human": "48.4 MiB",
+          "count_diff": 1540000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/embedder.py:26",
+          "size_diff": 210000,
+          "size_diff_human": "205.1 KiB",
+          "count_diff": 2000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/embedder.py:32",
+          "size_diff": 51904,
+          "size_diff_human": "50.7 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:374",
+          "size_diff": 85,
+          "size_diff_human": "85.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 80,
+          "size_diff_human": "80.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 80,
+          "size_diff_human": "80.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:373",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ],
+      "cache_dict_size": 51968,
+      "entry_count": 2000
+    }
+  },
+  "gc_pressure": {
+    "gc_pressure_simulation": {
+      "label": "GC pressure during simulated file processing (1k files x 20 funcs)",
+      "temp_objects_created": 20000,
+      "gc_gen0_before": {
+        "collections": 1785,
+        "collected": 8016,
+        "uncollectable": 0
+      },
+      "gc_gen0_after": {
+        "collections": 1785,
+        "collected": 8016,
+        "uncollectable": 0
+      },
+      "gc_gen1_before": {
+        "collections": 155,
+        "collected": 1262,
+        "uncollectable": 0
+      },
+      "gc_gen1_after": {
+        "collections": 155,
+        "collected": 1262,
+        "uncollectable": 0
+      },
+      "gc_gen2_before": {
+        "collections": 40,
+        "collected": 279,
+        "uncollectable": 0
+      },
+      "gc_gen2_after": {
+        "collections": 41,
+        "collected": 279,
+        "uncollectable": 0
+      }
+    }
+  },
+  "string_duplication": {
+    "property_dict_duplication_5k": {
+      "label": "5k property dicts with repeated key strings",
+      "total_new_alloc": 2180068,
+      "total_new_alloc_human": "2.1 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:449",
+          "size_diff": 920000,
+          "size_diff_human": "898.4 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:450",
+          "size_diff": 352290,
+          "size_diff_human": "344.0 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:454",
+          "size_diff": 308400,
+          "size_diff_human": "301.2 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:451",
+          "size_diff": 238890,
+          "size_diff_human": "233.3 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:453",
+          "size_diff": 159200,
+          "size_diff_human": "155.5 KiB",
+          "count_diff": 4975
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:452",
+          "size_diff": 159168,
+          "size_diff_human": "155.4 KiB",
+          "count_diff": 4974
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:456",
+          "size_diff": 41824,
+          "size_diff_human": "40.8 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 80,
+          "size_diff_human": "80.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 72,
+          "size_diff_human": "72.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:447",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:448",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "property_tuple_alternative_5k": {
+      "label": "5k tuples (no key duplication) as alternative",
+      "total_new_alloc": 1660012,
+      "total_new_alloc_human": "1.6 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:471",
+          "size_diff": 400000,
+          "size_diff_human": "390.6 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:472",
+          "size_diff": 352290,
+          "size_diff_human": "344.0 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:476",
+          "size_diff": 308400,
+          "size_diff_human": "301.2 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:473",
+          "size_diff": 238890,
+          "size_diff_human": "233.3 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:475",
+          "size_diff": 159200,
+          "size_diff_human": "155.5 KiB",
+          "count_diff": 4975
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:474",
+          "size_diff": 159168,
+          "size_diff_human": "155.4 KiB",
+          "count_diff": 4974
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:478",
+          "size_diff": 41824,
+          "size_diff_human": "40.8 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 80,
+          "size_diff_human": "80.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 72,
+          "size_diff_human": "72.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:470",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    }
+  },
+  "full_pipeline": {
+    "phase1_trie_15k": {
+      "label": "Phase 1: FunctionRegistryTrie + SimpleNameLookup (15k entries)",
+      "total_new_alloc": 6411617,
+      "total_new_alloc_human": "6.1 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:56",
+          "size_diff": 1679760,
+          "size_diff_human": "1.6 MiB",
+          "count_diff": 13998
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:51",
+          "size_diff": 1574648,
+          "size_diff_human": "1.5 MiB",
+          "count_diff": 18203
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:513",
+          "size_diff": 1150200,
+          "size_diff_human": "1.1 MiB",
+          "count_diff": 15000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:46",
+          "size_diff": 788278,
+          "size_diff_human": "769.8 KiB",
+          "count_diff": 16101
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:515",
+          "size_diff": 754088,
+          "size_diff_human": "736.4 KiB",
+          "count_diff": 2002
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:44",
+          "size_diff": 415088,
+          "size_diff_human": "405.4 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:512",
+          "size_diff": 48939,
+          "size_diff_human": "47.8 KiB",
+          "count_diff": 1001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:509",
+          "size_diff": 176,
+          "size_diff_human": "176.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 80,
+          "size_diff_human": "80.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 72,
+          "size_diff_human": "72.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:508",
+          "size_diff": 72,
+          "size_diff_human": "72.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:40",
+          "size_diff": 64,
+          "size_diff_human": "64.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:39",
+          "size_diff": 64,
+          "size_diff_human": "64.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:511",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "phase2_imports_1500_modules": {
+      "label": "Phase 2: import_mapping (1500 modules x 25 imports)",
+      "total_new_alloc": 5287898,
+      "total_new_alloc_human": "5.0 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:528",
+          "size_diff": 5140500,
+          "size_diff_human": "4.9 MiB",
+          "count_diff": 78000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:527",
+          "size_diff": 88890,
+          "size_diff_human": "86.8 KiB",
+          "count_diff": 1500
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:529",
+          "size_diff": 51904,
+          "size_diff_human": "50.7 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:39",
+          "size_diff": 2888,
+          "size_diff_human": "2.8 KiB",
+          "count_diff": 31
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:173",
+          "size_diff": 1872,
+          "size_diff_human": "1.8 KiB",
+          "count_diff": 15
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:23",
+          "size_diff": 768,
+          "size_diff_human": "768.0 B",
+          "count_diff": 16
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:503",
+          "size_diff": 192,
+          "size_diff_human": "192.0 B",
+          "count_diff": 6
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:502",
+          "size_diff": 192,
+          "size_diff_human": "192.0 B",
+          "count_diff": 6
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:31",
+          "size_diff": 184,
+          "size_diff_human": "184.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:519",
+          "size_diff": 120,
+          "size_diff_human": "120.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 80,
+          "size_diff_human": "80.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 72,
+          "size_diff_human": "72.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:525",
+          "size_diff": 64,
+          "size_diff_human": "64.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:35",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "phase3_inheritance_5k": {
+      "label": "Phase 3: class_inheritance (5k classes x 2 parents)",
+      "total_new_alloc": 1542592,
+      "total_new_alloc_human": "1.5 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:542",
+          "size_diff": 1089000,
+          "size_diff_human": "1.0 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:541",
+          "size_diff": 343390,
+          "size_diff_human": "335.3 KiB",
+          "count_diff": 5000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:543",
+          "size_diff": 103792,
+          "size_diff_human": "101.4 KiB",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:39",
+          "size_diff": 2888,
+          "size_diff_human": "2.8 KiB",
+          "count_diff": 31
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:173",
+          "size_diff": 1961,
+          "size_diff_human": "1.9 KiB",
+          "count_diff": 15
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:23",
+          "size_diff": 765,
+          "size_diff_human": "765.0 B",
+          "count_diff": 16
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:31",
+          "size_diff": 184,
+          "size_diff_human": "184.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:502",
+          "size_diff": 160,
+          "size_diff_human": "160.0 B",
+          "count_diff": 5
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:560",
+          "size_diff": 80,
+          "size_diff_human": "80.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:423",
+          "size_diff": 72,
+          "size_diff_human": "72.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:503",
+          "size_diff": 64,
+          "size_diff_human": "64.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:539",
+          "size_diff": 64,
+          "size_diff_human": "64.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:558",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:35",
+          "size_diff": 56,
+          "size_diff_human": "56.0 B",
+          "count_diff": 1
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:540",
+          "size_diff": 32,
+          "size_diff_human": "32.0 B",
+          "count_diff": 1
+        }
+      ]
+    },
+    "phase4_buffers_10k_nodes_20k_rels": {
+      "label": "Phase 4: node_buffer (10k) + rel_groups (20k)",
+      "total_new_alloc": 11864970,
+      "total_new_alloc_human": "11.3 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:568",
+          "size_diff": 3853176,
+          "size_diff_human": "3.7 MiB",
+          "count_diff": 40003
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:557",
+          "size_diff": 1840000,
+          "size_diff_human": "1.8 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:571",
+          "size_diff": 1280000,
+          "size_diff_human": "1.2 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:570",
+          "size_diff": 1208894,
+          "size_diff_human": "1.2 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:569",
+          "size_diff": 1208890,
+          "size_diff_human": "1.2 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:558",
+          "size_diff": 706790,
+          "size_diff_human": "690.2 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:555",
+          "size_diff": 645120,
+          "size_diff_human": "630.0 KiB",
+          "count_diff": 10001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:559",
+          "size_diff": 478890,
+          "size_diff_human": "467.7 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:561",
+          "size_diff": 318400,
+          "size_diff_human": "310.9 KiB",
+          "count_diff": 9950
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:560",
+          "size_diff": 318336,
+          "size_diff_human": "310.9 KiB",
+          "count_diff": 9948
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:39",
+          "size_diff": 2888,
+          "size_diff_human": "2.8 KiB",
+          "count_diff": 31
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:173",
+          "size_diff": 1961,
+          "size_diff_human": "1.9 KiB",
+          "count_diff": 15
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:23",
+          "size_diff": 765,
+          "size_diff_human": "765.0 B",
+          "count_diff": 16
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:31",
+          "size_diff": 184,
+          "size_diff_human": "184.0 B",
+          "count_diff": 2
+        },
+        {
+          "file": "/Users/vitaliavagyan/.local/share/uv/python/cpython-3.12.2-macos-aarch64-none/lib/python3.12/tracemalloc.py:126",
+          "size_diff": 96,
+          "size_diff_human": "96.0 B",
+          "count_diff": 3
+        }
+      ]
+    },
+    "total_pipeline_memory": {
+      "label": "TOTAL: Full pipeline memory (all phases combined)",
+      "total_new_alloc": 25106981,
+      "total_new_alloc_human": "23.9 MiB",
+      "top_allocators": [
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:528",
+          "size_diff": 5140500,
+          "size_diff_human": "4.9 MiB",
+          "count_diff": 78000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:568",
+          "size_diff": 3853176,
+          "size_diff_human": "3.7 MiB",
+          "count_diff": 40003
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:557",
+          "size_diff": 1840000,
+          "size_diff_human": "1.8 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:56",
+          "size_diff": 1679760,
+          "size_diff_human": "1.6 MiB",
+          "count_diff": 13998
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:51",
+          "size_diff": 1574648,
+          "size_diff_human": "1.5 MiB",
+          "count_diff": 18203
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:571",
+          "size_diff": 1280000,
+          "size_diff_human": "1.2 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:570",
+          "size_diff": 1208894,
+          "size_diff_human": "1.2 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:569",
+          "size_diff": 1208890,
+          "size_diff_human": "1.2 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:513",
+          "size_diff": 1150200,
+          "size_diff_human": "1.1 MiB",
+          "count_diff": 15000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:542",
+          "size_diff": 1089000,
+          "size_diff_human": "1.0 MiB",
+          "count_diff": 20000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/codebase_rag/graph_updater.py:46",
+          "size_diff": 788278,
+          "size_diff_human": "769.8 KiB",
+          "count_diff": 16101
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:515",
+          "size_diff": 754088,
+          "size_diff_human": "736.4 KiB",
+          "count_diff": 2002
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:558",
+          "size_diff": 706790,
+          "size_diff_human": "690.2 KiB",
+          "count_diff": 10000
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:555",
+          "size_diff": 645120,
+          "size_diff_human": "630.0 KiB",
+          "count_diff": 10001
+        },
+        {
+          "file": "/Users/vitaliavagyan/Documents/code-graph-rag/optimize/memory_profile.py:559",
+          "size_diff": 478890,
+          "size_diff_human": "467.7 KiB",
+          "count_diff": 10000
+        }
+      ]
+    },
+    "peak_traced_memory": {
+      "current": 25128953,
+      "current_human": "24.0 MiB",
+      "peak": 25135561,
+      "peak_human": "24.0 MiB"
+    }
+  }
+}
