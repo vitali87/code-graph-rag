@@ -518,7 +518,8 @@ def _build_stats_table(
     table.add_column(cs.CLI_STATS_COL_COUNT, style=cs.Color.YELLOW, justify="right")
     total = 0
     for row in rows:
-        count = int(row.get("count", 0))
+        raw_count = row.get("count", 0)
+        count = int(raw_count) if isinstance(raw_count, (int, float)) else 0
         total += count
         table.add_row(get_label(row), f"{count:,}")
     table.add_section()
