@@ -269,6 +269,7 @@ class GraphUpdater:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
+        project_name: str | None = None,
     ):
         self.ingestor = ingestor
         self._single_file: Path | None = None
@@ -279,7 +280,9 @@ class GraphUpdater:
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries
-        self.project_name = repo_path.resolve().name
+        self.project_name = (
+            project_name and project_name.strip()
+        ) or repo_path.resolve().name
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
