@@ -34,6 +34,10 @@ DOC_DURING_ANALYSIS = "Error: Document analysis failed: {error}"
 DIRECTORY_INVALID = "Error: '{path}' is not a valid directory."
 DIRECTORY_EMPTY = "Error: The directory '{path}' is empty."
 DIRECTORY_LIST_FAILED = "Error: Could not list contents of '{path}'."
+DIRECTORY_PATH_OUTSIDE_ROOT = (
+    "Error: '{path}' is outside the project root ({root}). "
+    "Use a relative path from the project root, or the full absolute path within it."
+)
 
 # (H) Shell command errors
 COMMAND_NOT_ALLOWED = "Command '{cmd}' is not in the allowlist.{suggestion} Available commands: {available}"
