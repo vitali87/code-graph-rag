@@ -89,6 +89,7 @@ class StructureProcessor:
                         cs.KEY_QUALIFIED_NAME: package_qn,
                         cs.KEY_NAME: root.name,
                         cs.KEY_PATH: relative_root.as_posix(),
+                        cs.KEY_ABSOLUTE_PATH: root.resolve().as_posix(),
                     },
                 )
                 parent_identifier = self._get_parent_identifier(
@@ -106,7 +107,11 @@ class StructureProcessor:
                 )
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.FOLDER,
-                    {cs.KEY_PATH: relative_root.as_posix(), cs.KEY_NAME: root.name},
+                    {
+                        cs.KEY_PATH: relative_root.as_posix(),
+                        cs.KEY_NAME: root.name,
+                        cs.KEY_ABSOLUTE_PATH: root.resolve().as_posix(),
+                    },
                 )
                 parent_identifier = self._get_parent_identifier(
                     parent_rel_path, parent_container_qn
@@ -132,6 +137,7 @@ class StructureProcessor:
                 cs.KEY_PATH: relative_filepath,
                 cs.KEY_NAME: file_name,
                 cs.KEY_EXTENSION: file_path.suffix,
+                cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
             },
         )
 

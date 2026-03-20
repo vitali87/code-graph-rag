@@ -157,6 +157,9 @@ class ClassIngestMixin:
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
             cs.KEY_IS_EXPORTED: is_exported,
         }
+        if file_path is not None:
+            class_props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
+            class_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -175,7 +178,9 @@ class ClassIngestMixin:
             self._resolve_to_qn,
             self.function_registry,
         )
-        self._ingest_class_methods(class_node, class_qn, language, lang_queries)
+        self._ingest_class_methods(
+            class_node, class_qn, language, lang_queries, file_path
+        )
 
     def _ingest_rust_impl_methods(
         self,
@@ -194,6 +199,7 @@ class ClassIngestMixin:
         if not body_node or not method_query:
             return
 
+        file_path = self.module_qn_to_file_path.get(module_qn)
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(body_node)
@@ -211,6 +217,8 @@ class ClassIngestMixin:
                 self.simple_name_lookup,
                 self._get_docstring,
                 language,
+                file_path=file_path,
+                repo_path=self.repo_path,
             )
 
     def _ingest_class_methods(
@@ -219,6 +227,7 @@ class ClassIngestMixin:
         class_qn: str,
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
+        file_path: Path | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
         method_query = lang_queries[cs.QUERY_FUNCTIONS]
@@ -255,6 +264,8 @@ class ClassIngestMixin:
                 language,
                 self._extract_decorators,
                 method_qualified_name,
+                file_path=file_path,
+                repo_path=self.repo_path,
             )
 
     def _process_inline_modules(
