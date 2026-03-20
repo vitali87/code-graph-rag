@@ -84,6 +84,19 @@ LIMIT 1
 """
 
 
+CYPHER_STATS_NODE_COUNTS = """
+MATCH (n)
+RETURN labels(n) AS labels, count(*) AS count
+ORDER BY count DESC
+"""
+
+CYPHER_STATS_RELATIONSHIP_COUNTS = """
+MATCH ()-[r]->()
+RETURN type(r) AS type, count(*) AS count
+ORDER BY count DESC
+"""
+
+
 def wrap_with_unwind(query: str) -> str:
     return f"UNWIND $batch AS row\n{query}"
 

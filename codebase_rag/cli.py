@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -25,6 +26,7 @@ from .parser_loader import load_parsers
 from .services.protobuf_service import ProtobufFileIngestor
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
+from .types_defs import ResultRow
 
 app = typer.Typer(
     name="code-graph-rag",
@@ -498,6 +500,75 @@ def doctor() -> None:
 
     if passed < total:
         raise typer.Exit(1)
+
+
+def _build_stats_table(
+    title: str,
+    col_label: str,
+    rows: list[ResultRow],
+    get_label: Callable[[ResultRow], str],
+    total_label: str,
+) -> Table:
+    table = Table(
+        title=style(title, cs.Color.GREEN),
+        show_header=True,
+        header_style=f"{cs.StyleModifier.BOLD} {cs.Color.MAGENTA}",
+    )
+    table.add_column(col_label, style=cs.Color.CYAN)
+    table.add_column(cs.CLI_STATS_COL_COUNT, style=cs.Color.YELLOW, justify="right")
+    total = 0
+    for row in rows:
+        count = int(row.get("count", 0))
+        total += count
+        table.add_row(get_label(row), f"{count:,}")
+    table.add_section()
+    table.add_row(
+        style(total_label, cs.Color.GREEN),
+        style(f"{total:,}", cs.Color.GREEN),
+    )
+    return table
+
+
+@app.command(name=ch.CLICommandName.STATS, help=ch.CMD_STATS)
+def stats() -> None:
+    from .cypher_queries import (
+        CYPHER_STATS_NODE_COUNTS,
+        CYPHER_STATS_RELATIONSHIP_COUNTS,
+    )
+
+    app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
+
+    try:
+        with connect_memgraph(batch_size=1) as ingestor:
+            node_results = ingestor.fetch_all(CYPHER_STATS_NODE_COUNTS)
+            rel_results = ingestor.fetch_all(CYPHER_STATS_RELATIONSHIP_COUNTS)
+
+            app_context.console.print(
+                _build_stats_table(
+                    cs.CLI_STATS_NODE_TITLE,
+                    cs.CLI_STATS_COL_NODE_TYPE,
+                    node_results,
+                    lambda r: ":".join(r.get("labels", [])) or cs.CLI_STATS_UNKNOWN,
+                    cs.CLI_STATS_TOTAL_NODES,
+                )
+            )
+            app_context.console.print()
+            app_context.console.print(
+                _build_stats_table(
+                    cs.CLI_STATS_REL_TITLE,
+                    cs.CLI_STATS_COL_REL_TYPE,
+                    rel_results,
+                    lambda r: str(r.get("type", cs.CLI_STATS_UNKNOWN)),
+                    cs.CLI_STATS_TOTAL_RELS,
+                )
+            )
+
+    except Exception as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(ls.STATS_ERROR.format(error=e))
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":
