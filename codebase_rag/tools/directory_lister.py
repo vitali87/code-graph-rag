@@ -19,7 +19,13 @@ class DirectoryLister:
         self.project_root = Path(project_root).resolve()
 
     def list_directory_contents(self, directory_path: str) -> str:
-        target_path = self._get_safe_path(directory_path)
+        try:
+            target_path = self._get_safe_path(directory_path)
+        except PermissionError:
+            return te.DIRECTORY_PATH_OUTSIDE_ROOT.format(
+                path=directory_path, root=self.project_root
+            )
+
         logger.info(ls.DIR_LISTING.format(path=target_path))
 
         try:
