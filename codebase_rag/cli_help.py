@@ -73,6 +73,10 @@ HELP_GRAMMAR_URL = (
 )
 HELP_KEEP_SUBMODULE = "Keep the git submodule (default: remove it)"
 
+HELP_PROJECT_NAME = (
+    "Override the project name used as qualified-name prefix for all nodes. "
+    "Defaults to the repo directory name."
+)
 HELP_EXCLUDE_PATTERNS = (
     "Additional directories to exclude from indexing. Can be specified multiple times."
 )

@@ -131,6 +131,11 @@ def start(
         min=1,
         help=ch.HELP_BATCH_SIZE,
     ),
+    project_name: str | None = typer.Option(
+        None,
+        "--project-name",
+        help=ch.HELP_PROJECT_NAME,
+    ),
     exclude: list[str] | None = typer.Option(
         None,
         "--exclude",
@@ -199,6 +204,7 @@ def start(
                 queries=queries,
                 unignore_paths=unignore_paths,
                 exclude_paths=exclude_paths,
+                project_name=project_name,
             )
             updater.run()
 
