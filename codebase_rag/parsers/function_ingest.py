@@ -161,6 +161,7 @@ class FunctionIngestMixin:
         )
         class_qn = f"{module_qn}.{class_name_normalized}"
 
+        file_path = self.module_qn_to_file_path.get(module_qn)
         ingest_method(
             method_node=func_node,
             container_qn=class_qn,
@@ -171,6 +172,8 @@ class FunctionIngestMixin:
             get_docstring_func=self._get_docstring,
             language=cs.SupportedLanguage.CPP,
             extract_decorators_func=self._extract_decorators,
+            file_path=file_path,
+            repo_path=self.repo_path,
         )
 
         return True
@@ -239,7 +242,7 @@ class FunctionIngestMixin:
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
-        func_props = self._build_function_props(func_node, resolution)
+        func_props = self._build_function_props(func_node, resolution, module_qn)
         logger.info(
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
@@ -254,9 +257,10 @@ class FunctionIngestMixin:
         )
 
     def _build_function_props(
-        self, func_node: Node, resolution: FunctionResolution
+        self, func_node: Node, resolution: FunctionResolution, module_qn: str
     ) -> PropertyDict:
-        return {
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,
             cs.KEY_DECORATORS: self._extract_decorators(func_node),
@@ -265,6 +269,10 @@ class FunctionIngestMixin:
             cs.KEY_DOCSTRING: self._get_docstring(func_node),
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
+        if file_path is not None:
+            props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
+            props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+        return props
 
     def _create_function_relationships(
         self,
