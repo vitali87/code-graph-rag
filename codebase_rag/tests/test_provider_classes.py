@@ -9,6 +9,7 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
 from codebase_rag.constants import GoogleProviderType, Provider
 from codebase_rag.providers.base import (
+    AnthropicProvider,
     GoogleProvider,
     ModelProvider,
     OllamaProvider,
@@ -37,6 +38,10 @@ class TestProviderRegistry:
         assert isinstance(ollama_provider, OllamaProvider)
         assert ollama_provider.provider_name == Provider.OLLAMA
 
+        anthropic_provider = get_provider(Provider.ANTHROPIC, api_key="test-key")
+        assert isinstance(anthropic_provider, AnthropicProvider)
+        assert anthropic_provider.provider_name == Provider.ANTHROPIC
+
     def test_get_invalid_provider(self) -> None:
         with pytest.raises(ValueError, match="Unknown provider 'invalid_provider'"):
             get_provider("invalid_provider")
@@ -46,7 +51,8 @@ class TestProviderRegistry:
         assert Provider.GOOGLE in providers
         assert Provider.OPENAI in providers
         assert Provider.OLLAMA in providers
-        assert len(providers) >= 3
+        assert Provider.ANTHROPIC in providers
+        assert len(providers) >= 4
 
     def test_register_custom_provider(self) -> None:
         class CustomProvider(ModelProvider):
@@ -188,6 +194,36 @@ class TestOllamaProvider:
         provider = OllamaProvider()
         with pytest.raises(ValueError, match="Ollama server not responding"):
             provider.validate_config()
+
+
+class TestAnthropicProvider:
+    def test_anthropic_configuration(self) -> None:
+        provider = AnthropicProvider(api_key="sk-ant-test-key")
+        assert provider.provider_name == Provider.ANTHROPIC
+        assert provider.api_key == "sk-ant-test-key"
+        provider.validate_config()
+
+    def test_anthropic_validation_error(self) -> None:
+        provider = AnthropicProvider()
+        with pytest.raises(ValueError, match="Anthropic provider requires api_key"):
+            provider.validate_config()
+
+    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
+    @patch("codebase_rag.providers.base.AnthropicModel")
+    def test_anthropic_model_creation(
+        self, mock_anthropic_model: Any, mock_anthropic_provider: Any
+    ) -> None:
+        provider = AnthropicProvider(api_key="sk-ant-test-key")
+        mock_model = MagicMock()
+        mock_anthropic_model.return_value = mock_model
+        result = provider.create_model("claude-opus-4-6")
+        mock_anthropic_model.assert_called_once()
+        assert result == mock_model
+
+    def test_anthropic_api_key_from_env(self) -> None:
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "env-key"}):
+            provider = AnthropicProvider()
+            assert provider.api_key == "env-key"
 
 
 class TestModelCreation:
