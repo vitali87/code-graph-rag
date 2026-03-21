@@ -12,6 +12,7 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import (
     AnthropicProvider as PydanticAnthropicProvider,
 )
+from pydantic_ai.providers.azure import AzureProvider as PydanticAzureProvider
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
@@ -201,11 +202,52 @@ class AnthropicProvider(ModelProvider):
         return AnthropicModel(model_id, provider=provider)
 
 
+class AzureOpenAIProvider(ModelProvider):
+    __slots__ = ("api_key", "endpoint", "api_version")
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        api_version: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = api_key or os.environ.get(cs.ENV_AZURE_API_KEY)
+        self.endpoint = endpoint or os.environ.get(cs.ENV_AZURE_ENDPOINT)
+        self.api_version = api_version or os.environ.get(cs.ENV_AZURE_API_VERSION)
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.AZURE
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(ex.AZURE_NO_KEY)
+        if not self.endpoint:
+            raise ValueError(ex.AZURE_NO_ENDPOINT)
+
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel:
+        self.validate_config()
+        # (H) api_key and endpoint are guaranteed to be set by validate_config
+        assert self.api_key is not None
+        assert self.endpoint is not None
+        provider = PydanticAzureProvider(
+            api_key=self.api_key,
+            azure_endpoint=self.endpoint,
+            api_version=self.api_version,
+        )
+        return OpenAIChatModel(model_id, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
     cs.Provider.OLLAMA: OllamaProvider,
     cs.Provider.ANTHROPIC: AnthropicProvider,
+    cs.Provider.AZURE: AzureOpenAIProvider,
 }
 
 

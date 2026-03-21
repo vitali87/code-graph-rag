@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
@@ -117,9 +118,18 @@ class ModelConfig:
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
         provider_lower = self.provider.lower()
-        if provider_lower in LOCAL_PROVIDERS or (
-            provider_lower == cs.Provider.GOOGLE
-            and self.provider_type == cs.GoogleProviderType.VERTEX
+        provider_env_keys = {
+            cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
+            cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
+        }
+        env_key = provider_env_keys.get(provider_lower)
+        if (
+            provider_lower in LOCAL_PROVIDERS
+            or (
+                provider_lower == cs.Provider.GOOGLE
+                and self.provider_type == cs.GoogleProviderType.VERTEX
+            )
+            or (env_key and os.environ.get(env_key))
         ):
             return
         if (
