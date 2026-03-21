@@ -44,6 +44,11 @@ class ModelProvider(ABC):
         pass
 
 
+def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
+    effective = api_key if api_key and api_key != cs.DEFAULT_API_KEY else None
+    return effective or os.environ.get(env_var)
+
+
 class GoogleProvider(ModelProvider):
     __slots__ = (
         "api_key",
@@ -65,7 +70,7 @@ class GoogleProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key or os.environ.get(cs.ENV_GOOGLE_API_KEY)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_GOOGLE_API_KEY)
         self.provider_type = provider_type
         self.project_id = project_id
         self.region = region
@@ -123,7 +128,7 @@ class OpenAIProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key or os.environ.get(cs.ENV_OPENAI_API_KEY)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_OPENAI_API_KEY)
         self.endpoint = endpoint
 
     @property
@@ -184,7 +189,7 @@ class AnthropicProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key or os.environ.get(cs.ENV_ANTHROPIC_API_KEY)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_ANTHROPIC_API_KEY)
 
     @property
     def provider_name(self) -> cs.Provider:
@@ -213,7 +218,7 @@ class AzureOpenAIProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key or os.environ.get(cs.ENV_AZURE_API_KEY)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_AZURE_API_KEY)
         self.endpoint = endpoint or os.environ.get(cs.ENV_AZURE_ENDPOINT)
         self.api_version = api_version or os.environ.get(cs.ENV_AZURE_API_VERSION)
 
