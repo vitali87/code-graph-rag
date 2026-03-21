@@ -10,6 +10,7 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from codebase_rag.constants import GoogleProviderType, Provider
 from codebase_rag.providers.base import (
     AnthropicProvider,
+    AzureOpenAIProvider,
     GoogleProvider,
     ModelProvider,
     OllamaProvider,
@@ -42,6 +43,14 @@ class TestProviderRegistry:
         assert isinstance(anthropic_provider, AnthropicProvider)
         assert anthropic_provider.provider_name == Provider.ANTHROPIC
 
+        azure_provider = get_provider(
+            Provider.AZURE,
+            api_key="test-key",
+            endpoint="https://myresource.openai.azure.com",
+        )
+        assert isinstance(azure_provider, AzureOpenAIProvider)
+        assert azure_provider.provider_name == Provider.AZURE
+
     def test_get_invalid_provider(self) -> None:
         with pytest.raises(ValueError, match="Unknown provider 'invalid_provider'"):
             get_provider("invalid_provider")
@@ -52,7 +61,8 @@ class TestProviderRegistry:
         assert Provider.OPENAI in providers
         assert Provider.OLLAMA in providers
         assert Provider.ANTHROPIC in providers
-        assert len(providers) >= 4
+        assert Provider.AZURE in providers
+        assert len(providers) >= 5
 
     def test_register_custom_provider(self) -> None:
         class CustomProvider(ModelProvider):
@@ -224,6 +234,64 @@ class TestAnthropicProvider:
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "env-key"}):
             provider = AnthropicProvider()
             assert provider.api_key == "env-key"
+
+
+class TestAzureOpenAIProvider:
+    def test_azure_configuration(self) -> None:
+        provider = AzureOpenAIProvider(
+            api_key="azure-key",
+            endpoint="https://myresource.openai.azure.com",
+            api_version="2024-06-01",
+        )
+        assert provider.provider_name == Provider.AZURE
+        assert provider.api_key == "azure-key"
+        assert provider.endpoint == "https://myresource.openai.azure.com"
+        assert provider.api_version == "2024-06-01"
+        provider.validate_config()
+
+    def test_azure_validation_error_no_key(self) -> None:
+        provider = AzureOpenAIProvider(endpoint="https://myresource.openai.azure.com")
+        with pytest.raises(ValueError, match="Azure OpenAI provider requires api_key"):
+            provider.validate_config()
+
+    def test_azure_validation_error_no_endpoint(self) -> None:
+        provider = AzureOpenAIProvider(api_key="azure-key")
+        with pytest.raises(ValueError, match="Azure OpenAI provider requires endpoint"):
+            provider.validate_config()
+
+    @patch("codebase_rag.providers.base.PydanticAzureProvider")
+    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    def test_azure_model_creation(
+        self, mock_chat_model: Any, mock_azure_provider: Any
+    ) -> None:
+        provider = AzureOpenAIProvider(
+            api_key="azure-key",
+            endpoint="https://myresource.openai.azure.com",
+        )
+        mock_model = MagicMock()
+        mock_chat_model.return_value = mock_model
+        result = provider.create_model("gpt-4o")
+        mock_azure_provider.assert_called_once_with(
+            api_key="azure-key",
+            azure_endpoint="https://myresource.openai.azure.com",
+            api_version=None,
+        )
+        mock_chat_model.assert_called_once_with(
+            "gpt-4o", provider=mock_azure_provider.return_value
+        )
+        assert result == mock_model
+
+    def test_azure_api_key_from_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "AZURE_API_KEY": "env-key",
+                "AZURE_OPENAI_ENDPOINT": "https://env.openai.azure.com",
+            },
+        ):
+            provider = AzureOpenAIProvider()
+            assert provider.api_key == "env-key"
+            assert provider.endpoint == "https://env.openai.azure.com"
 
 
 class TestModelCreation:
