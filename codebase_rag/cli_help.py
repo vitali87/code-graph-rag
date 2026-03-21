@@ -40,11 +40,11 @@ HELP_MEMGRAPH_HOST = "Memgraph host"
 HELP_MEMGRAPH_PORT = "Memgraph port"
 HELP_ORCHESTRATOR = (
     "Specify orchestrator as provider:model "
-    "(e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)"
+    "(e.g., ollama:llama3.2, openai:gpt-4, google:gemini-3.1-pro-preview)"
 )
 HELP_CYPHER_MODEL = (
     "Specify cypher model as provider:model "
-    "(e.g., ollama:codellama, google:gemini-2.5-flash)"
+    "(e.g., ollama:codellama, google:gemini-3-flash-preview)"
 )
 HELP_NO_CONFIRM = "Disable confirmation prompts for edit operations (YOLO mode)"
 
