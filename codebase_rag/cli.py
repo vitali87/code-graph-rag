@@ -394,11 +394,24 @@ def optimize(
 
 
 @app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
-def mcp_server() -> None:
+def mcp_server(
+    transport: cs.MCPTransport = typer.Option(
+        cs.MCPTransport.STDIO, help=ch.HELP_MCP_TRANSPORT
+    ),
+    host: str = typer.Option(None, help=ch.HELP_MCP_HTTP_HOST),
+    port: int = typer.Option(None, help=ch.HELP_MCP_HTTP_PORT),
+) -> None:
     try:
-        from codebase_rag.mcp import main as mcp_main
+        if transport == cs.MCPTransport.HTTP:
+            from codebase_rag.mcp import serve_http
 
-        asyncio.run(mcp_main())
+            resolved_host = host or settings.MCP_HTTP_HOST
+            resolved_port = port or settings.MCP_HTTP_PORT
+            asyncio.run(serve_http(host=resolved_host, port=resolved_port))
+        else:
+            from codebase_rag.mcp import serve_stdio
+
+            asyncio.run(serve_stdio())
     except KeyboardInterrupt:
         app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
@@ -406,7 +419,6 @@ def mcp_server() -> None:
             style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
         )
         _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
-
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)

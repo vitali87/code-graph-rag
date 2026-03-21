@@ -137,7 +137,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     return server, ingestor
 
 
-async def main() -> None:
+async def serve_stdio() -> None:
     logger.info(lg.MCP_SERVER_STARTING)
 
     server, ingestor = create_server()
@@ -161,7 +161,52 @@ async def main() -> None:
             logger.info(lg.MCP_SERVER_SHUTDOWN)
 
 
+async def serve_http(
+    host: str = settings.MCP_HTTP_HOST,
+    port: int = settings.MCP_HTTP_PORT,
+) -> None:
+    import contextlib
+
+    import uvicorn
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    logger.info(lg.MCP_HTTP_SERVER_STARTING.format(host=host, port=port))
+
+    server, ingestor = create_server()
+
+    session_manager = StreamableHTTPSessionManager(
+        app=server,
+        json_response=False,
+        stateless=False,
+    )
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Starlette):
+        with ingestor:
+            logger.info(
+                lg.MCP_SERVER_CONNECTED.format(
+                    host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+                )
+            )
+            async with session_manager.run():
+                logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
+                yield
+
+    starlette_app = Starlette(
+        routes=[
+            Mount(settings.MCP_HTTP_ENDPOINT_PATH, app=session_manager.handle_request),
+        ],
+        lifespan=lifespan,
+    )
+
+    config = uvicorn.Config(starlette_app, host=host, port=port, log_level="info")
+    uvicorn_server = uvicorn.Server(config)
+    await uvicorn_server.serve()
+
+
 if __name__ == "__main__":
     import asyncio
 
-    asyncio.run(main())
+    asyncio.run(serve_stdio())

@@ -87,6 +87,14 @@ HELP_INTERACTIVE_SETUP = (
     "Without this flag, all directories matching ignore patterns are automatically excluded."
 )
 
+HELP_MCP_TRANSPORT = "Transport mode: 'stdio' (default) or 'http'"
+HELP_MCP_HTTP_HOST = (
+    "Host to bind the HTTP server — only used when --transport http (default: 0.0.0.0)"
+)
+HELP_MCP_HTTP_PORT = (
+    "Port to bind the HTTP server — only used when --transport http (default: 8080)"
+)
+
 CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.START: CMD_START,
     CLICommandName.INDEX: CMD_INDEX,

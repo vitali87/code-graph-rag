@@ -280,6 +280,10 @@ class AppConfig(BaseSettings):
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
+    MCP_HTTP_HOST: str = "0.0.0.0"
+    MCP_HTTP_PORT: int = 8080
+    MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
+
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
 

@@ -2418,6 +2418,12 @@ class MCPToolName(StrEnum):
     LIST_DIRECTORY = "list_directory"
 
 
+# (H) MCP transport selection
+class MCPTransport(StrEnum):
+    STDIO = "stdio"
+    HTTP = "http"
+
+
 # (H) MCP environment variables
 class MCPEnvVar(StrEnum):
     TARGET_REPO_PATH = "TARGET_REPO_PATH"
