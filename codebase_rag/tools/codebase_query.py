@@ -10,16 +10,19 @@ from rich.table import Table
 
 from .. import exceptions as ex
 from .. import logs as ls
+from ..config import settings
 from ..constants import (
     QUERY_NOT_AVAILABLE,
     QUERY_RESULTS_PANEL_TITLE,
     QUERY_SUMMARY_DB_ERROR,
     QUERY_SUMMARY_SUCCESS,
     QUERY_SUMMARY_TRANSLATION_FAILED,
+    QUERY_SUMMARY_TRUNCATED,
 )
 from ..schemas import QueryGraphData
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
+from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
 
 
@@ -40,6 +43,16 @@ def create_query_tool(
             cypher_query = await cypher_gen.generate(natural_language_query)
 
             results = await asyncio.to_thread(ingestor.fetch_all, cypher_query)
+
+            total_count = len(results)
+            if total_count > settings.QUERY_RESULT_ROW_CAP:
+                results = results[: settings.QUERY_RESULT_ROW_CAP]
+
+            results, tokens_used, was_truncated = truncate_results_by_tokens(
+                results,
+                max_tokens=settings.QUERY_RESULT_MAX_TOKENS,
+                original_total=total_count,
+            )
 
             if results:
                 table = Table(
@@ -71,7 +84,15 @@ def create_query_tool(
                     )
                 )
 
-            summary = QUERY_SUMMARY_SUCCESS.format(count=len(results))
+            if was_truncated or total_count > len(results):
+                summary = QUERY_SUMMARY_TRUNCATED.format(
+                    kept=len(results),
+                    total=total_count,
+                    tokens=tokens_used,
+                    max_tokens=settings.QUERY_RESULT_MAX_TOKENS,
+                )
+            else:
+                summary = QUERY_SUMMARY_SUCCESS.format(count=len(results))
             return QueryGraphData(
                 query_used=cypher_query, results=results, summary=summary
             )

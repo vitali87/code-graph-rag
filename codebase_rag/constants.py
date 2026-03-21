@@ -1151,7 +1151,12 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
+TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
+QUERY_SUMMARY_TRUNCATED = (
+    "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
+    "Refine your query for more specific results."
+)
 QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )

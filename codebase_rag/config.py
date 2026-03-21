@@ -270,6 +270,9 @@ class AppConfig(BaseSettings):
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
+    QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
+    QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
+
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
 
     _active_orchestrator: ModelConfig | None = None
