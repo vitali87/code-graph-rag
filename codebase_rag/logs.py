@@ -245,6 +245,10 @@ TOOL_FILE_EDIT_SURGICAL_SUCCESS = (
 )
 TOOL_QUERY_RECEIVED = "[Tool:QueryGraph] Received NL query: '{query}'"
 TOOL_QUERY_ERROR = "[Tool:QueryGraph] Error during query execution: {error}"
+QUERY_RESULTS_TRUNCATED = (
+    "[Tool:QueryGraph] Results truncated: showing {kept} of {total} rows "
+    "({tokens} tokens, limit {max_tokens})"
+)
 TOOL_SHELL_EXEC = "Executing shell command: {cmd}"
 TOOL_SHELL_RETURN = "Return code: {code}"
 TOOL_SHELL_STDOUT = "Stdout: {stdout}"
