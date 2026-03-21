@@ -27,9 +27,40 @@ def _create_provider_model(config: ModelConfig) -> Model:
 
 
 def _clean_cypher_response(response_text: str) -> str:
-    query = response_text.strip().replace(cs.CYPHER_BACKTICK, "")
-    if query.startswith(cs.CYPHER_PREFIX):
-        query = query[len(cs.CYPHER_PREFIX) :].strip()
+    """Clean LLM response to extract pure Cypher query.
+
+    Handles markdown formatting that models sometimes output:
+    - Triple backticks (```cypher ... ```)
+    - Bold text (**Cypher Query:**)
+    - Headers and other markdown
+    """
+    query = response_text.strip()
+
+    # Extract content from code blocks (```cypher ... ``` or ``` ... ```)
+    if "```" in query:
+        parts = query.split("```")
+        if len(parts) >= 3:
+            block = parts[1]
+            if block.lower().startswith("cypher"):
+                block = block[len("cypher") :]
+            query = block.strip()
+    else:
+        # Remove markdown bold/headers (e.g., **Cypher Query:**)
+        while "**" in query:
+            start = query.index("**")
+            end = query.find("**", start + 2)
+            if end == -1:
+                break
+            after = end + 2
+            if after < len(query) and query[after] == ":":
+                after += 1
+            query = query[:start] + query[after:].lstrip()
+        # Remove single backticks
+        query = query.replace(cs.CYPHER_BACKTICK, "")
+        # Remove "cypher" prefix if present
+        if query.lower().startswith(cs.CYPHER_PREFIX):
+            query = query[len(cs.CYPHER_PREFIX) :].strip()
+
     if not query.endswith(cs.CYPHER_SEMICOLON):
         query += cs.CYPHER_SEMICOLON
     return query

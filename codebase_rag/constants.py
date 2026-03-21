@@ -133,6 +133,10 @@ DEFAULT_API_KEY = "ollama"
 
 ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
 ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
+ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+ENV_AZURE_API_KEY = "AZURE_API_KEY"
+ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
+ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
 
 HELP_ARG = "help"
 
@@ -175,6 +179,7 @@ KEY_QUALIFIED_NAME = "qualified_name"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
+KEY_ABSOLUTE_PATH = "absolute_path"
 KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
@@ -228,6 +233,8 @@ CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_CLEANING_DB = "Cleaning database..."
+CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
+CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
@@ -242,6 +249,16 @@ CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
 CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
+CLI_MSG_CONNECTING_STATS = "Fetching graph statistics..."
+CLI_STATS_NODE_TITLE = "Node Statistics"
+CLI_STATS_REL_TITLE = "Relationship Statistics"
+CLI_STATS_COL_NODE_TYPE = "Node Type"
+CLI_STATS_COL_REL_TYPE = "Relationship Type"
+CLI_STATS_COL_COUNT = "Count"
+CLI_STATS_TOTAL_NODES = "Total Nodes"
+CLI_STATS_TOTAL_RELS = "Total Relationships"
+CLI_STATS_UNKNOWN = "Unknown"
+CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "
     "Use --interactive-setup to customize."
@@ -272,7 +289,7 @@ UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
 UI_MODEL_SWITCHED = "[bold green]Model switched to: {model}[/bold green]"
 UI_MODEL_CURRENT = "[bold cyan]Current model: {model}[/bold cyan]"
 UI_MODEL_SWITCH_ERROR = "[bold red]Failed to switch model: {error}[/bold red]"
-UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model google:gemini-2.0-flash)[/bold yellow]"
+UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model google:gemini-3.1-pro-preview)[/bold yellow]"
 UI_HELP_COMMANDS = """[bold cyan]Available commands:[/bold cyan]
   /model <provider:model> - Switch to a different model
   /model                  - Show current model
@@ -1143,7 +1160,12 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
+TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
+QUERY_SUMMARY_TRUNCATED = (
+    "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
+    "Refine your query for more specific results."
+)
 QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
@@ -2403,6 +2425,12 @@ class MCPToolName(StrEnum):
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
+
+
+# (H) MCP transport selection
+class MCPTransport(StrEnum):
+    STDIO = "stdio"
+    HTTP = "http"
 
 
 # (H) MCP environment variables

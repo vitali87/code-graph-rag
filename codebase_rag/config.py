@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
@@ -117,9 +118,18 @@ class ModelConfig:
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
         provider_lower = self.provider.lower()
-        if provider_lower in LOCAL_PROVIDERS or (
-            provider_lower == cs.Provider.GOOGLE
-            and self.provider_type == cs.GoogleProviderType.VERTEX
+        provider_env_keys = {
+            cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
+            cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
+        }
+        env_key = provider_env_keys.get(provider_lower)
+        if (
+            provider_lower in LOCAL_PROVIDERS
+            or (
+                provider_lower == cs.Provider.GOOGLE
+                and self.provider_type == cs.GoogleProviderType.VERTEX
+            )
+            or (env_key and os.environ.get(env_key))
         ):
             return
         if (
@@ -260,12 +270,19 @@ class AppConfig(BaseSettings):
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
+    QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
+    QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
+
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
 
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+
+    MCP_HTTP_HOST: str = "0.0.0.0"
+    MCP_HTTP_PORT: int = 8080
+    MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()

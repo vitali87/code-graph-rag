@@ -10,6 +10,7 @@ class CLICommandName(StrEnum):
     GRAPH_LOADER = "graph-loader"
     LANGUAGE = "language"
     DOCTOR = "doctor"
+    STATS = "stats"
 
 
 APP_DESCRIPTION = (
@@ -26,6 +27,7 @@ CMD_MCP_SERVER = "Start the MCP server for Claude Code integration"
 CMD_GRAPH_LOADER = "Load and display summary of exported graph JSON"
 CMD_LANGUAGE = "Manage language grammars (add, remove, list)"
 CMD_DOCTOR = "Verify that all dependencies and configurations are properly set up"
+CMD_STATS = "Display node and relationship statistics for the indexed graph"
 
 CMD_LANGUAGE_GROUP = "CLI for managing language grammars"
 CMD_LANGUAGE_ADD = "Add a new language grammar to the project."
@@ -38,11 +40,11 @@ HELP_MEMGRAPH_HOST = "Memgraph host"
 HELP_MEMGRAPH_PORT = "Memgraph port"
 HELP_ORCHESTRATOR = (
     "Specify orchestrator as provider:model "
-    "(e.g., ollama:llama3.2, openai:gpt-4, google:gemini-2.5-pro)"
+    "(e.g., ollama:llama3.2, openai:gpt-4, google:gemini-3.1-pro-preview)"
 )
 HELP_CYPHER_MODEL = (
     "Specify cypher model as provider:model "
-    "(e.g., ollama:codellama, google:gemini-2.5-flash)"
+    "(e.g., ollama:codellama, google:gemini-3-flash-preview)"
 )
 HELP_NO_CONFIRM = "Disable confirmation prompts for edit operations (YOLO mode)"
 
@@ -73,12 +75,24 @@ HELP_GRAMMAR_URL = (
 )
 HELP_KEEP_SUBMODULE = "Keep the git submodule (default: remove it)"
 
+HELP_PROJECT_NAME = (
+    "Override the project name used as qualified-name prefix for all nodes. "
+    "Defaults to the repo directory name."
+)
 HELP_EXCLUDE_PATTERNS = (
     "Additional directories to exclude from indexing. Can be specified multiple times."
 )
 HELP_INTERACTIVE_SETUP = (
     "Show interactive prompt to select which detected directories to keep. "
     "Without this flag, all directories matching ignore patterns are automatically excluded."
+)
+
+HELP_MCP_TRANSPORT = "Transport mode: 'stdio' (default) or 'http'"
+HELP_MCP_HTTP_HOST = (
+    "Host to bind the HTTP server — only used when --transport http (default: 0.0.0.0)"
+)
+HELP_MCP_HTTP_PORT = (
+    "Port to bind the HTTP server — only used when --transport http (default: 8080)"
 )
 
 CLI_COMMANDS: dict[CLICommandName, str] = {
@@ -90,4 +104,5 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH_LOADER: CMD_GRAPH_LOADER,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DOCTOR: CMD_DOCTOR,
+    CLICommandName.STATS: CMD_STATS,
 }

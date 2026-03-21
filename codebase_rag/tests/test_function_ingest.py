@@ -466,7 +466,9 @@ class TestBuildFunctionProps:
             is_exported=False,
         )
 
-        result = definition_processor._build_function_props(func_node, resolution)
+        result = definition_processor._build_function_props(
+            func_node, resolution, "proj.module"
+        )
 
         assert result["qualified_name"] == "proj.module.my_function"
         assert result["name"] == "my_function"
@@ -497,7 +499,9 @@ class TestBuildFunctionProps:
             is_exported=True,
         )
 
-        result = definition_processor._build_function_props(func_node, resolution)
+        result = definition_processor._build_function_props(
+            func_node, resolution, "proj.module"
+        )
 
         assert result["is_exported"] is True
 

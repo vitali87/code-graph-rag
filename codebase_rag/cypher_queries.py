@@ -52,8 +52,8 @@ LIMIT {CYPHER_DEFAULT_LIMIT}"""
 CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
 
 CYPHER_EXAMPLE_CLASS_METHODS = f"""MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
-WHERE c.qualified_name ENDS WITH '.UserService'
-RETURN m.name AS name, m.qualified_name AS qualified_name, labels(m) AS type
+WHERE c.name = 'UserService'
+RETURN c.name AS className, m.name AS methodName, m.qualified_name AS qualified_name, labels(m) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXPORT_NODES = """
@@ -81,6 +81,19 @@ MATCH (n) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path, n.docstring AS docstring
 LIMIT 1
+"""
+
+
+CYPHER_STATS_NODE_COUNTS = """
+MATCH (n)
+RETURN labels(n) AS labels, count(*) AS count
+ORDER BY count DESC
+"""
+
+CYPHER_STATS_RELATIONSHIP_COUNTS = """
+MATCH ()-[r]->()
+RETURN type(r) AS type, count(*) AS count
+ORDER BY count DESC
 """
 
 

@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -25,6 +26,7 @@ from .parser_loader import load_parsers
 from .services.protobuf_service import ProtobufFileIngestor
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
+from .types_defs import ResultRow
 
 app = typer.Typer(
     name="code-graph-rag",
@@ -77,6 +79,18 @@ def _info(msg: str) -> None:
         app_context.console.print(msg)
 
 
+def _delete_hash_cache(repo_path: Path) -> None:
+    cache_path = repo_path / cs.HASH_CACHE_FILENAME
+    if cache_path.exists():
+        _info(
+            style(
+                cs.CLI_MSG_CLEANING_HASH_CACHE.format(path=cache_path),
+                cs.Color.YELLOW,
+            )
+        )
+        cache_path.unlink(missing_ok=True)
+
+
 @app.command(help=ch.CMD_START)
 def start(
     repo_path: str | None = typer.Option(
@@ -119,6 +133,11 @@ def start(
         min=1,
         help=ch.HELP_BATCH_SIZE,
     ),
+    project_name: str | None = typer.Option(
+        None,
+        "--project-name",
+        help=ch.HELP_PROJECT_NAME,
+    ),
     exclude: list[str] | None = typer.Option(
         None,
         "--exclude",
@@ -140,9 +159,19 @@ def start(
         )
         raise typer.Exit(1)
 
-    _update_and_validate_models(orchestrator, cypher)
-
     effective_batch_size = settings.resolve_batch_size(batch_size)
+
+    if clean and not update_graph:
+        repo_to_clean = Path(target_repo_path)
+        with connect_memgraph(effective_batch_size) as ingestor:
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
+
+        _delete_hash_cache(repo_to_clean)
+        _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
+        return
+
+    _update_and_validate_models(orchestrator, cypher)
 
     if update_graph:
         repo_to_update = Path(target_repo_path)
@@ -164,6 +193,8 @@ def start(
             if clean:
                 _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
                 ingestor.clean_database()
+                _delete_hash_cache(repo_to_update)
+
             ingestor.ensure_constraints()
 
             parsers, queries = load_parsers()
@@ -175,6 +206,7 @@ def start(
                 queries=queries,
                 unignore_paths=unignore_paths,
                 exclude_paths=exclude_paths,
+                project_name=project_name,
             )
             updater.run()
 
@@ -362,11 +394,24 @@ def optimize(
 
 
 @app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
-def mcp_server() -> None:
+def mcp_server(
+    transport: cs.MCPTransport = typer.Option(
+        cs.MCPTransport.STDIO, help=ch.HELP_MCP_TRANSPORT
+    ),
+    host: str = typer.Option(None, help=ch.HELP_MCP_HTTP_HOST),
+    port: int = typer.Option(None, help=ch.HELP_MCP_HTTP_PORT),
+) -> None:
     try:
-        from codebase_rag.mcp import main as mcp_main
+        if transport == cs.MCPTransport.HTTP:
+            from codebase_rag.mcp import serve_http
 
-        asyncio.run(mcp_main())
+            resolved_host = host or settings.MCP_HTTP_HOST
+            resolved_port = port or settings.MCP_HTTP_PORT
+            asyncio.run(serve_http(host=resolved_host, port=resolved_port))
+        else:
+            from codebase_rag.mcp import serve_stdio
+
+            asyncio.run(serve_stdio())
     except KeyboardInterrupt:
         app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
@@ -374,7 +419,6 @@ def mcp_server() -> None:
             style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
         )
         _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
-
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)
@@ -468,6 +512,76 @@ def doctor() -> None:
 
     if passed < total:
         raise typer.Exit(1)
+
+
+def _build_stats_table(
+    title: str,
+    col_label: str,
+    rows: list[ResultRow],
+    get_label: Callable[[ResultRow], str],
+    total_label: str,
+) -> Table:
+    table = Table(
+        title=style(title, cs.Color.GREEN),
+        show_header=True,
+        header_style=f"{cs.StyleModifier.BOLD} {cs.Color.MAGENTA}",
+    )
+    table.add_column(col_label, style=cs.Color.CYAN)
+    table.add_column(cs.CLI_STATS_COL_COUNT, style=cs.Color.YELLOW, justify="right")
+    total = 0
+    for row in rows:
+        raw_count = row.get("count", 0)
+        count = int(raw_count) if isinstance(raw_count, (int, float)) else 0
+        total += count
+        table.add_row(get_label(row), f"{count:,}")
+    table.add_section()
+    table.add_row(
+        style(total_label, cs.Color.GREEN),
+        style(f"{total:,}", cs.Color.GREEN),
+    )
+    return table
+
+
+@app.command(name=ch.CLICommandName.STATS, help=ch.CMD_STATS)
+def stats() -> None:
+    from .cypher_queries import (
+        CYPHER_STATS_NODE_COUNTS,
+        CYPHER_STATS_RELATIONSHIP_COUNTS,
+    )
+
+    app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
+
+    try:
+        with connect_memgraph(batch_size=1) as ingestor:
+            node_results = ingestor.fetch_all(CYPHER_STATS_NODE_COUNTS)
+            rel_results = ingestor.fetch_all(CYPHER_STATS_RELATIONSHIP_COUNTS)
+
+            app_context.console.print(
+                _build_stats_table(
+                    cs.CLI_STATS_NODE_TITLE,
+                    cs.CLI_STATS_COL_NODE_TYPE,
+                    node_results,
+                    lambda r: ":".join(r.get("labels", [])) or cs.CLI_STATS_UNKNOWN,
+                    cs.CLI_STATS_TOTAL_NODES,
+                )
+            )
+            app_context.console.print()
+            app_context.console.print(
+                _build_stats_table(
+                    cs.CLI_STATS_REL_TITLE,
+                    cs.CLI_STATS_COL_REL_TYPE,
+                    rel_results,
+                    lambda r: str(r.get("type", cs.CLI_STATS_UNKNOWN)),
+                    cs.CLI_STATS_TOTAL_RELS,
+                )
+            )
+
+    except Exception as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(ls.STATS_ERROR.format(error=e))
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

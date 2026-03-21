@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.116"
+version = "0.0.143"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -36,10 +36,11 @@ keywords = [
 dependencies = [
     "loguru>=0.7.3",
     "mcp>=1.21.1",
-    "pydantic-ai>=1.27.0",
+    "pydantic-ai>=1.70.0",
     "pydantic-settings>=2.0.0",
     "pymgclient>=1.4.0",
     "python-dotenv>=1.1.0",
+    "tiktoken>=0.12.0",
     "toml>=0.10.2",
     "tree-sitter-python>=0.23.6",
     "tree-sitter==0.25.2",
@@ -95,7 +96,7 @@ semantic = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-exclude = ["codec/"]
+exclude = ["codec/", "benchmarks/", "optimize/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "PL", "T201"]
@@ -113,6 +114,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["T201"]
+"benchmarks/**" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -121,7 +123,7 @@ quote-style = "double"
 python-version = "3.12"
 
 [tool.ty.src]
-exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py"]
+exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py", "benchmarks/", "optimize/"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -161,5 +163,5 @@ fuzz = [
 ]
 
 [tool.bandit]
-exclude_dirs = ["codebase_rag/tests", "scripts"]
+exclude_dirs = ["codebase_rag/tests", "scripts", "benchmarks", "optimize"]
 skips = ["B101"]

@@ -245,6 +245,10 @@ TOOL_FILE_EDIT_SURGICAL_SUCCESS = (
 )
 TOOL_QUERY_RECEIVED = "[Tool:QueryGraph] Received NL query: '{query}'"
 TOOL_QUERY_ERROR = "[Tool:QueryGraph] Error during query execution: {error}"
+QUERY_RESULTS_TRUNCATED = (
+    "[Tool:QueryGraph] Results truncated: showing {kept} of {total} rows "
+    "({tokens} tokens, limit {max_tokens})"
+)
 TOOL_SHELL_EXEC = "Executing shell command: {cmd}"
 TOOL_SHELL_RETURN = "Return code: {code}"
 TOOL_SHELL_STDOUT = "Stdout: {stdout}"
@@ -342,6 +346,7 @@ FILE_WRITER_SUCCESS = "[FileWriter] Successfully wrote {chars} characters to {pa
 # (H) Error logs (used with logger.error/warning)
 UNEXPECTED = "An unexpected error occurred: {error}"
 EXPORT_ERROR = "Export error: {error}"
+STATS_ERROR = "Stats error: {error}"
 INDEXING_FAILED = "Indexing failed"
 PATH_NOT_IN_QUESTION = (
     "Could not find original path in question for replacement: {path}"
@@ -642,6 +647,10 @@ MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
+MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
+MCP_HTTP_SERVER_READY = (
+    "[GraphCode MCP] HTTP server ready. MCP endpoint: http://{host}:{port}/mcp"
+)
 
 # (H) Incremental update logs
 HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Tool
 
+from codebase_rag import tool_errors as te
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
@@ -112,6 +113,24 @@ class TestListDirectoryContents:
         result = directory_lister.list_directory_contents("hidden")
         assert ".hidden_file" in result
         assert "visible_file" in result
+
+    def test_list_directory_returns_error_for_path_outside_root(
+        self, directory_lister: DirectoryLister
+    ) -> None:
+        result = directory_lister.list_directory_contents("../../../etc")
+        expected = te.DIRECTORY_PATH_OUTSIDE_ROOT.format(
+            path="../../../etc", root=directory_lister.project_root
+        )
+        assert result == expected
+
+    def test_list_directory_returns_error_for_absolute_path_outside_root(
+        self, directory_lister: DirectoryLister
+    ) -> None:
+        result = directory_lister.list_directory_contents("/etc/passwd")
+        expected = te.DIRECTORY_PATH_OUTSIDE_ROOT.format(
+            path="/etc/passwd", root=directory_lister.project_root
+        )
+        assert result == expected
 
 
 class TestGetSafePath:

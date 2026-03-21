@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -83,6 +84,8 @@ def ingest_method(
     language: cs.SupportedLanguage | None = None,
     extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
     method_qualified_name: str | None = None,
+    file_path: Path | None = None,
+    repo_path: Path | None = None,
 ) -> None:
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
@@ -109,6 +112,9 @@ def ingest_method(
         cs.KEY_END_LINE: method_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
     }
+    if file_path is not None and repo_path is not None:
+        method_props[cs.KEY_PATH] = file_path.relative_to(repo_path).as_posix()
+        method_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)

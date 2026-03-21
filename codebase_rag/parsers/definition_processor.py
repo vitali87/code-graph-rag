@@ -100,6 +100,7 @@ class DefinitionProcessor(
                     cs.KEY_QUALIFIED_NAME: module_qn,
                     cs.KEY_NAME: file_path.name,
                     cs.KEY_PATH: relative_path_str,
+                    cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
                 },
             )
 
