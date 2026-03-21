@@ -52,6 +52,11 @@ class TestGetHandler:
         assert isinstance(handler, BaseLanguageHandler)
         assert type(handler) is BaseLanguageHandler
 
+    def test_returns_base_handler_for_c(self) -> None:
+        handler = get_handler(SupportedLanguage.C)
+        assert isinstance(handler, BaseLanguageHandler)
+        assert type(handler) is BaseLanguageHandler
+
 
 class TestHandlerCaching:
     def test_same_instance_returned_for_same_language(self) -> None:
@@ -84,6 +89,7 @@ class TestHandlerProtocol:
             SupportedLanguage.PYTHON,
             SupportedLanguage.GO,
             SupportedLanguage.PHP,
+            SupportedLanguage.C,
         ],
     )
     def test_handler_has_all_protocol_methods(
@@ -114,6 +120,7 @@ class TestHandlerProtocol:
             SupportedLanguage.JAVA,
             SupportedLanguage.LUA,
             SupportedLanguage.PYTHON,
+            SupportedLanguage.C,
         ],
     )
     def test_handler_methods_are_callable(self, language: SupportedLanguage) -> None:

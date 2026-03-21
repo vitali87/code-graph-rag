@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from codebase_rag.constants import (
+    C_EXTENSIONS,
     CPP_EXTENSIONS,
     CS_EXTENSIONS,
     GO_EXTENSIONS,
@@ -60,6 +61,7 @@ LANGUAGE_SPEC_PARAMS = [
     (SupportedLanguage.GO, GO_EXTENSIONS),
     (SupportedLanguage.SCALA, SCALA_EXTENSIONS),
     (SupportedLanguage.JAVA, JAVA_EXTENSIONS),
+    (SupportedLanguage.C, C_EXTENSIONS),
     (SupportedLanguage.CPP, CPP_EXTENSIONS),
     (SupportedLanguage.CSHARP, CS_EXTENSIONS),
     (SupportedLanguage.PHP, PHP_EXTENSIONS),
@@ -87,6 +89,7 @@ EXTENSION_MAPPING_PARAMS = [
     (".go", SupportedLanguage.GO),
     (".scala", SupportedLanguage.SCALA),
     (".java", SupportedLanguage.JAVA),
+    (".c", SupportedLanguage.C),
     (".cpp", SupportedLanguage.CPP),
     (".h", SupportedLanguage.CPP),
     (".hpp", SupportedLanguage.CPP),
