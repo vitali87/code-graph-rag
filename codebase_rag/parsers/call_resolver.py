@@ -15,7 +15,6 @@ from .type_inference import TypeInferenceEngine
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
-_JS_INSTANCE_PREFIXES = {cs.KEYWORD_SELF, "this"}
 
 
 class CallResolver:
@@ -53,15 +52,6 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
-
-        class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
-        suffix_matches = self.function_registry.find_ending_with(
-            f"{class_name}{separator}{method_name}"
-        )
-        if len(suffix_matches) == 1:
-            matched_qn = suffix_matches[0]
-            return self.function_registry[matched_qn], matched_qn
-
         return self._resolve_inherited_method(class_qn, method_name)
 
     def resolve_function_call(
@@ -81,17 +71,14 @@ class CallResolver:
             return self._resolve_chained_call(call_name, module_qn, local_var_types)
 
         if result := self._try_resolve_via_imports(
-            call_name, module_qn, local_var_types, class_context
+            call_name, module_qn, local_var_types
         ):
             return result
 
-        if not self._has_separator(call_name):
-            if result := self._try_resolve_same_module(call_name, module_qn):
-                return result
-            return self._try_resolve_via_trie(call_name, module_qn)
+        if result := self._try_resolve_same_module(call_name, module_qn):
+            return result
 
-        logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
-        return None
+        return self._try_resolve_via_trie(call_name, module_qn)
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
@@ -120,21 +107,21 @@ class CallResolver:
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
-        class_context: str | None = None,
     ) -> tuple[str, str] | None:
-        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if module_qn not in self.import_processor.import_mapping:
+            return None
+
+        import_map = self.import_processor.import_mapping[module_qn]
 
         if result := self._try_resolve_direct_import(call_name, import_map):
             return result
 
         if result := self._try_resolve_qualified_call(
-            call_name, import_map, module_qn, local_var_types, class_context
+            call_name, import_map, module_qn, local_var_types
         ):
             return result
 
-        if import_map:
-            return self._try_resolve_wildcard_imports(call_name, import_map)
-        return None
+        return self._try_resolve_wildcard_imports(call_name, import_map)
 
     def _try_resolve_direct_import(
         self, call_name: str, import_map: dict[str, str]
@@ -153,7 +140,6 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
-        class_context: str | None = None,
     ) -> tuple[str, str] | None:
         if not self._has_separator(call_name):
             return None
@@ -163,17 +149,11 @@ class CallResolver:
 
         if len(parts) == 2:
             if result := self._resolve_two_part_call(
-                parts,
-                call_name,
-                separator,
-                import_map,
-                module_qn,
-                local_var_types,
-                class_context,
+                parts, call_name, separator, import_map, module_qn, local_var_types
             ):
                 return result
 
-        if len(parts) >= 3 and parts[0] in _JS_INSTANCE_PREFIXES:
+        if len(parts) >= 3 and parts[0] == cs.KEYWORD_SELF:
             return self._resolve_self_attribute_call(
                 parts, call_name, import_map, module_qn, local_var_types
             )
@@ -255,13 +235,8 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
-        class_context: str | None = None,
     ) -> tuple[str, str] | None:
         object_name, method_name = parts
-
-        if object_name in _JS_INSTANCE_PREFIXES and class_context:
-            if result := self._try_resolve_method(class_context, method_name, separator):
-                return result
 
         if result := self._try_resolve_via_local_type(
             object_name,
@@ -279,7 +254,7 @@ class CallResolver:
         ):
             return result
 
-        return None
+        return self._try_resolve_module_method(method_name, call_name, module_qn)
 
     def _try_resolve_via_local_type(
         self,
@@ -426,15 +401,28 @@ class CallResolver:
             if class_qn := self._resolve_class_qn_from_type(
                 var_type, import_map, module_qn
             ):
-                if resolved_method := self._try_resolve_method(class_qn, method_name):
+                method_qn = f"{class_qn}.{method_name}"
+                if method_qn in self.function_registry:
                     logger.debug(
                         ls.CALL_INSTANCE_ATTR,
                         call_name=call_name,
-                        method_qn=resolved_method[1],
+                        method_qn=method_qn,
                         attr_ref=attribute_ref,
                         var_type=var_type,
                     )
-                    return resolved_method
+                    return self.function_registry[method_qn], method_qn
+
+                if inherited_method := self._resolve_inherited_method(
+                    class_qn, method_name
+                ):
+                    logger.debug(
+                        ls.CALL_INSTANCE_ATTR_INHERITED,
+                        call_name=call_name,
+                        method_qn=inherited_method[1],
+                        attr_ref=attribute_ref,
+                        var_type=var_type,
+                    )
+                    return inherited_method
 
         return None
 

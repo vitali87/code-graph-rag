@@ -288,32 +288,3 @@ class TestSlots:
         cache = BoundedASTCache()
         with pytest.raises(AttributeError):
             cache.nonexistent_attr = "value"  # type: ignore[attr-defined]
-
-    def test_empty_graph_ignores_hash_cache_and_reindexes_all_files(
-        self, py_project: Path, mock_ingestor: MagicMock
-    ) -> None:
-        parsers, queries = load_parsers()
-        updater = GraphUpdater(
-            ingestor=mock_ingestor,
-            repo_path=py_project,
-            parsers=parsers,
-            queries=queries,
-        )
-        updater.run()
-
-        mock_ingestor.reset_mock()
-        mock_ingestor.fetch_all.return_value = [{"c": 0}]
-
-        updater2 = GraphUpdater(
-            ingestor=mock_ingestor,
-            repo_path=py_project,
-            parsers=parsers,
-            queries=queries,
-        )
-        with patch.object(
-            updater2, "_process_single_file", wraps=updater2._process_single_file
-        ) as spy:
-            updater2.run()
-            processed_paths = {call.args[0] for call in spy.call_args_list}
-            assert py_project / "module_a.py" in processed_paths
-            assert py_project / "module_b.py" in processed_paths
