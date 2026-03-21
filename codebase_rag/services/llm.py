@@ -46,7 +46,15 @@ def _clean_cypher_response(response_text: str) -> str:
             query = block.strip()
     else:
         # Remove markdown bold/headers (e.g., **Cypher Query:**)
-        query = re.sub(r"\*\*[^*]+\*\*:?\s*", "", query)
+        while "**" in query:
+            start = query.index("**")
+            end = query.find("**", start + 2)
+            if end == -1:
+                break
+            after = end + 2
+            if after < len(query) and query[after] == ":":
+                after += 1
+            query = query[:start] + query[after:].lstrip()
         # Remove single backticks
         query = query.replace(cs.CYPHER_BACKTICK, "")
         # Remove "cypher" prefix if present
