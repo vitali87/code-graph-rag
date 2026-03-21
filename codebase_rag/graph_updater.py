@@ -390,61 +390,11 @@ class GraphUpdater:
                 eligible.append(filepath)
         return eligible
 
-    def _should_force_full_reindex(
-        self, force: bool, old_hashes: FileHashCache
-    ) -> bool:
-        if force or not old_hashes:
-            return False
-
-        fetch_all = getattr(self.ingestor, "fetch_all", None)
-        if not callable(fetch_all):
-            return False
-
-        try:
-            results = fetch_all(
-                (
-                    "MATCH (n) "
-                    "WHERE toString(n.qualified_name) STARTS WITH $prefix "
-                    "RETURN count(n) AS c"
-                ),
-                {"prefix": f"{self.project_name}."},
-            )
-        except Exception as e:
-            logger.debug(
-                "Incremental reindex graph-state probe failed for {name}: {error}",
-                name=self.project_name,
-                error=e,
-            )
-            return False
-
-        if not results:
-            logger.info(
-                "No graph-state probe results for {name}; forcing full reindex",
-                name=self.project_name,
-            )
-            return True
-
-        symbol_count = results[0].get("c", 0)
-        if not isinstance(symbol_count, int):
-            return False
-
-        if symbol_count == 0:
-            logger.info(
-                "No existing graph symbols found for {name}; ignoring hash cache and forcing full reindex",
-                name=self.project_name,
-            )
-            return True
-
-        return False
-
     def _process_files(self, force: bool = False) -> None:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
-
-        if self._should_force_full_reindex(force, old_hashes):
-            old_hashes = {}
 
         eligible_files = self._collect_eligible_files()
         new_hashes: FileHashCache = {}

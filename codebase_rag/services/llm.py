@@ -34,14 +34,16 @@ def _clean_cypher_response(response_text: str) -> str:
     - Bold text (**Cypher Query:**)
     - Headers and other markdown
     """
-    import re
-
     query = response_text.strip()
 
-    # Extract content from code blocks if present (```cypher ... ``` or ``` ... ```)
-    code_block_match = re.search(r"```(?:cypher)?\s*(.*?)```", query, re.DOTALL | re.IGNORECASE)
-    if code_block_match:
-        query = code_block_match.group(1).strip()
+    # Extract content from code blocks (```cypher ... ``` or ``` ... ```)
+    if "```" in query:
+        parts = query.split("```")
+        if len(parts) >= 3:
+            block = parts[1]
+            if block.lower().startswith("cypher"):
+                block = block[len("cypher") :]
+            query = block.strip()
     else:
         # Remove markdown bold/headers (e.g., **Cypher Query:**)
         query = re.sub(r"\*\*[^*]+\*\*:?\s*", "", query)
@@ -49,7 +51,7 @@ def _clean_cypher_response(response_text: str) -> str:
         query = query.replace(cs.CYPHER_BACKTICK, "")
         # Remove "cypher" prefix if present
         if query.lower().startswith(cs.CYPHER_PREFIX):
-            query = query[len(cs.CYPHER_PREFIX):].strip()
+            query = query[len(cs.CYPHER_PREFIX) :].strip()
 
     if not query.endswith(cs.CYPHER_SEMICOLON):
         query += cs.CYPHER_SEMICOLON
