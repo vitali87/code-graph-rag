@@ -11,6 +11,10 @@ OPENAI_NO_KEY = (
     "OpenAI provider requires api_key. "
     "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
 )
+ANTHROPIC_NO_KEY = (
+    "Anthropic provider requires api_key. "
+    "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY in .env file."
+)
 OLLAMA_NOT_RUNNING = (
     "Ollama server not responding at {endpoint}. "
     "Make sure Ollama is running: ollama serve"

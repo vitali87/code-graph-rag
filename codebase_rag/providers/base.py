@@ -6,8 +6,12 @@ from urllib.parse import urljoin
 
 import httpx
 from loguru import logger
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.providers.anthropic import (
+    AnthropicProvider as PydanticAnthropicProvider,
+)
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
@@ -26,7 +30,7 @@ class ModelProvider(ABC):
     @abstractmethod
     def create_model(
         self, model_id: str, **kwargs: str | int | None
-    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel:
+    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel | AnthropicModel:
         pass
 
     @abstractmethod
@@ -170,10 +174,38 @@ class OllamaProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class AnthropicProvider(ModelProvider):
+    __slots__ = ("api_key",)
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = api_key or os.environ.get(cs.ENV_ANTHROPIC_API_KEY)
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.ANTHROPIC
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(ex.ANTHROPIC_NO_KEY)
+
+    def create_model(self, model_id: str, **kwargs: str | int | None) -> AnthropicModel:
+        self.validate_config()
+        # (H) api_key is guaranteed to be set by validate_config
+        assert self.api_key is not None
+        provider = PydanticAnthropicProvider(api_key=self.api_key)
+        return AnthropicModel(model_id, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
     cs.Provider.OLLAMA: OllamaProvider,
+    cs.Provider.ANTHROPIC: AnthropicProvider,
 }
 
 
