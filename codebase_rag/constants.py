@@ -498,7 +498,7 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "TypeScript",
     ),
     SupportedLanguage.C: LanguageMetadata(
-        LanguageStatus.DEV,
+        LanguageStatus.FULL,
         "Functions, structs, unions, enums, preprocessor includes",
         "C",
     ),
