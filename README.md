@@ -232,8 +232,19 @@ ollama pull llama3.2
 
 4. **Start Memgraph database**:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
+
+5. **Verify installation**:
+```bash
+# If installed from PyPI:
+cgr --help
+
+# If running from source:
+uv run cgr --help
+```
+
+> **Note**: When running from source (cloned repo), prefix all `cgr` commands below with `uv run`, e.g., `uv run cgr start ...`
 
 ## 🛠️ Makefile Commands
 
