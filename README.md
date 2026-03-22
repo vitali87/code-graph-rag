@@ -30,6 +30,9 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/vitali87/code-graph-rag">
     <img src="https://api.scorecard.dev/projects/github.com/vitali87/code-graph-rag/badge" alt="OpenSSF Scorecard" />
   </a>
+  <a href="https://gitcgr.com/vitali87/code-graph-rag">
+    <img src="https://gitcgr.com/badge/vitali87/code-graph-rag.svg" alt="gitcgr" />
+  </a>
 </p>
 </div>
 
