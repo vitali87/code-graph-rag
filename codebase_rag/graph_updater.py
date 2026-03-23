@@ -510,9 +510,9 @@ class GraphUpdater:
             for r in rows:
                 path = r.get("path")
                 qn = r.get("qualified_name", "")
-                if not path:
+                if not isinstance(path, str) or not path:
                     continue
-                if qn and not qn.startswith(project_prefix):
+                if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue
                 if not (self.repo_path / path).exists():
                     orphans.append(path)
