@@ -496,12 +496,15 @@ class GraphUpdater:
         total_pruned = 0
 
         project_prefix = self.project_name + "."
+        repo_abs = self.repo_path.resolve().as_posix()
         prune_specs: list[tuple[str, str, str]] = [
+            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
             (
                 cs.CYPHER_ALL_MODULE_PATHS_INTERNAL,
                 cs.CYPHER_DELETE_MODULE,
                 "Module",
             ),
+            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
         ]
 
         for query_all, delete_query, label in prune_specs:
@@ -509,8 +512,11 @@ class GraphUpdater:
             orphans = []
             for r in rows:
                 path = r.get("path")
-                qn = r.get("qualified_name", "")
                 if not isinstance(path, str) or not path:
+                    continue
+                abs_path = r.get("absolute_path")
+                qn = r.get("qualified_name", "")
+                if isinstance(abs_path, str) and not abs_path.startswith(repo_abs):
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue

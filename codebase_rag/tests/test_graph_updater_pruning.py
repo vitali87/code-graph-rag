@@ -46,15 +46,19 @@ class TestPruneOrphanNodes:
         )
         project_name = py_project.resolve().name
 
-        mock_ingestor.fetch_all.return_value = [
-            {
-                "path": "old_project/main.py",
-                "qualified_name": f"{project_name}.old_project.main",
-            },
-            {
-                "path": "module_a.py",
-                "qualified_name": f"{project_name}.module_a",
-            },
+        mock_ingestor.fetch_all.side_effect = [
+            [],
+            [
+                {
+                    "path": "old_project/main.py",
+                    "qualified_name": f"{project_name}.old_project.main",
+                },
+                {
+                    "path": "module_a.py",
+                    "qualified_name": f"{project_name}.module_a",
+                },
+            ],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -77,11 +81,10 @@ class TestPruneOrphanNodes:
             queries=queries,
         )
 
-        mock_ingestor.fetch_all.return_value = [
-            {
-                "path": "app.py",
-                "qualified_name": "other_project.app",
-            },
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "app.py", "absolute_path": "/other/project/app.py"}],
+            [{"path": "app.py", "qualified_name": "other_project.app"}],
+            [{"path": "data", "absolute_path": "/other/project/data"}],
         ]
         updater._prune_orphan_nodes()
 
@@ -99,11 +102,11 @@ class TestPruneOrphanNodes:
         )
 
         project_name = py_project.resolve().name
-        mock_ingestor.fetch_all.return_value = [
-            {
-                "path": "module_a.py",
-                "qualified_name": f"{project_name}.module_a",
-            },
+        repo_abs = py_project.resolve().as_posix()
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"}],
+            [{"path": "module_a.py", "qualified_name": f"{project_name}.module_a"}],
+            [{"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"}],
         ]
         updater._prune_orphan_nodes()
 
@@ -120,7 +123,7 @@ class TestPruneOrphanNodes:
             queries=queries,
         )
 
-        mock_ingestor.fetch_all.return_value = []
+        mock_ingestor.fetch_all.side_effect = [[], [], []]
         updater._prune_orphan_nodes()
 
         assert mock_ingestor.execute_write.call_count == 0
@@ -137,15 +140,19 @@ class TestPruneOrphanNodes:
         )
 
         project_name = py_project.resolve().name
-        mock_ingestor.fetch_all.return_value = [
-            {"path": None, "qualified_name": f"{project_name}.something"},
-            {"path": "module_a.py", "qualified_name": f"{project_name}.module_a"},
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": None, "absolute_path": None}],
+            [
+                {"path": None, "qualified_name": f"{project_name}.something"},
+                {"path": "module_a.py", "qualified_name": f"{project_name}.module_a"},
+            ],
+            [],
         ]
         updater._prune_orphan_nodes()
 
         assert mock_ingestor.execute_write.call_count == 0
 
-    def test_prune_multiple_orphan_modules(
+    def test_prune_multiple_orphans_across_types(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
         parsers, queries = load_parsers()
@@ -157,23 +164,30 @@ class TestPruneOrphanNodes:
         )
 
         project_name = py_project.resolve().name
-        mock_ingestor.fetch_all.return_value = [
-            {
-                "path": "deleted1.py",
-                "qualified_name": f"{project_name}.deleted1",
-            },
-            {
-                "path": "deleted2.py",
-                "qualified_name": f"{project_name}.deleted2",
-            },
-            {
-                "path": "module_a.py",
-                "qualified_name": f"{project_name}.module_a",
-            },
+        repo_abs = py_project.resolve().as_posix()
+        mock_ingestor.fetch_all.side_effect = [
+            [
+                {"path": "gone.py", "absolute_path": f"{repo_abs}/gone.py"},
+                {"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"},
+            ],
+            [
+                {
+                    "path": "deleted.py",
+                    "qualified_name": f"{project_name}.deleted",
+                },
+                {
+                    "path": "module_a.py",
+                    "qualified_name": f"{project_name}.module_a",
+                },
+            ],
+            [
+                {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
+                {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
+            ],
         ]
         updater._prune_orphan_nodes()
 
-        assert mock_ingestor.execute_write.call_count == 2
+        assert mock_ingestor.execute_write.call_count == 3
 
 
 class TestDeletedFileInProcessFiles:

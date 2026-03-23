@@ -883,7 +883,9 @@ CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 
 # (H) Queries for orphan pruning — returns all paths stored in the graph
-CYPHER_ALL_FILE_PATHS = "MATCH (f:File) RETURN f.path AS path, f.name AS qualified_name"
+CYPHER_ALL_FILE_PATHS = (
+    "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
 CYPHER_ALL_MODULE_PATHS = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
@@ -892,7 +894,7 @@ CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
 CYPHER_ALL_FOLDER_PATHS = (
-    "MATCH (f:Folder) RETURN f.path AS path, f.name AS qualified_name"
+    "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
 
 REALTIME_LOGGER_FORMAT = (
