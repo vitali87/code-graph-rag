@@ -886,9 +886,6 @@ CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
-CYPHER_ALL_MODULE_PATHS = (
-    "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
-)
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) WHERE m.is_external IS NULL OR m.is_external = false "
     "RETURN m.path AS path, m.qualified_name AS qualified_name"
