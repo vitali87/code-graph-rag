@@ -1,7 +1,7 @@
 # (H) Tests for orphan node pruning in GraphUpdater._prune_orphan_nodes
 # (H) and Cypher deletion in _process_files for hash-cache-detected deletions.
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -118,9 +118,7 @@ class TestPruneOrphanNodes:
         ]
         # (H) Only the non-existent path is pruned; "subpkg" still exists on disk
         assert len(delete_calls) == 1
-        assert delete_calls[0].args[1] == {
-            cs.KEY_PATH: "projects/mcp-openclaw-bridge"
-        }
+        assert delete_calls[0].args[1] == {cs.KEY_PATH: "projects/mcp-openclaw-bridge"}
 
     def test_prune_no_orphans_skips_deletes(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -291,9 +289,7 @@ class TestProcessFilesDeletesCypherNodes:
 class TestPruneCalledDuringRun:
     """Tests that _prune_orphan_nodes is called as part of GraphUpdater.run()."""
 
-    def test_run_calls_prune(
-        self, py_project: Path, mock_ingestor: MagicMock
-    ) -> None:
+    def test_run_calls_prune(self, py_project: Path, mock_ingestor: MagicMock) -> None:
         """GraphUpdater.run() invokes _prune_orphan_nodes after flush."""
         parsers, queries = load_parsers()
         mock_ingestor.fetch_all.return_value = []

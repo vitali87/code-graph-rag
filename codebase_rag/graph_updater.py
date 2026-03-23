@@ -506,8 +506,7 @@ class GraphUpdater:
             orphans = [
                 r["path"]
                 for r in rows
-                if r.get("path")
-                and not (self.repo_path / r["path"]).exists()
+                if r.get("path") and not (self.repo_path / r["path"]).exists()
             ]
 
             if orphans:

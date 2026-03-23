@@ -92,9 +92,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # (H) Delete Module node and its children (for code files)
         ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
         # (H) Delete File node (for all files including non-code like .md, .json)
-        ingestor.execute_write(
-            CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str}
-        )
+        ingestor.execute_write(CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str})
         logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
         # (H) Step 2
