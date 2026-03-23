@@ -14,6 +14,7 @@ from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.constants import (
     CYPHER_DELETE_CALLS,
+    CYPHER_DELETE_FILE,
     CYPHER_DELETE_MODULE,
     IGNORE_PATTERNS,
     IGNORE_SUFFIXES,
@@ -73,18 +74,33 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         path = Path(src_path)
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
+        # (H) Only process events that actually change file content
+        # (H) Skip read-only events like "opened", "closed_no_write" that don't modify the file
+        relevant_events = {
+            EventType.MODIFIED,
+            EventType.CREATED,
+            EventType.DELETED,  # (H) watchdog deletion event
+        }
+        if event.event_type not in relevant_events:
+            return
+
         logger.warning(
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
 
-        # (H) Step 1
+        # (H) Step 1: Delete existing nodes for this file path
+        # (H) Delete Module node and its children (for code files)
         ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
+        # (H) Delete File node (for all files including non-code like .md, .json)
+        ingestor.execute_write(
+            CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str}
+        )
         logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
         # (H) Step 2
         self.updater.remove_file_from_state(path)
 
-        # (H) Step 3
+        # (H) Step 3: Re-parse code files and create File nodes for ALL files
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_spec(path.suffix)
             if (
@@ -100,6 +116,11 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 ):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
+
+            # (H) Create File node for ALL files (code and non-code like .md, .json, etc.)
+            self.updater.factory.structure_processor.process_generic_file(
+                path, path.name
+            )
 
         # (H) Step 4
         logger.info(logs.RECALC_CALLS)
