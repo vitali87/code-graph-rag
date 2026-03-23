@@ -495,19 +495,27 @@ class GraphUpdater:
         logger.info(ls.PRUNE_START)
         total_pruned = 0
 
+        project_prefix = self.project_name + "."
         prune_specs: list[tuple[str, str, str]] = [
-            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
-            (cs.CYPHER_ALL_MODULE_PATHS, cs.CYPHER_DELETE_MODULE, "Module"),
-            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
+            (
+                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL,
+                cs.CYPHER_DELETE_MODULE,
+                "Module",
+            ),
         ]
 
         for query_all, delete_query, label in prune_specs:
             rows = self.ingestor.fetch_all(query_all)
-            orphans = [
-                r["path"]
-                for r in rows
-                if r.get("path") and not (self.repo_path / r["path"]).exists()
-            ]
+            orphans = []
+            for r in rows:
+                path = r.get("path")
+                qn = r.get("qualified_name", "")
+                if not path:
+                    continue
+                if qn and not qn.startswith(project_prefix):
+                    continue
+                if not (self.repo_path / path).exists():
+                    orphans.append(path)
 
             if orphans:
                 logger.info(ls.PRUNE_FOUND, count=len(orphans), label=label)
