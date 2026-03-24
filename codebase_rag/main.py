@@ -1041,7 +1041,7 @@ async def main_async(repo_path: str, batch_size: int) -> None:
     table = _create_configuration_table(repo_path)
     app_context.console.print(table)
 
-    with connect_memgraph(batch_size) as ingestor:
+    async with connect_memgraph(batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
         app_context.console.print(
             Panel(
@@ -1077,7 +1077,7 @@ async def main_optimize_async(
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
-    with connect_memgraph(effective_batch_size) as ingestor:
+    async with connect_memgraph(effective_batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
 
         rag_agent, tool_names = _initialize_services_and_agent(
