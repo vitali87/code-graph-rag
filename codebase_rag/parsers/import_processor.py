@@ -123,6 +123,8 @@ class ImportProcessor:
                     self._parse_cpp_imports(captures, module_qn)
                 case cs.SupportedLanguage.LUA:
                     self._parse_lua_imports(captures, module_qn)
+                case cs.SupportedLanguage.PHP:
+                    self._parse_php_imports(captures, module_qn)
                 case _:
                     self._parse_generic_imports(captures, module_qn, lang_config)
 
@@ -791,6 +793,36 @@ class ImportProcessor:
             f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
         )
         logger.debug(log_template, name=module_name)
+
+    def _parse_php_imports(self, captures: dict, module_qn: str) -> None:
+        all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
+            cs.CAPTURE_IMPORT_FROM, []
+        )
+        for import_node in all_imports:
+            if import_node.type == cs.TS_PHP_NAMESPACE_USE_DECLARATION:
+                self._handle_php_use_declaration(import_node, module_qn)
+
+    def _handle_php_use_declaration(self, use_node: Node, module_qn: str) -> None:
+        for child in use_node.named_children:
+            if child.type != cs.TS_PHP_NAMESPACE_USE_CLAUSE:
+                continue
+            qn_node = next(
+                (c for c in child.named_children if c.type == cs.TS_PHP_QUALIFIED_NAME),
+                None,
+            )
+            if not qn_node:
+                continue
+            imported_path = safe_decode_with_fallback(qn_node)
+            if not imported_path:
+                continue
+            imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
+            alias_node = child.child_by_field_name("alias")
+            if alias_node and alias_node.text:
+                local_name = safe_decode_with_fallback(alias_node)
+            else:
+                parts = imported_path.split(cs.SEPARATOR_DOT)
+                local_name = parts[-1] if parts else imported_path
+            self.import_mapping[module_qn][local_name] = imported_path
 
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageSpec

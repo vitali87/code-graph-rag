@@ -538,8 +538,8 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "C#",
     ),
     SupportedLanguage.PHP: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Classes, functions, namespaces",
+        LanguageStatus.FULL,
+        "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
         "PHP",
     ),
 }
@@ -757,6 +757,7 @@ BUILD_EXT_CMD = "build_ext"
 INPLACE_FLAG = "--inplace"
 LANG_ATTR_PREFIX = "language_"
 LANG_ATTR_TYPESCRIPT = "language_typescript"
+LANG_ATTR_PHP = "language_php"
 
 
 class TreeSitterModule(StrEnum):
@@ -770,6 +771,7 @@ class TreeSitterModule(StrEnum):
     C = "tree_sitter_c"
     CPP = "tree_sitter_cpp"
     LUA = "tree_sitter_lua"
+    PHP = "tree_sitter_php"
 
 
 # (H) Query dict keys
@@ -1778,6 +1780,8 @@ TS_CS_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CS_INVOCATION_EXPRESSION = "invocation_expression"
 
 # (H) Tree-sitter PHP node types
+TS_PHP_FUNCTION_DEFINITION = "function_definition"
+TS_PHP_METHOD_DECLARATION = "method_declaration"
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"
@@ -1786,6 +1790,19 @@ TS_PHP_MEMBER_CALL_EXPRESSION = "member_call_expression"
 TS_PHP_SCOPED_CALL_EXPRESSION = "scoped_call_expression"
 TS_PHP_FUNCTION_CALL_EXPRESSION = "function_call_expression"
 TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION = "nullsafe_member_call_expression"
+TS_PHP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+TS_PHP_NAMESPACE_DEFINITION = "namespace_definition"
+TS_PHP_NAMESPACE_USE_DECLARATION = "namespace_use_declaration"
+TS_PHP_NAMESPACE_USE_CLAUSE = "namespace_use_clause"
+TS_PHP_INCLUDE_EXPRESSION = "include_expression"
+TS_PHP_INCLUDE_ONCE_EXPRESSION = "include_once_expression"
+TS_PHP_REQUIRE_EXPRESSION = "require_expression"
+TS_PHP_REQUIRE_ONCE_EXPRESSION = "require_once_expression"
+TS_PHP_ATTRIBUTE_LIST = "attribute_list"
+TS_PHP_ATTRIBUTE = "attribute"
+TS_PHP_VISIBILITY_MODIFIER = "visibility_modifier"
+TS_PHP_USE_DECLARATION = "use_declaration"
+TS_PHP_QUALIFIED_NAME = "qualified_name"
 
 # (H) Tree-sitter Lua node types for language_spec
 TS_LUA_CHUNK = "chunk"
@@ -2661,13 +2678,14 @@ FQN_PHP_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
     TS_PHP_TRAIT_DECLARATION,
+    TS_PHP_NAMESPACE_DEFINITION,
     TS_PROGRAM,
 )
 FQN_PHP_FUNCTION_TYPES = (
-    TS_PY_FUNCTION_DEFINITION,
+    TS_PHP_FUNCTION_DEFINITION,
+    TS_PHP_METHOD_DECLARATION,
     TS_PHP_ANONYMOUS_FUNCTION,
     TS_PHP_ARROW_FUNCTION,
-    TS_PHP_FUNCTION_STATIC_DECLARATION,
 )
 
 # (H) LANGUAGE_SPECS node type tuples for Python
@@ -2850,24 +2868,27 @@ SPEC_CS_CALL_TYPES = (TS_CS_INVOCATION_EXPRESSION,)
 
 # (H) LANGUAGE_SPECS node type tuples for PHP
 SPEC_PHP_FUNCTION_TYPES = (
-    TS_PHP_FUNCTION_STATIC_DECLARATION,
+    TS_PHP_FUNCTION_DEFINITION,
+    TS_PHP_METHOD_DECLARATION,
     TS_PHP_ANONYMOUS_FUNCTION,
-    TS_PY_FUNCTION_DEFINITION,
     TS_PHP_ARROW_FUNCTION,
 )
 SPEC_PHP_CLASS_TYPES = (
+    TS_CLASS_DECLARATION,
+    TS_INTERFACE_DECLARATION,
     TS_PHP_TRAIT_DECLARATION,
     TS_ENUM_DECLARATION,
-    TS_INTERFACE_DECLARATION,
-    TS_CLASS_DECLARATION,
 )
 SPEC_PHP_MODULE_TYPES = (TS_PROGRAM,)
 SPEC_PHP_CALL_TYPES = (
+    TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_MEMBER_CALL_EXPRESSION,
     TS_PHP_SCOPED_CALL_EXPRESSION,
-    TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION,
+    TS_PHP_OBJECT_CREATION_EXPRESSION,
 )
+SPEC_PHP_IMPORT_TYPES = (TS_PHP_NAMESPACE_USE_DECLARATION,)
+SPEC_PHP_IMPORT_FROM_TYPES = (TS_PHP_NAMESPACE_USE_DECLARATION,)
 
 # (H) LANGUAGE_SPECS node type tuples for Lua
 SPEC_LUA_FUNCTION_TYPES = (TS_LUA_FUNCTION_DECLARATION, TS_LUA_FUNCTION_DEFINITION)

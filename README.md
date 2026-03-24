@@ -63,12 +63,12 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
+| PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
 | Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
 | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions |
 | TypeScript | Fully Supported | .ts, .tsx | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | C# | In Development | .cs | ✓ | ✓ | ✓ | - | Classes, interfaces, generics (planned) |
 | Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
-| PHP | In Development | .php | ✓ | ✓ | ✓ | - | Classes, functions, namespaces |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 <!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
@@ -586,36 +586,36 @@ The knowledge graph uses the following node types and relationships:
 | Label | Properties |
 |-----|----------|
 | Project | `{name: string}` |
-| Package | `{qualified_name: string, name: string, path: string}` |
-| Folder | `{path: string, name: string}` |
-| File | `{path: string, name: string, extension: string}` |
-| Module | `{qualified_name: string, name: string, path: string}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Interface | `{qualified_name: string, name: string}` |
-| Enum | `{qualified_name: string, name: string}` |
+| Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| Folder | `{path: string, name: string, absolute_path: string}` |
+| File | `{path: string, name: string, extension: string, absolute_path: string}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| Class | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
+| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
+| Method | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
+| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Type | `{qualified_name: string, name: string}` |
 | Union | `{qualified_name: string, name: string}` |
-| ModuleInterface | `{qualified_name: string, name: string, path: string}` |
-| ModuleImplementation | `{qualified_name: string, name: string, path: string, implements_module: string}` |
+| ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}` |
 | ExternalPackage | `{name: string, version_spec: string}` |
 <!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
 
 <!-- SECTION:language_mappings -->
-- **C**: `function_definition`, `struct_specifier`, `union_specifier`, `enum_specifier`, `call_expression`, `preproc_include`
+- **C**: `enum_specifier`, `function_definition`, `struct_specifier`, `union_specifier`
 - **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
 - **Lua**: `function_declaration`, `function_definition`
+- **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `interface_declaration`, `method_declaration`, `trait_declaration`
 - **Python**: `class_definition`, `function_definition`
 - **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **C#**: `anonymous_method_expression`, `class_declaration`, `constructor_declaration`, `destructor_declaration`, `enum_declaration`, `function_pointer_type`, `interface_declaration`, `lambda_expression`, `local_function_statement`, `method_declaration`, `struct_declaration`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
-- **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `function_static_declaration`, `interface_declaration`, `trait_declaration`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->
 
@@ -705,6 +705,7 @@ my_build_output
 - **pydantic-settings**: Settings management using Pydantic
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
+- **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
 - **toml**: Python Library for Tom's Obvious, Minimal Language
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library
@@ -717,6 +718,7 @@ my_build_output
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
+- **tree-sitter-php**: PHP grammar for tree-sitter
 <!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools

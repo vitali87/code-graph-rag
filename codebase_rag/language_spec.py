@@ -97,6 +97,17 @@ def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
+def _php_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    try:
+        rel = file_path.relative_to(repo_root)
+        parts = list(rel.with_suffix("").parts)
+        if parts and parts[0] in ("src", "app", "lib"):
+            parts = parts[1:]
+        return parts
+    except ValueError:
+        return []
+
+
 def _c_unwrap_declarator(declarator: Node | None) -> Node | None:
     while declarator and declarator.type == cs.CppNodeType.POINTER_DECLARATOR:
         declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
@@ -214,7 +225,7 @@ PHP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PHP_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PHP_FUNCTION_TYPES),
     get_name=_generic_get_name,
-    file_to_module_parts=_generic_file_to_module,
+    file_to_module_parts=_php_file_to_module,
 )
 
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
@@ -449,6 +460,42 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         class_node_types=cs.SPEC_PHP_CLASS_TYPES,
         module_node_types=cs.SPEC_PHP_MODULE_TYPES,
         call_node_types=cs.SPEC_PHP_CALL_TYPES,
+        import_node_types=cs.SPEC_PHP_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_PHP_IMPORT_FROM_TYPES,
+        function_query="""
+        (function_definition
+            name: (name) @name) @function
+        (method_declaration
+            name: (name) @name) @function
+        (anonymous_function) @function
+        (arrow_function) @function
+        """,
+        class_query="""
+        (class_declaration
+            name: (name) @name) @class
+        (interface_declaration
+            name: (name) @name) @class
+        (trait_declaration
+            name: (name) @name) @class
+        (enum_declaration
+            name: (name) @name) @class
+        """,
+        call_query="""
+        (function_call_expression
+            function: (name) @name) @call
+        (function_call_expression
+            function: (qualified_name) @name) @call
+        (member_call_expression
+            name: (name) @name) @call
+        (scoped_call_expression
+            name: (name) @name) @call
+        (nullsafe_member_call_expression
+            name: (name) @name) @call
+        (object_creation_expression
+            (name) @name) @call
+        (object_creation_expression
+            (qualified_name) @name) @call
+        """,
     ),
     cs.SupportedLanguage.LUA: LanguageSpec(
         language=cs.SupportedLanguage.LUA,

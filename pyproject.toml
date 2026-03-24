@@ -53,6 +53,7 @@ dependencies = [
     "protobuf>=5.27.0",
     "defusedxml>=0.7.1",
     "huggingface-hub[hf-xet]>=0.36.0",
+    "tree-sitter-php>=0.24.1",
 ]
 
 [project.scripts]
@@ -86,6 +87,7 @@ treesitter-full = [
     "tree-sitter-c>=0.24.1",
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
+    "tree-sitter-php>=0.24.1",
 ]
 
 semantic = [
