@@ -6,6 +6,7 @@ from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
 
 from loguru import logger
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from tree_sitter import Node, Parser
 
 from . import constants as cs
@@ -407,36 +408,46 @@ class GraphUpdater:
 
         processed_since_flush = 0
 
-        for filepath in eligible_files:
-            file_key = str(filepath.relative_to(self.repo_path))
-            current_file_keys.add(file_key)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]Indexing files..."),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("", total=None)
 
-            current_hash = _hash_file(filepath)
-            new_hashes[file_key] = current_hash
+            for filepath in eligible_files:
+                file_key = str(filepath.relative_to(self.repo_path))
+                current_file_keys.add(file_key)
 
-            if (
-                not force
-                and file_key in old_hashes
-                and old_hashes[file_key] == current_hash
-            ):
-                logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
-                skipped_count += 1
-                continue
+                current_hash = _hash_file(filepath)
+                new_hashes[file_key] = current_hash
 
-            if file_key in old_hashes:
-                logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
-                self.remove_file_from_state(filepath)
-            else:
-                logger.debug(ls.FILE_HASH_NEW, path=file_key)
+                if (
+                    not force
+                    and file_key in old_hashes
+                    and old_hashes[file_key] == current_hash
+                ):
+                    logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
+                    skipped_count += 1
+                    continue
 
-            changed_count += 1
-            self._process_single_file(filepath)
+                if file_key in old_hashes:
+                    logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
+                    self.remove_file_from_state(filepath)
+                else:
+                    logger.debug(ls.FILE_HASH_NEW, path=file_key)
 
-            processed_since_flush += 1
-            if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
-                logger.info(ls.PERIODIC_FLUSH.format(count=processed_since_flush))
-                self.ingestor.flush_all()
-                processed_since_flush = 0
+                changed_count += 1
+                self._process_single_file(filepath)
+
+                processed_since_flush += 1
+                if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
+                    logger.info(ls.PERIODIC_FLUSH.format(count=processed_since_flush))
+                    self.ingestor.flush_all()
+                    processed_since_flush = 0
+
+                progress.update(task, description=f"{changed_count} processed")
 
         deleted_keys = set(old_hashes.keys()) - current_file_keys
         if deleted_keys:
