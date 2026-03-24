@@ -21,8 +21,6 @@ from codebase_rag.services import QueryProtocol
 
 
 class MockQueryIngestor:
-    """Mock ingestor that satisfies both IngestorProtocol and QueryProtocol."""
-
     def __init__(self) -> None:
         self.execute_write = MagicMock()
         self.flush_all = MagicMock()
@@ -42,18 +40,22 @@ QueryProtocol.register(MockQueryIngestor)
 
 
 class TestCodeChangeEventHandlerDebounce:
-    """Tests for the CodeChangeEventHandler debouncing logic."""
+    @pytest.fixture(autouse=True)
+    def _patch_ignore(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from codebase_rag import constants as cs
+
+        patched = cs.IGNORE_PATTERNS - {"tmp"}
+        monkeypatch.setattr(cs, "IGNORE_PATTERNS", patched)
+        monkeypatch.setattr("realtime_updater.IGNORE_PATTERNS", patched)
 
     @pytest.fixture
     def mock_ingestor(self) -> MockQueryIngestor:
-        """Create a mock ingestor that satisfies QueryProtocol."""
         return MockQueryIngestor()
 
     @pytest.fixture
     def mock_updater(
         self, tmp_path: Path, mock_ingestor: MockQueryIngestor
     ) -> MagicMock:
-        """Create a mock GraphUpdater with required attributes."""
         updater = MagicMock()
         updater.repo_path = tmp_path
         updater.ingestor = mock_ingestor
@@ -68,7 +70,6 @@ class TestCodeChangeEventHandlerDebounce:
 
     @pytest.fixture
     def sample_file(self, tmp_path: Path) -> Path:
-        """Create a sample file for testing."""
         test_file = tmp_path / "test.py"
         test_file.write_text("# test file")
         return test_file
@@ -76,7 +77,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_handler_initialization_with_debounce(
         self, mock_updater: MagicMock
     ) -> None:
-        """Test that handler initializes with correct debounce settings."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -93,7 +93,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_handler_initialization_without_debounce(
         self, mock_updater: MagicMock
     ) -> None:
-        """Test that handler initializes correctly when debouncing is disabled."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -104,7 +103,6 @@ class TestCodeChangeEventHandlerDebounce:
         assert handler.debounce_enabled is False
 
     def test_handler_uses_default_constants(self, mock_updater: MagicMock) -> None:
-        """Test that handler uses default constants when not specified."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(mock_updater)
@@ -115,7 +113,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_is_relevant_filters_ignored_patterns(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        """Test that _is_relevant correctly filters out ignored paths."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(mock_updater)
@@ -133,7 +130,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_dispatch_ignores_directories(
         self, mock_updater: MagicMock, mock_ingestor: MockQueryIngestor, tmp_path: Path
     ) -> None:
-        """Test that dispatch ignores directory events."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -158,7 +154,6 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        """Test that rapid events are batched into a single update."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -186,7 +181,6 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        """Test that events are processed immediately when debounce is disabled."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -207,7 +201,6 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        """Test that max_wait forces an update even during continuous editing."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -234,7 +227,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_different_files_tracked_separately(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        """Test that different files are debounced independently."""
         from realtime_updater import CodeChangeEventHandler
 
         file1 = tmp_path / "file1.py"
@@ -263,7 +255,6 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        """Test that timers and state are cleaned up after processing."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -288,7 +279,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_created_event_triggers_debounce(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        """Test that created events are also debounced."""
         from realtime_updater import CodeChangeEventHandler
 
         new_file = tmp_path / "new_file.py"
@@ -306,7 +296,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_deleted_event_triggers_debounce(
         self, mock_updater: MagicMock, sample_file: Path
     ) -> None:
-        """Test that deleted events are also debounced."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -321,7 +310,6 @@ class TestCodeChangeEventHandlerDebounce:
     def test_thread_safety_concurrent_events(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        """Test thread safety when multiple events arrive concurrently."""
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
@@ -350,17 +338,13 @@ class TestCodeChangeEventHandlerDebounce:
 
 
 class TestDebounceValidation:
-    """Tests for CLI validation of debounce parameters."""
-
     def test_validate_non_negative_float_accepts_zero(self) -> None:
-        """Test that zero is accepted as a valid debounce value."""
         from realtime_updater import _validate_non_negative_float
 
         assert _validate_non_negative_float(0) == 0
         assert _validate_non_negative_float(0.0) == 0.0
 
     def test_validate_non_negative_float_accepts_positive(self) -> None:
-        """Test that positive values are accepted."""
         from realtime_updater import _validate_non_negative_float
 
         assert _validate_non_negative_float(5) == 5
@@ -368,7 +352,6 @@ class TestDebounceValidation:
         assert _validate_non_negative_float(100) == 100
 
     def test_validate_non_negative_float_rejects_negative(self) -> None:
-        """Test that negative values are rejected."""
         import typer
 
         from realtime_updater import _validate_non_negative_float
@@ -381,18 +364,22 @@ class TestDebounceValidation:
 
 
 class TestDebounceIntegration:
-    """Integration tests for debounce with real timing."""
+    @pytest.fixture(autouse=True)
+    def _patch_ignore(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from codebase_rag import constants as cs
+
+        patched = cs.IGNORE_PATTERNS - {"tmp"}
+        monkeypatch.setattr(cs, "IGNORE_PATTERNS", patched)
+        monkeypatch.setattr("realtime_updater.IGNORE_PATTERNS", patched)
 
     @pytest.fixture
     def mock_ingestor(self) -> MockQueryIngestor:
-        """Create a mock ingestor that satisfies QueryProtocol."""
         return MockQueryIngestor()
 
     @pytest.fixture
     def mock_updater(
         self, tmp_path: Path, mock_ingestor: MockQueryIngestor
     ) -> MagicMock:
-        """Create a mock GraphUpdater."""
         updater = MagicMock()
         updater.repo_path = tmp_path
         updater.ingestor = mock_ingestor
@@ -439,7 +426,6 @@ class TestDebounceIntegration:
     def test_single_edit_after_quiet_period(
         self, mock_updater: MagicMock, mock_ingestor: MockQueryIngestor, tmp_path: Path
     ) -> None:
-        """Test that a single edit after quiet period is processed correctly."""
         from realtime_updater import CodeChangeEventHandler
 
         test_file = tmp_path / "single.py"

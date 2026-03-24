@@ -30,7 +30,7 @@ def _bypass_protocol_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
-    h = CodeChangeEventHandler(mock_updater)
+    h = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
     h.ignore_patterns = h.ignore_patterns - {"tmp", "temp"}
     return h
 

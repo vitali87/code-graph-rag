@@ -149,11 +149,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             else:
                 # (H) Schedule debounced processing
                 remaining_wait = self.max_wait_seconds - time_since_first
+                effective_delay = min(self.debounce_seconds, remaining_wait)
                 timer = threading.Timer(
-                    self.debounce_seconds,
+                    effective_delay,
                     self._process_debounced_change,
                     args=[relative_path_str],
                 )
+                timer.daemon = True
                 self.timers[relative_path_str] = timer
                 timer.start()
 
@@ -171,6 +173,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         timer = threading.Timer(
             0, self._process_debounced_change, args=[relative_path_str]
         )
+        timer.daemon = True
         self.timers[relative_path_str] = timer
         timer.start()
 
