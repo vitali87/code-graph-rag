@@ -13,6 +13,7 @@ from codebase_rag.parsers.handlers.cpp import CppHandler
 from codebase_rag.parsers.handlers.java import JavaHandler
 from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 from codebase_rag.parsers.handlers.lua import LuaHandler
+from codebase_rag.parsers.handlers.php import PhpHandler
 from codebase_rag.parsers.handlers.python import PythonHandler
 from codebase_rag.parsers.handlers.rust import RustHandler
 from codebase_rag.tests.conftest import create_mock_node
@@ -62,6 +63,13 @@ try:
 except ImportError:
     LUA_AVAILABLE = False
 
+try:
+    import tree_sitter_php as tsphp
+
+    PHP_AVAILABLE = True
+except ImportError:
+    PHP_AVAILABLE = False
+
 
 @pytest.fixture
 def js_parser() -> Parser | None:
@@ -108,6 +116,14 @@ def lua_parser() -> Parser | None:
     if not LUA_AVAILABLE:
         return None
     language = Language(tslua.language())
+    return Parser(language)
+
+
+@pytest.fixture
+def php_parser() -> Parser | None:
+    if not PHP_AVAILABLE:
+        return None
+    language = Language(tsphp.language_php())
     return Parser(language)
 
 
@@ -1105,3 +1121,168 @@ class TestPythonHandler:
 
         result = handler.extract_decorators(class_node)
         assert result == ["@dataclass(frozen=True, slots=True)"]
+
+
+def _find_php_node(root: ASTNode, node_type: str) -> ASTNode | None:
+    if root.type == node_type:
+        return root
+    for child in root.children:
+        if result := _find_php_node(child, node_type):
+            return result
+    return None
+
+
+@pytest.mark.skipif(not PHP_AVAILABLE, reason="tree-sitter-php not available")
+class TestPhpHandler:
+    def test_extract_function_name_from_function_definition(
+        self, php_parser: Parser
+    ) -> None:
+        handler = PhpHandler()
+        code = b"<?php function myFunction() {}"
+        tree = php_parser.parse(code)
+        func_node = _find_php_node(tree.root_node, cs.TS_PHP_FUNCTION_DEFINITION)
+        assert func_node is not None
+
+        result = handler.extract_function_name(func_node)
+        assert result == "myFunction"
+
+    def test_extract_function_name_from_method_declaration(
+        self, php_parser: Parser
+    ) -> None:
+        handler = PhpHandler()
+        code = b"<?php class Foo { public function bar() {} }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        result = handler.extract_function_name(method_node)
+        assert result == "bar"
+
+    def test_extract_function_name_anonymous_function(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php $f = function() { return 1; };"
+        tree = php_parser.parse(code)
+        anon_node = _find_php_node(tree.root_node, cs.TS_PHP_ANONYMOUS_FUNCTION)
+        assert anon_node is not None
+
+        result = handler.extract_function_name(anon_node)
+        assert result is not None
+        assert result.startswith("anonymous_")
+
+    def test_extract_function_name_arrow_function(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php $g = fn() => 2;"
+        tree = php_parser.parse(code)
+        arrow_node = _find_php_node(tree.root_node, cs.TS_PHP_ARROW_FUNCTION)
+        assert arrow_node is not None
+
+        result = handler.extract_function_name(arrow_node)
+        assert result is not None
+        assert result.startswith("arrow_")
+
+    def test_is_class_method_inside_class(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php class Foo { public function bar() {} }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        assert handler.is_class_method(method_node) is True
+
+    def test_is_class_method_outside_class(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php function standalone() {}"
+        tree = php_parser.parse(code)
+        func_node = _find_php_node(tree.root_node, cs.TS_PHP_FUNCTION_DEFINITION)
+        assert func_node is not None
+
+        assert handler.is_class_method(func_node) is False
+
+    def test_is_class_method_inside_trait(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php trait MyTrait { public function traitMethod() {} }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        assert handler.is_class_method(method_node) is True
+
+    def test_is_class_method_inside_interface(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php interface Iface { public function doIt(); }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        assert handler.is_class_method(method_node) is True
+
+    def test_is_function_exported_public_method(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php class Foo { public function bar() {} }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        assert handler.is_function_exported(method_node) is True
+
+    def test_is_function_exported_private_method(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php class Foo { private function secret() {} }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        assert handler.is_function_exported(method_node) is False
+
+    def test_is_function_exported_standalone_function(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php function globalFunc() {}"
+        tree = php_parser.parse(code)
+        func_node = _find_php_node(tree.root_node, cs.TS_PHP_FUNCTION_DEFINITION)
+        assert func_node is not None
+
+        assert handler.is_function_exported(func_node) is True
+
+    def test_extract_decorators_php8_attribute(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b'<?php class Foo { #[Route("/products")] public function index() {} }'
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        result = handler.extract_decorators(method_node)
+        assert len(result) == 1
+        assert "Route" in result[0]
+
+    def test_extract_decorators_multiple_attributes(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php class C { #[First] #[Second] public function m() {} }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        result = handler.extract_decorators(method_node)
+        assert len(result) == 2
+
+    def test_extract_decorators_no_attributes(self, php_parser: Parser) -> None:
+        handler = PhpHandler()
+        code = b"<?php class Foo { public function bar() {} }"
+        tree = php_parser.parse(code)
+        method_node = _find_php_node(tree.root_node, cs.TS_PHP_METHOD_DECLARATION)
+        assert method_node is not None
+
+        result = handler.extract_decorators(method_node)
+        assert result == []
+
+    def test_extract_decorators_on_function_definition(
+        self, php_parser: Parser
+    ) -> None:
+        handler = PhpHandler()
+        code = b'<?php #[Deprecated("use newFunc")] function oldFunc() {}'
+        tree = php_parser.parse(code)
+        func_node = _find_php_node(tree.root_node, cs.TS_PHP_FUNCTION_DEFINITION)
+        assert func_node is not None
+
+        result = handler.extract_decorators(func_node)
+        assert len(result) == 1
+        assert "Deprecated" in result[0]

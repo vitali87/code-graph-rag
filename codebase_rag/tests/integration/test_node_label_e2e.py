@@ -864,7 +864,6 @@ class TestCSharpNodeLabels:
         assert "Status" in enum_names
 
 
-@pytest.mark.skip(reason=SKIP_PHP)
 class TestPhpNodeLabels:
     def test_php_creates_class_nodes(
         self, memgraph_ingestor: MemgraphIngestor, php_project: Path
@@ -939,7 +938,7 @@ DEFINES_TEST_PARAMS = [
     ("java_project", None),
     ("cpp_project", None),
     ("csharp_project", SKIP_CSHARP),
-    ("php_project", SKIP_PHP),
+    ("php_project", None),
     ("lua_project", None),
 ]
 

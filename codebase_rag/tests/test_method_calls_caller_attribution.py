@@ -628,3 +628,52 @@ impl Pipeline {
         method_calls = _get_method_caller_calls(mock_ingestor)
         run_calls = [c for c in method_calls if "run" in _caller_qn(c)]
         assert len(run_calls) >= 1
+
+
+class TestPhpMethodCallerAttribution:
+    def test_method_calls_method(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        (temp_repo / "service.php").write_text(
+            encoding="utf-8",
+            data="""<?php
+class Service {
+    public function validate() {}
+
+    public function process() {
+        $this->validate();
+    }
+}
+""",
+        )
+        run_updater(temp_repo, mock_ingestor, cs.SupportedLanguage.PHP)
+
+        method_calls = _get_method_caller_calls(mock_ingestor)
+        callers = [_caller_qn(c) for c in method_calls]
+        assert any("process" in qn for qn in callers)
+
+    def test_multiple_methods_calling_each_other(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        (temp_repo / "pipeline.php").write_text(
+            encoding="utf-8",
+            data="""<?php
+class Pipeline {
+    public function step1() {}
+
+    public function step2() {
+        $this->step1();
+    }
+
+    public function run() {
+        $this->step2();
+    }
+}
+""",
+        )
+        run_updater(temp_repo, mock_ingestor, cs.SupportedLanguage.PHP)
+
+        method_calls = _get_method_caller_calls(mock_ingestor)
+        callers = {_caller_qn(c) for c in method_calls}
+        assert any("step2" in qn for qn in callers)
+        assert any("run" in qn for qn in callers)
