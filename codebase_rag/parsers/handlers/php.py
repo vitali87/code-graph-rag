@@ -9,8 +9,6 @@ from .base import BaseLanguageHandler
 if TYPE_CHECKING:
     from ...types_defs import ASTNode
 
-TS_PHP_ATTRIBUTE_GROUP = "attribute_group"
-
 
 class PhpHandler(BaseLanguageHandler):
     __slots__ = ()
@@ -56,7 +54,7 @@ class PhpHandler(BaseLanguageHandler):
         for child in node.children:
             if child.type == cs.TS_PHP_ATTRIBUTE_LIST:
                 for group in child.children:
-                    if group.type == TS_PHP_ATTRIBUTE_GROUP:
+                    if group.type == cs.TS_PHP_ATTRIBUTE_GROUP:
                         for attr in group.children:
                             if attr.type == cs.TS_PHP_ATTRIBUTE:
                                 if text := safe_decode_text(attr):

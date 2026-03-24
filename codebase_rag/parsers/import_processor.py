@@ -794,6 +794,15 @@ class ImportProcessor:
         )
         logger.debug(log_template, name=module_name)
 
+    _PHP_INCLUDE_REQUIRE_TYPES = frozenset(
+        {
+            cs.TS_PHP_INCLUDE_EXPRESSION,
+            cs.TS_PHP_INCLUDE_ONCE_EXPRESSION,
+            cs.TS_PHP_REQUIRE_EXPRESSION,
+            cs.TS_PHP_REQUIRE_ONCE_EXPRESSION,
+        }
+    )
+
     def _parse_php_imports(self, captures: dict, module_qn: str) -> None:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
@@ -801,6 +810,8 @@ class ImportProcessor:
         for import_node in all_imports:
             if import_node.type == cs.TS_PHP_NAMESPACE_USE_DECLARATION:
                 self._handle_php_use_declaration(import_node, module_qn)
+            elif import_node.type in self._PHP_INCLUDE_REQUIRE_TYPES:
+                self._handle_php_include_require(import_node, module_qn)
 
     def _handle_php_use_declaration(self, use_node: Node, module_qn: str) -> None:
         for child in use_node.named_children:
@@ -823,6 +834,23 @@ class ImportProcessor:
                 parts = imported_path.split(cs.SEPARATOR_DOT)
                 local_name = parts[-1] if parts else imported_path
             self.import_mapping[module_qn][local_name] = imported_path
+
+    def _handle_php_include_require(self, node: Node, module_qn: str) -> None:
+        for child in node.children:
+            if child.type in {"string", "encapsed_string"}:
+                raw = safe_decode_with_fallback(child)
+                if not raw:
+                    continue
+                path_str = raw.strip("'\"")
+                path_str = path_str.replace("/", cs.SEPARATOR_DOT).replace(
+                    "\\", cs.SEPARATOR_DOT
+                )
+                if path_str.endswith(".php"):
+                    path_str = path_str[:-4]
+                parts = path_str.split(cs.SEPARATOR_DOT)
+                local_name = parts[-1] if parts else path_str
+                self.import_mapping[module_qn][local_name] = path_str
+                return
 
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageSpec
