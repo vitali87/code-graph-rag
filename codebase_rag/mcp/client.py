@@ -13,7 +13,8 @@ app = typer.Typer()
 
 
 async def query_mcp_server(question: str) -> dict[str, str]:
-    with open(os.devnull, "w") as devnull:
+    devnull = open(os.devnull, "w")  # noqa: ASYNC230, SIM115
+    try:
         server_params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "codebase_rag.cli", "mcp-server"],
@@ -37,6 +38,8 @@ async def query_mcp_server(question: str) -> dict[str, str]:
                     except json.JSONDecodeError:
                         return {"output": response_text}
                 return {"output": "No response from server"}
+    finally:
+        devnull.close()
 
 
 @app.command()

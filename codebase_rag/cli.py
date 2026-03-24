@@ -18,8 +18,8 @@ from .main import (
     connect_memgraph,
     export_graph_to_file,
     main_async,
-    main_async_single_query,
     main_optimize_async,
+    main_single_query,
     prompt_for_unignored_directories,
     style,
     update_model_settings,
@@ -247,11 +247,7 @@ def start(
 
     try:
         if ask_agent:
-            asyncio.run(
-                main_async_single_query(
-                    target_repo_path, effective_batch_size, ask_agent
-                )
-            )
+            main_single_query(target_repo_path, effective_batch_size, ask_agent)
         else:
             asyncio.run(main_async(target_repo_path, effective_batch_size))
     except KeyboardInterrupt:
