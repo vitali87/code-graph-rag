@@ -268,6 +268,121 @@ class TestRagAgentProperty:
             tools_arg = mock_create.call_args[1]["tools"]
             assert mock_tool in tools_arg
 
+    def test_rag_agent_includes_semantic_search_when_available(
+        self, temp_project_root: Path
+    ) -> None:
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with (
+            patch(
+                "codebase_rag.mcp.tools.has_semantic_dependencies",
+                return_value=True,
+            ),
+            patch(
+                "codebase_rag.tools.semantic_search.create_semantic_search_tool"
+            ) as mock_ss,
+        ):
+            mock_ss_tool = MagicMock()
+            mock_ss.return_value = mock_ss_tool
+
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+        with (
+            patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
+            patch("codebase_rag.tools.semantic_search.create_get_function_source_tool"),
+        ):
+            mock_create.return_value = MagicMock()
+            registry.rag_agent
+
+            tools_arg = mock_create.call_args[1]["tools"]
+            assert mock_ss_tool in tools_arg
+
+    def test_rag_agent_caches_after_first_access(self, temp_project_root: Path) -> None:
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with patch(
+            "codebase_rag.mcp.tools.has_semantic_dependencies",
+            return_value=False,
+        ):
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+        with (
+            patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
+            patch("codebase_rag.tools.semantic_search.create_get_function_source_tool"),
+        ):
+            mock_create.return_value = MagicMock()
+
+            agent1 = registry.rag_agent
+            agent2 = registry.rag_agent
+
+            mock_create.assert_called_once()
+            assert agent1 is agent2
+
+
+class TestMainSingleQuery:
+    def test_main_single_query_prints_output(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from codebase_rag.main import main_single_query
+
+        mock_response = MagicMock()
+        mock_response.output = "The answer is 42."
+
+        with (
+            patch("codebase_rag.main.connect_memgraph") as mock_conn,
+            patch("codebase_rag.main._initialize_services_and_agent") as mock_init,
+            patch("codebase_rag.main.asyncio") as mock_asyncio,
+            patch("codebase_rag.main._setup_common_initialization"),
+        ):
+            mock_agent = MagicMock()
+            mock_init.return_value = (mock_agent, [])
+            mock_asyncio.run.return_value = mock_response
+            mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_conn.return_value.__exit__ = MagicMock(return_value=False)
+
+            main_single_query(str(tmp_path), 1000, "What is the answer?")
+
+            captured = capsys.readouterr()
+            assert "The answer is 42." in captured.out
+
+    def test_main_single_query_routes_logs_to_stderr(self, tmp_path: Path) -> None:
+        from codebase_rag.main import main_single_query
+
+        mock_response = MagicMock()
+        mock_response.output = "result"
+
+        with (
+            patch("codebase_rag.main.connect_memgraph") as mock_conn,
+            patch("codebase_rag.main._initialize_services_and_agent") as mock_init,
+            patch("codebase_rag.main.asyncio") as mock_asyncio,
+            patch("codebase_rag.main._setup_common_initialization"),
+            patch("codebase_rag.main.logger") as mock_logger,
+        ):
+            mock_agent = MagicMock()
+            mock_init.return_value = (mock_agent, [])
+            mock_asyncio.run.return_value = mock_response
+            mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_conn.return_value.__exit__ = MagicMock(return_value=False)
+
+            main_single_query(str(tmp_path), 1000, "test")
+
+            mock_logger.remove.assert_called_once()
+            mock_logger.add.assert_called_once()
+            add_args = mock_logger.add.call_args
+            import sys
+
+            assert add_args[0][0] is sys.stderr
+
 
 class TestMCPClientImport:
     def test_query_mcp_server_is_callable(self) -> None:
@@ -281,3 +396,10 @@ class TestMCPClientImport:
         source = inspect.getsource(client)
         assert "MCPToolName.ASK_AGENT" in source
         assert "MCPParamName.QUESTION" in source
+
+    def test_query_with_errlog_is_async(self) -> None:
+        import asyncio
+
+        from codebase_rag.mcp.client import _query_with_errlog
+
+        assert asyncio.iscoroutinefunction(_query_with_errlog)
