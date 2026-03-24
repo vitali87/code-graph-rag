@@ -17,7 +17,6 @@ pytestmark = [pytest.mark.integration]
 SKIP_GO = "Go is in development status"
 SKIP_SCALA = "Scala is in development status"
 SKIP_CSHARP = "C# is in development status"
-SKIP_PHP = "PHP is in development status"
 
 
 PYTHON_CODE = """\
