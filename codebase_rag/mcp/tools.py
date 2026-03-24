@@ -13,7 +13,10 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.tools import tool_descriptions as td
-from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from codebase_rag.tools.code_retrieval import (
+    CodeRetriever,
+    create_code_retrieval_tool,
+)
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
@@ -36,6 +39,7 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
 )
+from codebase_rag.utils.dependencies import has_semantic_dependencies
 from codebase_rag.vector_store import delete_project_embeddings
 
 
@@ -69,6 +73,19 @@ class MCPToolsRegistry:
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
+
+        self._semantic_search_tool = None
+        self._semantic_search_available = False
+
+        if has_semantic_dependencies():
+            from codebase_rag.tools.semantic_search import (
+                create_semantic_search_tool,
+            )
+
+            self._semantic_search_tool = create_semantic_search_tool()
+            self._semantic_search_available = True
+        else:
+            logger.info(lg.MCP_SEMANTIC_NOT_AVAILABLE)
 
         self._tools: dict[str, ToolMetadata] = {
             cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
@@ -123,6 +140,17 @@ class MCPToolsRegistry:
                     required=[],
                 ),
                 handler=self.index_repository,
+                returns_json=False,
+            ),
+            cs.MCPToolName.UPDATE_REPOSITORY: ToolMetadata(
+                name=cs.MCPToolName.UPDATE_REPOSITORY,
+                description=td.MCP_TOOLS[cs.MCPToolName.UPDATE_REPOSITORY],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={},
+                    required=[],
+                ),
+                handler=self.update_repository,
                 returns_json=False,
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
@@ -250,6 +278,28 @@ class MCPToolsRegistry:
                 returns_json=False,
             ),
         }
+        if self._semantic_search_available:
+            self._tools[cs.MCPToolName.SEMANTIC_SEARCH] = ToolMetadata(
+                name=cs.MCPToolName.SEMANTIC_SEARCH,
+                description=td.MCP_TOOLS[cs.MCPToolName.SEMANTIC_SEARCH],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
+                        ),
+                        cs.MCPParamName.TOP_K: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_TOP_K,
+                            default=5,
+                        ),
+                    },
+                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
+                ),
+                handler=self.semantic_search,
+                returns_json=False,
+            )
 
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
@@ -340,6 +390,33 @@ class MCPToolsRegistry:
         except Exception as e:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)
+
+    def _update_repository_sync(self) -> str:
+        updater = GraphUpdater(
+            ingestor=self.ingestor,
+            repo_path=Path(self.project_root),
+            parsers=self.parsers,
+            queries=self.queries,
+        )
+        updater.run()
+        return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+
+    async def update_repository(self) -> str:
+        logger.info(lg.MCP_UPDATING_REPO.format(path=self.project_root))
+        try:
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._update_repository_sync)
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_UPDATING.format(error=e))
+            return cs.MCP_UPDATE_ERROR.format(error=e)
+
+    async def semantic_search(self, natural_language_query: str, top_k: int = 5) -> str:
+        assert self._semantic_search_tool is not None
+        logger.info(lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
+        result = await self._semantic_search_tool.function(
+            query=natural_language_query, top_k=top_k
+        )
+        return str(result)
 
     async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))

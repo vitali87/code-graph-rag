@@ -2458,12 +2458,14 @@ class MCPToolName(StrEnum):
     DELETE_PROJECT = "delete_project"
     WIPE_DATABASE = "wipe_database"
     INDEX_REPOSITORY = "index_repository"
+    UPDATE_REPOSITORY = "update_repository"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
+    SEMANTIC_SEARCH = "semantic_search"
 
 
 # (H) MCP transport selection
@@ -2509,6 +2511,7 @@ class MCPParamName(StrEnum):
     LIMIT = "limit"
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
+    TOP_K = "top_k"
 
 
 # (H) MCP server constants
@@ -2527,6 +2530,11 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
+MCP_UPDATE_ERROR = "Error updating repository: {error}"
+MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
+    "Semantic search is not available. Install with: uv sync --extra semantic"
+)
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."
