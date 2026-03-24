@@ -88,13 +88,19 @@ MCP_WIPE_DATABASE = (
 )
 
 MCP_INDEX_REPOSITORY = (
+    "WARNING: Clears the entire database including embeddings. "
     "Parse and ingest the repository into the Memgraph knowledge graph. "
-    "This builds a comprehensive graph of functions, classes, dependencies, and relationships. "
-    "Note: This preserves other projects - only the current project is re-indexed."
+    "Use update_repository for incremental updates. Only use when explicitly requested."
+)
+
+MCP_UPDATE_REPOSITORY = (
+    "Update the repository in the Memgraph knowledge graph without clearing existing data. "
+    "Use this for incremental updates."
 )
 
 MCP_QUERY_CODE_GRAPH = (
     "Query the codebase knowledge graph using natural language. "
+    "Use semantic_search unless you know the exact names of classes/functions you are searching for. "
     "Ask questions like 'What functions call UserService.create_user?' or "
     "'Show me all classes that implement the Repository interface'."
 )
@@ -117,6 +123,12 @@ MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
 
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
 
+MCP_SEMANTIC_SEARCH = (
+    "Performs a semantic search for functions based on a natural language query "
+    "describing their purpose, returning a list of potential matches with similarity scores. "
+    "Requires the 'semantic' extra to be installed."
+)
+
 MCP_PARAM_PROJECT_NAME = "Name of the project to delete (e.g., 'my-project')"
 MCP_PARAM_CONFIRM = "Must be true to confirm the wipe operation"
 MCP_PARAM_NATURAL_LANGUAGE_QUERY = "Your question in plain English about the codebase"
@@ -130,6 +142,7 @@ MCP_PARAM_OFFSET = "Line number to start reading from (0-based, optional)"
 MCP_PARAM_LIMIT = "Maximum number of lines to read (optional)"
 MCP_PARAM_CONTENT = "Content to write to the file"
 MCP_PARAM_DIRECTORY_PATH = "Relative path to directory from project root (default: '.')"
+MCP_PARAM_TOP_K = "Max number of results to return (optional, default: 5)"
 
 
 MCP_TOOLS: dict[MCPToolName, str] = {
@@ -137,12 +150,14 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.DELETE_PROJECT: MCP_DELETE_PROJECT,
     MCPToolName.WIPE_DATABASE: MCP_WIPE_DATABASE,
     MCPToolName.INDEX_REPOSITORY: MCP_INDEX_REPOSITORY,
+    MCPToolName.UPDATE_REPOSITORY: MCP_UPDATE_REPOSITORY,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,
     MCPToolName.READ_FILE: MCP_READ_FILE,
     MCPToolName.WRITE_FILE: MCP_WRITE_FILE,
     MCPToolName.LIST_DIRECTORY: MCP_LIST_DIRECTORY,
+    MCPToolName.SEMANTIC_SEARCH: MCP_SEMANTIC_SEARCH,
 }
 
 AGENTIC_TOOLS: dict[AgenticToolName, str] = {
