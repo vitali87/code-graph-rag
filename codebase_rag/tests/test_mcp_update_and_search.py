@@ -78,9 +78,23 @@ class TestUpdateRepository:
 
 class TestSemanticSearchRegistration:
     def test_semantic_search_not_registered_without_deps(
-        self, mcp_registry: MCPToolsRegistry
+        self, temp_project_root: Path
     ) -> None:
-        assert cs.MCPToolName.SEMANTIC_SEARCH not in mcp_registry._tools
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with patch(
+            "codebase_rag.mcp.tools.has_semantic_dependencies",
+            return_value=False,
+        ):
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+        assert cs.MCPToolName.SEMANTIC_SEARCH not in registry._tools
+        assert registry._semantic_search_available is False
 
     def test_semantic_search_registered_with_deps(
         self, temp_project_root: Path
