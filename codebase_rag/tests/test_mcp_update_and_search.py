@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.mcp.client import query_mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
 pytestmark = [pytest.mark.anyio]
@@ -203,3 +204,82 @@ class TestToolDescriptions:
 
         assert "current project" in MCP_INDEX_REPOSITORY
         assert "entire database" not in MCP_INDEX_REPOSITORY
+
+
+class TestRagAgentProperty:
+    def test_rag_agent_setter_allows_mock(self, mcp_registry: MCPToolsRegistry) -> None:
+        mock_agent = MagicMock()
+        mcp_registry.rag_agent = mock_agent
+        assert mcp_registry.rag_agent is mock_agent
+
+    def test_rag_agent_lazy_init(self, temp_project_root: Path) -> None:
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with patch(
+            "codebase_rag.mcp.tools.has_semantic_dependencies",
+            return_value=False,
+        ):
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+        assert registry._rag_agent is None
+
+        with patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create:
+            mock_agent = MagicMock()
+            mock_create.return_value = mock_agent
+
+            agent = registry.rag_agent
+
+            mock_create.assert_called_once()
+            assert agent is mock_agent
+
+    def test_rag_agent_includes_function_source_tool(
+        self, temp_project_root: Path
+    ) -> None:
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with patch(
+            "codebase_rag.mcp.tools.has_semantic_dependencies",
+            return_value=False,
+        ):
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+        with (
+            patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
+            patch(
+                "codebase_rag.tools.semantic_search.create_get_function_source_tool"
+            ) as mock_fst,
+        ):
+            mock_tool = MagicMock()
+            mock_fst.return_value = mock_tool
+            mock_create.return_value = MagicMock()
+
+            registry.rag_agent
+
+            tools_arg = mock_create.call_args[1]["tools"]
+            assert mock_tool in tools_arg
+
+
+class TestMCPClientImport:
+    def test_query_mcp_server_is_async(self) -> None:
+        import asyncio
+
+        assert asyncio.iscoroutinefunction(query_mcp_server)
+
+    def test_client_uses_constants(self) -> None:
+        import inspect
+
+        from codebase_rag.mcp import client
+
+        source = inspect.getsource(client)
+        assert "MCPToolName.ASK_AGENT" in source
+        assert "MCPParamName.QUESTION" in source
