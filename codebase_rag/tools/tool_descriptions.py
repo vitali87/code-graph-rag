@@ -88,7 +88,7 @@ MCP_WIPE_DATABASE = (
 )
 
 MCP_INDEX_REPOSITORY = (
-    "WARNING: Clears the entire database including embeddings. "
+    "WARNING: Clears all data for the current project including its embeddings. "
     "Parse and ingest the repository into the Memgraph knowledge graph. "
     "Use update_repository for incremental updates. Only use when explicitly requested."
 )

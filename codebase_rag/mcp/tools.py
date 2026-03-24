@@ -292,7 +292,7 @@ class MCPToolsRegistry:
                         cs.MCPParamName.TOP_K: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_TOP_K,
-                            default="5",
+                            default=5,
                         ),
                     },
                     required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
@@ -411,8 +411,7 @@ class MCPToolsRegistry:
             return cs.MCP_UPDATE_ERROR.format(error=e)
 
     async def semantic_search(self, natural_language_query: str, top_k: int = 5) -> str:
-        if self._semantic_search_tool is None:
-            return cs.MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE
+        assert self._semantic_search_tool is not None
         logger.info(lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
         result = await self._semantic_search_tool.function(
             query=natural_language_query, top_k=top_k

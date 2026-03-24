@@ -350,7 +350,7 @@ MCPToolArguments = dict[str, str | int | None]
 class MCPInputSchemaProperty(TypedDict, total=False):
     type: str
     description: str
-    default: str
+    default: str | int
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
