@@ -384,7 +384,7 @@ class TestMainSingleQuery:
             assert add_args[0][0] is sys.stderr
 
 
-class TestMCPClientImport:
+class TestMCPClient:
     def test_query_mcp_server_is_callable(self) -> None:
         assert callable(query_mcp_server)
 
@@ -403,3 +403,94 @@ class TestMCPClientImport:
         from codebase_rag.mcp.client import _query_with_errlog
 
         assert asyncio.iscoroutinefunction(_query_with_errlog)
+
+    async def test_query_with_errlog_json_response(self) -> None:
+        import io
+
+        from codebase_rag.mcp.client import _query_with_errlog
+
+        mock_content = MagicMock()
+        mock_content.text = '{"output": "test answer"}'
+        mock_result = MagicMock()
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_transport = AsyncMock()
+        mock_transport.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("codebase_rag.mcp.client.stdio_client", return_value=mock_transport),
+            patch("codebase_rag.mcp.client.ClientSession", return_value=mock_session),
+        ):
+            result = await _query_with_errlog("test question", io.StringIO())
+
+        assert result == {"output": "test answer"}
+
+    async def test_query_with_errlog_non_json_response(self) -> None:
+        import io
+
+        from codebase_rag.mcp.client import _query_with_errlog
+
+        mock_content = MagicMock()
+        mock_content.text = "plain text response"
+        mock_result = MagicMock()
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_transport = AsyncMock()
+        mock_transport.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("codebase_rag.mcp.client.stdio_client", return_value=mock_transport),
+            patch("codebase_rag.mcp.client.ClientSession", return_value=mock_session),
+        ):
+            result = await _query_with_errlog("test", io.StringIO())
+
+        assert result == {"output": "plain text response"}
+
+    async def test_query_with_errlog_empty_response(self) -> None:
+        import io
+
+        from codebase_rag.mcp.client import _query_with_errlog
+
+        mock_result = MagicMock()
+        mock_result.content = []
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_transport = AsyncMock()
+        mock_transport.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("codebase_rag.mcp.client.stdio_client", return_value=mock_transport),
+            patch("codebase_rag.mcp.client.ClientSession", return_value=mock_session),
+        ):
+            result = await _query_with_errlog("test", io.StringIO())
+
+        assert result == {"output": "No response from server"}
+
+    def test_query_mcp_server_opens_devnull(self) -> None:
+        with (
+            patch("codebase_rag.mcp.client.asyncio") as mock_asyncio,
+            patch("builtins.open", MagicMock()) as mock_open,
+        ):
+            mock_asyncio.run.return_value = {"output": "result"}
+            query_mcp_server("test")
+            mock_open.assert_called_once()
