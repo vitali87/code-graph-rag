@@ -38,9 +38,7 @@ class TestUpdateRepository:
     async def test_update_repository_success(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        with patch(
-            "codebase_rag.mcp.tools.GraphUpdater"
-        ) as mock_updater_cls:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater_cls.return_value = mock_updater
 
@@ -53,9 +51,7 @@ class TestUpdateRepository:
     async def test_update_repository_error(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        with patch(
-            "codebase_rag.mcp.tools.GraphUpdater"
-        ) as mock_updater_cls:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.side_effect = RuntimeError("parse error")
 
             result = await mcp_registry.update_repository()
@@ -70,9 +66,7 @@ class TestUpdateRepository:
     async def test_update_repository_no_wipe(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        with patch(
-            "codebase_rag.mcp.tools.GraphUpdater"
-        ) as mock_updater_cls:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater_cls.return_value = mock_updater
 
@@ -115,9 +109,7 @@ class TestSemanticSearchRegistration:
             assert cs.MCPToolName.SEMANTIC_SEARCH in registry._tools
             assert registry._semantic_search_available is True
 
-    async def test_semantic_search_calls_tool(
-        self, temp_project_root: Path
-    ) -> None:
+    async def test_semantic_search_calls_tool(self, temp_project_root: Path) -> None:
         mock_ingestor = MagicMock()
         mock_cypher_gen = MagicMock()
 
