@@ -914,3 +914,7 @@ We also offer custom development, integration consulting, technical support cont
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=vitali87/code-graph-rag&type=Date)](https://www.star-history.com/#vitali87/code-graph-rag&Date)
+
+## Fork History
+
+[![Fork History Chart](https://fork-history.site/svg?repos=vitali87/code-graph-rag)](https://fork-history.site/#vitali87/code-graph-rag)
