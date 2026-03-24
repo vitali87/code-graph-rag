@@ -410,11 +410,11 @@ class GraphUpdater:
 
         with Progress(
             SpinnerColumn(),
-            TextColumn("[bold blue]Indexing files..."),
+            TextColumn(ls.PROGRESS_INDEXING_LABEL),
             TextColumn("[progress.description]{task.description}"),
             transient=True,
         ) as progress:
-            task = progress.add_task("", total=None)
+            task = progress.add_task("", total=len(eligible_files))
 
             for filepath in eligible_files:
                 file_key = str(filepath.relative_to(self.repo_path))
@@ -430,6 +430,7 @@ class GraphUpdater:
                 ):
                     logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
                     skipped_count += 1
+                    progress.advance(task)
                     continue
 
                 if file_key in old_hashes:
@@ -447,7 +448,11 @@ class GraphUpdater:
                     self.ingestor.flush_all()
                     processed_since_flush = 0
 
-                progress.update(task, description=f"{changed_count} processed")
+                progress.update(
+                    task,
+                    advance=1,
+                    description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
+                )
 
         deleted_keys = set(old_hashes.keys()) - current_file_keys
         if deleted_keys:
