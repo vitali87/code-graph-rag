@@ -270,10 +270,8 @@ class TestRagAgentProperty:
 
 
 class TestMCPClientImport:
-    def test_query_mcp_server_is_async(self) -> None:
-        import asyncio
-
-        assert asyncio.iscoroutinefunction(query_mcp_server)
+    def test_query_mcp_server_is_callable(self) -> None:
+        assert callable(query_mcp_server)
 
     def test_client_uses_constants(self) -> None:
         import inspect

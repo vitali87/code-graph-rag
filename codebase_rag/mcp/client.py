@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import os
 import sys
@@ -12,34 +13,35 @@ from codebase_rag import constants as cs
 app = typer.Typer()
 
 
-async def query_mcp_server(question: str) -> dict[str, str]:
-    devnull = open(os.devnull, "w")  # noqa: ASYNC230, SIM115
-    try:
-        server_params = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "codebase_rag.cli", "mcp-server"],
-        )
+async def _query_with_errlog(question: str, errlog: io.TextIOWrapper) -> dict[str, str]:
+    server_params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "codebase_rag.cli", "mcp-server"],
+    )
 
-        async with stdio_client(server=server_params, errlog=devnull) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(
-                    cs.MCPToolName.ASK_AGENT,
-                    {cs.MCPParamName.QUESTION: question},
-                )
+    async with stdio_client(server=server_params, errlog=errlog) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                cs.MCPToolName.ASK_AGENT,
+                {cs.MCPParamName.QUESTION: question},
+            )
 
-                if result.content:
-                    response_text = result.content[0].text
-                    try:
-                        parsed = json.loads(response_text)
-                        if isinstance(parsed, dict):
-                            return parsed
-                        return {"output": str(parsed)}
-                    except json.JSONDecodeError:
-                        return {"output": response_text}
-                return {"output": "No response from server"}
-    finally:
-        devnull.close()
+            if result.content:
+                response_text = result.content[0].text
+                try:
+                    parsed = json.loads(response_text)
+                    if isinstance(parsed, dict):
+                        return parsed
+                    return {"output": str(parsed)}
+                except json.JSONDecodeError:
+                    return {"output": response_text}
+            return {"output": "No response from server"}
+
+
+def query_mcp_server(question: str) -> dict[str, str]:
+    with open(os.devnull, "w") as devnull:  # noqa: SIM115
+        return asyncio.run(_query_with_errlog(question, devnull))
 
 
 @app.command()
@@ -49,7 +51,7 @@ def main(
     ),
 ) -> None:
     try:
-        result = asyncio.run(query_mcp_server(question))
+        result = query_mcp_server(question)
         if isinstance(result, dict) and "output" in result:
             print(result["output"])  # noqa: T201
         else:
