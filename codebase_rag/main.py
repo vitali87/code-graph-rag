@@ -1025,6 +1025,9 @@ def _initialize_services_and_agent(
 
 def main_single_query(repo_path: str, batch_size: int, question: str) -> None:
     _setup_common_initialization(repo_path)
+    # (H) Override logger to stderr so stdout is clean for scripted output
+    logger.remove()
+    logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
 
     with connect_memgraph(batch_size) as ingestor:
         rag_agent, _ = _initialize_services_and_agent(repo_path, ingestor)
