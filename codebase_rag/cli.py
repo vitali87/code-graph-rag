@@ -40,7 +40,9 @@ app = typer.Typer(
 def _version_callback(value: bool) -> None:
     if value:
         app_context.console.print(
-            cs.CLI_MSG_VERSION.format(package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)),
+            cs.CLI_MSG_VERSION.format(
+                package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)
+            ),
             highlight=False,
         )
         raise typer.Exit()

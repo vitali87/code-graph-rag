@@ -698,3 +698,7 @@ EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
 MODEL_SWITCHED = "Model switched to: {model}"
 MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
 MODEL_CURRENT = "Current model: {model}"
+
+# (H) Progress bar logs
+PROGRESS_INDEXING_LABEL = "[bold blue]Indexing files..."
+PROGRESS_FILES_PROCESSED = "{count} processed"
