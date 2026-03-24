@@ -19,7 +19,7 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 | TypeScript | Fully Supported | .ts, .tsx | Yes | Yes | Yes | No | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | C# | In Development | .cs | Yes | Yes | Yes | No | Classes, interfaces, generics (planned) |
 | Go | In Development | .go | Yes | Yes | Yes | No | Methods, type declarations |
-| PHP | In Development | .php | Yes | Yes | Yes | No | Classes, functions, namespaces |
+| PHP | Fully Supported | .php | Yes | Yes | Yes | No | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
 | Scala | In Development | .scala, .sc | Yes | Yes | Yes | No | Case classes, objects |
 
 ## Language-Agnostic Design

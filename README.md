@@ -47,9 +47,9 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## Latest News 🔥
 
+- **PHP Language Support**: Full PHP language support added — classes, interfaces, traits, enums, namespaces, PHP 8 attributes, and call graph analysis. Contributed by [@rs-ipps](https://github.com/rs-ipps).
 - **C Language Support**: Full C language support added — functions, structs, unions, enums, preprocessor includes, and call graph analysis. Contributed by [@dj0nes](https://github.com/dj0nes).
 - **Visualise any GitHub repo instantly!** Just change `github.com` to `gitcgr.com` in any repo URL — that's it, only 3 letters! Get an interactive graph of the entire codebase structure. Try it now: [gitcgr.com](https://gitcgr.com)
-- **MCP Server Integration**: Code-Graph-RAG now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
 
 ## 🚀 Features
 
