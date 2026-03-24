@@ -2466,6 +2466,7 @@ class MCPToolName(StrEnum):
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
     SEMANTIC_SEARCH = "semantic_search"
+    ASK_AGENT = "ask_agent"
 
 
 # (H) MCP transport selection
@@ -2512,6 +2513,7 @@ class MCPParamName(StrEnum):
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
     TOP_K = "top_k"
+    QUESTION = "question"
 
 
 # (H) MCP server constants
@@ -2535,6 +2537,7 @@ MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
+MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."

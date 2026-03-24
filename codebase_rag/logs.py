@@ -651,6 +651,8 @@ MCP_SEMANTIC_NOT_AVAILABLE = (
 MCP_UPDATING_REPO = "[MCP] Updating repository at: {path}"
 MCP_ERROR_UPDATING = "[MCP] Error updating repository: {error}"
 MCP_SEMANTIC_SEARCH = "[MCP] semantic_search: {query}"
+MCP_ASK_AGENT = "[MCP] ask_agent: {question}"
+MCP_ASK_AGENT_ERROR = "[MCP] Error running ask_agent: {error}"
 
 # (H) MCP server logs
 MCP_SERVER_INFERRED_ROOT = "[GraphCode MCP] Using inferred project root: {path}"

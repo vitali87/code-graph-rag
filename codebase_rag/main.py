@@ -1023,6 +1023,17 @@ def _initialize_services_and_agent(
     return rag_agent, confirmation_tool_names
 
 
+async def main_async_single_query(
+    repo_path: str, batch_size: int, question: str
+) -> None:
+    _setup_common_initialization(repo_path)
+
+    with connect_memgraph(batch_size) as ingestor:
+        rag_agent, _ = _initialize_services_and_agent(repo_path, ingestor)
+        response = await rag_agent.run(question, message_history=[])
+        print(response.output)  # noqa: T201
+
+
 async def main_async(repo_path: str, batch_size: int) -> None:
     project_root = _setup_common_initialization(repo_path)
 
