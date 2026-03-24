@@ -2,16 +2,17 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any
 
 import typer
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from codebase_rag import constants as cs
+
 app = typer.Typer()
 
 
-async def query_mcp_server(question: str) -> dict[str, Any]:
+async def query_mcp_server(question: str) -> dict[str, str]:
     with open(os.devnull, "w") as devnull:
         server_params = StdioServerParameters(
             command=sys.executable,
@@ -21,7 +22,10 @@ async def query_mcp_server(question: str) -> dict[str, Any]:
         async with stdio_client(server=server_params, errlog=devnull) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.call_tool("ask_agent", {"question": question})
+                result = await session.call_tool(
+                    cs.MCPToolName.ASK_AGENT,
+                    {cs.MCPParamName.QUESTION: question},
+                )
 
                 if result.content:
                     response_text = result.content[0].text

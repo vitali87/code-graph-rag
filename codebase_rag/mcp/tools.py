@@ -2,9 +2,9 @@ import asyncio
 import itertools
 import sys
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
+from pydantic_ai import Agent
 from rich.console import Console
 
 from codebase_rag import constants as cs
@@ -91,7 +91,7 @@ class MCPToolsRegistry:
             self.document_analyzer
         )
 
-        self._rag_agent: Any = None
+        self._rag_agent: Agent | None = None
 
         self._semantic_search_tool = None
         self._semantic_search_available = False
@@ -338,8 +338,12 @@ class MCPToolsRegistry:
         )
 
     @property
-    def rag_agent(self) -> Any:
+    def rag_agent(self) -> Agent:
         if self._rag_agent is None:
+            from codebase_rag.tools.semantic_search import (
+                create_get_function_source_tool,
+            )
+
             tools = [
                 self._query_tool,
                 self._code_tool,
@@ -349,14 +353,16 @@ class MCPToolsRegistry:
                 self._shell_command_tool,
                 self._directory_lister_tool,
                 self._document_analyzer_tool,
+                create_get_function_source_tool(),
             ]
             if self._semantic_search_tool is not None:
                 tools.append(self._semantic_search_tool)
             self._rag_agent = create_rag_orchestrator(tools=tools)
         return self._rag_agent
 
+    # (H) Setter allows tests to inject a mock agent without triggering LLM init
     @rag_agent.setter
-    def rag_agent(self, value: Any) -> None:
+    def rag_agent(self, value: Agent) -> None:
         self._rag_agent = value
 
     async def list_projects(self) -> ListProjectsResult:
@@ -476,7 +482,7 @@ class MCPToolsRegistry:
         )
         return str(result)
 
-    async def ask_agent(self, question: str) -> dict[str, Any]:
+    async def ask_agent(self, question: str) -> dict[str, str]:
         logger.info(lg.MCP_ASK_AGENT.format(question=question))
         try:
             response = await self.rag_agent.run(question, message_history=[])

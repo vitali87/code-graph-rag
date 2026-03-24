@@ -154,6 +154,34 @@ class TestSemanticSearchRegistration:
             assert "result1" in result
 
 
+class TestAskAgent:
+    async def test_ask_agent_registered(self, mcp_registry: MCPToolsRegistry) -> None:
+        assert cs.MCPToolName.ASK_AGENT in mcp_registry._tools
+
+    async def test_ask_agent_success(self, mcp_registry: MCPToolsRegistry) -> None:
+        mock_agent = MagicMock()
+        mock_response = MagicMock()
+        mock_response.output = "The auth module uses JWT tokens."
+        mock_agent.run = AsyncMock(return_value=mock_response)
+        mcp_registry.rag_agent = mock_agent
+
+        result = await mcp_registry.ask_agent("How is auth implemented?")
+
+        assert result["output"] == "The auth module uses JWT tokens."
+        mock_agent.run.assert_called_once_with(
+            "How is auth implemented?", message_history=[]
+        )
+
+    async def test_ask_agent_error(self, mcp_registry: MCPToolsRegistry) -> None:
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+        mcp_registry.rag_agent = mock_agent
+
+        result = await mcp_registry.ask_agent("What does main do?")
+
+        assert "error" in result
+
+
 class TestToolDescriptions:
     def test_update_repository_in_tool_map(self) -> None:
         from codebase_rag.tools.tool_descriptions import MCP_TOOLS
@@ -164,6 +192,11 @@ class TestToolDescriptions:
         from codebase_rag.tools.tool_descriptions import MCP_TOOLS
 
         assert cs.MCPToolName.SEMANTIC_SEARCH in MCP_TOOLS
+
+    def test_ask_agent_in_tool_map(self) -> None:
+        from codebase_rag.tools.tool_descriptions import MCP_TOOLS
+
+        assert cs.MCPToolName.ASK_AGENT in MCP_TOOLS
 
     def test_index_repository_warns_about_project_clear(self) -> None:
         from codebase_rag.tools.tool_descriptions import MCP_INDEX_REPOSITORY
