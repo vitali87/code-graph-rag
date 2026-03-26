@@ -571,19 +571,19 @@ The knowledge graph uses the following node types and relationships:
 | Label | Properties |
 |-----|----------|
 | Project | `{name: string}` |
-| Package | `{qualified_name: string, name: string, path: string}` |
-| Folder | `{path: string, name: string}` |
-| File | `{path: string, name: string, extension: string}` |
-| Module | `{qualified_name: string, name: string, path: string}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Interface | `{qualified_name: string, name: string}` |
-| Enum | `{qualified_name: string, name: string}` |
+| Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| Folder | `{path: string, name: string, absolute_path: string}` |
+| File | `{path: string, name: string, extension: string, absolute_path: string}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| Class | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
+| Function | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
+| Method | `{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}` |
+| Interface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Type | `{qualified_name: string, name: string}` |
 | Union | `{qualified_name: string, name: string}` |
-| ModuleInterface | `{qualified_name: string, name: string, path: string}` |
-| ModuleImplementation | `{qualified_name: string, name: string, path: string, implements_module: string}` |
+| ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
+| ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}` |
 | ExternalPackage | `{name: string, version_spec: string}` |
 <!-- /SECTION:node_schemas -->
 
@@ -689,6 +689,7 @@ my_build_output
 - **pydantic-settings**: Settings management using Pydantic
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
+- **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
 - **toml**: Python Library for Tom's Obvious, Minimal Language
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library
