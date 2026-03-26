@@ -26,7 +26,7 @@ def mock_ingestor() -> MagicMock:
     mock = MagicMock()
     mock.__enter__ = MagicMock(return_value=mock)
     mock.__exit__ = MagicMock(return_value=False)
-    mock._execute_query.return_value = [
+    mock.fetch_all.return_value = [
         {
             "node_id": 1,
             "qualified_name": "project.module.func1",
@@ -198,7 +198,7 @@ def test_semantic_code_search_preserves_score_order(
 def test_get_function_source_code_returns_source(mock_ingestor: MagicMock) -> None:
     from codebase_rag.tools.semantic_search import get_function_source_code
 
-    mock_ingestor._execute_query.return_value = [
+    mock_ingestor.fetch_all.return_value = [
         {
             "qualified_name": "project.module.func",
             "start_line": 10,
@@ -236,7 +236,7 @@ def test_get_function_source_code_returns_none_when_not_found(
 ) -> None:
     from codebase_rag.tools.semantic_search import get_function_source_code
 
-    mock_ingestor._execute_query.return_value = []
+    mock_ingestor.fetch_all.return_value = []
 
     with patch(
         "codebase_rag.services.graph_service.MemgraphIngestor",
@@ -255,7 +255,7 @@ def test_get_function_source_code_returns_none_on_invalid_location(
 ) -> None:
     from codebase_rag.tools.semantic_search import get_function_source_code
 
-    mock_ingestor._execute_query.return_value = [
+    mock_ingestor.fetch_all.return_value = [
         {
             "qualified_name": "project.module.func",
             "start_line": None,
@@ -287,7 +287,7 @@ def test_get_function_source_code_returns_none_on_invalid_location(
 def test_get_function_source_code_handles_exception(mock_ingestor: MagicMock) -> None:
     from codebase_rag.tools.semantic_search import get_function_source_code
 
-    mock_ingestor._execute_query.side_effect = Exception("Database error")
+    mock_ingestor.fetch_all.side_effect = Exception("Database error")
 
     with patch(
         "codebase_rag.services.graph_service.MemgraphIngestor",
@@ -387,7 +387,7 @@ async def test_get_function_source_tool_returns_source(
 ) -> None:
     from codebase_rag.tools.semantic_search import create_get_function_source_tool
 
-    mock_ingestor._execute_query.return_value = [
+    mock_ingestor.fetch_all.return_value = [
         {
             "qualified_name": "project.func",
             "start_line": 1,
@@ -429,7 +429,7 @@ async def test_get_function_source_tool_handles_not_found(
 ) -> None:
     from codebase_rag.tools.semantic_search import create_get_function_source_tool
 
-    mock_ingestor._execute_query.return_value = []
+    mock_ingestor.fetch_all.return_value = []
 
     tool = create_get_function_source_tool()
 

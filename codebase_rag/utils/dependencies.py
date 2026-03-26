@@ -4,7 +4,6 @@ import importlib.util
 from collections.abc import Sequence
 
 from codebase_rag.constants import (
-    MODULE_QDRANT_CLIENT,
     MODULE_TORCH,
     MODULE_TRANSFORMERS,
 )
@@ -28,12 +27,11 @@ def has_transformers() -> bool:
     return _check_dependency(MODULE_TRANSFORMERS)
 
 
-def has_qdrant_client() -> bool:
-    return _check_dependency(MODULE_QDRANT_CLIENT)
-
+def has_pgvector() -> bool:
+    return _check_dependency("pgvector") and _check_dependency("psycopg")
 
 def has_semantic_dependencies() -> bool:
-    return has_qdrant_client() and has_torch() and has_transformers()
+    return has_pgvector() and has_torch() and has_transformers()
 
 
 def check_dependencies(required_modules: Sequence[str]) -> bool:

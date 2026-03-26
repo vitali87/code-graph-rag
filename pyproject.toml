@@ -38,6 +38,8 @@ dependencies = [
     "mcp>=1.21.1",
     "pydantic-ai>=1.70.0",
     "pydantic-settings>=2.0.0",
+    "fastapi>=0.111.0",
+    "uvicorn>=0.30.0",
     "pymgclient>=1.4.0",
     "python-dotenv>=1.1.0",
     "tiktoken>=0.12.0",
@@ -90,7 +92,8 @@ treesitter-full = [
 ]
 
 semantic = [
-    "qdrant-client>=1.9.0",
+    "pgvector>=0.3.2",
+    "psycopg[binary]>=3.2.3",
     "torch>=2.6.0",
     "transformers>=4.0.0",
 ]

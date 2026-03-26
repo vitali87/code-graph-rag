@@ -14,7 +14,7 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 .claude/
-.qdrant_code_embeddings/
+.pgvector_code_embeddings/
 CLAUDE.md
 AGENTS.md
 PROJECT.md
@@ -24,3 +24,6 @@ PROJECT.md
 .pypi_cache.json
 .omc
 site/
+
+# Embedding cache
+.embedding_cache.json

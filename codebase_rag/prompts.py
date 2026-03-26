@@ -57,6 +57,124 @@ The database contains information about a codebase, structured with the followin
 
 GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
 
+API_EVIDENCE_PROMPT = """You are a senior application security engineer. Build an evidence pack ONLY.
+
+INPUT
+{ "findings": [ ... ] }
+
+OUTPUT (ONE JSON OBJECT, NO PROSE)
+{
+  "findings": [
+    {
+      "finding_id": "...",
+      "tool": "...",
+      "vulnerability_type": "...",
+      "severity_reported": "...",
+      "file": "...",
+      "justification": {
+        "questions_and_answers": [
+          {
+            "question": "...",
+            "answer": "...",
+            "code_reference": "...",
+            "evidence": {
+              "type": "code_snippet | data_flow | dependency | config | control_check",
+              "file": "...",
+              "line_range": "start-end",
+              "snippet": "...",
+              "interpretation": "..."
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+
+RULES
+* 5–8 questions per finding.
+* Evidence must come from real code/config/lockfiles. Do NOT invent.
+* If SCA-only, set file/line_range to "" and cite lockfile/manifest.
+* Escape " as \\\", \\ as \\\\, newline as \\n, tab as \\t.
+* No markdown, no extra keys, no trailing commas.
+
+Findings JSON:"""
+
+# (H) Split analysis into 2 independent calls so they can run concurrently:
+# - scoring: verdict + score + breakdown + summary
+# - remediation: concrete fix guidance only
+API_SCORING_PROMPT = """You are a senior application security engineer. Use ONLY the evidence pack to score each finding.
+
+INPUT
+{ "findings": [ ... ] }
+
+OUTPUT (ONE JSON OBJECT, NO PROSE)
+{
+  "findings": [
+    {
+      "finding_id": "...",
+      "tool": "...",
+      "vulnerability_type": "...",
+      "severity_reported": "...",
+      "file": "...",
+      "analysis": {
+        "verdict": "True Positive | Likely True Positive | Uncertain | Likely False Positive | False Positive",
+        "score": 0-100,
+        "scoring_breakdown": {
+          "reachability": { "score": 0-20, "reason": "..." },
+          "exploitability": { "score": 0-20, "reason": "..." },
+          "data_sensitivity": { "score": 0-15, "reason": "..." },
+          "control_coverage": { "score": 0-20, "reason": "..." },
+          "dependency_risk": { "score": 0-15, "reason": "..." },
+          "contextual_confidence": { "score": 0-10, "reason": "..." }
+        },
+        "summary": "..."
+      }
+    }
+  ]
+}
+
+RULES
+* Use evidence_pack only. No new facts.
+* Escape " as \\\", \\ as \\\\, newline as \\n, tab as \\t.
+* No markdown, no extra keys, no trailing commas.
+
+Evidence JSON:"""
+
+API_REMEDIATION_PROMPT = """You are a senior application security engineer. Use ONLY the evidence pack to propose remediation for each finding.
+
+INPUT
+{ "findings": [ ... ] }
+
+OUTPUT (ONE JSON OBJECT, NO PROSE)
+{
+  "findings": [
+    {
+      "finding_id": "...",
+      "tool": "...",
+      "vulnerability_type": "...",
+      "severity_reported": "...",
+      "file": "...",
+      "remediation": {
+        "priority": "Immediate | High | Medium | Low",
+        "effort": "Low | Medium | High",
+        "primary_fix": { "description": "...", "file": "...", "before": "...", "after": "..." },
+        "secondary_fixes": [ { "description": "...", "file": "...", "before": "...", "after": "..." } ],
+        "verification_steps": [ "..." ],
+        "references": [ "..." ]
+      }
+    }
+  ]
+}
+
+RULES
+* Use evidence_pack only. No new facts.
+* primary_fix must reference a real file/lines from evidence where possible.
+* Escape " as \\\", \\ as \\\\, newline as \\n, tab as \\t.
+* No markdown, no extra keys, no trailing commas.
+
+Evidence JSON:"""
+
 
 def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
     t = extract_tool_names(tools)
@@ -69,6 +187,8 @@ def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
 4.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
     - For source code files (.py, .ts, etc.), use `{t.read_file}`.
     - For documents like PDFs, use the `{t.analyze_document}` tool. This is more effective than trying to read them as plain text.
+5.  **AVOID TOOL LOOPS**: Do NOT repeat the same tool call or shell command if you already have the output. If you need more info, refine the query or move to a different tool.
+6.  **SHELL COMMAND CONSTRAINTS**: Only use allowlisted commands. Do NOT use `grep` (use `rg`). Do NOT append `|| true` to shell commands.
 
 **Your General Approach:**
 1.  **Analyze Documents**: If the user asks a question about a document (like a PDF), you **MUST** use the `{t.analyze_document}` tool. Provide both the `file_path` and the user's `question` to the tool.
@@ -175,6 +295,14 @@ cypher// "What methods does UserService have?" or "Show me methods in UserServic
 
 **4. Output Format**
 Provide only the Cypher query.
+
+**Memgraph Compatibility (CRITICAL)**
+- Do NOT use line or block comments (`//` or `/* */`) in Cypher.
+- Do NOT use label unions like `:A|B` or `:(A|B)` in node patterns.
+- Do NOT use `EXISTS(property)`; use `property IS NOT NULL`.
+- Return a SINGLE Cypher statement only (no multiple MATCH/RETURN blocks).
+- If you need to match multiple labels, use a `WHERE` clause:
+  `WHERE (n:LabelA OR n:LabelB)`
 """
 
 # (H) Stricter prompt for less capable open-source/local models (e.g., Ollama)
@@ -195,6 +323,13 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 7.  **AGGREGATION QUERIES**: When asked "how many" or "count", return ONLY the count:
     - CORRECT: `MATCH (c:Class) RETURN count(c) AS total`
     - WRONG: `MATCH (c:Class) RETURN c.name, count(c) AS total` (returns all items!)
+8.  **MEMGRAPH COMPATIBILITY**:
+    - Do NOT use line or block comments (`//` or `/* */`) in Cypher.
+    - Do NOT use label unions like `:A|B` or `:(A|B)` in node patterns.
+    - Do NOT use `EXISTS(property)`; use `property IS NOT NULL`.
+    - Return a SINGLE Cypher statement only (no multiple MATCH/RETURN blocks).
+    - If you need multiple labels, use a `WHERE` clause:
+      `WHERE (n:LabelA OR n:LabelB)`
 
 **VALUE PATTERN RULES (CRITICAL FOR NAME MATCHING):**
 - The `qualified_name` property contains FULL paths like: `'Project.folder.subfolder.ClassName'`

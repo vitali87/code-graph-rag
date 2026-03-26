@@ -1,7 +1,7 @@
 """Memory allocation profiler for code-graph-rag.
 
 Profiles the main data structures and parsing pipeline using tracemalloc.
-Does NOT require external services (Memgraph, Qdrant).
+Does NOT require external services (Memgraph, PGVector).
 """
 
 import gc

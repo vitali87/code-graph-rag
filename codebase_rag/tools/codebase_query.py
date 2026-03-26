@@ -22,6 +22,7 @@ from ..constants import (
 from ..schemas import QueryGraphData
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
+from ..utils.cypher_sanitizer import CypherSanitizer
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
 
@@ -41,6 +42,23 @@ def create_query_tool(
         cypher_query = QUERY_NOT_AVAILABLE
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
+            cypher_query = CypherSanitizer.strip_comments(cypher_query)
+
+            if CypherSanitizer.contains_label_union(cypher_query):
+                cypher_query = await cypher_gen.generate(
+                    CypherSanitizer.append_memgraph_constraints(natural_language_query)
+                )
+                cypher_query = CypherSanitizer.strip_comments(cypher_query)
+                if CypherSanitizer.contains_label_union(cypher_query):
+                    raise ex.LLMGenerationError(
+                        "Generated Cypher uses label unions (e.g., :A|B). "
+                        "Memgraph does not accept this syntax."
+                    )
+
+            if CypherSanitizer.contains_property_exists(cypher_query):
+                cypher_query = CypherSanitizer.replace_property_exists(cypher_query)
+
+            cypher_query = CypherSanitizer.first_statement(cypher_query)
 
             results = await asyncio.to_thread(ingestor.fetch_all, cypher_query)
 

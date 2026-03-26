@@ -2,13 +2,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.utils.dependencies import has_qdrant_client
+from codebase_rag.utils.dependencies import has_pgvector_client
 
 pytestmark = pytest.mark.skipif(
-    not has_qdrant_client(), reason="qdrant-client not installed"
+    not has_pgvector_client(), reason="pgvector-client not installed"
 )
 
-_PATCH_CLIENT = "codebase_rag.vector_store.get_qdrant_client"
+_PATCH_CLIENT = "codebase_rag.vector_store.get_pgvector_client"
 _PATCH_SLEEP = "codebase_rag.vector_store.time.sleep"
 
 

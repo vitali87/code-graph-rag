@@ -98,9 +98,9 @@ class UniXcoder(nn.Module):
         pad_id = self.config.pad_token_id
         assert pad_id is not None
         mask = source_ids.ne(pad_id)
-        token_embeddings = self.model(
-            source_ids, attention_mask=mask.unsqueeze(1) * mask.unsqueeze(2)
-        )[0]
+        # (H) Newer transformers expect a 2D attention mask for encoder-style usage.
+        # Passing a 3D mask can trigger internal 5D expansion errors.
+        token_embeddings = self.model(source_ids, attention_mask=mask)[0]
         sentence_embeddings = (token_embeddings * mask.unsqueeze(-1)).sum(1) / mask.sum(
             -1
         ).unsqueeze(-1)

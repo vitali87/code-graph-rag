@@ -28,7 +28,7 @@ from .types_defs import (
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import should_skip_path
-from .utils.source_extraction import extract_source_with_fallback
+from .utils.source_extraction import SourceFileCache, extract_source_with_fallback
 
 type FileHashCache = dict[str, str]
 
@@ -289,6 +289,7 @@ class GraphUpdater:
             simple_name_lookup=self.simple_name_lookup
         )
         self.ast_cache = BoundedASTCache()
+        self.source_cache = SourceFileCache()
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
 
@@ -563,9 +564,9 @@ class GraphUpdater:
             return
 
         try:
-            from .embedder import embed_code, get_embedding_cache
+            from .embedder import get_embedding_cache
             from .vector_store import (
-                close_qdrant_client,
+                close_pgvector_client,
                 store_embedding_batch,
                 verify_stored_ids,
             )
@@ -585,7 +586,9 @@ class GraphUpdater:
             embedded_count = 0
             expected_ids: set[int] = set()
             batch_buffer: list[tuple[int, list[float], str]] = []
-            batch_size = settings.QDRANT_BATCH_SIZE
+            pgvector_batch_size = settings.PGVECTOR_BATCH_SIZE
+            embedding_batch_size = settings.EMBEDDING_BATCH_SIZE
+            pending: list[tuple[int, str, str]] = []
 
             for row in results:
                 parsed = self._parse_embedding_result(row)
@@ -605,33 +608,32 @@ class GraphUpdater:
                 if source_code := self._extract_source_code(
                     qualified_name, file_path, start_line, end_line
                 ):
-                    try:
-                        embedding = embed_code(source_code)
-                        batch_buffer.append((node_id, embedding, qualified_name))
-                        expected_ids.add(node_id)
+                    pending.append((node_id, qualified_name, source_code))
+                    expected_ids.add(node_id)
+                    if len(pending) >= embedding_batch_size:
+                        embedded_count += self._flush_semantic_batch(
+                            pending, batch_buffer, pgvector_batch_size, embedding_batch_size
+                        )
 
-                        if len(batch_buffer) >= batch_size:
-                            embedded_count += store_embedding_batch(batch_buffer)
-                            batch_buffer = []
-
-                        if (
-                            embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0
-                            and embedded_count > 0
-                        ):
-                            logger.debug(
-                                ls.EMBEDDING_PROGRESS,
-                                done=embedded_count,
-                                total=len(results),
-                            )
-
-                    except Exception as e:
-                        logger.warning(
-                            ls.EMBEDDING_FAILED, name=qualified_name, error=e
+                    if (
+                        embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0
+                        and embedded_count > 0
+                    ):
+                        logger.debug(
+                            ls.EMBEDDING_PROGRESS,
+                            done=embedded_count,
+                            total=len(results),
                         )
                 else:
                     logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
 
+            if pending:
+                embedded_count += self._flush_semantic_batch(
+                    pending, batch_buffer, pgvector_batch_size, embedding_batch_size
+                )
+
             if batch_buffer:
+                from .vector_store import store_embedding_batch
                 embedded_count += store_embedding_batch(batch_buffer)
 
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
@@ -639,10 +641,57 @@ class GraphUpdater:
             self._reconcile_embeddings(expected_ids, verify_stored_ids)
 
             get_embedding_cache().save()
-            close_qdrant_client()
+            close_pgvector_client()
 
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+
+    def _flush_semantic_batch(
+        self,
+        pending: list[tuple[int, str, str]],
+        batch_buffer: list[tuple[int, list[float], str]],
+        pgvector_batch_size: int,
+        embedding_batch_size: int,
+    ) -> int:
+        from .embedder import embed_code, embed_code_batch
+        from .vector_store import store_embedding_batch
+
+        if not pending:
+            return 0
+
+        embedded_count_inc = 0
+        snippets = [item[2] for item in pending]
+
+        try:
+            embeddings = embed_code_batch(
+                snippets,
+                max_length=settings.EMBEDDING_MAX_LENGTH,
+                batch_size=embedding_batch_size,
+            )
+        except Exception as e:
+            logger.warning(ls.EMBEDDING_FAILED, name="batch", error=e)
+            embeddings = []
+            for _, qn, snippet in pending:
+                try:
+                    embeddings.append(
+                        embed_code(snippet, max_length=settings.EMBEDDING_MAX_LENGTH)
+                    )
+                except Exception as embed_err:
+                    logger.warning(ls.EMBEDDING_FAILED, name=qn, error=embed_err)
+                    embeddings.append(None)
+
+        for (node_id, qualified_name, _), embedding in zip(pending, embeddings):
+            if embedding is None:
+                continue
+            batch_buffer.append((node_id, embedding, qualified_name))
+
+        pending.clear()
+
+        if len(batch_buffer) >= pgvector_batch_size:
+            embedded_count_inc += store_embedding_batch(batch_buffer)
+            batch_buffer.clear()
+
+        return embedded_count_inc
 
     def _reconcile_embeddings(
         self,
@@ -696,7 +745,12 @@ class GraphUpdater:
                 ast_extractor = ast_extractor_func
 
         return extract_source_with_fallback(
-            file_path_obj, start_line, end_line, qualified_name, ast_extractor
+            file_path_obj,
+            start_line,
+            end_line,
+            qualified_name,
+            ast_extractor,
+            cache=self.source_cache,
         )
 
     def _parse_embedding_result(self, row: ResultRow) -> EmbeddingQueryResult | None:

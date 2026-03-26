@@ -126,6 +126,57 @@ def _parse_command(command: str) -> list[CommandGroup]:
     return groups
 
 
+def _strip_trailing_noop(command: str) -> str:
+    normalized = command.strip()
+    if normalized.endswith("|| true"):
+        return normalized[: -len("|| true")].rstrip()
+    return normalized
+
+
+def _normalize_segment(segment: str) -> str:
+    try:
+        parts = shlex.split(segment)
+    except ValueError:
+        return segment
+
+    if not parts:
+        return segment
+
+    base_cmd = parts[0]
+
+    if base_cmd == cs.SHELL_CMD_GREP:
+        pattern = None
+        paths: list[str] = []
+        flags: list[str] = []
+        for arg in parts[1:]:
+            if arg.startswith("-"):
+                flags.append(arg)
+            elif pattern is None:
+                pattern = arg
+            else:
+                paths.append(arg)
+
+        if pattern is None:
+            return segment
+
+        rg_parts = [cs.SHELL_CMD_RG, "-n"]
+        if "-i" in flags:
+            rg_parts.append("-i")
+        if "-S" in flags:
+            rg_parts.append("-S")
+        rg_parts.append(pattern)
+        if paths:
+            rg_parts.extend(paths)
+        return shlex.join(rg_parts)
+
+    if base_cmd == cs.SHELL_CMD_RG:
+        if len(parts) > 1 and parts[-1] == ".":
+            parts = parts[:-1]
+        return shlex.join(parts)
+
+    return segment
+
+
 def _is_blocked_command(cmd: str) -> bool:
     return cmd in cs.SHELL_DANGEROUS_COMMANDS
 
@@ -265,11 +316,20 @@ def _requires_approval(command: str) -> bool:
 
 
 class ShellCommander:
-    __slots__ = ("project_root", "timeout")
+    __slots__ = (
+        "project_root",
+        "timeout",
+        "_last_command",
+        "_last_command_count",
+        "_last_command_ts",
+    )
 
     def __init__(self, project_root: str = ".", timeout: int = 30):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
+        self._last_command: str | None = None
+        self._last_command_count = 0
+        self._last_command_ts = 0.0
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
     async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
@@ -327,8 +387,32 @@ class ShellCommander:
 
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
+        command = _strip_trailing_noop(command)
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
+            now = time.monotonic()
+            if (
+                self._last_command == command
+                and (now - self._last_command_ts)
+                <= settings.SHELL_COMMAND_REPEAT_WINDOW_SECONDS
+            ):
+                self._last_command_count += 1
+            else:
+                self._last_command = command
+                self._last_command_count = 1
+            self._last_command_ts = now
+
+            if self._last_command_count > settings.SHELL_COMMAND_REPEAT_LIMIT:
+                msg = (
+                    "Repeated shell command detected. "
+                    "Aborting to prevent a tool loop. "
+                    f"Command: {command}"
+                )
+                logger.warning(msg)
+                return ShellCommandResult(
+                    return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
+                )
+
             if subshell_pattern := _has_subshell(command):
                 err_msg = te.COMMAND_SUBSHELL_NOT_ALLOWED.format(
                     pattern=subshell_pattern
@@ -354,6 +438,15 @@ class ShellCommander:
                     stdout="",
                     stderr=te.COMMAND_EMPTY,
                 )
+
+            for group in groups:
+                normalized = []
+                for seg in group.commands:
+                    norm = _normalize_segment(seg)
+                    if norm != seg:
+                        logger.info(f"Normalized shell command: {norm}")
+                    normalized.append(norm)
+                group.commands = normalized
 
             available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
             for group in groups:

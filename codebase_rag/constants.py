@@ -838,7 +838,7 @@ IGNORE_PATTERNS = frozenset(
         ".nyc_output",
         ".pnpm-store",
         ".pytest_cache",
-        ".qdrant_code_embeddings",
+        ".pgvector_code_embeddings",
         ".ruff_cache",
         ".svn",
         ".tmp",
@@ -996,9 +996,9 @@ TEXT_UNKNOWN = "unknown"
 
 MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
-MODULE_QDRANT_CLIENT = "qdrant_client"
-
-SEMANTIC_DEPENDENCIES = (MODULE_QDRANT_CLIENT, MODULE_TORCH, MODULE_TRANSFORMERS)
+MODULE_PGVECTOR = "pgvector"
+MODULE_PSYCOPG = "psycopg"
+SEMANTIC_DEPENDENCIES = (MODULE_PGVECTOR, MODULE_PSYCOPG, MODULE_TORCH, MODULE_TRANSFORMERS)
 ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
 
 
@@ -1052,6 +1052,7 @@ GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 
 # (H) Shell command constants
 SHELL_CMD_GREP = "grep"
+SHELL_CMD_RG = "rg"
 SHELL_CMD_GIT = "git"
 SHELL_CMD_RM = "rm"
 SHELL_RM_RF_FLAG = "-rf"

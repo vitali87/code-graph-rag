@@ -11,6 +11,7 @@ class CLICommandName(StrEnum):
     LANGUAGE = "language"
     DOCTOR = "doctor"
     STATS = "stats"
+    SERVE = "serve"
 
 
 APP_DESCRIPTION = (
@@ -28,6 +29,7 @@ CMD_GRAPH_LOADER = "Load and display summary of exported graph JSON"
 CMD_LANGUAGE = "Manage language grammars (add, remove, list)"
 CMD_DOCTOR = "Verify that all dependencies and configurations are properly set up"
 CMD_STATS = "Display node and relationship statistics for the indexed graph"
+CMD_SERVE = "Start the FastAPI application for Q&A on codebase"
 
 CMD_LANGUAGE_GROUP = "CLI for managing language grammars"
 CMD_LANGUAGE_ADD = "Add a new language grammar to the project."
@@ -111,4 +113,5 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.STATS: CMD_STATS,
+    CLICommandName.SERVE: CMD_SERVE,
 }

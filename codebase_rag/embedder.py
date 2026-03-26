@@ -78,7 +78,7 @@ _embedding_cache: EmbeddingCache | None = None
 def get_embedding_cache() -> EmbeddingCache:
     global _embedding_cache
     if _embedding_cache is None:
-        cache_path = Path(settings.QDRANT_DB_PATH) / cs.EMBEDDING_CACHE_FILENAME
+        cache_path = Path(settings.TARGET_REPO_PATH) / cs.EMBEDDING_CACHE_FILENAME
         _embedding_cache = EmbeddingCache(path=cache_path)
         _embedding_cache.load()
     return _embedding_cache
@@ -97,6 +97,12 @@ if has_torch() and has_transformers():
     from numpy.typing import NDArray
 
     from .unixcoder import UniXcoder
+
+    if not settings.HF_TOKEN:
+        # (H) Avoid noisy HF warnings by setting an explicit empty token if unset.
+        import os
+
+        os.environ.setdefault("HF_TOKEN", "")
 
     @lru_cache(maxsize=1)
     def get_model() -> UniXcoder:
@@ -170,6 +176,9 @@ if has_torch() and has_transformers():
 
         return results
 
+    def prewarm_embeddings() -> None:
+        _ = get_model()
+
 else:
 
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
@@ -180,4 +189,7 @@ else:
         max_length: int | None = None,
         batch_size: int = cs.EMBEDDING_DEFAULT_BATCH_SIZE,
     ) -> list[list[float]]:
+        raise RuntimeError(ex.SEMANTIC_EXTRA)
+
+    def prewarm_embeddings() -> None:
         raise RuntimeError(ex.SEMANTIC_EXTRA)

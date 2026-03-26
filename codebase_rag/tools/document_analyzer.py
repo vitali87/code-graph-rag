@@ -141,7 +141,9 @@ class DocumentAnalyzer:
 
             orchestrator_config = settings.active_orchestrator_config
             response = self.client.models.generate_content(
-                model=orchestrator_config.model_id, contents=prompt_parts
+                model=orchestrator_config.model_id,
+                contents=prompt_parts,
+                config=types.GenerateContentConfig(temperature=0.0),
             )
 
             logger.success(ls.DOC_SUCCESS.format(path=file_path))

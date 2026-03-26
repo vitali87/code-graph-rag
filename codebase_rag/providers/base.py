@@ -145,10 +145,14 @@ class OpenAIProvider(ModelProvider):
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIResponsesModel:
+    ) -> OpenAIResponsesModel | OpenAIChatModel:
         self.validate_config()
 
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
+        # (H) Non-OpenAI endpoints like DeepInfra often only implement Chat Completions,
+        # not the Responses API. Use chat model for compatibility.
+        if self.endpoint != cs.OPENAI_DEFAULT_ENDPOINT:
+            return OpenAIChatModel(model_id, provider=provider)
         return OpenAIResponsesModel(model_id, provider=provider)
 
 

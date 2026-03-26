@@ -72,6 +72,8 @@ _COMMENT_OR_WS = r"(?:\s|//[^\n]*|/\*.*?\*/)+"
 def _build_keyword_pattern(keyword: str) -> re.Pattern[str]:
     parts = keyword.split()
     if len(parts) == 1:
+        if parts[0].upper() == "CALL":
+            return re.compile(r"\bCALL\s", re.IGNORECASE)
         return re.compile(rf"\b{re.escape(parts[0])}\b")
     joined = _COMMENT_OR_WS.join(re.escape(p) for p in parts)
     return re.compile(rf"\b{joined}\b", re.DOTALL)
@@ -110,6 +112,7 @@ class CypherGenerator:
                 system_prompt=system_prompt,
                 output_type=str,
                 retries=settings.AGENT_RETRIES,
+                model_settings={"temperature": 0.0},
             )
         except Exception as e:
             raise ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error=e)) from e
@@ -135,18 +138,21 @@ class CypherGenerator:
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
 
 
-def create_rag_orchestrator(tools: list[Tool]) -> Agent:
+def create_rag_orchestrator(
+    tools: list[Tool], system_prompt: str | None = None
+) -> Agent:
     try:
         config = settings.active_orchestrator_config
         llm = _create_provider_model(config)
-
+        prompt = system_prompt or build_rag_orchestrator_prompt(tools)
         return Agent(
             model=llm,
-            system_prompt=build_rag_orchestrator_prompt(tools),
+            system_prompt=prompt,
             tools=tools,
             retries=settings.AGENT_RETRIES,
             output_retries=settings.ORCHESTRATOR_OUTPUT_RETRIES,
             output_type=[str, DeferredToolRequests],
+            model_settings={"temperature": 0.0},
         )
     except Exception as e:
         raise ex.LLMGenerationError(ex.LLM_INIT_ORCHESTRATOR.format(error=e)) from e

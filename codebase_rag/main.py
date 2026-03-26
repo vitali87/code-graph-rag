@@ -62,6 +62,7 @@ from .types_defs import (
     ShellCommandArgs,
     ToolArgs,
 )
+from .utils.dependencies import has_semantic_dependencies
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -263,6 +264,21 @@ def _setup_common_initialization(repo_path: str) -> Path:
     tmp_dir.mkdir()
 
     return project_root
+
+
+def _prewarm_semantic_model() -> None:
+    if not settings.SEMANTIC_SEARCH_ENABLED:
+        return
+    if not has_semantic_dependencies():
+        return
+    try:
+        from .embedder import prewarm_embeddings
+
+        logger.info(ls.SEMANTIC_PREWARM_START)
+        prewarm_embeddings()
+        logger.info(ls.SEMANTIC_PREWARM_COMPLETE)
+    except Exception as e:
+        logger.warning(ls.SEMANTIC_PREWARM_FAILED.format(error=e))
 
 
 def _create_configuration_table(
@@ -971,7 +987,9 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
 
 
 def _initialize_services_and_agent(
-    repo_path: str, ingestor: QueryProtocol
+    repo_path: str,
+    ingestor: QueryProtocol,
+    system_prompt: str | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames]:
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
@@ -997,8 +1015,8 @@ def _initialize_services_and_agent(
     shell_command_tool = create_shell_command_tool(shell_commander)
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
-    semantic_search_tool = create_semantic_search_tool()
-    function_source_tool = create_get_function_source_tool()
+    semantic_search_tool = create_semantic_search_tool(ingestor=ingestor)
+    function_source_tool = create_get_function_source_tool(ingestor=ingestor)
 
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,
@@ -1018,7 +1036,8 @@ def _initialize_services_and_agent(
             document_analyzer_tool,
             semantic_search_tool,
             function_source_tool,
-        ]
+        ],
+        system_prompt=system_prompt,
     )
     return rag_agent, confirmation_tool_names
 
@@ -1039,6 +1058,7 @@ async def main_async(repo_path: str, batch_size: int) -> None:
         )
 
         rag_agent, tool_names = _initialize_services_and_agent(repo_path, ingestor)
+        _prewarm_semantic_model()
         await run_chat_loop(rag_agent, [], project_root, tool_names)
 
 

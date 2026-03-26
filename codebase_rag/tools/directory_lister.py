@@ -9,6 +9,7 @@ from pydantic_ai import Tool
 from .. import exceptions as ex
 from .. import logs as ls
 from .. import tool_errors as te
+from ..config import settings
 from . import tool_descriptions as td
 
 
@@ -33,6 +34,9 @@ class DirectoryLister:
                 return te.DIRECTORY_INVALID.format(path=directory_path)
 
             if contents := os.listdir(target_path):
+                if len(contents) > settings.MAX_DIR_LIST_ENTRIES:
+                    truncated = contents[: settings.MAX_DIR_LIST_ENTRIES]
+                    return "\n".join(truncated) + "\n\n[Directory listing truncated]"
                 return "\n".join(contents)
             return te.DIRECTORY_EMPTY.format(path=directory_path)
 

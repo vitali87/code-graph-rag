@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -152,137 +154,182 @@ class AppConfig(BaseSettings):
         case_sensitive=False,
     )
 
-    MEMGRAPH_HOST: str = "localhost"
-    MEMGRAPH_PORT: int = 7687
-    MEMGRAPH_HTTP_PORT: int = 7444
-    MEMGRAPH_USERNAME: str | None = None
-    MEMGRAPH_PASSWORD: str | None = None
-    LAB_PORT: int = 3000
-    MEMGRAPH_BATCH_SIZE: int = 1000
-    AGENT_RETRIES: int = 3
-    ORCHESTRATOR_OUTPUT_RETRIES: int = 100
+    MEMGRAPH_HOST: str
+    MEMGRAPH_PORT: int
+    MEMGRAPH_HTTP_PORT: int
+    MEMGRAPH_USERNAME: str | None
+    MEMGRAPH_PASSWORD: str | None
+    LAB_PORT: int
+    MEMGRAPH_BATCH_SIZE: int
+    AGENT_RETRIES: int
+    ORCHESTRATOR_OUTPUT_RETRIES: int
 
-    ORCHESTRATOR_PROVIDER: str = ""
-    ORCHESTRATOR_MODEL: str = ""
-    ORCHESTRATOR_API_KEY: str | None = None
-    ORCHESTRATOR_ENDPOINT: str | None = None
-    ORCHESTRATOR_PROJECT_ID: str | None = None
-    ORCHESTRATOR_REGION: str = cs.DEFAULT_REGION
-    ORCHESTRATOR_PROVIDER_TYPE: cs.GoogleProviderType | None = None
-    ORCHESTRATOR_THINKING_BUDGET: int | None = None
-    ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
+    # --- Chat orchestration policy (API /api/chat) ---
+    CHAT_EVIDENCE_TIMEOUT_SECONDS: float = 120.0
+    CHAT_SCORING_TIMEOUT_SECONDS: float = 90.0
+    CHAT_REMEDIATION_TIMEOUT_SECONDS: float = 90.0
+    CHAT_SCHEMA_RETRY_ATTEMPTS: int = 2
 
-    CYPHER_PROVIDER: str = ""
-    CYPHER_MODEL: str = ""
-    CYPHER_API_KEY: str | None = None
-    CYPHER_ENDPOINT: str | None = None
-    CYPHER_PROJECT_ID: str | None = None
-    CYPHER_REGION: str = cs.DEFAULT_REGION
-    CYPHER_PROVIDER_TYPE: cs.GoogleProviderType | None = None
-    CYPHER_THINKING_BUDGET: int | None = None
-    CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
+    ORCHESTRATOR_PROVIDER: str
+    ORCHESTRATOR_MODEL: str
+    ORCHESTRATOR_API_KEY: str | None
+    ORCHESTRATOR_ENDPOINT: str | None
+    ORCHESTRATOR_PROJECT_ID: str | None
+    ORCHESTRATOR_REGION: str
+    ORCHESTRATOR_PROVIDER_TYPE: cs.GoogleProviderType | None
+    ORCHESTRATOR_THINKING_BUDGET: int | None
+    ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None
 
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    CYPHER_PROVIDER: str
+    CYPHER_MODEL: str
+    CYPHER_API_KEY: str | None
+    CYPHER_ENDPOINT: str | None
+    CYPHER_PROJECT_ID: str | None
+    CYPHER_REGION: str
+    CYPHER_PROVIDER_TYPE: cs.GoogleProviderType | None
+    CYPHER_THINKING_BUDGET: int | None
+    CYPHER_SERVICE_ACCOUNT_FILE: str | None
+
+    OLLAMA_BASE_URL: str
 
     @property
     def ollama_endpoint(self) -> str:
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
-    TARGET_REPO_PATH: str = "."
-    SHELL_COMMAND_TIMEOUT: int = 30
-    SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
-        {
-            "ls",
-            "rg",
-            "cat",
-            "git",
-            "echo",
-            "pwd",
-            "pytest",
-            "mypy",
-            "ruff",
-            "uv",
-            "find",
-            "pre-commit",
-            "rm",
-            "cp",
-            "mv",
-            "mkdir",
-            "rmdir",
-            "wc",
-            "head",
-            "tail",
-            "sort",
-            "uniq",
-            "cut",
-            "tr",
-            "xargs",
-            "awk",
-            "sed",
-            "tee",
-        }
-    )
-    SHELL_READ_ONLY_COMMANDS: frozenset[str] = frozenset(
-        {
-            "ls",
-            "cat",
-            "find",
-            "pwd",
-            "rg",
-            "echo",
-            "wc",
-            "head",
-            "tail",
-            "sort",
-            "uniq",
-            "cut",
-            "tr",
-        }
-    )
-    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset(
-        {
-            "status",
-            "log",
-            "diff",
-            "show",
-            "ls-files",
-            "remote",
-            "config",
-            "branch",
-        }
-    )
+    TARGET_REPO_PATH: str
+    SHELL_COMMAND_TIMEOUT: int
+    SHELL_COMMAND_REPEAT_LIMIT: int = Field(..., gt=0)
+    SHELL_COMMAND_REPEAT_WINDOW_SECONDS: int = Field(..., gt=0)
+    SHELL_COMMAND_ALLOWLIST: frozenset[str]
+    SHELL_READ_ONLY_COMMANDS: frozenset[str]
+    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str]
 
-    QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
-    QDRANT_COLLECTION_NAME: str = "code_embeddings"
-    QDRANT_VECTOR_DIM: int = 768
-    QDRANT_TOP_K: int = 5
-    QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
-    QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
-    QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
-    EMBEDDING_MAX_LENGTH: int = 512
-    EMBEDDING_PROGRESS_INTERVAL: int = 10
+    PGVECTOR_HOST: str
+    PGVECTOR_PORT: int
+    PGVECTOR_USER: str
+    PGVECTOR_PASSWORD: str
+    PGVECTOR_DBNAME: str
+    PGVECTOR_TABLE_NAME: str
+    PGVECTOR_DIM: int
+    PGVECTOR_TOP_K: int
+    PGVECTOR_UPSERT_RETRIES: int = Field(..., gt=0)
+    PGVECTOR_RETRY_BASE_DELAY: float = Field(..., gt=0)
+    PGVECTOR_BATCH_SIZE: int = Field(..., gt=0)
+    EMBEDDING_BATCH_SIZE: int = Field(..., gt=0)
+    EMBEDDING_MAX_LENGTH: int
+    EMBEDDING_PROGRESS_INTERVAL: int
+    SOURCE_CACHE_MAX_ENTRIES: int = Field(..., gt=0)
+    SOURCE_CACHE_MAX_MEMORY_MB: int = Field(..., gt=0)
+    SEMANTIC_SEARCH_ENABLED: bool
+    SEMANTIC_SEARCH_EMPTY_COOLDOWN_SECONDS: int = Field(..., gt=0)
+    SEMANTIC_SEARCH_REPEAT_COOLDOWN_SECONDS: int = Field(..., gt=0)
 
-    FLUSH_THREAD_POOL_SIZE: int = Field(default=4, gt=0)
-    FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
+    FLUSH_THREAD_POOL_SIZE: int = Field(..., gt=0)
+    FILE_FLUSH_INTERVAL: int = Field(..., gt=0)
 
-    CACHE_MAX_ENTRIES: int = 1000
-    CACHE_MAX_MEMORY_MB: int = 500
-    CACHE_EVICTION_DIVISOR: int = 10
-    CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
+    CACHE_MAX_ENTRIES: int
+    CACHE_MAX_MEMORY_MB: int
+    CACHE_EVICTION_DIVISOR: int
+    CACHE_MEMORY_THRESHOLD_RATIO: float
 
-    QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
-    QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
+    QUERY_RESULT_MAX_TOKENS: int = Field(..., gt=0)
+    QUERY_RESULT_ROW_CAP: int = Field(..., gt=0)
 
-    OLLAMA_HEALTH_TIMEOUT: float = 5.0
+    MAX_FILE_READ_CHARS: int = Field(..., gt=0)
+    MAX_DIR_LIST_ENTRIES: int = Field(..., gt=0)
+
+    OLLAMA_HEALTH_TIMEOUT: float
 
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
-    QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+    HF_TOKEN: str | None
 
-    MCP_HTTP_HOST: str = "0.0.0.0"
-    MCP_HTTP_PORT: int = 8080
-    MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
+    QUIET: bool = Field(..., validation_alias="CGR_QUIET")
+
+    MCP_HTTP_HOST: str
+    MCP_HTTP_PORT: int
+    MCP_HTTP_ENDPOINT_PATH: str
+
+    STRICT_ENV: bool = Field(True, validation_alias="CGR_STRICT_ENV")
+
+    @field_validator(
+        "MEMGRAPH_USERNAME",
+        "MEMGRAPH_PASSWORD",
+        "ORCHESTRATOR_API_KEY",
+        "ORCHESTRATOR_ENDPOINT",
+        "ORCHESTRATOR_PROJECT_ID",
+        "ORCHESTRATOR_PROVIDER_TYPE",
+        "ORCHESTRATOR_THINKING_BUDGET",
+        "ORCHESTRATOR_SERVICE_ACCOUNT_FILE",
+        "CYPHER_API_KEY",
+        "CYPHER_ENDPOINT",
+        "CYPHER_PROJECT_ID",
+        "CYPHER_PROVIDER_TYPE",
+        "CYPHER_THINKING_BUDGET",
+        "CYPHER_SERVICE_ACCOUNT_FILE",
+        "HF_TOKEN",
+        "PGVECTOR_HOST",
+        "PGVECTOR_USER",
+        "PGVECTOR_PASSWORD",
+        "PGVECTOR_DBNAME",
+        "PGVECTOR_TABLE_NAME",
+        mode="before",
+    )
+    @classmethod
+    def _empty_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator(
+        "SHELL_COMMAND_ALLOWLIST",
+        "SHELL_READ_ONLY_COMMANDS",
+        "SHELL_SAFE_GIT_SUBCOMMANDS",
+        mode="before",
+    )
+    @classmethod
+    def _parse_command_sets(cls, value: object) -> frozenset[str]:
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return frozenset()
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = raw.split(",")
+            else:
+                parsed = raw.split(",")
+            return frozenset(item.strip() for item in parsed if str(item).strip())
+        if isinstance(value, (list, set, tuple, frozenset)):
+            return frozenset(str(item).strip() for item in value if str(item).strip())
+        return frozenset()
+
+    @field_validator(
+        "MEMGRAPH_HOST",
+        "ORCHESTRATOR_PROVIDER",
+        "ORCHESTRATOR_MODEL",
+        "ORCHESTRATOR_REGION",
+        "CYPHER_PROVIDER",
+        "CYPHER_MODEL",
+        "CYPHER_REGION",
+        "OLLAMA_BASE_URL",
+        "TARGET_REPO_PATH",
+        "PGVECTOR_HOST",
+        "PGVECTOR_USER",
+        "PGVECTOR_PASSWORD",
+        "PGVECTOR_DBNAME",
+        "PGVECTOR_TABLE_NAME",
+        "MCP_HTTP_HOST",
+        "MCP_HTTP_ENDPOINT_PATH",
+        mode="before",
+    )
+    @classmethod
+    def _non_empty_strings(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("Value must not be empty")
+        return value
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
@@ -353,7 +400,71 @@ class AppConfig(BaseSettings):
         return resolved
 
 
+def _required_env_keys() -> list[str]:
+    keys: list[str] = []
+    for name, field in AppConfig.model_fields.items():
+        if not field.is_required():
+            continue
+        alias = field.validation_alias
+        if isinstance(alias, str):
+            keys.append(alias)
+        else:
+            keys.append(name)
+    return keys
+
+
+def _assert_required_env_vars() -> None:
+    required_keys = _required_env_keys()
+    present = {key.lower() for key in os.environ.keys()}
+    missing = [key for key in required_keys if key.lower() not in present]
+    if missing:
+        missing_display = "\n  - ".join(sorted(missing))
+        raise ValueError(
+            "Missing required environment variables. Add them to your .env file:\n"
+            f"  - {missing_display}\n"
+        )
+
+
+_ENV_KEY_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def _env_example_keys(example_path: Path) -> list[str]:
+    if not example_path.is_file():
+        return []
+    keys: list[str] = []
+    try:
+        for line in example_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            m = _ENV_KEY_RE.match(line)
+            if m:
+                keys.append(m.group(1))
+    except OSError:
+        return []
+    return keys
+
+
+def _assert_env_matches_example(*, strict: bool) -> None:
+    if not strict:
+        return
+    example_path = Path(".env.example")
+    expected = _env_example_keys(example_path)
+    if not expected:
+        return
+    present = {key.lower() for key in os.environ.keys()}
+    missing = [k for k in expected if k.lower() not in present]
+    if missing:
+        missing_display = "\n  - ".join(missing)
+        raise ValueError(
+            "Strict env mode: your .env is missing keys from .env.example.\n"
+            "Add these keys to your .env file:\n"
+            f"  - {missing_display}\n"
+        )
+
+
+_assert_required_env_vars()
 settings = AppConfig()
+_assert_env_matches_example(strict=bool(settings.STRICT_ENV))
 
 CGRIGNORE_FILENAME = ".cgrignore"
 

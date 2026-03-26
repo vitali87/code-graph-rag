@@ -604,5 +604,33 @@ def stats() -> None:
         raise typer.Exit(1) from e
 
 
+@app.command(name=ch.CLICommandName.SERVE, help=ch.CMD_SERVE)
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Host to bind the API server"),
+    port: int = typer.Option(8000, help="Port to bind the API server"),
+    reload: bool = typer.Option(False, help="Enable auto-reload for development"),
+    no_confirm: bool = typer.Option(
+        False,
+        "--no-confirm",
+        help=ch.HELP_NO_CONFIRM,
+    ),
+) -> None:
+    try:
+        import os
+
+        import uvicorn
+    except ImportError:
+        app_context.console.print(
+            style("uvicorn is not installed. Please install it using 'pip install uvicorn'", cs.Color.RED)
+        )
+        raise typer.Exit(1)
+
+    if no_confirm:
+        os.environ["CGR_NO_CONFIRM"] = "1"
+
+    app_context.console.print(style(f"Starting FastAPI server on {host}:{port}", cs.Color.GREEN))
+    uvicorn.run("codebase_rag.api:app", host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     app()
