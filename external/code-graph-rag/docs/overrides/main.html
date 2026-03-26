@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Code-Graph-RAG",
+  "description": "Graph-based RAG system that parses multi-language codebases with Tree-sitter, builds knowledge graphs, and enables natural language querying, editing, and optimization.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS, Windows",
+  "url": "https://docs.code-graph-rag.com",
+  "downloadUrl": "https://pypi.org/project/code-graph-rag/",
+  "softwareRequirements": "Python 3.12+, Docker",
+  "license": "https://opensource.org/licenses/MIT",
+  "author": {
+    "@type": "Person",
+    "name": "Vitali Avagyan",
+    "url": "https://github.com/vitali87"
+  },
+  "codeRepository": "https://github.com/vitali87/code-graph-rag",
+  "programmingLanguage": "Python",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
+{% endblock %}

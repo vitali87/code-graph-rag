@@ -1,0 +1,108 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.1.0",
+  "entity": {
+    "type": "individual",
+    "role": "owner",
+    "name": "Vitali Avagyan",
+    "email": "eheva87@gmail.com",
+    "description": "Creator and maintainer of Code-Graph-RAG, an open source tool for AI-powered codebase understanding via knowledge graphs.",
+    "webpageUrl": {
+      "url": "https://code-graph-rag.com"
+    }
+  },
+  "projects": [
+    {
+      "guid": "code-graph-rag",
+      "name": "Code-Graph-RAG",
+      "description": "An open source retrieval-augmented generation system that analyzes multi-language codebases using Tree-sitter, builds comprehensive knowledge graphs, and enables natural language querying and editing of codebase structure and relationships. Supports 11 programming languages with a unified graph schema and functions as an MCP server for AI assistant integration.",
+      "webpageUrl": {
+        "url": "https://code-graph-rag.com"
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/vitali87/code-graph-rag"
+      },
+      "licenses": [
+        "spdx:MIT"
+      ],
+      "tags": [
+        "rag",
+        "knowledge-graph",
+        "code-analysis",
+        "tree-sitter",
+        "mcp-server",
+        "developer-tools",
+        "ai",
+        "graph-database",
+        "semantic-search",
+        "python"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "github-sponsors",
+        "type": "payment-provider",
+        "address": "https://github.com/sponsors/vitali87",
+        "description": "GitHub Sponsors"
+      },
+      {
+        "guid": "buy-me-a-coffee",
+        "type": "payment-provider",
+        "address": "https://buymeacoffee.com/vitali87",
+        "description": "Buy Me a Coffee"
+      }
+    ],
+    "plans": [
+      {
+        "guid": "one-time-any",
+        "status": "active",
+        "name": "One-time donation",
+        "description": "Support Code-Graph-RAG development with a one-time contribution of any amount.",
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "github-sponsors",
+          "buy-me-a-coffee"
+        ]
+      },
+      {
+        "guid": "monthly-supporter",
+        "status": "active",
+        "name": "Monthly supporter",
+        "description": "Recurring monthly support for ongoing development, security maintenance, and new language support.",
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "monthly",
+        "channels": [
+          "github-sponsors",
+          "buy-me-a-coffee"
+        ]
+      },
+      {
+        "guid": "annual-sponsor",
+        "status": "active",
+        "name": "Annual sponsor",
+        "description": "Yearly sponsorship for sustained development of Code-Graph-RAG as open infrastructure for AI-powered codebase understanding.",
+        "amount": 25000,
+        "currency": "USD",
+        "frequency": "yearly",
+        "channels": [
+          "github-sponsors"
+        ]
+      }
+    ],
+    "history": [
+      {
+        "year": 2025,
+        "income": 0,
+        "expenses": 0,
+        "taxes": 0,
+        "currency": "USD",
+        "description": "Project launched in 2025. No external funding received."
+      }
+    ]
+  }
+}

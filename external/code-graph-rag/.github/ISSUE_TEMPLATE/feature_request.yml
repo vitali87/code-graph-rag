@@ -1,0 +1,119 @@
+name: 🚀 Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a new feature! Please provide details below.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: I'm frustrated when... / It would be helpful if...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like
+      placeholder: Add support for... / Implement a feature that...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or features?
+      placeholder: I also thought about... / Another approach could be...
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: What type of feature is this?
+      options:
+        - Language Support (new language)
+        - Language Support (improve existing)
+        - Query Capabilities
+        - Code Editing
+        - Performance
+        - CLI/UX
+        - Integration (MCP, API, etc.)
+        - Graph Schema
+        - Documentation
+        - Testing
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority/Impact
+      description: How important is this feature to you?
+      options:
+        - Critical - Blocking my work
+        - High - Would significantly improve my workflow
+        - Medium - Nice to have
+        - Low - Minor improvement
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: Describe your specific use case and how this feature would help
+      placeholder: |
+        I'm working on... and I need to...
+        This feature would help by...
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples
+      description: Provide examples of how this feature would work
+      placeholder: |
+        Example usage:
+        ```bash
+        cgr query "find all classes that inherit from BaseModel"
+        ```
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other context, mockups, or references
+      placeholder: Links to similar features in other tools, mockups, etc.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Are you willing to contribute?
+      options:
+        - label: I'm willing to implement this feature and submit a PR
+          required: false
+        - label: I can help with testing
+          required: false
+        - label: I can help with documentation
+          required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and PRs to ensure this hasn't been requested
+          required: true
+        - label: This feature aligns with the project's goals
+          required: true

@@ -1,0 +1,34 @@
+name: Sync Labels
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/labels.yml"
+      - ".github/workflows/label-sync.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 1"
+
+permissions: read-all
+
+jobs:
+  sync-labels:
+    name: Sync Repository Labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Sync labels
+        uses: micnncim/action-label-syncer@3abd5ab72fda571e69fffd97bd4e0033dd5f495c # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          manifest: .github/labels.yml
+          prune: false # Don't delete labels not in the manifest (preserve existing custom labels)

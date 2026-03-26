@@ -1,0 +1,107 @@
+name: 📖 Documentation
+description: Report missing, incorrect, or unclear documentation
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve our documentation! Report issues, suggest improvements, or request new docs.
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: Documentation Issue
+      description: Describe what's wrong or missing in the documentation
+      placeholder: The documentation is unclear/missing/incorrect because...
+    validations:
+      required: true
+
+  - type: input
+    id: location-file
+    attributes:
+      label: File/Page Location
+      description: Which file or page has the issue?
+      placeholder: "README.md, docs/claude-code-setup.md, or specific section"
+    validations:
+      required: true
+
+  - type: input
+    id: location-url
+    attributes:
+      label: URL (if applicable)
+      description: Link to the documentation page
+      placeholder: "https://github.com/vitali87/code-graph-rag/blob/main/..."
+
+  - type: textarea
+    id: current-state
+    attributes:
+      label: Current State
+      description: What does the documentation currently say?
+      placeholder: Currently it says...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested
+    attributes:
+      label: Suggested Improvement
+      description: What should it say instead? Be specific if possible
+      placeholder: It should say...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Why This Matters
+      description: How does this affect users?
+      options:
+        - label: Causes confusion
+        - label: Information is outdated
+        - label: Missing critical information
+        - label: Example code doesn't work
+        - label: Typo or grammar issue
+        - label: Other (please specify in additional context)
+
+  - type: textarea
+    id: proposed-changes
+    attributes:
+      label: Proposed Changes
+      description: If you have specific changes in mind, share them here
+      render: markdown
+      placeholder: |
+        ```markdown
+        # Suggested documentation update
+        ```
+
+  - type: textarea
+    id: related
+    attributes:
+      label: Related Issues
+      description: Link to related issues if any
+      placeholder: "#123, #456"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Screenshots, examples, or any other helpful context
+      placeholder: Add screenshots, examples, or other context
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Are you willing to help fix this?
+      options:
+        - label: I'm willing to submit a PR to fix this documentation
+          required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues to ensure this hasn't been reported
+          required: true
