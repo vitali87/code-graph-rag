@@ -316,6 +316,15 @@ class CallProcessor:
                 callee_type, callee_qn = operator_info
             else:
                 continue
+            if callee_type == cs.NodeLabel.CLASS:
+                logger.debug(
+                    ls.CALL_SKIP_CLASS,
+                    caller=caller_qn,
+                    call_name=call_name,
+                    callee_qn=callee_qn,
+                )
+                continue
+
             logger.debug(
                 ls.CALL_FOUND,
                 caller=caller_qn,
