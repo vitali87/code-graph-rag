@@ -818,7 +818,7 @@ def main():
         ]
         assert len(calls) >= 1
 
-        # Builder() is a class instantiation, not a function call
+        # (H) Builder() is a class instantiation, not a function call
         class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
         assert len(class_targets) == 0
 
@@ -864,8 +864,6 @@ package_func()
 
 
 class TestModuleCallsClassFiltered:
-    """Module CALLS Class edges are semantically incorrect and should be filtered out."""
-
     def test_module_does_not_call_class_python(
         self,
         temp_repo: Path,
@@ -906,10 +904,7 @@ helper()
         ]
 
         class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
-        assert len(class_targets) == 0, (
-            f"Expected no CALLS edges to Class nodes, but found {len(class_targets)}: "
-            f"{[(c.args[0][2], c.args[2][2]) for c in class_targets]}"
-        )
+        assert class_targets == []
 
         helper_calls = [c for c in calls if "helper" in c.args[2][2]]
         assert len(helper_calls) >= 1
@@ -952,7 +947,4 @@ def factory():
         ]
 
         class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
-        assert len(class_targets) == 0, (
-            f"Expected no CALLS edges to Class nodes, but found {len(class_targets)}: "
-            f"{[(c.args[0][2], c.args[2][2]) for c in class_targets]}"
-        )
+        assert class_targets == []
