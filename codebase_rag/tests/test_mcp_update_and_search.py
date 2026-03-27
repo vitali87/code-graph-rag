@@ -1,0 +1,172 @@
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.mcp.tools import MCPToolsRegistry
+
+pytestmark = [pytest.mark.anyio]
+
+
+@pytest.fixture(params=["asyncio"])
+def anyio_backend(request: pytest.FixtureRequest) -> str:
+    return str(request.param)
+
+
+@pytest.fixture
+def temp_project_root(tmp_path: Path) -> Path:
+    sample_file = tmp_path / "app.py"
+    sample_file.write_text("def main(): pass\n", encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture
+def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
+    mock_ingestor = MagicMock()
+    mock_cypher_gen = MagicMock()
+
+    registry = MCPToolsRegistry(
+        project_root=str(temp_project_root),
+        ingestor=mock_ingestor,
+        cypher_gen=mock_cypher_gen,
+    )
+    return registry
+
+
+class TestUpdateRepository:
+    async def test_update_repository_success(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater = MagicMock()
+            mock_updater_cls.return_value = mock_updater
+
+            result = await mcp_registry.update_repository()
+
+            mock_updater_cls.assert_called_once()
+            mock_updater.run.assert_called_once()
+            assert mcp_registry.project_root in result
+
+    async def test_update_repository_error(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater_cls.side_effect = RuntimeError("parse error")
+
+            result = await mcp_registry.update_repository()
+
+            assert "Error" in result
+
+    async def test_update_repository_registered(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        assert cs.MCPToolName.UPDATE_REPOSITORY in mcp_registry._tools
+
+    async def test_update_repository_no_wipe(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater = MagicMock()
+            mock_updater_cls.return_value = mock_updater
+
+            await mcp_registry.update_repository()
+
+            mcp_registry.ingestor.delete_project.assert_not_called()
+            mcp_registry.ingestor.clean_database.assert_not_called()
+
+
+class TestSemanticSearchRegistration:
+    def test_semantic_search_not_registered_without_deps(
+        self, temp_project_root: Path
+    ) -> None:
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with patch(
+            "codebase_rag.mcp.tools.has_semantic_dependencies",
+            return_value=False,
+        ):
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+        assert cs.MCPToolName.SEMANTIC_SEARCH not in registry._tools
+        assert registry._semantic_search_available is False
+
+    def test_semantic_search_registered_with_deps(
+        self, temp_project_root: Path
+    ) -> None:
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with (
+            patch(
+                "codebase_rag.mcp.tools.has_semantic_dependencies",
+                return_value=True,
+            ),
+            patch(
+                "codebase_rag.tools.semantic_search.create_semantic_search_tool"
+            ) as mock_create,
+        ):
+            mock_tool = MagicMock()
+            mock_create.return_value = mock_tool
+
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+            assert cs.MCPToolName.SEMANTIC_SEARCH in registry._tools
+            assert registry._semantic_search_available is True
+
+    async def test_semantic_search_calls_tool(self, temp_project_root: Path) -> None:
+        mock_ingestor = MagicMock()
+        mock_cypher_gen = MagicMock()
+
+        with (
+            patch(
+                "codebase_rag.mcp.tools.has_semantic_dependencies",
+                return_value=True,
+            ),
+            patch(
+                "codebase_rag.tools.semantic_search.create_semantic_search_tool"
+            ) as mock_create,
+        ):
+            mock_tool = MagicMock()
+            mock_tool.function = AsyncMock(return_value="result1, result2")
+            mock_create.return_value = mock_tool
+
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=mock_ingestor,
+                cypher_gen=mock_cypher_gen,
+            )
+
+            result = await registry.semantic_search("find auth functions", top_k=3)
+
+            mock_tool.function.assert_called_once_with(
+                query="find auth functions", top_k=3
+            )
+            assert "result1" in result
+
+
+class TestToolDescriptions:
+    def test_update_repository_in_tool_map(self) -> None:
+        from codebase_rag.tools.tool_descriptions import MCP_TOOLS
+
+        assert cs.MCPToolName.UPDATE_REPOSITORY in MCP_TOOLS
+
+    def test_semantic_search_in_tool_map(self) -> None:
+        from codebase_rag.tools.tool_descriptions import MCP_TOOLS
+
+        assert cs.MCPToolName.SEMANTIC_SEARCH in MCP_TOOLS
+
+    def test_index_repository_warns_about_project_clear(self) -> None:
+        from codebase_rag.tools.tool_descriptions import MCP_INDEX_REPOSITORY
+
+        assert "current project" in MCP_INDEX_REPOSITORY
+        assert "entire database" not in MCP_INDEX_REPOSITORY

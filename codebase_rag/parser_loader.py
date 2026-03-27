@@ -137,6 +137,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.SupportedLanguage.JAVA,
         ),
         LanguageImport(
+            cs.SupportedLanguage.C,
+            cs.TreeSitterModule.C,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.C,
+        ),
+        LanguageImport(
             cs.SupportedLanguage.CPP,
             cs.TreeSitterModule.CPP,
             cs.QUERY_LANGUAGE,
@@ -147,6 +153,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.TreeSitterModule.LUA,
             cs.QUERY_LANGUAGE,
             cs.SupportedLanguage.LUA,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.PHP,
+            cs.TreeSitterModule.PHP,
+            cs.LANG_ATTR_PHP,
+            cs.SupportedLanguage.PHP,
         ),
     ]
 

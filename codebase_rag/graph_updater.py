@@ -6,6 +6,7 @@ from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
 
 from loguru import logger
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from tree_sitter import Node, Parser
 
 from . import constants as cs
@@ -156,9 +157,11 @@ class FunctionRegistryTrie:
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
             # (H) O(1) lookup using the simple_name_lookup index
-            return list(self._simple_name_lookup[suffix])
+            return sorted(self._simple_name_lookup[suffix])
         # (H) Fallback to linear scan if no index available
-        return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
+        return sorted(
+            qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
+        )
 
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
@@ -330,6 +333,8 @@ class GraphUpdater:
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
 
+        self._prune_orphan_nodes()
+
         self._generate_semantic_embeddings()
 
     def remove_file_from_state(self, file_path: Path) -> None:
@@ -405,36 +410,51 @@ class GraphUpdater:
 
         processed_since_flush = 0
 
-        for filepath in eligible_files:
-            file_key = str(filepath.relative_to(self.repo_path))
-            current_file_keys.add(file_key)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn(ls.PROGRESS_INDEXING_LABEL),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("", total=len(eligible_files))
 
-            current_hash = _hash_file(filepath)
-            new_hashes[file_key] = current_hash
+            for filepath in eligible_files:
+                file_key = str(filepath.relative_to(self.repo_path))
+                current_file_keys.add(file_key)
 
-            if (
-                not force
-                and file_key in old_hashes
-                and old_hashes[file_key] == current_hash
-            ):
-                logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
-                skipped_count += 1
-                continue
+                current_hash = _hash_file(filepath)
+                new_hashes[file_key] = current_hash
 
-            if file_key in old_hashes:
-                logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
-                self.remove_file_from_state(filepath)
-            else:
-                logger.debug(ls.FILE_HASH_NEW, path=file_key)
+                if (
+                    not force
+                    and file_key in old_hashes
+                    and old_hashes[file_key] == current_hash
+                ):
+                    logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
+                    skipped_count += 1
+                    progress.advance(task)
+                    continue
 
-            changed_count += 1
-            self._process_single_file(filepath)
+                if file_key in old_hashes:
+                    logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
+                    self.remove_file_from_state(filepath)
+                else:
+                    logger.debug(ls.FILE_HASH_NEW, path=file_key)
 
-            processed_since_flush += 1
-            if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
-                logger.info(ls.PERIODIC_FLUSH.format(count=processed_since_flush))
-                self.ingestor.flush_all()
-                processed_since_flush = 0
+                changed_count += 1
+                self._process_single_file(filepath)
+
+                processed_since_flush += 1
+                if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
+                    logger.info(ls.PERIODIC_FLUSH.format(count=processed_since_flush))
+                    self.ingestor.flush_all()
+                    processed_since_flush = 0
+
+                progress.update(
+                    task,
+                    advance=1,
+                    description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
+                )
 
         deleted_keys = set(old_hashes.keys()) - current_file_keys
         if deleted_keys:
@@ -442,6 +462,13 @@ class GraphUpdater:
             for deleted_key in deleted_keys:
                 deleted_path = self.repo_path / deleted_key
                 self.remove_file_from_state(deleted_path)
+                if isinstance(self.ingestor, QueryProtocol):
+                    self.ingestor.execute_write(
+                        cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: deleted_key}
+                    )
+                    self.ingestor.execute_write(
+                        cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: deleted_key}
+                    )
 
         if skipped_count > 0:
             logger.info(ls.INCREMENTAL_SKIPPED, count=skipped_count)
@@ -477,6 +504,56 @@ class GraphUpdater:
             self.factory.call_processor.process_calls_in_file(
                 file_path, root_node, language, self.queries
             )
+
+    def _prune_orphan_nodes(self) -> None:
+        """Remove graph nodes whose files/folders no longer exist on disk."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+
+        logger.info(ls.PRUNE_START)
+        total_pruned = 0
+
+        project_prefix = self.project_name + "."
+        repo_abs = self.repo_path.resolve().as_posix()
+        prune_specs: list[tuple[str, str, str]] = [
+            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
+            (
+                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL,
+                cs.CYPHER_DELETE_MODULE,
+                "Module",
+            ),
+            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
+        ]
+
+        for query_all, delete_query, label in prune_specs:
+            rows = self.ingestor.fetch_all(query_all)
+            orphans = []
+            for r in rows:
+                path = r.get("path")
+                if not isinstance(path, str) or not path:
+                    continue
+                abs_path = r.get("absolute_path")
+                qn = r.get("qualified_name", "")
+                if isinstance(abs_path, str) and not abs_path.startswith(repo_abs):
+                    continue
+                if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
+                    continue
+                if not (self.repo_path / path).exists():
+                    orphans.append(path)
+
+            if orphans:
+                logger.info(ls.PRUNE_FOUND, count=len(orphans), label=label)
+                for orphan_path in orphans:
+                    logger.debug(ls.PRUNE_DELETING, label=label, path=orphan_path)
+                    self.ingestor.execute_write(
+                        delete_query, {cs.KEY_PATH: orphan_path}
+                    )
+                total_pruned += len(orphans)
+
+        if total_pruned:
+            logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
+        else:
+            logger.info(ls.PRUNE_SKIP)
 
     def _generate_semantic_embeddings(self) -> None:
         if not has_semantic_dependencies():

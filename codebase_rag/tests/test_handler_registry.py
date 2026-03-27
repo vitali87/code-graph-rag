@@ -9,6 +9,7 @@ from codebase_rag.parsers.handlers.cpp import CppHandler
 from codebase_rag.parsers.handlers.java import JavaHandler
 from codebase_rag.parsers.handlers.js_ts import JsTsHandler
 from codebase_rag.parsers.handlers.lua import LuaHandler
+from codebase_rag.parsers.handlers.php import PhpHandler
 from codebase_rag.parsers.handlers.python import PythonHandler
 from codebase_rag.parsers.handlers.rust import RustHandler
 
@@ -47,8 +48,12 @@ class TestGetHandler:
         assert isinstance(handler, BaseLanguageHandler)
         assert type(handler) is BaseLanguageHandler
 
-    def test_returns_base_handler_for_php(self) -> None:
+    def test_returns_php_handler_for_php(self) -> None:
         handler = get_handler(SupportedLanguage.PHP)
+        assert isinstance(handler, PhpHandler)
+
+    def test_returns_base_handler_for_c(self) -> None:
+        handler = get_handler(SupportedLanguage.C)
         assert isinstance(handler, BaseLanguageHandler)
         assert type(handler) is BaseLanguageHandler
 
@@ -84,6 +89,7 @@ class TestHandlerProtocol:
             SupportedLanguage.PYTHON,
             SupportedLanguage.GO,
             SupportedLanguage.PHP,
+            SupportedLanguage.C,
         ],
     )
     def test_handler_has_all_protocol_methods(
@@ -114,6 +120,8 @@ class TestHandlerProtocol:
             SupportedLanguage.JAVA,
             SupportedLanguage.LUA,
             SupportedLanguage.PYTHON,
+            SupportedLanguage.PHP,
+            SupportedLanguage.C,
         ],
     )
     def test_handler_methods_are_callable(self, language: SupportedLanguage) -> None:
@@ -151,3 +159,6 @@ class TestHandlerInheritance:
 
     def test_python_handler_extends_base(self) -> None:
         assert issubclass(PythonHandler, BaseLanguageHandler)
+
+    def test_php_handler_extends_base(self) -> None:
+        assert issubclass(PhpHandler, BaseLanguageHandler)

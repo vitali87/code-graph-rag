@@ -30,6 +30,9 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/vitali87/code-graph-rag">
     <img src="https://api.scorecard.dev/projects/github.com/vitali87/code-graph-rag/badge" alt="OpenSSF Scorecard" />
   </a>
+  <a href="https://gitcgr.com/vitali87/code-graph-rag">
+    <img src="https://gitcgr.com/badge/vitali87/code-graph-rag.svg" alt="gitcgr" />
+  </a>
 </p>
 </div>
 
@@ -44,9 +47,9 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 
 ## Latest News 🔥
 
-- **[NEW]** **Visualise any GitHub repo instantly!** Just change `github.com` to `gitcgr.com` in any repo URL — that's it, only 3 letters! Get an interactive graph of the entire codebase structure. Try it now: [gitcgr.com](https://gitcgr.com)
-- **MCP Server Integration**: Code-Graph-RAG now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
-- **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
+- **PHP Language Support**: Full PHP language support added — classes, interfaces, traits, enums, namespaces, PHP 8 attributes, and call graph analysis. Contributed by [@rs-ipps](https://github.com/rs-ipps).
+- **C Language Support**: Full C language support added — functions, structs, unions, enums, preprocessor includes, and call graph analysis. Contributed by [@dj0nes](https://github.com/dj0nes).
+- **Visualise any GitHub repo instantly!** Just change `github.com` to `gitcgr.com` in any repo URL — that's it, only 3 letters! Get an interactive graph of the entire codebase structure. Try it now: [gitcgr.com](https://gitcgr.com)
 
 ## 🚀 Features
 
@@ -55,16 +58,17 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 <!-- SECTION:supported_languages -->
 | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
 |--------|------|----------|---------|---------------|-------|-----------------|-------------------|
+| C | Fully Supported | .c | ✓ | ✓ | ✓ | ✓ | Functions, structs, unions, enums, preprocessor includes |
 | C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
+| PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
 | Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
 | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions |
 | TypeScript | Fully Supported | .ts, .tsx | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | C# | In Development | .cs | ✓ | ✓ | ✓ | - | Classes, interfaces, generics (planned) |
 | Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
-| PHP | In Development | .php | ✓ | ✓ | ✓ | - | Classes, functions, namespaces |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 <!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
@@ -228,8 +232,19 @@ ollama pull llama3.2
 
 4. **Start Memgraph database**:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
+
+5. **Verify installation**:
+```bash
+# If installed from PyPI:
+cgr --help
+
+# If running from source:
+uv run cgr --help
+```
+
+> **Note**: When running from source (cloned repo), prefix all `cgr` commands below with `uv run`, e.g., `uv run cgr start ...`
 
 ## 🛠️ Makefile Commands
 
@@ -464,7 +479,7 @@ cgr optimize javascript --repo-path /path/to/frontend \
 ```
 
 **Supported Languages for Optimization:**
-All supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `cpp`
+All supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `c`, `cpp`
 
 **How It Works:**
 1. **Analysis Phase**: The agent analyzes your codebase structure using the knowledge graph
@@ -542,13 +557,15 @@ claude mcp add --transport stdio code-graph-rag \
 | `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
-| `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. Note: This preserves other projects - only the current project is re-indexed. |
-| `query_code_graph` | Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. |
+| `index_repository` | WARNING: Clears all data for the current project including its embeddings. Parse and ingest the repository into the Memgraph knowledge graph. Use update_repository for incremental updates. Only use when explicitly requested. |
+| `update_repository` | Update the repository in the Memgraph knowledge graph without clearing existing data. Use this for incremental updates. |
+| `query_code_graph` | Query the codebase knowledge graph using natural language. Use semantic_search unless you know the exact names of classes/functions you are searching for. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. |
 | `get_code_snippet` | Retrieve source code for a function, class, or method by its qualified name. Returns the source code, file path, line numbers, and docstring. |
 | `surgical_replace_code` | Surgically replace an exact code block in a file using diff-match-patch. Only modifies the exact target block, leaving the rest unchanged. |
 | `read_file` | Read the contents of a file from the project. Supports pagination for large files. |
 | `write_file` | Write content to a file, creating it if it doesn't exist. |
 | `list_directory` | List contents of a directory in the project. |
+| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Requires the 'semantic' extra to be installed. |
 <!-- /SECTION:mcp_tools -->
 
 ### Example Usage
@@ -590,16 +607,17 @@ The knowledge graph uses the following node types and relationships:
 ### Language-Specific Mappings
 
 <!-- SECTION:language_mappings -->
+- **C**: `enum_specifier`, `function_definition`, `struct_specifier`, `union_specifier`
 - **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
 - **Lua**: `function_declaration`, `function_definition`
+- **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `interface_declaration`, `method_declaration`, `trait_declaration`
 - **Python**: `class_definition`, `function_definition`
 - **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **C#**: `anonymous_method_expression`, `class_declaration`, `constructor_declaration`, `destructor_declaration`, `enum_declaration`, `function_pointer_type`, `interface_declaration`, `lambda_expression`, `local_function_statement`, `method_declaration`, `struct_declaration`
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
-- **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `function_static_declaration`, `interface_declaration`, `trait_declaration`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->
 
@@ -898,3 +916,7 @@ We also offer custom development, integration consulting, technical support cont
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=vitali87/code-graph-rag&type=Date)](https://www.star-history.com/#vitali87/code-graph-rag&Date)
+
+## Fork History
+
+[![Fork History Chart](https://fork-history.site/svg?repos=vitali87/code-graph-rag)](https://fork-history.site/#vitali87/code-graph-rag)

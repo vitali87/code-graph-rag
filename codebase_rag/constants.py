@@ -89,6 +89,7 @@ EXT_HH = ".hh"
 EXT_IXX = ".ixx"
 EXT_CPPM = ".cppm"
 EXT_CCM = ".ccm"
+EXT_C = ".c"
 EXT_CS = ".cs"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
@@ -101,6 +102,7 @@ RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
 JAVA_EXTENSIONS = (EXT_JAVA,)
+C_EXTENSIONS = (EXT_C,)
 CPP_EXTENSIONS = (
     EXT_CPP,
     EXT_H,
@@ -243,6 +245,8 @@ CLI_MSG_CONNECTING_MEMGRAPH = "Connecting to Memgraph to export graph..."
 CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
 CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
 CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
+PACKAGE_NAME = "code-graph-rag"
+CLI_MSG_VERSION = "{package} version {version}"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
@@ -461,6 +465,7 @@ class SupportedLanguage(StrEnum):
     GO = "go"
     SCALA = "scala"
     JAVA = "java"
+    C = "c"
     CPP = "cpp"
     CSHARP = "c-sharp"
     PHP = "php"
@@ -493,6 +498,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         LanguageStatus.FULL,
         "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
         "TypeScript",
+    ),
+    SupportedLanguage.C: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Functions, structs, unions, enums, preprocessor includes",
+        "C",
     ),
     SupportedLanguage.CPP: LanguageMetadata(
         LanguageStatus.FULL,
@@ -530,8 +540,8 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "C#",
     ),
     SupportedLanguage.PHP: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Classes, functions, namespaces",
+        LanguageStatus.FULL,
+        "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
         "PHP",
     ),
 }
@@ -749,6 +759,7 @@ BUILD_EXT_CMD = "build_ext"
 INPLACE_FLAG = "--inplace"
 LANG_ATTR_PREFIX = "language_"
 LANG_ATTR_TYPESCRIPT = "language_typescript"
+LANG_ATTR_PHP = "language_php"
 
 
 class TreeSitterModule(StrEnum):
@@ -759,8 +770,10 @@ class TreeSitterModule(StrEnum):
     GO = "tree_sitter_go"
     SCALA = "tree_sitter_scala"
     JAVA = "tree_sitter_java"
+    C = "tree_sitter_c"
     CPP = "tree_sitter_cpp"
     LUA = "tree_sitter_lua"
+    PHP = "tree_sitter_php"
 
 
 # (H) Query dict keys
@@ -865,10 +878,25 @@ PAYLOAD_QUALIFIED_NAME = "qualified_name"
 class EventType(StrEnum):
     MODIFIED = "modified"
     CREATED = "created"
+    DELETED = "deleted"
 
 
 CYPHER_DELETE_MODULE = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
+CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
+CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
+
+# (H) Queries for orphan pruning — returns all paths stored in the graph
+CYPHER_ALL_FILE_PATHS = (
+    "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_ALL_MODULE_PATHS_INTERNAL = (
+    "MATCH (m:Module) WHERE m.is_external IS NULL OR m.is_external = false "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
+)
+CYPHER_ALL_FOLDER_PATHS = (
+    "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
 
 REALTIME_LOGGER_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -879,6 +907,10 @@ REALTIME_LOGGER_FORMAT = (
 
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
+
+# (H) Debounce settings for realtime watcher
+DEFAULT_DEBOUNCE_SECONDS = 5
+DEFAULT_MAX_WAIT_SECONDS = 30
 
 
 class Architecture(StrEnum):
@@ -1750,6 +1782,8 @@ TS_CS_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CS_INVOCATION_EXPRESSION = "invocation_expression"
 
 # (H) Tree-sitter PHP node types
+TS_PHP_FUNCTION_DEFINITION = "function_definition"
+TS_PHP_METHOD_DECLARATION = "method_declaration"
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"
@@ -1758,6 +1792,20 @@ TS_PHP_MEMBER_CALL_EXPRESSION = "member_call_expression"
 TS_PHP_SCOPED_CALL_EXPRESSION = "scoped_call_expression"
 TS_PHP_FUNCTION_CALL_EXPRESSION = "function_call_expression"
 TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION = "nullsafe_member_call_expression"
+TS_PHP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+TS_PHP_NAMESPACE_DEFINITION = "namespace_definition"
+TS_PHP_NAMESPACE_USE_DECLARATION = "namespace_use_declaration"
+TS_PHP_NAMESPACE_USE_CLAUSE = "namespace_use_clause"
+TS_PHP_INCLUDE_EXPRESSION = "include_expression"
+TS_PHP_INCLUDE_ONCE_EXPRESSION = "include_once_expression"
+TS_PHP_REQUIRE_EXPRESSION = "require_expression"
+TS_PHP_REQUIRE_ONCE_EXPRESSION = "require_once_expression"
+TS_PHP_ATTRIBUTE_LIST = "attribute_list"
+TS_PHP_ATTRIBUTE = "attribute"
+TS_PHP_ATTRIBUTE_GROUP = "attribute_group"
+TS_PHP_VISIBILITY_MODIFIER = "visibility_modifier"
+TS_PHP_USE_DECLARATION = "use_declaration"
+TS_PHP_QUALIFIED_NAME = "qualified_name"
 
 # (H) Tree-sitter Lua node types for language_spec
 TS_LUA_CHUNK = "chunk"
@@ -2410,12 +2458,14 @@ class MCPToolName(StrEnum):
     DELETE_PROJECT = "delete_project"
     WIPE_DATABASE = "wipe_database"
     INDEX_REPOSITORY = "index_repository"
+    UPDATE_REPOSITORY = "update_repository"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
+    SEMANTIC_SEARCH = "semantic_search"
 
 
 # (H) MCP transport selection
@@ -2461,6 +2511,7 @@ class MCPParamName(StrEnum):
     LIMIT = "limit"
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
+    TOP_K = "top_k"
 
 
 # (H) MCP server constants
@@ -2479,6 +2530,11 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
+MCP_UPDATE_ERROR = "Error updating repository: {error}"
+MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
+    "Semantic search is not available. Install with: uv sync --extra semantic"
+)
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."
@@ -2633,13 +2689,14 @@ FQN_PHP_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
     TS_PHP_TRAIT_DECLARATION,
+    TS_PHP_NAMESPACE_DEFINITION,
     TS_PROGRAM,
 )
 FQN_PHP_FUNCTION_TYPES = (
-    TS_PY_FUNCTION_DEFINITION,
+    TS_PHP_FUNCTION_DEFINITION,
+    TS_PHP_METHOD_DECLARATION,
     TS_PHP_ANONYMOUS_FUNCTION,
     TS_PHP_ARROW_FUNCTION,
-    TS_PHP_FUNCTION_STATIC_DECLARATION,
 )
 
 # (H) LANGUAGE_SPECS node type tuples for Python
@@ -2675,6 +2732,13 @@ RS_IDENT_NODE_TYPES = (TS_RS_FUNCTION_ITEM, TS_RS_MOD_ITEM)
 CPP_NAME_NODE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,
     TS_STRUCT_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+
+# (H) Derived node types for _c_get_name
+C_NAME_NODE_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
     TS_ENUM_SPECIFIER,
 )
 
@@ -2774,6 +2838,26 @@ SPEC_CPP_PACKAGE_INDICATORS = (
     PKG_CONANFILE,
 )
 
+# (H) FQN node type tuples for C
+FQN_C_SCOPE_TYPES = (
+    TS_CPP_TRANSLATION_UNIT,
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+FQN_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
+
+# (H) LANGUAGE_SPECS node type tuples for C
+SPEC_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
+SPEC_C_CLASS_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+SPEC_C_MODULE_TYPES = (TS_CPP_TRANSLATION_UNIT,)
+SPEC_C_CALL_TYPES = (TS_CPP_CALL_EXPRESSION,)
+SPEC_C_PACKAGE_INDICATORS = (PKG_CMAKE_LISTS, PKG_MAKEFILE)
+
 # (H) LANGUAGE_SPECS node type tuples for C#
 SPEC_CS_FUNCTION_TYPES = (
     TS_CS_DESTRUCTOR_DECLARATION,
@@ -2795,23 +2879,31 @@ SPEC_CS_CALL_TYPES = (TS_CS_INVOCATION_EXPRESSION,)
 
 # (H) LANGUAGE_SPECS node type tuples for PHP
 SPEC_PHP_FUNCTION_TYPES = (
-    TS_PHP_FUNCTION_STATIC_DECLARATION,
+    TS_PHP_FUNCTION_DEFINITION,
+    TS_PHP_METHOD_DECLARATION,
     TS_PHP_ANONYMOUS_FUNCTION,
-    TS_PY_FUNCTION_DEFINITION,
     TS_PHP_ARROW_FUNCTION,
 )
 SPEC_PHP_CLASS_TYPES = (
+    TS_CLASS_DECLARATION,
+    TS_INTERFACE_DECLARATION,
     TS_PHP_TRAIT_DECLARATION,
     TS_ENUM_DECLARATION,
-    TS_INTERFACE_DECLARATION,
-    TS_CLASS_DECLARATION,
 )
 SPEC_PHP_MODULE_TYPES = (TS_PROGRAM,)
 SPEC_PHP_CALL_TYPES = (
+    TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_MEMBER_CALL_EXPRESSION,
     TS_PHP_SCOPED_CALL_EXPRESSION,
-    TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION,
+    TS_PHP_OBJECT_CREATION_EXPRESSION,
+)
+SPEC_PHP_IMPORT_TYPES = (TS_PHP_NAMESPACE_USE_DECLARATION,)
+SPEC_PHP_IMPORT_FROM_TYPES = (
+    TS_PHP_INCLUDE_EXPRESSION,
+    TS_PHP_INCLUDE_ONCE_EXPRESSION,
+    TS_PHP_REQUIRE_EXPRESSION,
+    TS_PHP_REQUIRE_ONCE_EXPRESSION,
 )
 
 # (H) LANGUAGE_SPECS node type tuples for Lua

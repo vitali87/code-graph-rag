@@ -112,8 +112,25 @@ CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
 # (H) File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
+WATCHER_DEBOUNCE_ACTIVE = (
+    "File watcher active with debouncing (debounce={debounce}s, max_wait={max_wait}s)"
+)
 WATCHER_SKIP_NO_QUERY = "Ingestor does not support querying, skipping real-time update."
 CHANGE_DETECTED = "Change detected: {event_type} on {path}. Updating graph."
+CHANGE_DEBOUNCING = (
+    "Change detected: {event_type} on {name} (debouncing for {debounce}s)"
+)
+DEBOUNCE_RESET = "Reset debounce timer for {path}"
+DEBOUNCE_MAX_WAIT = "Max wait ({max_wait}s) exceeded for {path}, processing now"
+DEBOUNCE_SCHEDULED = (
+    "Scheduled update for {path} in {debounce}s (max wait: {remaining}s remaining)"
+)
+DEBOUNCE_PROCESSING = "Processing debounced change: {path}"
+DEBOUNCE_NO_EVENT = "No pending event for {path}, skipping"
+DEBOUNCE_MAX_WAIT_ADJUSTED = (
+    "max_wait ({max_wait}s) is less than debounce ({debounce}s). "
+    "Setting max_wait to debounce value."
+)
 DELETION_QUERY = "Ran deletion query for path: {path}"
 RECALC_CALLS = "Recalculating all function call relationships for consistency..."
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
@@ -628,6 +645,12 @@ MCP_WRITE_FILE = "[MCP] write_file: {path}"
 MCP_ERROR_WRITE = "[MCP] Error writing file: {error}"
 MCP_LIST_DIR = "[MCP] list_directory: {path}"
 MCP_ERROR_LIST_DIR = "[MCP] Error listing directory: {error}"
+MCP_SEMANTIC_NOT_AVAILABLE = (
+    "[MCP] Semantic search not available. Install with: uv sync --extra semantic"
+)
+MCP_UPDATING_REPO = "[MCP] Updating repository at: {path}"
+MCP_ERROR_UPDATING = "[MCP] Error updating repository: {error}"
+MCP_SEMANTIC_SEARCH = "[MCP] semantic_search: {query}"
 
 # (H) MCP server logs
 MCP_SERVER_INFERRED_ROOT = "[GraphCode MCP] Using inferred project root: {path}"
@@ -662,6 +685,13 @@ INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
+
+# (H) Orphan pruning logs
+PRUNE_START = "--- Pruning orphan nodes from graph ---"
+PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
+PRUNE_DELETING = "Pruning orphan {label}: {path}"
+PRUNE_COMPLETE = "Pruning complete. Removed {count} orphan nodes."
+PRUNE_SKIP = "No orphan nodes found. Graph is clean."
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"
@@ -674,3 +704,7 @@ EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
 MODEL_SWITCHED = "Model switched to: {model}"
 MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
 MODEL_CURRENT = "Current model: {model}"
+
+# (H) Progress bar logs
+PROGRESS_INDEXING_LABEL = "[bold blue]Indexing files..."
+PROGRESS_FILES_PROCESSED = "{count} processed"

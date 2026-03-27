@@ -97,6 +97,38 @@ def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
+def _php_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    try:
+        rel = file_path.relative_to(repo_root)
+        parts = list(rel.with_suffix("").parts)
+        if parts and parts[0] in ("src", "app", "lib"):
+            parts = parts[1:]
+        return parts
+    except ValueError:
+        return []
+
+
+def _c_unwrap_declarator(declarator: Node | None) -> Node | None:
+    while declarator and declarator.type == cs.CppNodeType.POINTER_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    return declarator
+
+
+def _c_get_name(node: Node) -> str | None:
+    if node.type in cs.C_NAME_NODE_TYPES:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node and name_node.text:
+            return name_node.text.decode(cs.ENCODING_UTF8)
+    elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
+        declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+        declarator = _c_unwrap_declarator(declarator)
+        if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
+            name_node = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+            if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
+                return name_node.text.decode(cs.ENCODING_UTF8)
+    return _generic_get_name(node)
+
+
 def _cpp_get_name(node: Node) -> str | None:
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
@@ -154,6 +186,13 @@ CPP_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+C_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_C_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_C_FUNCTION_TYPES),
+    get_name=_c_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 LUA_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_LUA_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_LUA_FUNCTION_TYPES),
@@ -186,7 +225,7 @@ PHP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PHP_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PHP_FUNCTION_TYPES),
     get_name=_generic_get_name,
-    file_to_module_parts=_generic_file_to_module,
+    file_to_module_parts=_php_file_to_module,
 )
 
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
@@ -195,6 +234,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.TS: TS_FQN_SPEC,
     cs.SupportedLanguage.RUST: RUST_FQN_SPEC,
     cs.SupportedLanguage.JAVA: JAVA_FQN_SPEC,
+    cs.SupportedLanguage.C: C_FQN_SPEC,
     cs.SupportedLanguage.CPP: CPP_FQN_SPEC,
     cs.SupportedLanguage.LUA: LUA_FQN_SPEC,
     cs.SupportedLanguage.GO: GO_FQN_SPEC,
@@ -343,6 +383,28 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             type: (type_identifier) @name) @call
         """,
     ),
+    cs.SupportedLanguage.C: LanguageSpec(
+        language=cs.SupportedLanguage.C,
+        file_extensions=cs.C_EXTENSIONS,
+        function_node_types=cs.SPEC_C_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_C_CLASS_TYPES,
+        module_node_types=cs.SPEC_C_MODULE_TYPES,
+        call_node_types=cs.SPEC_C_CALL_TYPES,
+        import_node_types=cs.IMPORT_NODES_INCLUDE,
+        import_from_node_types=cs.IMPORT_NODES_INCLUDE,
+        package_indicators=cs.SPEC_C_PACKAGE_INDICATORS,
+        function_query="""
+    (function_definition) @function
+    """,
+        class_query="""
+    (struct_specifier) @class
+    (union_specifier) @class
+    (enum_specifier) @class
+    """,
+        call_query="""
+    (call_expression) @call
+    """,
+    ),
     cs.SupportedLanguage.CPP: LanguageSpec(
         language=cs.SupportedLanguage.CPP,
         file_extensions=cs.CPP_EXTENSIONS,
@@ -398,6 +460,42 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         class_node_types=cs.SPEC_PHP_CLASS_TYPES,
         module_node_types=cs.SPEC_PHP_MODULE_TYPES,
         call_node_types=cs.SPEC_PHP_CALL_TYPES,
+        import_node_types=cs.SPEC_PHP_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_PHP_IMPORT_FROM_TYPES,
+        function_query="""
+        (function_definition
+            name: (name) @name) @function
+        (method_declaration
+            name: (name) @name) @function
+        (anonymous_function) @function
+        (arrow_function) @function
+        """,
+        class_query="""
+        (class_declaration
+            name: (name) @name) @class
+        (interface_declaration
+            name: (name) @name) @class
+        (trait_declaration
+            name: (name) @name) @class
+        (enum_declaration
+            name: (name) @name) @class
+        """,
+        call_query="""
+        (function_call_expression
+            function: (name) @name) @call
+        (function_call_expression
+            function: (qualified_name) @name) @call
+        (member_call_expression
+            name: (name) @name) @call
+        (scoped_call_expression
+            name: (name) @name) @call
+        (nullsafe_member_call_expression
+            name: (name) @name) @call
+        (object_creation_expression
+            (name) @name) @call
+        (object_creation_expression
+            (qualified_name) @name) @call
+        """,
     ),
     cs.SupportedLanguage.LUA: LanguageSpec(
         language=cs.SupportedLanguage.LUA,
