@@ -157,9 +157,11 @@ class FunctionRegistryTrie:
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
             # (H) O(1) lookup using the simple_name_lookup index
-            return list(self._simple_name_lookup[suffix])
+            return sorted(self._simple_name_lookup[suffix])
         # (H) Fallback to linear scan if no index available
-        return [qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")]
+        return sorted(
+            qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
+        )
 
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
