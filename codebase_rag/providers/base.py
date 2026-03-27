@@ -259,6 +259,16 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.AZURE: AzureOpenAIProvider,
 }
 
+# Import LiteLLM provider after base classes are defined to avoid circular import
+try:
+    from .litellm import LiteLLMProvider
+
+    PROVIDER_REGISTRY["litellm_proxy"] = LiteLLMProvider
+    _litellm_available = True
+except ImportError as e:
+    logger.debug(f"LiteLLM provider not available: {e}")
+    _litellm_available = False
+
 
 def get_provider(
     provider_name: str | cs.Provider, **config: str | int | None
@@ -303,5 +313,46 @@ def check_ollama_running(endpoint: str | None = None) -> bool:
         with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
             response = client.get(health_url)
             return response.status_code == cs.HTTP_OK
+    except (httpx.RequestError, httpx.TimeoutException):
+        return False
+
+
+def check_litellm_proxy_running(
+    endpoint: str = "http://localhost:4000", api_key: str | None = None
+) -> bool:
+    """Check if LiteLLM proxy is running and accessible.
+
+    Args:
+        endpoint: Base URL of the LiteLLM proxy server
+        api_key: Optional API key for authenticated proxies
+
+    Returns:
+        True if the proxy is accessible, False otherwise
+    """
+    try:
+        base_url = endpoint.rstrip("/v1").rstrip("/")
+
+        # Try health endpoint first (works for unauthenticated proxies)
+        health_url = urljoin(base_url, "/health")
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(health_url, headers=headers)
+
+            # If health endpoint works, we're good
+            if response.status_code == 200:
+                return True
+
+            # If health endpoint fails (401, 404, 405, 500, etc.),
+            # try the models endpoint as a fallback when we have an API key
+            if api_key:
+                models_url = urljoin(base_url, "/v1/models")
+                response = client.get(models_url, headers=headers)
+                # Accept 200 (success) - server is up and API key works
+                return bool(response.status_code == 200)
+
+            return False
     except (httpx.RequestError, httpx.TimeoutException):
         return False
