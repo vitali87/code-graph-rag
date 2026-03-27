@@ -22,6 +22,10 @@ LABEL_TO_ONEOF_FIELD: dict[cs.NodeLabel, str] = {
     cs.NodeLabel.EXTERNAL_PACKAGE: cs.ONEOF_EXTERNAL_PACKAGE,
     cs.NodeLabel.MODULE_IMPLEMENTATION: cs.ONEOF_MODULE_IMPLEMENTATION,
     cs.NodeLabel.MODULE_INTERFACE: cs.ONEOF_MODULE_INTERFACE,
+    cs.NodeLabel.INTERFACE: cs.ONEOF_INTERFACE,
+    cs.NodeLabel.ENUM: cs.ONEOF_ENUM,
+    cs.NodeLabel.TYPE: cs.ONEOF_TYPE,
+    cs.NodeLabel.UNION: cs.ONEOF_UNION,
 }
 
 ONEOF_FIELD_TO_LABEL: dict[str, cs.NodeLabel] = {

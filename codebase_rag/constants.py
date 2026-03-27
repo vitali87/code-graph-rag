@@ -218,6 +218,10 @@ ONEOF_FILE = "file"
 ONEOF_EXTERNAL_PACKAGE = "external_package"
 ONEOF_MODULE_IMPLEMENTATION = "module_implementation"
 ONEOF_MODULE_INTERFACE = "module_interface"
+ONEOF_INTERFACE = "interface_node"
+ONEOF_ENUM = "enum_node"
+ONEOF_TYPE = "type_node"
+ONEOF_UNION = "union_node"
 
 # (H) CLI error and info messages
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
