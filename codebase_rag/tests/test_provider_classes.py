@@ -55,6 +55,17 @@ class TestProviderRegistry:
         with pytest.raises(ValueError, match="Unknown provider 'invalid_provider'"):
             get_provider("invalid_provider")
 
+    def test_get_litellm_provider(self) -> None:
+        litellm_provider = get_provider(
+            Provider.LITELLM_PROXY,
+            api_key="sk-test",
+            endpoint="http://localhost:4000/v1",
+        )
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        assert isinstance(litellm_provider, LiteLLMProvider)
+        assert litellm_provider.provider_name == Provider.LITELLM_PROXY
+
     def test_list_providers(self) -> None:
         providers = list_providers()
         assert Provider.GOOGLE in providers
@@ -62,7 +73,8 @@ class TestProviderRegistry:
         assert Provider.OLLAMA in providers
         assert Provider.ANTHROPIC in providers
         assert Provider.AZURE in providers
-        assert len(providers) >= 5
+        assert Provider.LITELLM_PROXY in providers
+        assert len(providers) >= 6
 
     def test_register_custom_provider(self) -> None:
         class CustomProvider(ModelProvider):
@@ -379,3 +391,109 @@ class TestModelCreation:
             mock_openai_provider.assert_called_once_with(
                 api_key="ollama", base_url="http://localhost:11434/v1"
             )
+
+
+class TestLiteLLMProvider:
+    def test_litellm_configuration(self) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        provider = LiteLLMProvider(
+            api_key="sk-litellm-key", endpoint="http://litellm:4000/v1"
+        )
+        assert provider.provider_name == Provider.LITELLM_PROXY
+        assert provider.api_key == "sk-litellm-key"
+        assert provider.endpoint == "http://litellm:4000/v1"
+
+    def test_litellm_default_endpoint(self) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        provider = LiteLLMProvider()
+        assert provider.endpoint == "http://localhost:4000/v1"
+
+    def test_litellm_no_endpoint_validation_error(self) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        provider = LiteLLMProvider(endpoint="")
+        with pytest.raises(ValueError, match="LiteLLM provider requires endpoint"):
+            provider.validate_config()
+
+    @patch("httpx.Client")
+    def test_litellm_validation_success(self, mock_client: Any) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+
+        provider = LiteLLMProvider(api_key="sk-test", endpoint="http://litellm:4000/v1")
+        provider.validate_config()
+
+    @patch("httpx.Client")
+    def test_litellm_validation_server_not_running(self, mock_client: Any) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+
+        provider = LiteLLMProvider(endpoint="http://litellm:4000/v1")
+        with pytest.raises(ValueError, match="LiteLLM proxy server not responding"):
+            provider.validate_config()
+
+    @patch("httpx.Client")
+    def test_litellm_validation_fallback_to_models_endpoint(
+        self, mock_client: Any
+    ) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        health_response = MagicMock()
+        health_response.status_code = 401
+        models_response = MagicMock()
+        models_response.status_code = 200
+        mock_client.return_value.__enter__.return_value.get.side_effect = [
+            health_response,
+            models_response,
+        ]
+
+        provider = LiteLLMProvider(api_key="sk-test", endpoint="http://litellm:4000/v1")
+        provider.validate_config()
+
+    @patch("httpx.Client")
+    def test_litellm_validation_connection_error(self, mock_client: Any) -> None:
+        import httpx
+
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        mock_client.return_value.__enter__.return_value.get.side_effect = (
+            httpx.ConnectError("Connection failed")
+        )
+
+        provider = LiteLLMProvider(endpoint="http://litellm:4000/v1")
+        with pytest.raises(ValueError, match="LiteLLM proxy server not responding"):
+            provider.validate_config()
+
+    @patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider")
+    @patch("codebase_rag.providers.litellm.OpenAIChatModel")
+    @patch("httpx.Client")
+    def test_litellm_model_creation(
+        self, mock_client: Any, mock_chat_model: Any, mock_litellm_provider: Any
+    ) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+
+        provider = LiteLLMProvider(api_key="sk-test", endpoint="http://litellm:4000/v1")
+        mock_model = MagicMock()
+        mock_chat_model.return_value = mock_model
+
+        result = provider.create_model("openai/gpt-4o")
+
+        mock_litellm_provider.assert_called_once_with(
+            api_key="sk-test", api_base="http://litellm:4000/v1"
+        )
+        mock_chat_model.assert_called_once_with(
+            "openai/gpt-4o", provider=mock_litellm_provider.return_value
+        )
+        assert result == mock_model

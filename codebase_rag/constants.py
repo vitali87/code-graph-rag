@@ -20,6 +20,7 @@ class Provider(StrEnum):
     OPENAI = "openai"
     GOOGLE = "google"
     AZURE = "azure"
+    LITELLM_PROXY = "litellm_proxy"
 
 
 class Color(StrEnum):
