@@ -322,6 +322,10 @@ class GraphUpdater:
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
 
+        corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
+        if corrected:
+            logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
+
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
