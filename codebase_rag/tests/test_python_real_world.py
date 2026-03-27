@@ -874,24 +874,20 @@ export const HomePage = () => {
     return project_path
 
 
-def test_flask_model_calls(
+def test_flask_no_calls_to_class_nodes(
     todo_app_project: Path,
     mock_ingestor: MagicMock,
 ) -> None:
-    """Test detection of model usage in controllers."""
+    """Test that Class nodes are not targets of CALLS relationships."""
     run_updater(todo_app_project, mock_ingestor)
 
     function_calls = get_relationships(mock_ingestor, "CALLS")
 
-    model_usage_calls = [
-        call
-        for call in function_calls
-        if "task_controller" in call.args[0][2] and "TaskModel" in call.args[2][2]
-    ]
+    class_calls = [call for call in function_calls if call.args[2][0] == "Class"]
 
-    assert model_usage_calls, (
-        f"Expected TaskController to use TaskModel, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in model_usage_calls]}"
+    assert not class_calls, (
+        f"Expected no CALLS edges to Class nodes, found: "
+        f"{[(c.args[0][2], c.args[2][2]) for c in class_calls]}"
     )
 
 
