@@ -376,6 +376,7 @@ FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of projec
 CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
 CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
 CALL_FOUND_NODES = "Found {count} call nodes in {language} for {caller}"
+CALL_SKIP_CLASS = "Skipping CALLS edge from {caller} to {call_name} (callee is Class node: {callee_qn})"
 CALL_FOUND = (
     "Found call from {caller} to {call_name} (resolved as {callee_type}:{callee_qn})"
 )

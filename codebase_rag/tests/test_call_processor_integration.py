@@ -793,7 +793,11 @@ class Builder:
     def build(self):
         return {}
 
+def helper():
+    pass
+
 def main():
+    helper()
     result = Builder().with_name("test").with_value(42).build()
     return result
 """,
@@ -813,6 +817,10 @@ def main():
             if c.args[1] == cs.RelationshipType.CALLS
         ]
         assert len(calls) >= 1
+
+        # (H) Builder() is a class instantiation, not a function call
+        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        assert len(class_targets) == 0
 
     def test_handles_init_py_module_qn(
         self,
@@ -853,3 +861,90 @@ package_func()
         caller_qns = [c.args[0][2] for c in calls]
         package_callers = [qn for qn in caller_qns if "mypackage" in qn]
         assert len(package_callers) >= 1
+
+
+class TestModuleCallsClassFiltered:
+    def test_module_does_not_call_class_python(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
+class MyClass:
+    def method(self):
+        pass
+
+def helper():
+    pass
+
+helper()
+""",
+        )
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        calls = [
+            c
+            for c in mock_ingestor.ensure_relationship_batch.call_args_list
+            if c.args[1] == cs.RelationshipType.CALLS
+        ]
+
+        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        assert class_targets == []
+
+        helper_calls = [c for c in calls if "helper" in c.args[2][2]]
+        assert len(helper_calls) >= 1
+
+    def test_function_does_not_call_class_python(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
+class MyClass:
+    pass
+
+def factory():
+    obj = MyClass()
+    return obj
+""",
+        )
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        calls = [
+            c
+            for c in mock_ingestor.ensure_relationship_batch.call_args_list
+            if c.args[1] == cs.RelationshipType.CALLS
+        ]
+
+        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        assert class_targets == []
