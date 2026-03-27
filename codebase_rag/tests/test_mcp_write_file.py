@@ -199,6 +199,10 @@ class TestWriteFileErrorHandling:
     @pytest.mark.skipif(
         os.name == "nt", reason="chmod 0o444 does not prevent file creation on Windows"
     )
+    @pytest.mark.skipif(
+        hasattr(os, "getuid") and os.getuid() == 0,
+        reason="root bypasses filesystem permissions",
+    )
     async def test_write_to_readonly_directory(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
     ) -> None:
