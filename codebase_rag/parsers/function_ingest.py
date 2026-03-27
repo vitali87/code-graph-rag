@@ -40,6 +40,15 @@ class FunctionResolution(NamedTuple):
     is_exported: bool
 
 
+class _DeferredMethod(NamedTuple):
+    """Out-of-class C++ method whose class hasn't been parsed yet."""
+
+    method_name: str
+    class_name: str
+    fallback_class_qn: str
+    method_props: PropertyDict
+
+
 class FunctionIngestMixin:
     __slots__ = ()
     ingestor: IngestorProtocol
@@ -49,6 +58,7 @@ class FunctionIngestMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     _handler: LanguageHandler
+    _deferred_cpp_methods: list[_DeferredMethod]
 
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None: ...
@@ -148,6 +158,29 @@ class FunctionIngestMixin:
             func_node, module_qn, language, lang_config
         )
 
+    def _resolve_cpp_class_qn(
+        self, class_name: str, module_qn: str
+    ) -> tuple[str, bool]:
+        """Look up an existing Class node for *class_name* across all parsed files.
+
+        Returns ``(class_qn, resolved)`` where *resolved* is True when the
+        qualified name was obtained from the function registry (i.e. the
+        class has already been parsed, typically from a header file).
+        """
+        class_name_normalized = class_name.replace(
+            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+        )
+        leaf_name = class_name_normalized.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+        if leaf_name in self.simple_name_lookup:
+            for candidate_qn in self.simple_name_lookup[leaf_name]:
+                node_type = self.function_registry.get(candidate_qn)
+                if node_type in {NodeType.CLASS, NodeType.TYPE}:
+                    if candidate_qn.endswith(f".{class_name_normalized}"):
+                        return candidate_qn, True
+
+        return f"{module_qn}.{class_name_normalized}", False
+
     def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:
         if not cpp_utils.is_out_of_class_method_definition(func_node):
             return False
@@ -156,27 +189,85 @@ class FunctionIngestMixin:
         if not class_name:
             return False
 
-        class_name_normalized = class_name.replace(
-            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
-        )
-        class_qn = f"{module_qn}.{class_name_normalized}"
-
+        class_qn, resolved = self._resolve_cpp_class_qn(class_name, module_qn)
         file_path = self.module_qn_to_file_path.get(module_qn)
-        ingest_method(
-            method_node=func_node,
-            container_qn=class_qn,
-            container_type=cs.NodeLabel.CLASS,
-            ingestor=self.ingestor,
-            function_registry=self.function_registry,
-            simple_name_lookup=self.simple_name_lookup,
-            get_docstring_func=self._get_docstring,
-            language=cs.SupportedLanguage.CPP,
-            extract_decorators_func=self._extract_decorators,
-            file_path=file_path,
-            repo_path=self.repo_path,
-        )
+
+        if resolved:
+            ingest_method(
+                method_node=func_node,
+                container_qn=class_qn,
+                container_type=cs.NodeLabel.CLASS,
+                ingestor=self.ingestor,
+                function_registry=self.function_registry,
+                simple_name_lookup=self.simple_name_lookup,
+                get_docstring_func=self._get_docstring,
+                language=cs.SupportedLanguage.CPP,
+                extract_decorators_func=self._extract_decorators,
+                file_path=file_path,
+                repo_path=self.repo_path,
+            )
+        else:
+            method_name = cpp_utils.extract_function_name(func_node)
+            if not method_name:
+                return True
+            decorators = self._extract_decorators(func_node)
+            props: PropertyDict = {
+                cs.KEY_NAME: method_name,
+                cs.KEY_DECORATORS: decorators,
+                cs.KEY_START_LINE: func_node.start_point[0] + 1,
+                cs.KEY_END_LINE: func_node.end_point[0] + 1,
+                cs.KEY_DOCSTRING: self._get_docstring(func_node),
+            }
+            if file_path is not None and self.repo_path is not None:
+                props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
+                props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+            if not hasattr(self, "_deferred_cpp_methods"):
+                self._deferred_cpp_methods = []
+            self._deferred_cpp_methods.append(
+                _DeferredMethod(
+                    method_name=method_name,
+                    class_name=class_name,
+                    fallback_class_qn=class_qn,
+                    method_props=props,
+                )
+            )
 
         return True
+
+    def resolve_deferred_cpp_methods(self) -> int:
+        """Ingest deferred out-of-class C++ methods now that all classes are known.
+
+        Called after all files have been parsed so that every Class node
+        is guaranteed to be in the registry.  Returns the number of
+        methods that were ingested.
+        """
+        deferred = getattr(self, "_deferred_cpp_methods", None)
+        if not deferred:
+            return 0
+
+        ingested = 0
+        for entry in deferred:
+            real_class_qn, resolved = self._resolve_cpp_class_qn(entry.class_name, "")
+            class_qn = real_class_qn if resolved else entry.fallback_class_qn
+            method_qn = f"{class_qn}.{entry.method_name}"
+
+            props = dict(entry.method_props)
+            props[cs.KEY_QUALIFIED_NAME] = method_qn
+
+            logger.info(ls.METHOD_FOUND.format(name=entry.method_name, qn=method_qn))
+            self.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, props)
+            self.function_registry[method_qn] = NodeType.METHOD
+            self.simple_name_lookup[entry.method_name].add(method_qn)
+
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
+                cs.RelationshipType.DEFINES_METHOD,
+                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+            )
+            ingested += 1
+
+        self._deferred_cpp_methods = []
+        return ingested
 
     def _resolve_cpp_function(
         self, func_node: Node, module_qn: str
