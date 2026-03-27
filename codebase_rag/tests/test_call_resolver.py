@@ -1254,21 +1254,10 @@ class TestDeterministicFileOrder:
         for i in range(1, len(results)):
             assert results[i] == results[0]
 
-    def test_multi_language_deterministic(self, temp_repo: Path) -> None:
+    def _run_determinism_check(self, temp_repo: Path, runs: int = 5) -> None:
         parsers, queries = load_parsers()
-
-        if cs.SupportedLanguage.JS not in parsers:
-            pytest.skip("JavaScript parser not available")
-
-        (temp_repo / "utils.js").write_text(
-            "function helper() {}\nfunction worker() { helper(); }\n"
-        )
-        (temp_repo / "main.js").write_text(
-            "function helper() {}\nfunction entry() { helper(); }\n"
-        )
-
         results = []
-        for _ in range(5):
+        for _ in range(runs):
             ingestor = MagicMock()
             updater = GraphUpdater(
                 ingestor=ingestor,
@@ -1286,5 +1275,105 @@ class TestDeterministicFileOrder:
             calls.sort()
             results.append(calls)
 
+        assert len(results[0]) > 0
         for i in range(1, len(results)):
             assert results[i] == results[0]
+
+    def test_javascript_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.JS not in parsers:
+            pytest.skip("JavaScript parser not available")
+
+        (temp_repo / "utils.js").write_text(
+            "function helper() {}\nfunction worker() { helper(); }\n"
+        )
+        (temp_repo / "main.js").write_text(
+            "function helper() {}\nfunction entry() { helper(); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_typescript_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.TS not in parsers:
+            pytest.skip("TypeScript parser not available")
+
+        (temp_repo / "service.ts").write_text(
+            "function validate(x: string): boolean { return true; }\n"
+            "function process() { validate('test'); }\n"
+        )
+        (temp_repo / "handler.ts").write_text(
+            "function validate(x: string): boolean { return false; }\n"
+            "function handle() { validate('input'); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_rust_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.RUST not in parsers:
+            pytest.skip("Rust parser not available")
+
+        (temp_repo / "utils.rs").write_text(
+            "fn compute() -> i32 { 42 }\nfn run() { compute(); }\n"
+        )
+        (temp_repo / "main.rs").write_text(
+            "fn compute() -> i32 { 0 }\nfn start() { compute(); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_java_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.JAVA not in parsers:
+            pytest.skip("Java parser not available")
+
+        (temp_repo / "Utils.java").write_text(
+            "public class Utils {\n"
+            "    public static void process() {}\n"
+            "    public static void run() { process(); }\n"
+            "}\n"
+        )
+        (temp_repo / "Helper.java").write_text(
+            "public class Helper {\n"
+            "    public static void process() {}\n"
+            "    public static void execute() { process(); }\n"
+            "}\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_cpp_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.CPP not in parsers:
+            pytest.skip("C++ parser not available")
+
+        (temp_repo / "math.cpp").write_text(
+            "int calculate() { return 1; }\nint run() { return calculate(); }\n"
+        )
+        (temp_repo / "logic.cpp").write_text(
+            "int calculate() { return 2; }\nint start() { return calculate(); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_go_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.GO not in parsers:
+            pytest.skip("Go parser not available")
+
+        (temp_repo / "util.go").write_text(
+            "package main\nfunc helper() {}\nfunc doWork() { helper() }\n"
+        )
+        (temp_repo / "main.go").write_text(
+            "package main\nfunc helper() {}\nfunc run() { helper() }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_lua_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.LUA not in parsers:
+            pytest.skip("Lua parser not available")
+
+        (temp_repo / "utils.lua").write_text(
+            "local function process() end\nlocal function run() process() end\n"
+        )
+        (temp_repo / "main.lua").write_text(
+            "local function process() end\nlocal function start() process() end\n"
+        )
+        self._run_determinism_check(temp_repo)
