@@ -20,9 +20,6 @@ class Provider(StrEnum):
     OPENAI = "openai"
     GOOGLE = "google"
     AZURE = "azure"
-    COHERE = "cohere"
-    LOCAL = "local"
-    VLLM = "vllm"
 
 
 class Color(StrEnum):
