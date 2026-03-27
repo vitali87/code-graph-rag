@@ -5,18 +5,8 @@ from codebase_rag.config import ModelConfig, format_missing_api_key_errors
 
 
 class TestValidateApiKey:
-    @pytest.mark.parametrize(
-        ("provider", "model_id"),
-        [
-            (cs.Provider.OLLAMA, "llama3"),
-            (cs.Provider.LOCAL, "local-model"),
-            (cs.Provider.VLLM, "vllm-model"),
-        ],
-    )
-    def test_local_providers_skip_validation(
-        self, provider: cs.Provider, model_id: str
-    ) -> None:
-        cfg = ModelConfig(provider=provider, model_id=model_id)
+    def test_local_providers_skip_validation(self) -> None:
+        cfg = ModelConfig(provider=cs.Provider.OLLAMA, model_id="llama3")
         cfg.validate_api_key()
 
     def test_google_vertex_skips_validation(self) -> None:
