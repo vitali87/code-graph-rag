@@ -1112,3 +1112,268 @@ class TestChainedMethodPattern:
         match = _CHAINED_METHOD_PATTERN.search("a.b().c().final_method")
         assert match is not None
         assert match[1] == "final_method"
+
+
+class TestDeterministicResolution:
+    def test_trie_tiebreak_by_qualified_name(self, call_resolver: CallResolver) -> None:
+        # (H) Register multiple functions with the same simple name in different modules
+        # at equal import distance from the caller
+        call_resolver.function_registry["proj.alpha.utils.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.beta.utils.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.gamma.utils.helper"] = NodeType.FUNCTION
+
+        results = []
+        for _ in range(20):
+            result = call_resolver._try_resolve_via_trie("helper", "proj.delta.module")
+            assert result is not None
+            results.append(result[1])
+
+        # (H) All 20 runs must resolve to the same candidate (lexicographically first)
+        assert all(r == results[0] for r in results)
+        assert results[0] == "proj.alpha.utils.helper"
+
+    def test_trie_tiebreak_picks_lexicographic_first(
+        self, call_resolver: CallResolver
+    ) -> None:
+        # (H) Deliberately insert in reverse lexicographic order
+        call_resolver.function_registry["proj.zoo.compute"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.mid.compute"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.aaa.compute"] = NodeType.FUNCTION
+
+        result = call_resolver._try_resolve_via_trie("compute", "other.module")
+        assert result is not None
+        assert result[1] == "proj.aaa.compute"
+
+    def test_trie_tiebreak_distance_still_wins(
+        self, call_resolver: CallResolver
+    ) -> None:
+        # (H) Closer module should win even if lexicographically later
+        call_resolver.function_registry["proj.far.away.process"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.module.process"] = NodeType.FUNCTION
+
+        result = call_resolver._try_resolve_via_trie("process", "proj.module.caller")
+        assert result is not None
+        # (H) proj.module.process is closer to proj.module.caller
+        assert result[1] == "proj.module.process"
+
+    def test_trie_many_candidates_deterministic(
+        self, call_resolver: CallResolver
+    ) -> None:
+        # (H) Register 10 equidistant candidates
+        names = [
+            "proj.m09.run",
+            "proj.m05.run",
+            "proj.m01.run",
+            "proj.m07.run",
+            "proj.m03.run",
+            "proj.m08.run",
+            "proj.m02.run",
+            "proj.m06.run",
+            "proj.m04.run",
+            "proj.m10.run",
+        ]
+        for name in names:
+            call_resolver.function_registry[name] = NodeType.FUNCTION
+
+        result = call_resolver._try_resolve_via_trie("run", "other.caller")
+        assert result is not None
+        assert result[1] == "proj.m01.run"
+
+    def test_resolve_function_call_deterministic_across_runs(
+        self, call_resolver: CallResolver
+    ) -> None:
+        call_resolver.function_registry["pkg.svc_a.validate"] = NodeType.FUNCTION
+        call_resolver.function_registry["pkg.svc_b.validate"] = NodeType.FUNCTION
+        call_resolver.function_registry["pkg.svc_c.validate"] = NodeType.FUNCTION
+
+        results = set()
+        for _ in range(10):
+            result = call_resolver.resolve_function_call(
+                "validate", "pkg.other.module", {}, None
+            )
+            assert result is not None
+            results.add(result[1])
+
+        # (H) Must resolve to exactly one candidate across all runs
+        assert len(results) == 1
+
+
+class TestDeterministicFileOrder:
+    def test_eligible_files_are_sorted(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+
+        # (H) Create files in non-alphabetical order
+        for name in ["zebra.py", "alpha.py", "middle.py", "beta.py"]:
+            (temp_repo / name).write_text(f"def func_{name[0]}(): pass\n")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+
+        eligible = updater._collect_eligible_files()
+        paths_str = [str(f) for f in eligible]
+
+        assert paths_str == sorted(paths_str)
+
+    def test_graph_output_deterministic_across_runs(self, temp_repo: Path) -> None:
+        parsers, queries = load_parsers()
+
+        (temp_repo / "mod_a.py").write_text(
+            "def shared(): pass\ndef call_a(): shared()\n"
+        )
+        (temp_repo / "mod_b.py").write_text(
+            "def shared(): pass\ndef call_b(): shared()\n"
+        )
+
+        results = []
+        for _ in range(5):
+            ingestor = MagicMock()
+            updater = GraphUpdater(
+                ingestor=ingestor,
+                repo_path=temp_repo,
+                parsers=parsers,
+                queries=queries,
+            )
+            updater.run(force=True)
+
+            calls = [
+                (c.args[0][2], c.args[1], c.args[2][2])
+                for c in ingestor.ensure_relationship_batch.call_args_list
+                if c.args[1] == cs.RelationshipType.CALLS
+            ]
+            calls.sort()
+            results.append(calls)
+
+        # (H) All 5 runs must produce identical call graphs
+        assert len(results[0]) > 0
+        for i in range(1, len(results)):
+            assert results[i] == results[0]
+
+    def _run_determinism_check(self, temp_repo: Path, runs: int = 5) -> None:
+        parsers, queries = load_parsers()
+        results = []
+        for _ in range(runs):
+            ingestor = MagicMock()
+            updater = GraphUpdater(
+                ingestor=ingestor,
+                repo_path=temp_repo,
+                parsers=parsers,
+                queries=queries,
+            )
+            updater.run(force=True)
+
+            calls = [
+                (c.args[0][2], c.args[2][2])
+                for c in ingestor.ensure_relationship_batch.call_args_list
+                if c.args[1] == cs.RelationshipType.CALLS
+            ]
+            calls.sort()
+            results.append(calls)
+
+        assert len(results[0]) > 0
+        for i in range(1, len(results)):
+            assert results[i] == results[0]
+
+    def test_javascript_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.JS not in parsers:
+            pytest.skip("JavaScript parser not available")
+
+        (temp_repo / "utils.js").write_text(
+            "function helper() {}\nfunction worker() { helper(); }\n"
+        )
+        (temp_repo / "main.js").write_text(
+            "function helper() {}\nfunction entry() { helper(); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_typescript_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.TS not in parsers:
+            pytest.skip("TypeScript parser not available")
+
+        (temp_repo / "service.ts").write_text(
+            "function validate(x: string): boolean { return true; }\n"
+            "function process() { validate('test'); }\n"
+        )
+        (temp_repo / "handler.ts").write_text(
+            "function validate(x: string): boolean { return false; }\n"
+            "function handle() { validate('input'); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_rust_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.RUST not in parsers:
+            pytest.skip("Rust parser not available")
+
+        (temp_repo / "utils.rs").write_text(
+            "fn compute() -> i32 { 42 }\nfn run() { compute(); }\n"
+        )
+        (temp_repo / "main.rs").write_text(
+            "fn compute() -> i32 { 0 }\nfn start() { compute(); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_java_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.JAVA not in parsers:
+            pytest.skip("Java parser not available")
+
+        (temp_repo / "Utils.java").write_text(
+            "public class Utils {\n"
+            "    public static void process() {}\n"
+            "    public static void run() { process(); }\n"
+            "}\n"
+        )
+        (temp_repo / "Helper.java").write_text(
+            "public class Helper {\n"
+            "    public static void process() {}\n"
+            "    public static void execute() { process(); }\n"
+            "}\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_cpp_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.CPP not in parsers:
+            pytest.skip("C++ parser not available")
+
+        (temp_repo / "math.cpp").write_text(
+            "int calculate() { return 1; }\nint run() { return calculate(); }\n"
+        )
+        (temp_repo / "logic.cpp").write_text(
+            "int calculate() { return 2; }\nint start() { return calculate(); }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_go_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.GO not in parsers:
+            pytest.skip("Go parser not available")
+
+        (temp_repo / "util.go").write_text(
+            "package main\nfunc helper() {}\nfunc doWork() { helper() }\n"
+        )
+        (temp_repo / "main.go").write_text(
+            "package main\nfunc helper() {}\nfunc run() { helper() }\n"
+        )
+        self._run_determinism_check(temp_repo)
+
+    def test_lua_deterministic(self, temp_repo: Path) -> None:
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.LUA not in parsers:
+            pytest.skip("Lua parser not available")
+
+        (temp_repo / "utils.lua").write_text(
+            "local function process() end\nlocal function run() process() end\n"
+        )
+        (temp_repo / "main.lua").write_text(
+            "local function process() end\nlocal function start() process() end\n"
+        )
+        self._run_determinism_check(temp_repo)

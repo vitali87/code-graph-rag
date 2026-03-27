@@ -395,6 +395,7 @@ class GraphUpdater:
                 )
             ):
                 eligible.append(filepath)
+        eligible.sort()
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
