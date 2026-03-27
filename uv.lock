@@ -494,7 +494,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.173"
+version = "0.0.175"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -572,24 +572,24 @@ fuzz = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", specifier = ">=8.0.0" },
+    { name = "click", specifier = ">=8.3.1" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "diff-match-patch", specifier = ">=20241021" },
-    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.36.0" },
+    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=1.7.2" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mcp", specifier = ">=1.21.1" },
-    { name = "prompt-toolkit", specifier = ">=3.0.0" },
-    { name = "protobuf", specifier = ">=5.27.0" },
+    { name = "mcp", specifier = ">=1.25.0" },
+    { name = "prompt-toolkit", specifier = ">=3.0.52" },
+    { name = "protobuf", specifier = ">=6.33.5" },
     { name = "pydantic-ai", specifier = ">=1.70.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "pymgclient", specifier = ">=1.4.0" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "pymgclient", specifier = ">=1.5.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
-    { name = "python-dotenv", specifier = ">=1.1.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
-    { name = "rich", specifier = ">=13.7.1" },
+    { name = "rich", specifier = ">=14.2.0" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "toml", specifier = ">=0.10.2" },
@@ -603,12 +603,12 @@ requires-dist = [
     { name = "tree-sitter-javascript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
     { name = "tree-sitter-lua", marker = "extra == 'treesitter-full'", specifier = ">=0.0.19" },
     { name = "tree-sitter-php", marker = "extra == 'treesitter-full'", specifier = ">=0.24.1" },
-    { name = "tree-sitter-python", specifier = ">=0.23.6" },
+    { name = "tree-sitter-python", specifier = ">=0.25.0" },
     { name = "tree-sitter-python", marker = "extra == 'treesitter-full'", specifier = ">=0.23.6" },
     { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-typescript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.2" },
-    { name = "typer", specifier = ">=0.12.5" },
+    { name = "typer", specifier = ">=0.21.1" },
     { name = "watchdog", specifier = ">=6.0.0" },
 ]
 provides-extras = ["test", "treesitter-full", "semantic"]
