@@ -7,6 +7,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider as PydanticLiteLLMProvider
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 
 from .base import ModelProvider
 
@@ -30,19 +31,13 @@ class LiteLLMProvider(ModelProvider):
 
     def validate_config(self) -> None:
         if not self.endpoint:
-            raise ValueError(
-                "LiteLLM provider requires endpoint. "
-                "Set ORCHESTRATOR_ENDPOINT or CYPHER_ENDPOINT in .env file."
-            )
+            raise ValueError(ex.LITELLM_NO_ENDPOINT)
 
         from .base import check_litellm_proxy_running
 
         base_url = self.endpoint.rstrip("/v1").rstrip("/")
         if not check_litellm_proxy_running(base_url, api_key=self.api_key):
-            raise ValueError(
-                f"LiteLLM proxy server not responding at {base_url}. "
-                f"Make sure LiteLLM proxy is running and API key is valid."
-            )
+            raise ValueError(ex.LITELLM_NOT_RUNNING.format(endpoint=base_url))
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None

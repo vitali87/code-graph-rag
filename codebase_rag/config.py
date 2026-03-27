@@ -269,6 +269,7 @@ class AppConfig(BaseSettings):
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
 
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
+    LITELLM_HEALTH_TIMEOUT: float = 5.0
 
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None

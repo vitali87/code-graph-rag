@@ -23,6 +23,14 @@ OLLAMA_NOT_RUNNING = (
     "Ollama server not responding at {endpoint}. "
     "Make sure Ollama is running: ollama serve"
 )
+LITELLM_NO_ENDPOINT = (
+    "LiteLLM provider requires endpoint. "
+    "Set ORCHESTRATOR_ENDPOINT or CYPHER_ENDPOINT in .env file."
+)
+LITELLM_NOT_RUNNING = (
+    "LiteLLM proxy server not responding at {endpoint}. "
+    "Make sure LiteLLM proxy is running and API key is valid."
+)
 UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
 
 # (H) Dependency errors

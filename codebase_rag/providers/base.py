@@ -327,7 +327,7 @@ def check_litellm_proxy_running(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
+        with httpx.Client(timeout=settings.LITELLM_HEALTH_TIMEOUT) as client:
             response = client.get(health_url, headers=headers)
             if response.status_code == cs.HTTP_OK:
                 return True
