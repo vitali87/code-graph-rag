@@ -221,7 +221,7 @@ class CallResolver:
             return None
 
         possible_matches.sort(
-            key=lambda qn: self._calculate_import_distance(qn, module_qn)
+            key=lambda qn: (self._calculate_import_distance(qn, module_qn), qn)
         )
         best_candidate_qn = possible_matches[0]
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
