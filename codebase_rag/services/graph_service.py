@@ -132,6 +132,17 @@ class MemgraphIngestor:
                 self.conn.close()
                 logger.info(ls.MG_DISCONNECTED)
 
+    async def __aenter__(self) -> MemgraphIngestor:
+        return self.__enter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type | None,
+        exc_val: Exception | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        self.__exit__(exc_type, exc_val, exc_tb)
+
     @contextmanager
     def _get_cursor(self) -> Generator[CursorProtocol, None, None]:
         if not self.conn:

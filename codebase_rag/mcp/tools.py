@@ -1,8 +1,11 @@
 import asyncio
 import itertools
+import sys
 from pathlib import Path
 
 from loguru import logger
+from pydantic_ai import Agent
+from rich.console import Console
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as lg
@@ -11,7 +14,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.code_retrieval import (
     CodeRetriever,
@@ -22,9 +25,14 @@ from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
 )
+from codebase_rag.tools.document_analyzer import (
+    DocumentAnalyzer,
+    create_document_analyzer_tool,
+)
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
 from codebase_rag.types_defs import (
     CodeSnippetResultDict,
     DeleteProjectErrorResult,
@@ -62,9 +70,12 @@ class MCPToolsRegistry:
         self.file_reader = FileReader(project_root=project_root)
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
+        self.shell_commander = ShellCommander(project_root=project_root)
+        self.document_analyzer = DocumentAnalyzer(project_root=project_root)
 
+        stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
         self._query_tool = create_query_tool(
-            ingestor=ingestor, cypher_gen=cypher_gen, console=None
+            ingestor=ingestor, cypher_gen=cypher_gen, console=stderr_console
         )
         self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
         self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
@@ -73,6 +84,14 @@ class MCPToolsRegistry:
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
+        self._shell_command_tool = create_shell_command_tool(
+            shell_commander=self.shell_commander
+        )
+        self._document_analyzer_tool = create_document_analyzer_tool(
+            self.document_analyzer
+        )
+
+        self._rag_agent: Agent | None = None
 
         self._semantic_search_tool = None
         self._semantic_search_available = False
@@ -301,6 +320,51 @@ class MCPToolsRegistry:
                 returns_json=False,
             )
 
+        self._tools[cs.MCPToolName.ASK_AGENT] = ToolMetadata(
+            name=cs.MCPToolName.ASK_AGENT,
+            description=td.MCP_TOOLS[cs.MCPToolName.ASK_AGENT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUESTION: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUESTION,
+                    )
+                },
+                required=[cs.MCPParamName.QUESTION],
+            ),
+            handler=self.ask_agent,
+            returns_json=True,
+        )
+
+    @property
+    def rag_agent(self) -> Agent:
+        if self._rag_agent is None:
+            from codebase_rag.tools.semantic_search import (
+                create_get_function_source_tool,
+            )
+
+            tools = [
+                self._query_tool,
+                self._code_tool,
+                self._file_reader_tool,
+                self._file_writer_tool,
+                self._file_editor_tool,
+                self._shell_command_tool,
+                self._directory_lister_tool,
+                self._document_analyzer_tool,
+                create_get_function_source_tool(),
+            ]
+            if self._semantic_search_tool is not None:
+                tools.append(self._semantic_search_tool)
+            self._rag_agent = create_rag_orchestrator(tools=tools)
+        return self._rag_agent
+
+    # (H) Setter allows tests to inject a mock agent without triggering LLM init
+    @rag_agent.setter
+    def rag_agent(self, value: Agent) -> None:
+        self._rag_agent = value
+
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
@@ -417,6 +481,15 @@ class MCPToolsRegistry:
             query=natural_language_query, top_k=top_k
         )
         return str(result)
+
+    async def ask_agent(self, question: str) -> dict[str, str]:
+        logger.info(lg.MCP_ASK_AGENT.format(question=question))
+        try:
+            response = await self.rag_agent.run(question, message_history=[])
+            return {"output": str(response.output)}
+        except Exception as e:
+            logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
+            return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
 
     async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))

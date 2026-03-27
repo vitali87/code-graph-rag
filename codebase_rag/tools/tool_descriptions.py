@@ -143,6 +143,15 @@ MCP_PARAM_LIMIT = "Maximum number of lines to read (optional)"
 MCP_PARAM_CONTENT = "Content to write to the file"
 MCP_PARAM_DIRECTORY_PATH = "Relative path to directory from project root (default: '.')"
 MCP_PARAM_TOP_K = "Max number of results to return (optional, default: 5)"
+MCP_PARAM_QUESTION = (
+    "A question about the codebase, architecture, functionality, or code relationships"
+)
+
+MCP_ASK_AGENT = (
+    "Ask the Code Graph RAG agent a question about the codebase. "
+    "Uses the full RAG pipeline to analyze the code graph and provide a detailed answer. "
+    "Use this for general questions about architecture, functionality, and code relationships."
+)
 
 
 MCP_TOOLS: dict[MCPToolName, str] = {
@@ -158,6 +167,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.WRITE_FILE: MCP_WRITE_FILE,
     MCPToolName.LIST_DIRECTORY: MCP_LIST_DIRECTORY,
     MCPToolName.SEMANTIC_SEARCH: MCP_SEMANTIC_SEARCH,
+    MCPToolName.ASK_AGENT: MCP_ASK_AGENT,
 }
 
 AGENTIC_TOOLS: dict[AgenticToolName, str] = {

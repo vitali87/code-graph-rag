@@ -19,6 +19,7 @@ from .main import (
     export_graph_to_file,
     main_async,
     main_optimize_async,
+    main_single_query,
     prompt_for_unignored_directories,
     style,
     update_model_settings,
@@ -168,6 +169,12 @@ def start(
         "--interactive-setup",
         help=ch.HELP_INTERACTIVE_SETUP,
     ),
+    ask_agent: str | None = typer.Option(
+        None,
+        "-a",
+        "--ask-agent",
+        help=ch.HELP_ASK_AGENT,
+    ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
 
@@ -239,7 +246,10 @@ def start(
         return
 
     try:
-        asyncio.run(main_async(target_repo_path, effective_batch_size))
+        if ask_agent:
+            main_single_query(target_repo_path, effective_batch_size, ask_agent)
+        else:
+            asyncio.run(main_async(target_repo_path, effective_batch_size))
     except KeyboardInterrupt:
         app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:

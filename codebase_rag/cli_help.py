@@ -93,6 +93,11 @@ HELP_INTERACTIVE_SETUP = (
     "Without this flag, all directories matching ignore patterns are automatically excluded."
 )
 
+HELP_ASK_AGENT = (
+    "Run a single query in non-interactive mode and exit. "
+    "Output is sent to stdout, useful for scripting."
+)
+
 HELP_MCP_TRANSPORT = "Transport mode: 'stdio' (default) or 'http'"
 HELP_MCP_HTTP_HOST = (
     "Host to bind the HTTP server — only used when --transport http (default: 0.0.0.0)"

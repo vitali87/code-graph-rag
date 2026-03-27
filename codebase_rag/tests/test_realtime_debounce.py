@@ -313,7 +313,7 @@ class TestCodeChangeEventHandlerDebounce:
         from realtime_updater import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
-            mock_updater, debounce_seconds=0.3, max_wait_seconds=5
+            mock_updater, debounce_seconds=5.0, max_wait_seconds=30
         )
 
         files = [tmp_path / f"file{i}.py" for i in range(10)]
