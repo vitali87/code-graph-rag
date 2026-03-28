@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sys
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, ItemsView, KeysView
@@ -383,19 +384,29 @@ class GraphUpdater:
             return []
 
         eligible: list[Path] = []
-        for filepath in self.repo_path.rglob("*"):
-            if (
-                filepath.is_file()
-                and filepath.name != cs.HASH_CACHE_FILENAME
-                and not should_skip_path(
+        repo_str = str(self.repo_path)
+        hash_name = cs.HASH_CACHE_FILENAME
+        exclude = self.exclude_paths
+        unignore = self.unignore_paths
+        ignore_patterns = cs.IGNORE_PATTERNS
+        for dirpath, dirnames, filenames in os.walk(repo_str):
+            dirnames[:] = sorted(
+                d
+                for d in dirnames
+                if d not in ignore_patterns
+                and (not exclude or d not in exclude)
+            )
+            for fname in sorted(filenames):
+                if fname == hash_name:
+                    continue
+                filepath = Path(dirpath) / fname
+                if not should_skip_path(
                     filepath,
                     self.repo_path,
-                    exclude_paths=self.exclude_paths,
-                    unignore_paths=self.unignore_paths,
-                )
-            ):
-                eligible.append(filepath)
-        eligible.sort()
+                    exclude_paths=exclude,
+                    unignore_paths=unignore,
+                ):
+                    eligible.append(filepath)
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
