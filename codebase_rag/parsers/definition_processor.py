@@ -147,9 +147,10 @@ class DefinitionProcessor(
                 queries,
                 pre_captures=combined_captures,
             )
-            self._ingest_missing_import_patterns(
-                root_node, module_qn, language, queries
-            )
+            if language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+                self._ingest_missing_import_patterns(
+                    root_node, module_qn, language, queries
+                )
             if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
             self._ingest_all_functions(
@@ -166,14 +167,18 @@ class DefinitionProcessor(
                 queries,
                 combined_captures=combined_captures,
             )
-            self._ingest_object_literal_methods(root_node, module_qn, language, queries)
-            self._ingest_commonjs_exports(root_node, module_qn, language, queries)
-            if language in {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}:
+            if language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+                self._ingest_object_literal_methods(
+                    root_node, module_qn, language, queries
+                )
+                self._ingest_commonjs_exports(root_node, module_qn, language, queries)
                 self._ingest_es6_exports(root_node, module_qn, language, queries)
-            self._ingest_assignment_arrow_functions(
-                root_node, module_qn, language, queries
-            )
-            self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
+                self._ingest_assignment_arrow_functions(
+                    root_node, module_qn, language, queries
+                )
+                self._ingest_prototype_inheritance(
+                    root_node, module_qn, language, queries
+                )
 
             return (root_node, language)
 
