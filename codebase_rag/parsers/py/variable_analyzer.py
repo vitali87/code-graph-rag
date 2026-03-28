@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
+from tree_sitter import QueryCursor
 
 from ... import constants as cs
 from ... import logs as lg
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
-from ..utils import safe_decode_text
+from ..utils import get_cached_query, safe_decode_text
 
 if TYPE_CHECKING:
 
@@ -261,8 +262,21 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _analyze_self_assignments(
         self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
+        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
+        if py_lang_obj is not None:
+            try:
+                q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
+                cursor = QueryCursor(q)
+                captures = cursor.captures(node)
+                for assign_node in captures.get("assignment", []):
+                    self._process_self_assignment(
+                        assign_node, local_var_types, module_qn
+                    )
+                return
+            except Exception:
+                pass
         stack: list[ASTNode] = [node]
-
         while stack:
             current = stack.pop()
             if current.type == cs.TS_PY_ASSIGNMENT:
