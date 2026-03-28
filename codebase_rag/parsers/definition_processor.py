@@ -140,22 +140,13 @@ class DefinitionProcessor(
                     if fc_captures:
                         self._func_class_captures_cache[file_path] = fc_captures
 
-            if combined_captures:
-                import_captures: dict[str, list] = {}
-                for key in (cs.CAPTURE_IMPORT, cs.CAPTURE_IMPORT_FROM):
-                    if key in combined_captures:
-                        import_captures[key] = combined_captures[key]
-                self.import_processor.parse_imports(
-                    root_node,
-                    module_qn,
-                    language,
-                    queries,
-                    pre_captures=import_captures if import_captures else None,
-                )
-            else:
-                self.import_processor.parse_imports(
-                    root_node, module_qn, language, queries
-                )
+            self.import_processor.parse_imports(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                pre_captures=combined_captures,
+            )
             self._ingest_missing_import_patterns(
                 root_node, module_qn, language, queries
             )
