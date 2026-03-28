@@ -14,6 +14,7 @@ from .py import resolve_class_name
 from .type_inference import TypeInferenceEngine
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
+_SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 
@@ -247,7 +248,10 @@ class CallResolver:
     def _try_resolve_via_trie(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
+        search_name = _SEARCH_NAME_CACHE.get(call_name)
+        if search_name is None:
+            search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
+            _SEARCH_NAME_CACHE[call_name] = search_name
         possible_matches = self.function_registry.find_ending_with(search_name)
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
