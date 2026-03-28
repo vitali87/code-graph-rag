@@ -53,11 +53,20 @@ def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node |
     return None
 
 
+_CLASS_BODY_CACHE: dict[tuple[int, str], Node | None] = {}
+
+
 def find_method_in_ast(
     root_node: Node, class_name: str, method_name: str
 ) -> Node | None:
-    stack: list[Node] = [root_node]
+    cache_key = (id(root_node), class_name)
+    if cache_key in _CLASS_BODY_CACHE:
+        body_node = _CLASS_BODY_CACHE[cache_key]
+        if body_node is not None:
+            return find_method_in_class_body(body_node, method_name)
+        return None
 
+    stack: list[Node] = [root_node]
     while stack:
         current = stack.pop()
 
@@ -66,11 +75,15 @@ def find_method_in_ast(
             if name_node and name_node.text:
                 found_class_name = safe_decode_text(name_node)
                 if found_class_name == class_name:
-                    if body_node := current.child_by_field_name(cs.FIELD_BODY):
+                    body_node = current.child_by_field_name(cs.FIELD_BODY)
+                    _CLASS_BODY_CACHE[cache_key] = body_node
+                    if body_node:
                         return find_method_in_class_body(body_node, method_name)
+                    return None
 
         stack.extend(reversed(current.children))
 
+    _CLASS_BODY_CACHE[cache_key] = None
     return None
 
 
