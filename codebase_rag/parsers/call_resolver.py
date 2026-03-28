@@ -161,10 +161,15 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
-        if not self._has_separator(call_name):
+        if cs.SEPARATOR_DOUBLE_COLON in call_name:
+            separator = cs.SEPARATOR_DOUBLE_COLON
+        elif cs.SEPARATOR_COLON in call_name:
+            separator = cs.SEPARATOR_COLON
+        elif cs.SEPARATOR_DOT in call_name:
+            separator = cs.SEPARATOR_DOT
+        else:
             return None
 
-        separator = self._get_separator(call_name)
         parts = call_name.split(separator)
 
         if len(parts) == 2:
