@@ -430,71 +430,57 @@ class CallProcessor:
             captures = sorted_captures(cursor, caller_node)
             call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
-        logger.debug(
-            ls.CALL_FOUND_NODES,
-            count=len(call_nodes),
-            language=language,
-            caller=caller_qn,
-        )
+        if not call_nodes:
+            return
+
+        is_java = language == cs.SupportedLanguage.JAVA
+        method_invocation_type = cs.TS_METHOD_INVOCATION
+        resolver = self._resolver
+        resolve_func = resolver.resolve_function_call
+        resolve_builtin = resolver.resolve_builtin_call
+        resolve_cpp_op = resolver.resolve_cpp_operator_call
+        get_target = self._get_call_target_name
+        class_label = cs.NodeLabel.CLASS
+        ensure_rel = self.ingestor.ensure_relationship_batch
+        calls_rel = cs.RelationshipType.CALLS
+        qn_key = cs.KEY_QUALIFIED_NAME
+        _id = id
+        has_cache = call_name_cache is not None
 
         for call_node in call_nodes:
-            if not isinstance(call_node, Node):
-                continue
-
-            # (H) tree-sitter finds ALL call nodes including nested; no recursive processing needed
-
-            node_id = id(call_node)
-            if call_name_cache is not None and node_id in call_name_cache:
+            node_id = _id(call_node)
+            if has_cache and node_id in call_name_cache:
                 call_name = call_name_cache[node_id]
             else:
-                call_name = self._get_call_target_name(call_node)
-                if call_name_cache is not None:
+                call_name = get_target(call_node)
+                if has_cache:
                     call_name_cache[node_id] = call_name
             if not call_name:
                 continue
 
-            if (
-                language == cs.SupportedLanguage.JAVA
-                and call_node.type == cs.TS_METHOD_INVOCATION
-            ):
-                callee_info = self._resolver.resolve_java_method_call(
+            if is_java and call_node.type == method_invocation_type:
+                callee_info = resolver.resolve_java_method_call(
                     call_node, module_qn, local_var_types
                 )
             else:
-                callee_info = self._resolver.resolve_function_call(
+                callee_info = resolve_func(
                     call_name, module_qn, local_var_types, class_context
                 )
-            if callee_info:
-                callee_type, callee_qn = callee_info
-            elif builtin_info := self._resolver.resolve_builtin_call(call_name):
-                callee_type, callee_qn = builtin_info
-            elif operator_info := self._resolver.resolve_cpp_operator_call(
-                call_name, module_qn
-            ):
-                callee_type, callee_qn = operator_info
-            else:
-                continue
-            if callee_type == cs.NodeLabel.CLASS:
-                logger.debug(
-                    ls.CALL_SKIP_CLASS,
-                    caller=caller_qn,
-                    call_name=call_name,
-                    callee_qn=callee_qn,
-                )
+            if not callee_info:
+                callee_info = resolve_builtin(call_name)
+            if not callee_info:
+                callee_info = resolve_cpp_op(call_name, module_qn)
+            if not callee_info:
                 continue
 
-            logger.debug(
-                ls.CALL_FOUND,
-                caller=caller_qn,
-                call_name=call_name,
-                callee_type=callee_type,
-                callee_qn=callee_qn,
-            )
+            callee_type, callee_qn = callee_info
+            if callee_type == class_label:
+                continue
 
-            self.ingestor.ensure_relationship_batch(
-                (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn),
-                cs.RelationshipType.CALLS,
-                (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+            ensure_rel(
+                (caller_type, qn_key, caller_qn),
+                calls_rel,
+                (callee_type, qn_key, callee_qn),
             )
 
     def _build_nested_qualified_name(
