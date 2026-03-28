@@ -293,13 +293,22 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
+        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
+        if py_lang_obj is not None:
+            try:
+                q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
+                cursor = QueryCursor(q)
+                captures = cursor.captures(node)
+                return_nodes.extend(captures.get("return_stmt", []))
+                return
+            except Exception:
+                pass
         stack: list[Node] = [node]
-
         while stack:
             current = stack.pop()
             if current.type == cs.TS_PY_RETURN_STATEMENT:
                 return_nodes.append(current)
-
             stack.extend(reversed(current.children))
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
