@@ -20,7 +20,12 @@ from .stdlib_extractor import (
     load_persistent_cache,
     save_persistent_cache,
 )
-from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
+from .utils import (
+    get_query_cursor,
+    safe_decode_text,
+    safe_decode_with_fallback,
+    sorted_captures,
+)
 
 
 class ImportProcessor:
@@ -106,7 +111,7 @@ class ImportProcessor:
 
         try:
             cursor = get_query_cursor(imports_query)
-            captures = cursor.captures(root_node)
+            captures = sorted_captures(cursor, root_node)
 
             match language:
                 case cs.SupportedLanguage.PYTHON:

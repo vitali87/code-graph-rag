@@ -16,7 +16,7 @@ from ...types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
-from ..utils import safe_decode_text, safe_decode_with_fallback
+from ..utils import safe_decode_text, safe_decode_with_fallback, sorted_captures
 from .module_system import JsTsModuleSystemMixin
 from .utils import get_js_ts_language_obj
 
@@ -96,7 +96,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     ):
         query = Query(language_obj, cs.JS_PROTOTYPE_INHERITANCE_QUERY)
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = sorted_captures(cursor, root_node)
 
         child_classes = captures.get(cs.CAPTURE_CHILD_CLASS, [])
         parent_classes = captures.get(cs.CAPTURE_PARENT_CLASS, [])
@@ -147,7 +147,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _process_prototype_method_captures(self, language_obj, root_node, module_qn):
         method_query = Query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(root_node)
+        method_captures = sorted_captures(method_cursor, root_node)
 
         constructor_names = method_captures.get(cs.CAPTURE_CONSTRUCTOR_NAME, [])
         method_names = method_captures.get(cs.CAPTURE_METHOD_NAME, [])
@@ -225,7 +225,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         try:
             query = Query(language_obj, query_text)
             cursor = QueryCursor(query)
-            captures = cursor.captures(root_node)
+            captures = sorted_captures(cursor, root_node)
 
             method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
             method_functions = captures.get(cs.CAPTURE_METHOD_FUNCTION, [])
@@ -362,7 +362,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         try:
             query = Query(lang_query, query_text)
             cursor = QueryCursor(query)
-            captures = cursor.captures(root_node)
+            captures = sorted_captures(cursor, root_node)
 
             method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
             member_exprs = captures.get(cs.CAPTURE_MEMBER_EXPR, [])

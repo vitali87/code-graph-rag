@@ -30,6 +30,15 @@ class FunctionCapturesResult(NamedTuple):
     captures: dict[str, list[ASTNode]]
 
 
+def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
+    # (H) tree-sitter v0.25 captures() returns nodes in non-deterministic order
+    # across process invocations; sort by start_byte for reproducibility
+    raw = cursor.captures(node)
+    return {
+        name: sorted(nodes, key=lambda n: n.start_byte) for name, nodes in raw.items()
+    }
+
+
 def get_function_captures(
     root_node: ASTNode,
     language: cs.SupportedLanguage,
@@ -42,7 +51,7 @@ def get_function_captures(
         return None
 
     cursor = QueryCursor(query)
-    captures = cursor.captures(root_node)
+    captures = sorted_captures(cursor, root_node)
     return FunctionCapturesResult(lang_config, captures)
 
 

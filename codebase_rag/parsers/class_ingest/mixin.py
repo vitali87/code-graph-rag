@@ -14,7 +14,7 @@ from ...types_defs import ASTNode, PropertyDict
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
-from ..utils import ingest_method, safe_decode_text
+from ..utils import ingest_method, safe_decode_text, sorted_captures
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -96,7 +96,7 @@ class ClassIngestMixin:
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = sorted_captures(cursor, root_node)
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
         module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
@@ -202,7 +202,7 @@ class ClassIngestMixin:
         file_path = self.module_qn_to_file_path.get(module_qn)
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = sorted_captures(method_cursor, body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(method_node, Node):
                 continue
@@ -236,7 +236,7 @@ class ClassIngestMixin:
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = sorted_captures(method_cursor, body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(method_node, Node):
                 continue

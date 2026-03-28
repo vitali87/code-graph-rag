@@ -14,7 +14,7 @@ from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
-from .utils import get_function_captures, is_method_node
+from .utils import get_function_captures, is_method_node, sorted_captures
 
 
 class CallProcessor:
@@ -143,7 +143,7 @@ class CallProcessor:
         if not method_query:
             return
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = sorted_captures(method_cursor, body_node)
         method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         for method_node in method_nodes:
             if not isinstance(method_node, Node):
@@ -176,7 +176,7 @@ class CallProcessor:
         if not query:
             return
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = sorted_captures(cursor, root_node)
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
         for class_node in class_nodes:
@@ -275,7 +275,7 @@ class CallProcessor:
         )
 
         cursor = QueryCursor(calls_query)
-        captures = cursor.captures(caller_node)
+        captures = sorted_captures(cursor, caller_node)
         call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
         logger.debug(
