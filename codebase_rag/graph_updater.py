@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sys
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, ItemsView, KeysView
@@ -371,6 +372,19 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+    def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
+        if dirname not in cs.IGNORE_PATTERNS and (
+            not self.exclude_paths or dirname not in self.exclude_paths
+        ):
+            return True
+        return bool(
+            self.unignore_paths
+            and any(
+                u.startswith(f"{dir_prefix}{dirname}/") or u == f"{dir_prefix}{dirname}"
+                for u in self.unignore_paths
+            )
+        )
+
     def _collect_eligible_files(self) -> list[Path]:
         if self._single_file is not None:
             if not should_skip_path(
@@ -383,19 +397,24 @@ class GraphUpdater:
             return []
 
         eligible: list[Path] = []
-        for filepath in self.repo_path.rglob("*"):
-            if (
-                filepath.is_file()
-                and filepath.name != cs.HASH_CACHE_FILENAME
-                and not should_skip_path(
+        hash_name = cs.HASH_CACHE_FILENAME
+        for dirpath, dirnames, filenames in os.walk(str(self.repo_path)):
+            rel_dir = Path(dirpath).relative_to(self.repo_path).as_posix()
+            dir_prefix = "" if rel_dir == "." else f"{rel_dir}/"
+            dirnames[:] = sorted(
+                d for d in dirnames if self._should_keep_dir(d, dir_prefix)
+            )
+            for fname in sorted(filenames):
+                if fname == hash_name:
+                    continue
+                filepath = Path(dirpath) / fname
+                if not should_skip_path(
                     filepath,
                     self.repo_path,
                     exclude_paths=self.exclude_paths,
                     unignore_paths=self.unignore_paths,
-                )
-            ):
-                eligible.append(filepath)
-        eligible.sort()
+                ):
+                    eligible.append(filepath)
         return eligible
 
     def _process_files(self, force: bool = False) -> None:

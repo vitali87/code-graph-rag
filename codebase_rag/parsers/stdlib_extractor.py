@@ -549,132 +549,45 @@ int main() {{
         return full_qualified_name
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
+        cached_result = _get_cached_stdlib_result(
+            cs.SupportedLanguage.JAVA, full_qualified_name
+        )
+        if cached_result is not None:
+            return cached_result
+
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
-            try:
-                import os
-                import subprocess
-                import tempfile
-
-                package_name = cs.SEPARATOR_DOT.join(parts[:-1])
-                entity_name = parts[-1]
-
-                java_program = """
-import java.lang.reflect.*;
-
-public class StdlibCheck {
-    public static void main(String[] args) {
-        if (args.length < 2) {
-            System.out.println("{\\"hasEntity\\": false}");
-            return;
-        }
-
-        String packageName = args[0];
-        String entityName = args[1];
-
-        try {
-            Class<?> clazz = Class.forName(packageName + "." + entityName);
-            System.out.println("{\\"hasEntity\\": true, \\"entityType\\": \\"class\\"}");
-        } catch (ClassNotFoundException e) {
-            // Try as method or field in parent package
-            try {
-                Class<?> packageClass = Class.forName(packageName);
-                Method[] methods = packageClass.getMethods();
-                Field[] fields = packageClass.getFields();
-
-                boolean foundMethod = false;
-                for (Method method : methods) {
-                    if (method.getName().equals(entityName)) {
-                        foundMethod = true;
-                        break;
-                    }
-                }
-
-                boolean foundField = false;
-                for (Field field : fields) {
-                    if (field.getName().equals(entityName)) {
-                        foundField = true;
-                        break;
-                    }
-                }
-
-                if (foundMethod || foundField) {
-                    System.out.println("{\\"hasEntity\\": true, \\"entityType\\": \\"member\\"}");
-                } else {
-                    System.out.println("{\\"hasEntity\\": false}");
-                }
-            } catch (Exception ex) {
-                System.out.println("{\\"hasEntity\\": false}");
-            }
-        }
-    }
-}
-                """
-
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".java", delete=False
-                ) as f:
-                    f.write(java_program)
-                    java_file = f.name
-
-                try:
-                    compile_result = subprocess.run(
-                        ["javac", java_file],
-                        check=False,
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                    )
-
-                    if compile_result.returncode == 0:
-                        class_name = os.path.splitext(os.path.basename(java_file))[0]
-                        run_result = subprocess.run(
-                            [
-                                "java",
-                                "-cp",
-                                os.path.dirname(java_file),
-                                class_name,
-                                package_name,
-                                entity_name,
-                            ],
-                            check=False,
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                        )
-
-                        if run_result.returncode == 0:
-                            data = json.loads(run_result.stdout.strip())
-                            if data.get(cs.JSON_KEY_HAS_ENTITY):
-                                return cs.SEPARATOR_DOT.join(parts[:-1])
-
-                finally:
-                    for ext in (cs.EXT_JAVA, cs.EXT_CLASS):
-                        temp_file = os.path.splitext(java_file)[0] + ext
-                        try:
-                            os.unlink(temp_file)
-                        except OSError:
-                            pass
-
-            except (
-                subprocess.TimeoutExpired,
-                subprocess.CalledProcessError,
-                json.JSONDecodeError,
-                OSError,
-            ):
-                pass
-
             entity_name = parts[-1]
-            if (
+            is_class_entity = (
                 entity_name[:1].isupper()
                 or entity_name.endswith(cs.JAVA_SUFFIX_EXCEPTION)
                 or entity_name.endswith(cs.JAVA_SUFFIX_ERROR)
                 or entity_name.endswith(cs.JAVA_SUFFIX_INTERFACE)
                 or entity_name.endswith(cs.JAVA_SUFFIX_BUILDER)
                 or entity_name in cs.JAVA_STDLIB_CLASSES
-            ):
-                return cs.SEPARATOR_DOT.join(parts[:-1])
+            )
 
+            if full_qualified_name.startswith(cs.JAVA_STDLIB_PREFIXES):
+                result = (
+                    cs.SEPARATOR_DOT.join(parts[:-1])
+                    if is_class_entity
+                    else full_qualified_name
+                )
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.JAVA, full_qualified_name, result
+                )
+                return result
+
+            if is_class_entity:
+                result = cs.SEPARATOR_DOT.join(parts[:-1])
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.JAVA, full_qualified_name, result
+                )
+                return result
+
+        _cache_stdlib_result(
+            cs.SupportedLanguage.JAVA, full_qualified_name, full_qualified_name
+        )
         return full_qualified_name
 
     def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
