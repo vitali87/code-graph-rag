@@ -68,6 +68,12 @@ class CallResolver:
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
     ) -> tuple[str, str] | None:
+        use_cache = not local_var_types
+        if use_cache:
+            cache_key = (call_name, module_qn)
+            if cache_key in self._simple_resolution_cache:
+                return self._simple_resolution_cache[cache_key]
+
         if result := self._try_resolve_iife(call_name, module_qn):
             return result
 
@@ -76,12 +82,6 @@ class CallResolver:
 
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
             return self._resolve_chained_call(call_name, module_qn, local_var_types)
-
-        use_cache = not local_var_types
-        if use_cache:
-            cache_key = (call_name, module_qn)
-            if cache_key in self._simple_resolution_cache:
-                return self._simple_resolution_cache[cache_key]
 
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types
