@@ -393,8 +393,7 @@ class GraphUpdater:
             dirnames[:] = sorted(
                 d
                 for d in dirnames
-                if d not in ignore_patterns
-                and (not exclude or d not in exclude)
+                if d not in ignore_patterns and (not exclude or d not in exclude)
             )
             for fname in sorted(filenames):
                 if fname == hash_name:

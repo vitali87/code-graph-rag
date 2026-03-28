@@ -549,6 +549,12 @@ int main() {{
         return full_qualified_name
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
+        cached_result = _get_cached_stdlib_result(
+            cs.SupportedLanguage.JAVA, full_qualified_name
+        )
+        if cached_result is not None:
+            return cached_result
+
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             entity_name = parts[-1]
