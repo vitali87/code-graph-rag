@@ -8,6 +8,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs
+from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..utils import safe_decode_text, safe_decode_with_fallback
 from .utils import decode_node_stripped
 
@@ -79,8 +80,8 @@ def _process_export_module(
         {
             cs.KEY_QUALIFIED_NAME: interface_qn,
             cs.KEY_NAME: module_name,
-            cs.KEY_PATH: str(file_path.relative_to(repo_path)),
-            cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
+            cs.KEY_PATH: cached_relative_path(file_path, repo_path).as_posix(),
+            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
             cs.KEY_MODULE_TYPE: cs.CPP_MODULE_TYPE_INTERFACE,
         },
     )
@@ -114,8 +115,8 @@ def _process_module_implementation(
         {
             cs.KEY_QUALIFIED_NAME: impl_qn,
             cs.KEY_NAME: f"{module_name}{cs.CPP_IMPL_SUFFIX}",
-            cs.KEY_PATH: str(file_path.relative_to(repo_path)),
-            cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
+            cs.KEY_PATH: cached_relative_path(file_path, repo_path).as_posix(),
+            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
             cs.KEY_IMPLEMENTS_MODULE: module_name,
             cs.KEY_MODULE_TYPE: cs.CPP_MODULE_TYPE_IMPLEMENTATION,
         },
