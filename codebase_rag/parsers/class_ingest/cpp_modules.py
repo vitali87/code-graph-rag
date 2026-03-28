@@ -40,10 +40,8 @@ def ingest_cpp_module_declarations(
 
 def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
     module_declarations: list[tuple[Node, str]] = []
-    stack = [root_node]
 
-    while stack:
-        node = stack.pop()
+    for node in root_node.children:
         if node.type == cs.TS_MODULE_DECLARATION:
             module_declarations.append((node, decode_node_stripped(node)))
         elif node.type == cs.CppNodeType.DECLARATION:
@@ -57,8 +55,6 @@ def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
             )
             if has_module:
                 module_declarations.append((node, decode_node_stripped(node)))
-
-        stack.extend(node.children)
 
     return module_declarations
 
@@ -143,7 +139,7 @@ def _process_module_implementation(
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:
     exported_class_nodes: list[Node] = []
-    stack = [root_node]
+    stack = list(root_node.children)
 
     while stack:
         node = stack.pop()
@@ -164,7 +160,7 @@ def find_cpp_exported_classes(root_node: Node) -> list[Node]:
                     or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
                 ):
                     exported_class_nodes.append(node)
-
-        stack.extend(node.children)
+        elif node.type == cs.TS_NAMESPACE_DEFINITION:
+            stack.extend(node.children)
 
     return exported_class_nodes

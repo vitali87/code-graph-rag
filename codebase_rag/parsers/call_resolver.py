@@ -15,6 +15,7 @@ from .type_inference import TypeInferenceEngine
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
+_QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 
 
 class CallResolver:
@@ -76,7 +77,7 @@ class CallResolver:
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
             return self._resolve_chained_call(call_name, module_qn, local_var_types)
 
-        use_cache = not local_var_types and not class_context
+        use_cache = not local_var_types
         if use_cache:
             cache_key = (call_name, module_qn)
             if cache_key in self._simple_resolution_cache:
@@ -716,8 +717,12 @@ class CallResolver:
         caller_len: int,
         caller_parent_prefix: str,
     ) -> int:
-        candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
-        candidate_len = len(candidate_parts)
+        if candidate_qn in _QN_SPLIT_CACHE:
+            candidate_parts, candidate_len = _QN_SPLIT_CACHE[candidate_qn]
+        else:
+            candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
+            candidate_len = len(candidate_parts)
+            _QN_SPLIT_CACHE[candidate_qn] = (candidate_parts, candidate_len)
         common_prefix = 0
         for i in range(min(caller_len, candidate_len)):
             if caller_parts[i] == candidate_parts[i]:

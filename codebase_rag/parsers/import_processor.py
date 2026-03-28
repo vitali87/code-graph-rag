@@ -98,6 +98,7 @@ class ImportProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        pre_captures: dict | None = None,
     ) -> None:
         if language not in queries:
             return
@@ -110,8 +111,11 @@ class ImportProcessor:
         self.import_mapping[module_qn] = {}
 
         try:
-            cursor = get_query_cursor(imports_query)
-            captures = sorted_captures(cursor, root_node)
+            if pre_captures is not None:
+                captures = pre_captures
+            else:
+                cursor = get_query_cursor(imports_query)
+                captures = sorted_captures(cursor, root_node)
 
             match language:
                 case cs.SupportedLanguage.PYTHON:

@@ -90,16 +90,21 @@ class ClassIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None = None,
     ) -> None:
         lang_queries = queries[language]
-        if not (query := lang_queries[cs.QUERY_CLASSES]):
-            return
-
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        cursor = QueryCursor(query)
-        captures = sorted_captures(cursor, root_node)
-        class_nodes = captures.get(cs.CAPTURE_CLASS, [])
-        module_nodes = captures.get(cs.ONEOF_MODULE, [])
+
+        if combined_captures and cs.CAPTURE_CLASS in combined_captures:
+            class_nodes = list(combined_captures[cs.CAPTURE_CLASS])
+            module_nodes = combined_captures.get(cs.ONEOF_MODULE, [])
+        else:
+            if not (query := lang_queries[cs.QUERY_CLASSES]):
+                return
+            cursor = QueryCursor(query)
+            captures = sorted_captures(cursor, root_node)
+            class_nodes = captures.get(cs.CAPTURE_CLASS, [])
+            module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
         if language == cs.SupportedLanguage.CPP:
             class_nodes.extend(self._find_cpp_exported_classes(root_node))

@@ -9,6 +9,7 @@ from tree_sitter import Node, QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import LanguageSpec
+from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from ..utils.path_utils import cached_relative_path
@@ -17,6 +18,16 @@ from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
 from .utils import get_function_captures, is_method_node, sorted_captures
+
+_TYPED_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.PYTHON,
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.LUA,
+    }
+)
 
 
 class CallProcessor:
@@ -85,6 +96,7 @@ class CallProcessor:
         root_node: Node,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        func_class_captures_cache: dict[Path, dict] | None = None,
     ) -> None:
         relative_path = cached_relative_path(file_path, self.repo_path)
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
@@ -102,11 +114,51 @@ class CallProcessor:
                 root_node, language, queries
             )
 
+            call_name_cache: dict[int, str | None] = {}
+
+            if (
+                func_class_captures_cache is not None
+                and file_path in func_class_captures_cache
+            ):
+                combined_captures = func_class_captures_cache[file_path]
+            else:
+                combined_query = COMBINED_FUNC_CLASS_QUERIES.get(language)
+                if combined_query:
+                    cursor = QueryCursor(combined_query)
+                    combined_captures = sorted_captures(cursor, root_node)
+                else:
+                    combined_captures = {}
+
+            sorted_func_nodes: list[Node] | None = None
+            func_node_starts: list[int] | None = None
+            raw_func = combined_captures.get(cs.CAPTURE_FUNCTION, [])
+            if raw_func:
+                sorted_func_nodes = sorted(
+                    (n for n in raw_func if isinstance(n, Node)),
+                    key=lambda n: n.start_byte,
+                )
+                func_node_starts = [n.start_byte for n in sorted_func_nodes]
+
             self._process_calls_in_functions(
-                root_node, module_qn, language, queries, all_call_nodes, call_starts
+                root_node,
+                module_qn,
+                language,
+                queries,
+                all_call_nodes,
+                call_starts,
+                call_name_cache=call_name_cache,
             )
             self._process_calls_in_classes(
-                root_node, module_qn, language, queries, all_call_nodes, call_starts
+                root_node,
+                module_qn,
+                language,
+                queries,
+                all_call_nodes,
+                call_starts,
+                call_name_cache=call_name_cache,
+                combined_captures=combined_captures,
+                sorted_func_nodes=sorted_func_nodes,
+                func_node_starts=func_node_starts,
             )
             self._ingest_function_calls(
                 root_node,
@@ -116,6 +168,7 @@ class CallProcessor:
                 language,
                 queries,
                 call_nodes=all_call_nodes,
+                call_name_cache=call_name_cache,
             )
 
         except Exception as e:
@@ -129,6 +182,7 @@ class CallProcessor:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         all_call_nodes: list[Node] | None = None,
         call_starts: list[int] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
     ) -> None:
         result = get_function_captures(root_node, language, queries)
         if not result:
@@ -164,6 +218,7 @@ class CallProcessor:
                     language,
                     queries,
                     call_nodes=filtered,
+                    call_name_cache=call_name_cache,
                 )
 
     def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
@@ -195,13 +250,27 @@ class CallProcessor:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         all_call_nodes: list[Node] | None = None,
         call_starts: list[int] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
-        method_query = queries[language][cs.QUERY_FUNCTIONS]
-        if not method_query:
-            return
-        method_cursor = QueryCursor(method_query)
-        method_captures = sorted_captures(method_cursor, body_node)
-        method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+        if sorted_func_nodes is not None and func_node_starts is not None:
+            body_start = body_node.start_byte
+            body_end = body_node.end_byte
+            lo = bisect_left(func_node_starts, body_start)
+            hi = bisect_right(func_node_starts, body_end)
+            method_nodes = [
+                n
+                for n in sorted_func_nodes[lo:hi]
+                if n.end_byte <= body_end and isinstance(n, Node)
+            ]
+        else:
+            method_query = queries[language][cs.QUERY_FUNCTIONS]
+            if not method_query:
+                return
+            method_cursor = QueryCursor(method_query)
+            method_captures = sorted_captures(method_cursor, body_node)
+            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         for method_node in method_nodes:
             if not isinstance(method_node, Node):
                 continue
@@ -226,6 +295,7 @@ class CallProcessor:
                 queries,
                 class_qn,
                 call_nodes=filtered,
+                call_name_cache=call_name_cache,
             )
 
     def _process_calls_in_classes(
@@ -236,13 +306,20 @@ class CallProcessor:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         all_call_nodes: list[Node] | None = None,
         call_starts: list[int] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
+        combined_captures: dict[str, list] | None = None,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
-        query = queries[language][cs.QUERY_CLASSES]
-        if not query:
-            return
-        cursor = QueryCursor(query)
-        captures = sorted_captures(cursor, root_node)
-        class_nodes = captures.get(cs.CAPTURE_CLASS, [])
+        if combined_captures and cs.CAPTURE_CLASS in combined_captures:
+            class_nodes = combined_captures[cs.CAPTURE_CLASS]
+        else:
+            query = queries[language][cs.QUERY_CLASSES]
+            if not query:
+                return
+            cursor = QueryCursor(query)
+            captures = sorted_captures(cursor, root_node)
+            class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
         for class_node in class_nodes:
             if not isinstance(class_node, Node):
@@ -260,6 +337,9 @@ class CallProcessor:
                     queries,
                     all_call_nodes,
                     call_starts,
+                    call_name_cache=call_name_cache,
+                    sorted_func_nodes=sorted_func_nodes,
+                    func_node_starts=func_node_starts,
                 )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
@@ -326,10 +406,16 @@ class CallProcessor:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         class_context: str | None = None,
         call_nodes: list[Node] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
     ) -> None:
-        local_var_types = self._resolver.type_inference.build_local_variable_type_map(
-            caller_node, module_qn, language
-        )
+        if language in _TYPED_LANGUAGES:
+            local_var_types = (
+                self._resolver.type_inference.build_local_variable_type_map(
+                    caller_node, module_qn, language
+                )
+            )
+        else:
+            local_var_types = None
 
         if call_nodes is None:
             calls_query = queries[language].get(cs.QUERY_CALLS)
@@ -352,7 +438,13 @@ class CallProcessor:
 
             # (H) tree-sitter finds ALL call nodes including nested; no recursive processing needed
 
-            call_name = self._get_call_target_name(call_node)
+            node_id = id(call_node)
+            if call_name_cache is not None and node_id in call_name_cache:
+                call_name = call_name_cache[node_id]
+            else:
+                call_name = self._get_call_target_name(call_node)
+                if call_name_cache is not None:
+                    call_name_cache[node_id] = call_name
             if not call_name:
                 continue
 

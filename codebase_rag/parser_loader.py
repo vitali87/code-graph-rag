@@ -230,6 +230,10 @@ def _create_locals_query(
         return None
 
 
+COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
+COMBINED_FUNC_CLASS_IMPORT_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
+
+
 def _create_language_queries(
     language: Language,
     parser: Parser,
@@ -246,6 +250,24 @@ def _create_language_queries(
         lang_config.call_node_types, cs.CAPTURE_CALL
     )
     combined_import_patterns = _build_combined_import_pattern(lang_config)
+
+    combined_fc_pattern = f"{function_patterns} {class_patterns}".strip()
+    try:
+        COMBINED_FUNC_CLASS_QUERIES[lang_name] = (
+            Query(language, combined_fc_pattern) if combined_fc_pattern else None
+        )
+    except Exception:
+        COMBINED_FUNC_CLASS_QUERIES[lang_name] = None
+
+    combined_fci_pattern = (
+        f"{function_patterns} {class_patterns} {combined_import_patterns}".strip()
+    )
+    try:
+        COMBINED_FUNC_CLASS_IMPORT_QUERIES[lang_name] = (
+            Query(language, combined_fci_pattern) if combined_fci_pattern else None
+        )
+    except Exception:
+        COMBINED_FUNC_CLASS_IMPORT_QUERIES[lang_name] = None
 
     return LanguageQueries(
         functions=_create_optional_query(language, function_patterns),

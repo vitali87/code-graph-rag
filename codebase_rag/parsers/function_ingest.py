@@ -17,7 +17,6 @@ from ..types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
-from ..utils.fqn_resolver import resolve_fqn_from_ast
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
@@ -52,6 +51,7 @@ class _DeferredMethod(NamedTuple):
 
 class FunctionIngestMixin:
     __slots__ = ()
+    _module_prefix_cache: dict[tuple[Path, int], str] = {}
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -73,12 +73,17 @@ class FunctionIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None = None,
     ) -> None:
-        result = get_function_captures(root_node, language, queries)
-        if not result:
-            return
-
-        lang_config, captures = result
+        if combined_captures and cs.CAPTURE_FUNCTION in combined_captures:
+            lang_queries = queries[language]
+            lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
+            captures = combined_captures
+        else:
+            result = get_function_captures(root_node, language, queries)
+            if not result:
+                return
+            lang_config, captures = result
         file_path = self.module_qn_to_file_path.get(module_qn)
 
         for func_node in captures.get(cs.CAPTURE_FUNCTION, []):
@@ -132,13 +137,29 @@ class FunctionIngestMixin:
         if not fqn_config or not file_path:
             return None
 
-        func_qn = resolve_fqn_from_ast(
-            func_node, file_path, self.repo_path, self.project_name, fqn_config
-        )
-        if not func_qn:
+        func_name = fqn_config.get_name(func_node)
+        if not func_name:
             return None
 
-        func_name = func_qn.split(cs.SEPARATOR_DOT)[-1]
+        parts = [func_name]
+        current = func_node.parent
+        while current:
+            if current.type in fqn_config.scope_node_types:
+                if scope_name := fqn_config.get_name(current):
+                    parts.append(scope_name)
+            current = current.parent
+        parts.reverse()
+
+        cache_key = (file_path, id(fqn_config))
+        if cache_key in self._module_prefix_cache:
+            module_prefix = self._module_prefix_cache[cache_key]
+        else:
+            module_parts = fqn_config.file_to_module_parts(file_path, self.repo_path)
+            module_prefix = cs.SEPARATOR_DOT.join([self.project_name] + module_parts)
+            self._module_prefix_cache[cache_key] = module_prefix
+
+        func_qn = module_prefix + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+
         is_exported = (
             cpp_utils.is_exported(func_node)
             if language == cs.SupportedLanguage.CPP

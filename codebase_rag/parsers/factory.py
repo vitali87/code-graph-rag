@@ -32,6 +32,7 @@ class ProcessorFactory:
         "_definition_processor",
         "_type_inference",
         "_call_processor",
+        "_func_class_captures_cache",
     )
 
     def __init__(
@@ -57,6 +58,7 @@ class ProcessorFactory:
         self.exclude_paths = exclude_paths
 
         self.module_qn_to_file_path: dict[str, Path] = {}
+        self._func_class_captures_cache: dict[Path, dict] = {}
 
         self._import_processor: ImportProcessor | None = None
         self._structure_processor: StructureProcessor | None = None
@@ -99,6 +101,7 @@ class ProcessorFactory:
                 simple_name_lookup=self.simple_name_lookup,
                 import_processor=self.import_processor,
                 module_qn_to_file_path=self.module_qn_to_file_path,
+                func_class_captures_cache=self._func_class_captures_cache,
             )
         return self._definition_processor
 

@@ -48,6 +48,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     ast_cache: ASTCacheProtocol
 
     _method_return_type_cache: dict[str, str | None]
+    _self_assignment_cache: dict[tuple[int, str], dict[str, str] | None] = {}
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:
@@ -348,8 +349,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             if language != cs.SupportedLanguage.PYTHON:
                 return None
 
-            instance_vars: dict[str, str] = {}
-            self._analyze_self_assignments(root_node, instance_vars, module_qn)
+            cache_key = (id(root_node), module_qn)
+            if cache_key in self._self_assignment_cache:
+                instance_vars = self._self_assignment_cache[cache_key]
+            else:
+                instance_vars = {}
+                self._analyze_self_assignments(root_node, instance_vars, module_qn)
+                self._self_assignment_cache[cache_key] = instance_vars or None
+
+            if not instance_vars:
+                return None
 
             full_attr_name = f"{cs.PY_SELF_PREFIX}{attribute_name}"
             return instance_vars.get(full_attr_name)

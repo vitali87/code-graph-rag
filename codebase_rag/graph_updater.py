@@ -528,7 +528,11 @@ class GraphUpdater:
         ast_cache_items = list(self.ast_cache.items())
         for file_path, (root_node, language) in ast_cache_items:
             self.factory.call_processor.process_calls_in_file(
-                file_path, root_node, language, self.queries
+                file_path,
+                root_node,
+                language,
+                self.queries,
+                func_class_captures_cache=self.factory._func_class_captures_cache,
             )
 
     def _prune_orphan_nodes(self) -> None:

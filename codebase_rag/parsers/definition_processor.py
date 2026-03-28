@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from tree_sitter import QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
@@ -14,7 +16,7 @@ from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
 from .handlers import get_handler
 from .js_ts.ingest import JsTsIngestMixin
-from .utils import safe_decode_with_fallback
+from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -39,6 +41,7 @@ class DefinitionProcessor(
         simple_name_lookup: SimpleNameLookup,
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
+        func_class_captures_cache: dict[Path, dict] | None = None,
     ):
         super().__init__()
         self.ingestor = ingestor
@@ -51,6 +54,7 @@ class DefinitionProcessor(
         self.class_inheritance: dict[str, list[str]] = {}
         self._deferred_cpp_methods: list = []
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
+        self._func_class_captures_cache = func_class_captures_cache
 
     def process_file(
         self,
@@ -123,14 +127,54 @@ class DefinitionProcessor(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             )
 
-            self.import_processor.parse_imports(root_node, module_qn, language, queries)
+            combined_captures: dict[str, list] | None = None
+            combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+            if combined_query:
+                cursor = QueryCursor(combined_query)
+                combined_captures = sorted_captures(cursor, root_node)
+                if self._func_class_captures_cache is not None and combined_captures:
+                    fc_captures: dict[str, list] = {}
+                    for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
+                        if key in combined_captures:
+                            fc_captures[key] = combined_captures[key]
+                    if fc_captures:
+                        self._func_class_captures_cache[file_path] = fc_captures
+
+            if combined_captures:
+                import_captures: dict[str, list] = {}
+                for key in (cs.CAPTURE_IMPORT, cs.CAPTURE_IMPORT_FROM):
+                    if key in combined_captures:
+                        import_captures[key] = combined_captures[key]
+                self.import_processor.parse_imports(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    pre_captures=import_captures if import_captures else None,
+                )
+            else:
+                self.import_processor.parse_imports(
+                    root_node, module_qn, language, queries
+                )
             self._ingest_missing_import_patterns(
                 root_node, module_qn, language, queries
             )
             if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
-            self._ingest_all_functions(root_node, module_qn, language, queries)
-            self._ingest_classes_and_methods(root_node, module_qn, language, queries)
+            self._ingest_all_functions(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
+            self._ingest_classes_and_methods(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
             self._ingest_object_literal_methods(root_node, module_qn, language, queries)
             self._ingest_commonjs_exports(root_node, module_qn, language, queries)
             if language in {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}:
