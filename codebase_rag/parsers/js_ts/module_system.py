@@ -281,8 +281,8 @@ class JsTsModuleSystemMixin:
 
         for query_text in query_texts:
             try:
-                _cursor = QueryCursor(Query(language_obj, query_text))
-                captures = sorted_captures(_cursor, root_node)
+                cursor = QueryCursor(Query(language_obj, query_text))
+                captures = sorted_captures(cursor, root_node)
 
                 self._process_exports_pattern(
                     captures.get(cs.CAPTURE_EXPORTS_OBJ, []),
