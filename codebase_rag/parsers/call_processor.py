@@ -110,10 +110,6 @@ class CallProcessor:
                     [self.project_name] + list(relative_path.parent.parts)
                 )
 
-            all_call_nodes, call_starts = self._collect_all_call_nodes(
-                root_node, language, queries
-            )
-
             call_name_cache: dict[int, str | None] = {}
 
             if (
@@ -129,15 +125,21 @@ class CallProcessor:
                 else:
                     combined_captures = {}
 
-            sorted_func_nodes: list[Node] | None = None
-            func_node_starts: list[int] | None = None
-            raw_func = combined_captures.get(cs.CAPTURE_FUNCTION, [])
-            if raw_func:
-                sorted_func_nodes = sorted(
-                    (n for n in raw_func if isinstance(n, Node)),
-                    key=lambda n: n.start_byte,
+            cached_calls = combined_captures.get(cs.CAPTURE_CALL)
+            if cached_calls is not None:
+                all_call_nodes = cached_calls
+                call_starts = [n.start_byte for n in all_call_nodes]
+            else:
+                all_call_nodes, call_starts = self._collect_all_call_nodes(
+                    root_node, language, queries
                 )
-                func_node_starts = [n.start_byte for n in sorted_func_nodes]
+            if not all_call_nodes:
+                return
+
+            sorted_func_nodes = combined_captures.get(cs.CAPTURE_FUNCTION)
+            func_node_starts = (
+                [n.start_byte for n in sorted_func_nodes] if sorted_func_nodes else None
+            )
 
             self._process_calls_in_functions(
                 root_node,

@@ -259,9 +259,7 @@ def _create_language_queries(
     except Exception:
         COMBINED_FUNC_CLASS_QUERIES[lang_name] = None
 
-    combined_fci_pattern = (
-        f"{function_patterns} {class_patterns} {combined_import_patterns}".strip()
-    )
+    combined_fci_pattern = f"{function_patterns} {class_patterns} {combined_import_patterns} {call_patterns}".strip()
     try:
         COMBINED_FUNC_CLASS_IMPORT_QUERIES[lang_name] = (
             Query(language, combined_fci_pattern) if combined_fci_pattern else None

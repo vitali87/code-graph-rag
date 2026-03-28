@@ -133,12 +133,12 @@ class DefinitionProcessor(
                 cursor = QueryCursor(combined_query)
                 combined_captures = sorted_captures(cursor, root_node)
                 if self._func_class_captures_cache is not None and combined_captures:
-                    fc_captures: dict[str, list] = {}
-                    for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
+                    cache_entry: dict[str, list] = {}
+                    for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
                         if key in combined_captures:
-                            fc_captures[key] = combined_captures[key]
-                    if fc_captures:
-                        self._func_class_captures_cache[file_path] = fc_captures
+                            cache_entry[key] = combined_captures[key]
+                    if cache_entry:
+                        self._func_class_captures_cache[file_path] = cache_entry
 
             self.import_processor.parse_imports(
                 root_node,
