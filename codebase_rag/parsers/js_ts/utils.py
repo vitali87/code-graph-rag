@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
-from tree_sitter import Language, Node
+from tree_sitter import Language, Node, QueryCursor
 
 from ... import constants as cs
-from ..utils import safe_decode_text
+from ..utils import get_cached_query, safe_decode_text
 
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
@@ -87,15 +87,26 @@ def find_method_in_ast(
     return None
 
 
-def find_return_statements(node: Node, return_nodes: list[Node]) -> None:
-    stack: list[Node] = [node]
+_JS_RETURN_QUERY = "(return_statement) @return_stmt"
 
+
+def find_return_statements(
+    node: Node, return_nodes: list[Node], language_obj=None
+) -> None:
+    if language_obj is not None:
+        try:
+            q = get_cached_query(language_obj, _JS_RETURN_QUERY)
+            cursor = QueryCursor(q)
+            captures = cursor.captures(node)
+            return_nodes.extend(captures.get("return_stmt", []))
+            return
+        except Exception:
+            pass
+    stack: list[Node] = [node]
     while stack:
         current = stack.pop()
-
         if current.type == cs.TS_RETURN_STATEMENT:
             return_nodes.append(current)
-
         stack.extend(reversed(current.children))
 
 

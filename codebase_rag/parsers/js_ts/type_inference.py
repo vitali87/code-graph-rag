@@ -238,11 +238,20 @@ class JsTypeInferenceEngine:
 
         return None
 
+    def _get_language_obj(self) -> object | None:
+        if self._queries is None:
+            return None
+        for lang in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+            lang_queries = self._queries.get(lang)
+            if lang_queries and "language" in lang_queries:
+                return lang_queries["language"]
+        return None
+
     def _analyze_return_statements(
         self, method_node: ASTNode, method_qn: str
     ) -> str | None:
         return_nodes: list[ASTNode] = []
-        ut.find_return_statements(method_node, return_nodes)
+        ut.find_return_statements(method_node, return_nodes, self._get_language_obj())
 
         for return_node in return_nodes:
             for child in return_node.children:
