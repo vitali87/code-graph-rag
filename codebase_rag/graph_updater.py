@@ -48,6 +48,10 @@ class FunctionRegistryTrie:
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self._entries[qualified_name] = func_type
 
+        if self._simple_name_lookup is not None:
+            simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            self._simple_name_lookup[simple_name].add(qualified_name)
+
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         current: TrieNode = self.root
 
@@ -80,6 +84,11 @@ class FunctionRegistryTrie:
             return
 
         del self._entries[qualified_name]
+
+        if self._simple_name_lookup is not None:
+            simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            if simple_name in self._simple_name_lookup:
+                self._simple_name_lookup[simple_name].discard(qualified_name)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
@@ -159,10 +168,10 @@ class FunctionRegistryTrie:
         return [qn for qn, _ in matches]
 
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
-        if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
-            # (H) O(1) lookup using the simple_name_lookup index
-            return sorted(self._simple_name_lookup[suffix])
-        # (H) Fallback to linear scan if no index available
+        if self._simple_name_lookup is not None:
+            if suffix in self._simple_name_lookup:
+                return sorted(self._simple_name_lookup[suffix])
+            return []
         return sorted(qn for qn in self._entries.keys() if qn.endswith(f".{suffix}"))
 
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
