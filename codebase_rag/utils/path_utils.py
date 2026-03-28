@@ -1,6 +1,17 @@
+from functools import lru_cache
 from pathlib import Path
 
 from .. import constants as cs
+
+
+@lru_cache(maxsize=4096)
+def cached_relative_path(file_path: Path, repo_path: Path) -> Path:
+    return file_path.relative_to(repo_path)
+
+
+@lru_cache(maxsize=4096)
+def cached_resolve_posix(file_path: Path) -> str:
+    return file_path.resolve().as_posix()
 
 
 def should_skip_path(

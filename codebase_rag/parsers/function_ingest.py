@@ -18,6 +18,7 @@ from ..types_defs import (
     SimpleNameLookup,
 )
 from ..utils.fqn_resolver import resolve_fqn_from_ast
+from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
@@ -219,8 +220,10 @@ class FunctionIngestMixin:
                 cs.KEY_DOCSTRING: self._get_docstring(func_node),
             }
             if file_path is not None and self.repo_path is not None:
-                props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
-                props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+                props[cs.KEY_PATH] = cached_relative_path(
+                    file_path, self.repo_path
+                ).as_posix()
+                props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
             if not hasattr(self, "_deferred_cpp_methods"):
                 self._deferred_cpp_methods = []
             self._deferred_cpp_methods.append(
@@ -361,8 +364,10 @@ class FunctionIngestMixin:
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
         if file_path is not None:
-            props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
-            props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+            props[cs.KEY_PATH] = cached_relative_path(
+                file_path, self.repo_path
+            ).as_posix()
+            props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         return props
 
     def _create_function_relationships(

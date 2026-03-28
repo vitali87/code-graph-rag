@@ -43,6 +43,7 @@ class PythonTypeInferenceEngine(
         "_js_type_inference_getter",
         "_method_return_type_cache",
         "_type_inference_in_progress",
+        "_available_classes_cache",
     )
 
     def __init__(
@@ -71,6 +72,7 @@ class PythonTypeInferenceEngine(
 
         self._method_return_type_cache: dict[str, str | None] = {}
         self._type_inference_in_progress: set[str] = set()
+        self._available_classes_cache: dict[str, list[str]] = {}
 
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str

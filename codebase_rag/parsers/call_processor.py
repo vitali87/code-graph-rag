@@ -10,6 +10,7 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
+from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
@@ -55,7 +56,7 @@ class CallProcessor:
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        relative_path = file_path.relative_to(self.repo_path)
+        relative_path = cached_relative_path(file_path, self.repo_path)
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
         try:

@@ -220,10 +220,22 @@ class CallResolver:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
 
-        possible_matches.sort(
-            key=lambda qn: (self._calculate_import_distance(qn, module_qn), qn)
-        )
-        best_candidate_qn = possible_matches[0]
+        if len(possible_matches) == 1:
+            best_candidate_qn = possible_matches[0]
+        else:
+            caller_parts = module_qn.split(cs.SEPARATOR_DOT)
+            caller_len = len(caller_parts)
+            caller_parent_prefix = (
+                cs.SEPARATOR_DOT.join(caller_parts[:-1]) + cs.SEPARATOR_DOT
+                if caller_len > 1
+                else ""
+            )
+            best_candidate_qn = min(
+                possible_matches,
+                key=lambda qn: self._import_distance_fast(
+                    qn, caller_parts, caller_len, caller_parent_prefix
+                ),
+            )
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         return self.function_registry[best_candidate_qn], best_candidate_qn
 
@@ -668,6 +680,26 @@ class CallResolver:
         ):
             base_distance -= 1
 
+        return base_distance
+
+    def _import_distance_fast(
+        self,
+        candidate_qn: str,
+        caller_parts: list[str],
+        caller_len: int,
+        caller_parent_prefix: str,
+    ) -> int:
+        candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
+        candidate_len = len(candidate_parts)
+        common_prefix = 0
+        for i in range(min(caller_len, candidate_len)):
+            if caller_parts[i] == candidate_parts[i]:
+                common_prefix += 1
+            else:
+                break
+        base_distance = max(caller_len, candidate_len) - common_prefix
+        if caller_parent_prefix and candidate_qn.startswith(caller_parent_prefix):
+            base_distance -= 1
         return base_distance
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:

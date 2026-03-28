@@ -6,7 +6,11 @@ from .. import constants as cs
 from .. import logs
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
-from ..utils.path_utils import should_skip_path
+from ..utils.path_utils import (
+    cached_relative_path,
+    cached_resolve_posix,
+    should_skip_path,
+)
 
 
 class StructureProcessor:
@@ -58,7 +62,7 @@ class StructureProcessor:
                 directories.add(path)
 
         for root in sorted(directories):
-            relative_root = root.relative_to(self.repo_path)
+            relative_root = cached_relative_path(root, self.repo_path)
 
             parent_rel_path = relative_root.parent
             parent_container_qn = self.structural_elements.get(parent_rel_path)
@@ -89,7 +93,7 @@ class StructureProcessor:
                         cs.KEY_QUALIFIED_NAME: package_qn,
                         cs.KEY_NAME: root.name,
                         cs.KEY_PATH: relative_root.as_posix(),
-                        cs.KEY_ABSOLUTE_PATH: root.resolve().as_posix(),
+                        cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
                     },
                 )
                 parent_identifier = self._get_parent_identifier(
@@ -110,7 +114,7 @@ class StructureProcessor:
                     {
                         cs.KEY_PATH: relative_root.as_posix(),
                         cs.KEY_NAME: root.name,
-                        cs.KEY_ABSOLUTE_PATH: root.resolve().as_posix(),
+                        cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
                     },
                 )
                 parent_identifier = self._get_parent_identifier(
@@ -123,8 +127,8 @@ class StructureProcessor:
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
-        relative_filepath = file_path.relative_to(self.repo_path).as_posix()
-        relative_root = file_path.parent.relative_to(self.repo_path)
+        relative_filepath = cached_relative_path(file_path, self.repo_path).as_posix()
+        relative_root = cached_relative_path(file_path.parent, self.repo_path)
 
         parent_container_qn = self.structural_elements.get(relative_root)
         parent_identifier = self._get_parent_identifier(
@@ -137,7 +141,7 @@ class StructureProcessor:
                 cs.KEY_PATH: relative_filepath,
                 cs.KEY_NAME: file_name,
                 cs.KEY_EXTENSION: file_path.suffix,
-                cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
+                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
             },
         )
 

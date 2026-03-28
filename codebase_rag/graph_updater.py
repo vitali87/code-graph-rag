@@ -28,7 +28,10 @@ from .types_defs import (
 )
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
-from .utils.path_utils import should_skip_path
+from .utils.path_utils import (
+    cached_relative_path,
+    should_skip_path,
+)
 from .utils.source_extraction import extract_source_with_fallback
 
 type FileHashCache = dict[str, str]
@@ -347,7 +350,7 @@ class GraphUpdater:
             del self.ast_cache[file_path]
             logger.debug(ls.REMOVED_FROM_CACHE)
 
-        relative_path = file_path.relative_to(self.repo_path)
+        relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
             relative_path.parent.parts
             if file_path.name == cs.INIT_PY
@@ -437,11 +440,12 @@ class GraphUpdater:
             TextColumn(ls.PROGRESS_INDEXING_LABEL),
             TextColumn("[progress.description]{task.description}"),
             transient=True,
+            disable=not sys.stderr.isatty(),
         ) as progress:
             task = progress.add_task("", total=len(eligible_files))
 
             for filepath in eligible_files:
-                file_key = str(filepath.relative_to(self.repo_path))
+                file_key = str(cached_relative_path(filepath, self.repo_path))
                 current_file_keys.add(file_key)
 
                 current_hash = _hash_file(filepath)

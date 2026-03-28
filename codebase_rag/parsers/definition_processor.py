@@ -8,6 +8,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
+from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
@@ -60,7 +61,7 @@ class DefinitionProcessor(
     ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
         if isinstance(file_path, str):
             file_path = Path(file_path)
-        relative_path = file_path.relative_to(self.repo_path)
+        relative_path = cached_relative_path(file_path, self.repo_path)
         relative_path_str = str(relative_path)
         logger.info(
             ls.DEF_PARSING_AST.format(language=language, path=relative_path_str)
@@ -101,7 +102,7 @@ class DefinitionProcessor(
                     cs.KEY_QUALIFIED_NAME: module_qn,
                     cs.KEY_NAME: file_path.name,
                     cs.KEY_PATH: relative_path_str,
-                    cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
+                    cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
                 },
             )
 

@@ -18,11 +18,21 @@ from ..types_defs import (
     SimpleNameLookup,
     TreeSitterNodeProtocol,
 )
+from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
+
+_QUERY_CACHE: dict[tuple[int, str], Query] = {}
+
+
+def get_cached_query(language_obj, query_text: str) -> Query:
+    key = (id(language_obj), query_text)
+    if key not in _QUERY_CACHE:
+        _QUERY_CACHE[key] = Query(language_obj, query_text)
+    return _QUERY_CACHE[key]
 
 
 class FunctionCapturesResult(NamedTuple):
@@ -122,8 +132,10 @@ def ingest_method(
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
     }
     if file_path is not None and repo_path is not None:
-        method_props[cs.KEY_PATH] = file_path.relative_to(repo_path).as_posix()
-        method_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+        method_props[cs.KEY_PATH] = cached_relative_path(
+            file_path, repo_path
+        ).as_posix()
+        method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)

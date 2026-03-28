@@ -11,6 +11,7 @@ from ... import constants as cs
 from ... import logs
 from ...language_spec import LanguageSpec
 from ...types_defs import ASTNode, PropertyDict
+from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
@@ -158,8 +159,10 @@ class ClassIngestMixin:
             cs.KEY_IS_EXPORTED: is_exported,
         }
         if file_path is not None:
-            class_props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
-            class_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+            class_props[cs.KEY_PATH] = cached_relative_path(
+                file_path, self.repo_path
+            ).as_posix()
+            class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
