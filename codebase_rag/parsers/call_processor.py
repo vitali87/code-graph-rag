@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 
 from loguru import logger
@@ -49,6 +50,35 @@ class CallProcessor:
         text = name_node.text
         return None if text is None else text.decode(cs.ENCODING_UTF8)
 
+    def _collect_all_call_nodes(
+        self,
+        root_node: Node,
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
+    ) -> tuple[list[Node], list[int]]:
+        calls_query = queries[language].get(cs.QUERY_CALLS)
+        if not calls_query:
+            return [], []
+        cursor = QueryCursor(calls_query)
+        captures = sorted_captures(cursor, root_node)
+        raw_nodes = captures.get(cs.CAPTURE_CALL, [])
+        call_nodes = [n for n in raw_nodes if isinstance(n, Node)]
+        call_nodes.sort(key=lambda n: n.start_byte)
+        call_starts = [n.start_byte for n in call_nodes]
+        return call_nodes, call_starts
+
+    def _filter_calls_in_node(
+        self,
+        all_call_nodes: list[Node],
+        call_starts: list[int],
+        container: Node,
+    ) -> list[Node]:
+        start = container.start_byte
+        end = container.end_byte
+        lo = bisect_left(call_starts, start)
+        hi = bisect_right(call_starts, end)
+        return [n for n in all_call_nodes[lo:hi] if n.end_byte <= end]
+
     def process_calls_in_file(
         self,
         file_path: Path,
@@ -68,9 +98,25 @@ class CallProcessor:
                     [self.project_name] + list(relative_path.parent.parts)
                 )
 
-            self._process_calls_in_functions(root_node, module_qn, language, queries)
-            self._process_calls_in_classes(root_node, module_qn, language, queries)
-            self._process_module_level_calls(root_node, module_qn, language, queries)
+            all_call_nodes, call_starts = self._collect_all_call_nodes(
+                root_node, language, queries
+            )
+
+            self._process_calls_in_functions(
+                root_node, module_qn, language, queries, all_call_nodes, call_starts
+            )
+            self._process_calls_in_classes(
+                root_node, module_qn, language, queries, all_call_nodes, call_starts
+            )
+            self._ingest_function_calls(
+                root_node,
+                module_qn,
+                cs.NodeLabel.MODULE,
+                module_qn,
+                language,
+                queries,
+                call_nodes=all_call_nodes,
+            )
 
         except Exception as e:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
@@ -81,6 +127,8 @@ class CallProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        all_call_nodes: list[Node] | None = None,
+        call_starts: list[int] | None = None,
     ) -> None:
         result = get_function_captures(root_node, language, queries)
         if not result:
@@ -103,6 +151,11 @@ class CallProcessor:
             if func_qn := self._build_nested_qualified_name(
                 func_node, module_qn, func_name, lang_config
             ):
+                filtered = (
+                    self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+                    if all_call_nodes is not None and call_starts is not None
+                    else None
+                )
                 self._ingest_function_calls(
                     func_node,
                     func_qn,
@@ -110,6 +163,7 @@ class CallProcessor:
                     module_qn,
                     language,
                     queries,
+                    call_nodes=filtered,
                 )
 
     def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
@@ -139,6 +193,8 @@ class CallProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        all_call_nodes: list[Node] | None = None,
+        call_starts: list[int] | None = None,
     ) -> None:
         method_query = queries[language][cs.QUERY_FUNCTIONS]
         if not method_query:
@@ -156,6 +212,11 @@ class CallProcessor:
             if not method_name:
                 continue
             method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+            filtered = (
+                self._filter_calls_in_node(all_call_nodes, call_starts, method_node)
+                if all_call_nodes is not None and call_starts is not None
+                else None
+            )
             self._ingest_function_calls(
                 method_node,
                 method_qn,
@@ -164,6 +225,7 @@ class CallProcessor:
                 language,
                 queries,
                 class_qn,
+                call_nodes=filtered,
             )
 
     def _process_calls_in_classes(
@@ -172,6 +234,8 @@ class CallProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        all_call_nodes: list[Node] | None = None,
+        call_starts: list[int] | None = None,
     ) -> None:
         query = queries[language][cs.QUERY_CLASSES]
         if not query:
@@ -189,19 +253,14 @@ class CallProcessor:
             class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
             if body_node := class_node.child_by_field_name(cs.FIELD_BODY):
                 self._process_methods_in_class(
-                    body_node, class_qn, module_qn, language, queries
+                    body_node,
+                    class_qn,
+                    module_qn,
+                    language,
+                    queries,
+                    all_call_nodes,
+                    call_starts,
                 )
-
-    def _process_module_level_calls(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
-    ) -> None:
-        self._ingest_function_calls(
-            root_node, module_qn, cs.NodeLabel.MODULE, module_qn, language, queries
-        )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
@@ -266,18 +325,19 @@ class CallProcessor:
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         class_context: str | None = None,
+        call_nodes: list[Node] | None = None,
     ) -> None:
-        calls_query = queries[language].get(cs.QUERY_CALLS)
-        if not calls_query:
-            return
-
         local_var_types = self._resolver.type_inference.build_local_variable_type_map(
             caller_node, module_qn, language
         )
 
-        cursor = QueryCursor(calls_query)
-        captures = sorted_captures(cursor, caller_node)
-        call_nodes = captures.get(cs.CAPTURE_CALL, [])
+        if call_nodes is None:
+            calls_query = queries[language].get(cs.QUERY_CALLS)
+            if not calls_query:
+                return
+            cursor = QueryCursor(calls_query)
+            captures = sorted_captures(cursor, caller_node)
+            call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
         logger.debug(
             ls.CALL_FOUND_NODES,

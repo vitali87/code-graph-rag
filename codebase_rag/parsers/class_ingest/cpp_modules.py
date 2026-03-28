@@ -40,8 +40,10 @@ def ingest_cpp_module_declarations(
 
 def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
     module_declarations: list[tuple[Node, str]] = []
+    stack = [root_node]
 
-    def find_declarations(node: Node) -> None:
+    while stack:
+        node = stack.pop()
         if node.type == cs.TS_MODULE_DECLARATION:
             module_declarations.append((node, decode_node_stripped(node)))
         elif node.type == cs.CppNodeType.DECLARATION:
@@ -56,10 +58,8 @@ def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
             if has_module:
                 module_declarations.append((node, decode_node_stripped(node)))
 
-        for child in node.children:
-            find_declarations(child)
+        stack.extend(node.children)
 
-    find_declarations(root_node)
     return module_declarations
 
 
@@ -143,27 +143,28 @@ def _process_module_implementation(
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:
     exported_class_nodes: list[Node] = []
+    stack = [root_node]
 
-    def traverse(node: Node) -> None:
+    while stack:
+        node = stack.pop()
         if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
             node_text = decode_node_stripped(node)
 
             if node_text.startswith(cs.CPP_EXPORT_PREFIXES):
+                found = False
                 for child in node.children:
                     if child.type == cs.TS_ERROR and child.text:
                         error_text = safe_decode_text(child)
                         if error_text in cs.CPP_EXPORTED_CLASS_KEYWORDS:
                             exported_class_nodes.append(node)
+                            found = True
                             break
-                else:
-                    if (
-                        cs.CPP_EXPORT_CLASS_PREFIX in node_text
-                        or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
-                    ):
-                        exported_class_nodes.append(node)
+                if not found and (
+                    cs.CPP_EXPORT_CLASS_PREFIX in node_text
+                    or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
+                ):
+                    exported_class_nodes.append(node)
 
-        for child in node.children:
-            traverse(child)
+        stack.extend(node.children)
 
-    traverse(root_node)
     return exported_class_nodes

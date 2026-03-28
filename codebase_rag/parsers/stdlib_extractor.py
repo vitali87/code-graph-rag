@@ -337,6 +337,11 @@ class StdlibExtractor:
         return result
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
+        if cached := _get_cached_stdlib_result(
+            cs.SupportedLanguage.GO, full_qualified_name
+        ):
+            return cached
+
         parts = full_qualified_name.split(cs.SEPARATOR_SLASH)
         if len(parts) >= 2:
             try:
@@ -451,6 +456,11 @@ func main() {
                     if proc.returncode == 0:
                         data = json.loads(stdout.strip())
                         if data[cs.JSON_KEY_HAS_ENTITY]:
+                            _cache_stdlib_result(
+                                cs.SupportedLanguage.GO,
+                                full_qualified_name,
+                                package_path,
+                            )
                             return package_path
 
             except (
@@ -463,11 +473,23 @@ func main() {
 
             entity_name = parts[-1]
             if entity_name[:1].isupper():
-                return cs.SEPARATOR_SLASH.join(parts[:-1])
+                result = cs.SEPARATOR_SLASH.join(parts[:-1])
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.GO, full_qualified_name, result
+                )
+                return result
 
+        _cache_stdlib_result(
+            cs.SupportedLanguage.GO, full_qualified_name, full_qualified_name
+        )
         return full_qualified_name
 
     def _extract_rust_stdlib_path(self, full_qualified_name: str) -> str:
+        if cached := _get_cached_stdlib_result(
+            cs.SupportedLanguage.RUST, full_qualified_name
+        ):
+            return cached
+
         parts = full_qualified_name.split(cs.SEPARATOR_DOUBLE_COLON)
         if len(parts) >= 2:
             entity_name = parts[-1]
@@ -477,66 +499,27 @@ func main() {
                 or entity_name.isupper()
                 or (cs.CHAR_UNDERSCORE not in entity_name and entity_name.islower())
             ):
-                return cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1])
+                result = cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1])
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.RUST, full_qualified_name, result
+                )
+                return result
 
+        _cache_stdlib_result(
+            cs.SupportedLanguage.RUST, full_qualified_name, full_qualified_name
+        )
         return full_qualified_name
 
     def _extract_cpp_stdlib_path(self, full_qualified_name: str) -> str:
+        if cached := _get_cached_stdlib_result(
+            cs.SupportedLanguage.CPP, full_qualified_name
+        ):
+            return cached
+
         parts = full_qualified_name.split(cs.SEPARATOR_DOUBLE_COLON)
         if len(parts) >= 2:
             namespace = parts[0]
             if namespace == cs.CPP_STD_NAMESPACE:
-                entity_name = parts[-1]
-
-                try:
-                    import os
-                    import subprocess
-                    import tempfile
-
-                    with tempfile.NamedTemporaryFile(
-                        mode="w", suffix=".txt", delete=False
-                    ) as f:
-                        f.write(entity_name)
-                        entity_file = f.name
-
-                    try:
-                        cpp_template_program = f"""
-#include <iostream>
-#include <fstream>
-#include <string>
-
-int main() {{
-    std::ifstream file("{entity_file}");
-    std::string entity_name;
-    std::getline(file, entity_name);
-    file.close();
-
-    // This is a compile-time check strategy - we can't dynamically construct templates
-    // Fall back to heuristic approach for safety
-    std::cout << "heuristic_check" << std::endl;
-    return 0;
-}}
-                        """
-
-                        subprocess.run(
-                            ["g++", "-std=c++17", "-x", "c++", "-", "-o", "/dev/null"],
-                            check=False,
-                            input=cpp_template_program,
-                            capture_output=True,
-                            text=True,
-                            timeout=5,
-                        )
-
-                    finally:
-                        os.unlink(entity_file)
-
-                except (
-                    subprocess.TimeoutExpired,
-                    subprocess.CalledProcessError,
-                    OSError,
-                ):
-                    pass
-
                 entity_name = parts[-1]
                 if (
                     entity_name[:1].isupper()
@@ -544,8 +527,15 @@ int main() {{
                     or entity_name.startswith(cs.CPP_PREFIX_HAS)
                     or entity_name in cs.CPP_STDLIB_ENTITIES
                 ):
-                    return cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1])
+                    result = cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1])
+                    _cache_stdlib_result(
+                        cs.SupportedLanguage.CPP, full_qualified_name, result
+                    )
+                    return result
 
+        _cache_stdlib_result(
+            cs.SupportedLanguage.CPP, full_qualified_name, full_qualified_name
+        )
         return full_qualified_name
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:

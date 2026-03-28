@@ -23,6 +23,8 @@ class CallResolver:
         "import_processor",
         "type_inference",
         "class_inheritance",
+        "_simple_resolution_cache",
+        "_wildcard_cache",
     )
 
     def __init__(
@@ -36,6 +38,10 @@ class CallResolver:
         self.import_processor = import_processor
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        self._simple_resolution_cache: dict[
+            tuple[str, str], tuple[str, str] | None
+        ] = {}
+        self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
 
     def _resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
@@ -70,15 +76,28 @@ class CallResolver:
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
             return self._resolve_chained_call(call_name, module_qn, local_var_types)
 
+        use_cache = not local_var_types and not class_context
+        if use_cache:
+            cache_key = (call_name, module_qn)
+            if cache_key in self._simple_resolution_cache:
+                return self._simple_resolution_cache[cache_key]
+
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types
         ):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
             return result
 
         if result := self._try_resolve_same_module(call_name, module_qn):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
             return result
 
-        return self._try_resolve_via_trie(call_name, module_qn)
+        result = self._try_resolve_via_trie(call_name, module_qn)
+        if use_cache:
+            self._simple_resolution_cache[cache_key] = result
+        return result
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
@@ -179,9 +198,17 @@ class CallResolver:
     def _try_resolve_wildcard_imports(
         self, call_name: str, import_map: dict[str, str]
     ) -> tuple[str, str] | None:
-        for local_name, imported_qn in import_map.items():
-            if not local_name.startswith("*"):
-                continue
+        map_id = id(import_map)
+        if map_id not in self._wildcard_cache:
+            self._wildcard_cache[map_id] = (
+                [(k, v) for k, v in import_map.items() if k[0] == "*"]
+                if import_map
+                else []
+            )
+        wildcards = self._wildcard_cache[map_id]
+        if not wildcards:
+            return None
+        for _, imported_qn in wildcards:
             if result := self._try_wildcard_qns(call_name, imported_qn):
                 return result
         return None
