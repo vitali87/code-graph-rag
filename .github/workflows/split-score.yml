@@ -1,0 +1,21 @@
+name: PR Split Score
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: vitali87/pr-split@adad0c2b3db0a9cff42a54c5d988f1600f072124 # v1.0.0
+        with:
+          max-loc: "400"
