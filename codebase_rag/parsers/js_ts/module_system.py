@@ -15,6 +15,7 @@ from ..utils import (
     ingest_exported_function,
     safe_decode_text,
     safe_decode_with_fallback,
+    sorted_captures,
 )
 from .utils import get_js_ts_language_obj
 
@@ -62,7 +63,7 @@ class JsTsModuleSystemMixin:
             try:
                 query = Query(language_obj, cs.JS_COMMONJS_DESTRUCTURE_QUERY)
                 cursor = QueryCursor(query)
-                captures = cursor.captures(root_node)
+                captures = sorted_captures(cursor, root_node)
 
                 variable_declarators = captures.get(cs.CAPTURE_VARIABLE_DECLARATOR, [])
 
@@ -280,9 +281,8 @@ class JsTsModuleSystemMixin:
 
         for query_text in query_texts:
             try:
-                captures = QueryCursor(Query(language_obj, query_text)).captures(
-                    root_node
-                )
+                _cursor = QueryCursor(Query(language_obj, query_text))
+                captures = sorted_captures(_cursor, root_node)
 
                 self._process_exports_pattern(
                     captures.get(cs.CAPTURE_EXPORTS_OBJ, []),
@@ -320,7 +320,7 @@ class JsTsModuleSystemMixin:
                     cleaned_query = textwrap.dedent(query_text).strip()
                     query = Query(lang_query, cleaned_query)
                     cursor = QueryCursor(query)
-                    captures = cursor.captures(root_node)
+                    captures = sorted_captures(cursor, root_node)
 
                     export_names = captures.get(cs.CAPTURE_EXPORT_NAME, [])
                     export_functions = captures.get(cs.CAPTURE_EXPORT_FUNCTION, [])
