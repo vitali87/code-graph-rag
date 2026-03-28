@@ -57,35 +57,43 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
     return cs.SEPARATOR_DOT.join([module_qn, name])
 
 
+_EXPORT_CANDIDATE_TYPES = frozenset(
+    {
+        cs.CppNodeType.EXPORT,
+        cs.CppNodeType.EXPORT_KEYWORD,
+        cs.CppNodeType.IDENTIFIER,
+        cs.CppNodeType.PRIMITIVE_TYPE,
+    }
+)
+
+_EXPORT_STOP_TYPES = frozenset(
+    {
+        cs.CppNodeType.DECLARATION,
+        cs.CppNodeType.FUNCTION_DEFINITION,
+        cs.CppNodeType.TEMPLATE_DECLARATION,
+        cs.CppNodeType.CLASS_SPECIFIER,
+        cs.CppNodeType.TRANSLATION_UNIT,
+    }
+)
+
+
 def is_exported(node: Node) -> bool:
     current = node
+    export_text = cs.CppNodeType.EXPORT
     while current and current.parent:
         parent = current.parent
-        found_export = False
 
         for child in parent.children:
             if child == current:
                 break
-            if child.text:
-                child_text = safe_decode_text(child)
-                if child_text == cs.CppNodeType.EXPORT and child.type in (
-                    cs.CppNodeType.EXPORT,
-                    cs.CppNodeType.EXPORT_KEYWORD,
-                    cs.CppNodeType.IDENTIFIER,
-                    cs.CppNodeType.PRIMITIVE_TYPE,
-                ):
-                    found_export = True
+            if (
+                child.type in _EXPORT_CANDIDATE_TYPES
+                and child.text
+                and safe_decode_text(child) == export_text
+            ):
+                return True
 
-        if found_export:
-            return True
-
-        if current.type in (
-            cs.CppNodeType.DECLARATION,
-            cs.CppNodeType.FUNCTION_DEFINITION,
-            cs.CppNodeType.TEMPLATE_DECLARATION,
-            cs.CppNodeType.CLASS_SPECIFIER,
-            cs.CppNodeType.TRANSLATION_UNIT,
-        ):
+        if current.type in _EXPORT_STOP_TYPES:
             break
         current = current.parent
 

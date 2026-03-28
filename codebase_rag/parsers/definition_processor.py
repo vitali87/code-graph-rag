@@ -62,6 +62,7 @@ class DefinitionProcessor(
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
+        source_bytes: bytes | None = None,
     ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
         if isinstance(file_path, str):
             file_path = Path(file_path)
@@ -81,7 +82,8 @@ class DefinitionProcessor(
                 return None
 
             self._handler = get_handler(language)
-            source_bytes = file_path.read_bytes()
+            if source_bytes is None:
+                source_bytes = file_path.read_bytes()
             lang_queries = queries[language]
             parser = lang_queries.get(cs.KEY_PARSER)
             if not parser:

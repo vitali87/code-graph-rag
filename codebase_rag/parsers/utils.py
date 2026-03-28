@@ -194,13 +194,23 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
     if not isinstance(current, Node):
         return False
 
-    while current and current.type not in lang_config.module_node_types:
+    class_types = lang_config.class_node_types
+    func_types = lang_config.function_node_types
+    module_types = lang_config.module_node_types
+    body_field = cs.FIELD_BODY
+
+    for _ in range(6):
+        if current is None:
+            return False
+        current_type = current.type
+        if current_type in module_types:
+            return False
+        if current_type in class_types:
+            return True
         if (
-            current.type in lang_config.function_node_types
-            and current.child_by_field_name(cs.FIELD_BODY) is not None
+            current_type in func_types
+            and current.child_by_field_name(body_field) is not None
         ):
             return False
-        if current.type in lang_config.class_node_types:
-            return True
         current = current.parent
     return False

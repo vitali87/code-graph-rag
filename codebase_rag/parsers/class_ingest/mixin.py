@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -111,6 +112,12 @@ class ClassIngestMixin:
 
         file_path = self.module_qn_to_file_path.get(module_qn)
 
+        sorted_func_nodes: list[Node] | None = None
+        func_node_starts: list[int] | None = None
+        if combined_captures and cs.CAPTURE_FUNCTION in combined_captures:
+            sorted_func_nodes = combined_captures[cs.CAPTURE_FUNCTION]
+            func_node_starts = [n.start_byte for n in sorted_func_nodes]
+
         for class_node in class_nodes:
             if isinstance(class_node, Node):
                 self._process_class_node(
@@ -120,6 +127,8 @@ class ClassIngestMixin:
                     lang_queries,
                     lang_config,
                     file_path,
+                    sorted_func_nodes=sorted_func_nodes,
+                    func_node_starts=func_node_starts,
                 )
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
@@ -132,6 +141,8 @@ class ClassIngestMixin:
         lang_queries: LanguageQueries,
         lang_config: LanguageSpec,
         file_path: Path | None,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             self._ingest_rust_impl_methods(
@@ -187,7 +198,13 @@ class ClassIngestMixin:
             self.function_registry,
         )
         self._ingest_class_methods(
-            class_node, class_qn, language, lang_queries, file_path
+            class_node,
+            class_qn,
+            language,
+            lang_queries,
+            file_path,
+            sorted_func_nodes=sorted_func_nodes,
+            func_node_starts=func_node_starts,
         )
 
     def _ingest_rust_impl_methods(
@@ -236,16 +253,34 @@ class ClassIngestMixin:
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
         file_path: Path | None = None,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
-        method_query = lang_queries[cs.QUERY_FUNCTIONS]
-        if not body_node or not method_query:
+        if not body_node:
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        method_cursor = QueryCursor(method_query)
-        method_captures = sorted_captures(method_cursor, body_node)
-        for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
+
+        if sorted_func_nodes is not None and func_node_starts is not None:
+            body_start = body_node.start_byte
+            body_end = body_node.end_byte
+            lo = bisect_left(func_node_starts, body_start)
+            hi = bisect_right(func_node_starts, body_end)
+            method_nodes = [
+                n
+                for n in sorted_func_nodes[lo:hi]
+                if n.end_byte <= body_end and isinstance(n, Node)
+            ]
+        else:
+            method_query = lang_queries[cs.QUERY_FUNCTIONS]
+            if not method_query:
+                return
+            method_cursor = QueryCursor(method_query)
+            method_captures = sorted_captures(method_cursor, body_node)
+            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+
+        for method_node in method_nodes:
             if not isinstance(method_node, Node):
                 continue
             if _is_nested_inside_function(method_node, body_node, lang_config):

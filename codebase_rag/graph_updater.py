@@ -243,11 +243,13 @@ class BoundedASTCache:
 
 
 def _hash_file(filepath: Path) -> str:
-    hasher = hashlib.sha256()
-    with filepath.open("rb") as f:
-        while chunk := f.read(8192):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    data = filepath.read_bytes()
+    return hashlib.sha256(data).hexdigest()
+
+
+def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
+    data = filepath.read_bytes()
+    return hashlib.sha256(data).hexdigest(), data
 
 
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
@@ -457,7 +459,7 @@ class GraphUpdater:
                 file_key = str(cached_relative_path(filepath, self.repo_path))
                 current_file_keys.add(file_key)
 
-                current_hash = _hash_file(filepath)
+                current_hash, file_bytes = _hash_file_with_bytes(filepath)
                 new_hashes[file_key] = current_hash
 
                 if (
@@ -477,7 +479,7 @@ class GraphUpdater:
                     logger.debug(ls.FILE_HASH_NEW, path=file_key)
 
                 changed_count += 1
-                self._process_single_file(filepath)
+                self._process_single_file(filepath, file_bytes=file_bytes)
 
                 processed_since_flush += 1
                 if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
@@ -512,7 +514,9 @@ class GraphUpdater:
 
         _save_hash_cache(cache_path, new_hashes)
 
-    def _process_single_file(self, filepath: Path) -> None:
+    def _process_single_file(
+        self, filepath: Path, file_bytes: bytes | None = None
+    ) -> None:
         lang_config = get_language_spec(filepath.suffix)
         if (
             lang_config
@@ -524,6 +528,7 @@ class GraphUpdater:
                 lang_config.language,
                 self.queries,
                 self.factory.structure_processor.structural_elements,
+                source_bytes=file_bytes,
             )
             if result:
                 root_node, language = result

@@ -36,6 +36,10 @@ PATH_BASED_LABELS = frozenset({cs.NodeLabel.FOLDER, cs.NodeLabel.FILE})
 NAME_BASED_LABELS = frozenset({cs.NodeLabel.EXTERNAL_PACKAGE, cs.NodeLabel.PROJECT})
 
 
+_REL_TYPE_CACHE: dict[str, int | None] = {}
+_MSG_CLASS_CACHE: dict[str, type | None] = {}
+
+
 class ProtobufFileIngestor:
     __slots__ = ("output_dir", "_nodes", "_relationships", "split_index")
 
@@ -59,7 +63,11 @@ class ProtobufFileIngestor:
         if not node_id or node_id in self._nodes:
             return
 
-        payload_message_class = getattr(pb, label, None)
+        if label in _MSG_CLASS_CACHE:
+            payload_message_class = _MSG_CLASS_CACHE[label]
+        else:
+            payload_message_class = getattr(pb, label, None)
+            _MSG_CLASS_CACHE[label] = payload_message_class
         if not payload_message_class:
             logger.warning(ls.PROTOBUF_NO_MESSAGE_CLASS.format(label=label))
             return
@@ -94,42 +102,43 @@ class ProtobufFileIngestor:
         to_spec: tuple[str, str, PropertyValue],
         properties: PropertyDict | None = None,
     ) -> None:
-        rel = pb.Relationship()
-
-        rel_type_enum = getattr(pb.Relationship.RelationshipType, rel_type, None)
-        if rel_type_enum is None:
-            logger.warning(ls.PROTOBUF_UNKNOWN_REL_TYPE.format(rel_type=rel_type))
-            rel_type_enum = (
-                pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
-            )
-        rel.type = rel_type_enum
+        if rel_type in _REL_TYPE_CACHE:
+            rel_type_enum = _REL_TYPE_CACHE[rel_type]
+        else:
+            rel_type_enum = getattr(pb.Relationship.RelationshipType, rel_type, None)
+            if rel_type_enum is None:
+                logger.warning(ls.PROTOBUF_UNKNOWN_REL_TYPE.format(rel_type=rel_type))
+                rel_type_enum = (
+                    pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
+                )
+            _REL_TYPE_CACHE[rel_type] = rel_type_enum
 
         from_label, _, from_val = from_spec
         to_label, _, to_val = to_spec
 
-        rel.source_id = from_val
-        rel.source_label = str(from_label)
-        rel.target_id = to_val
-        rel.target_label = str(to_label)
+        unique_key = (from_val, rel_type_enum, to_val)
+        if unique_key in self._relationships:
+            if properties:
+                self._relationships[unique_key].properties.update(properties)
+            return
 
-        if not rel.source_id.strip() or not rel.target_id.strip():
+        if not from_val or not from_val.strip() or not to_val or not to_val.strip():
             logger.warning(
                 ls.PROTOBUF_INVALID_REL.format(
-                    source_id=rel.source_id, target_id=rel.target_id
+                    source_id=from_val, target_id=to_val
                 )
             )
             return
 
+        rel = pb.Relationship()
+        rel.type = rel_type_enum
+        rel.source_id = from_val
+        rel.source_label = str(from_label)
+        rel.target_id = to_val
+        rel.target_label = str(to_label)
         if properties:
             rel.properties.update(properties)
-
-        unique_key = (rel.source_id, rel.type, rel.target_id)
-        if unique_key in self._relationships:
-            if properties:
-                existing_rel = self._relationships[unique_key]
-                existing_rel.properties.update(properties)
-        else:
-            self._relationships[unique_key] = rel
+        self._relationships[unique_key] = rel
 
     def _flush_joint(self) -> None:
         index = pb.GraphCodeIndex()

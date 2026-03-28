@@ -72,9 +72,7 @@ class CallProcessor:
             return [], []
         cursor = QueryCursor(calls_query)
         captures = sorted_captures(cursor, root_node)
-        raw_nodes = captures.get(cs.CAPTURE_CALL, [])
-        call_nodes = [n for n in raw_nodes if isinstance(n, Node)]
-        call_nodes.sort(key=lambda n: n.start_byte)
+        call_nodes = captures.get(cs.CAPTURE_CALL, [])
         call_starts = [n.start_byte for n in call_nodes]
         return call_nodes, call_starts
 
