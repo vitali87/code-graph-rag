@@ -390,10 +390,20 @@ class GraphUpdater:
         unignore = self.unignore_paths
         ignore_patterns = cs.IGNORE_PATTERNS
         for dirpath, dirnames, filenames in os.walk(repo_str):
+            # (H) Keep ignored dirs if any of their children are in unignore_paths
+            rel_dir = Path(dirpath).relative_to(self.repo_path).as_posix()
+            dir_prefix = "" if rel_dir == "." else f"{rel_dir}/"
             dirnames[:] = sorted(
                 d
                 for d in dirnames
-                if d not in ignore_patterns and (not exclude or d not in exclude)
+                if (d not in ignore_patterns and (not exclude or d not in exclude))
+                or (
+                    unignore
+                    and any(
+                        u.startswith(f"{dir_prefix}{d}/") or u == f"{dir_prefix}{d}"
+                        for u in unignore
+                    )
+                )
             )
             for fname in sorted(filenames):
                 if fname == hash_name:
