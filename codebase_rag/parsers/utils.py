@@ -44,11 +44,21 @@ def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNod
     # (H) tree-sitter v0.25 captures() returns nodes in non-deterministic order
     # across process invocations; sort by start_byte for reproducibility
     raw = cursor.captures(node)
-    _key = _start_byte_key
-    return {
-        name: nodes if len(nodes) <= 1 else sorted(nodes, key=_key)
-        for name, nodes in raw.items()
-    }
+    result: dict[str, list[ASTNode]] = {}
+    for name, nodes in raw.items():
+        if len(nodes) <= 1:
+            result[name] = nodes
+        else:
+            is_sorted = True
+            prev_byte = nodes[0].start_byte
+            for i in range(1, len(nodes)):
+                cur_byte = nodes[i].start_byte
+                if cur_byte < prev_byte:
+                    is_sorted = False
+                    break
+                prev_byte = cur_byte
+            result[name] = nodes if is_sorted else sorted(nodes, key=_start_byte_key)
+    return result
 
 
 def _start_byte_key(n: ASTNode) -> int:
