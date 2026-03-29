@@ -96,8 +96,8 @@ class ClassIngestMixin:
         lang_queries = queries[language]
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
 
-        if combined_captures and cs.CAPTURE_CLASS in combined_captures:
-            class_nodes = list(combined_captures[cs.CAPTURE_CLASS])
+        if combined_captures is not None:
+            class_nodes = list(combined_captures.get(cs.CAPTURE_CLASS, []))
             module_nodes = combined_captures.get(cs.ONEOF_MODULE, [])
         else:
             if not (query := lang_queries[cs.QUERY_CLASSES]):
@@ -114,7 +114,7 @@ class ClassIngestMixin:
 
         sorted_func_nodes: list[Node] | None = None
         func_node_starts: list[int] | None = None
-        if combined_captures and cs.CAPTURE_FUNCTION in combined_captures:
+        if combined_captures is not None and cs.CAPTURE_FUNCTION in combined_captures:
             sorted_func_nodes = combined_captures[cs.CAPTURE_FUNCTION]
             func_node_starts = [n.start_byte for n in sorted_func_nodes]
 

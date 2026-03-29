@@ -321,8 +321,8 @@ class CallProcessor:
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
     ) -> None:
-        if combined_captures and cs.CAPTURE_CLASS in combined_captures:
-            class_nodes = combined_captures[cs.CAPTURE_CLASS]
+        if combined_captures is not None:
+            class_nodes = combined_captures.get(cs.CAPTURE_CLASS, [])
         else:
             query = queries[language][cs.QUERY_CLASSES]
             if not query:

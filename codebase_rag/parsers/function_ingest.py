@@ -75,7 +75,7 @@ class FunctionIngestMixin:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         combined_captures: dict[str, list] | None = None,
     ) -> None:
-        if combined_captures and cs.CAPTURE_FUNCTION in combined_captures:
+        if combined_captures is not None:
             lang_queries = queries[language]
             lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
             captures = combined_captures
