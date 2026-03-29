@@ -47,6 +47,7 @@ class FunctionRegistryTrie:
         self._ending_with_cache: dict[str, list[QualifiedName]] = {}
 
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
+        qualified_name = sys.intern(qualified_name)
         self._entries[qualified_name] = func_type
 
         if self._simple_name_lookup is not None:
