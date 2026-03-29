@@ -325,8 +325,6 @@ class CallProcessor:
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
         for class_node in class_nodes:
-            if not isinstance(class_node, Node):
-                continue
             class_name = self._get_class_name_for_node(class_node, language)
             if not class_name:
                 continue
