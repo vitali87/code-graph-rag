@@ -554,14 +554,21 @@ class GraphUpdater:
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 
     def _process_function_calls(self) -> None:
+        captures_cache = self.factory._func_class_captures_cache
         ast_cache_items = list(self.ast_cache.items())
         for file_path, (root_node, language) in ast_cache_items:
+            if captures_cache is not None and file_path in captures_cache:
+                cached = captures_cache[file_path]
+                if not cached.get(cs.CAPTURE_CALL) and not cached.get(
+                    cs.CAPTURE_FUNCTION
+                ):
+                    continue
             self.factory.call_processor.process_calls_in_file(
                 file_path,
                 root_node,
                 language,
                 self.queries,
-                func_class_captures_cache=self.factory._func_class_captures_cache,
+                func_class_captures_cache=captures_cache,
             )
 
     def _prune_orphan_nodes(self) -> None:
