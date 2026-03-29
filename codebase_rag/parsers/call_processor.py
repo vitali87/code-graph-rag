@@ -189,16 +189,18 @@ class CallProcessor:
         if combined_captures is not None:
             lang_config = queries[language][cs.QUERY_CONFIG]
             func_nodes = combined_captures.get(cs.CAPTURE_FUNCTION, [])
+            has_classes = bool(combined_captures.get(cs.CAPTURE_CLASS))
         else:
             result = get_function_captures(root_node, language, queries)
             if not result:
                 return
             lang_config, captures = result
             func_nodes = captures.get(cs.CAPTURE_FUNCTION, [])
+            has_classes = bool(captures.get(cs.CAPTURE_CLASS))
         for func_node in func_nodes:
             if not isinstance(func_node, Node):
                 continue
-            if self._is_method(func_node, lang_config):
+            if has_classes and self._is_method(func_node, lang_config):
                 continue
 
             if language == cs.SupportedLanguage.CPP:
