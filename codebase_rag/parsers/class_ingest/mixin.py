@@ -119,8 +119,7 @@ class ClassIngestMixin:
             func_node_starts = [n.start_byte for n in sorted_func_nodes]
 
         for class_node in class_nodes:
-            if isinstance(class_node, Node):
-                self._process_class_node(
+            self._process_class_node(
                     class_node,
                     module_qn,
                     language,
@@ -270,7 +269,7 @@ class ClassIngestMixin:
             method_nodes = [
                 n
                 for n in sorted_func_nodes[lo:hi]
-                if n.end_byte <= body_end and isinstance(n, Node)
+                if n.end_byte <= body_end
             ]
         else:
             method_query = lang_queries[cs.QUERY_FUNCTIONS]
@@ -281,8 +280,6 @@ class ClassIngestMixin:
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
 
         for method_node in method_nodes:
-            if not isinstance(method_node, Node):
-                continue
             if _is_nested_inside_function(method_node, body_node, lang_config):
                 continue
 
