@@ -38,12 +38,13 @@ type FileHashCache = dict[str, str]
 
 
 class FunctionRegistryTrie:
-    __slots__ = ("root", "_entries", "_simple_name_lookup")
+    __slots__ = ("root", "_entries", "_simple_name_lookup", "_ending_with_cache")
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
         self.root: TrieNode = {}
         self._entries: FunctionRegistry = {}
         self._simple_name_lookup = simple_name_lookup
+        self._ending_with_cache: dict[str, list[QualifiedName]] = {}
 
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         self._entries[qualified_name] = func_type
@@ -84,9 +85,12 @@ class FunctionRegistryTrie:
             return
 
         del self._entries[qualified_name]
+        simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+        if self._ending_with_cache:
+            self._ending_with_cache.pop(simple_name, None)
 
         if self._simple_name_lookup is not None:
-            simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             if simple_name in self._simple_name_lookup:
                 self._simple_name_lookup[simple_name].discard(qualified_name)
 
@@ -168,11 +172,20 @@ class FunctionRegistryTrie:
         return [qn for qn, _ in matches]
 
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
+        cached = self._ending_with_cache.get(suffix)
+        if cached is not None:
+            return cached
         if self._simple_name_lookup is not None:
             if suffix in self._simple_name_lookup:
-                return sorted(self._simple_name_lookup[suffix])
-            return []
-        return sorted(qn for qn in self._entries.keys() if qn.endswith(f".{suffix}"))
+                result = sorted(self._simple_name_lookup[suffix])
+            else:
+                result = []
+        else:
+            result = sorted(
+                qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
+            )
+        self._ending_with_cache[suffix] = result
+        return result
 
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
