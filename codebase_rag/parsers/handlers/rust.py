@@ -33,13 +33,12 @@ class RustHandler(BaseLanguageHandler):
         if body_node := node.child_by_field_name(cs.FIELD_BODY):
             nodes_to_search.append(body_node)
 
+        inner_attr_type = cs.TS_RS_INNER_ATTRIBUTE_ITEM
         for search_node in nodes_to_search:
-            decorators.extend(
-                attr_text
-                for child in search_node.children
-                if child.type == cs.TS_RS_INNER_ATTRIBUTE_ITEM
-                if (attr_text := safe_decode_text(child))
-            )
+            for child in search_node.children:
+                if child.type == inner_attr_type:
+                    if attr_text := safe_decode_text(child):
+                        decorators.append(attr_text)
 
         return decorators
 
