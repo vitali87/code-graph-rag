@@ -446,6 +446,7 @@ class CallProcessor:
         qn_key = cs.KEY_QUALIFIED_NAME
         _id = id
         has_cache = call_name_cache is not None
+        caller_spec = (caller_type, qn_key, caller_qn)
 
         for call_node in call_nodes:
             node_id = _id(call_node)
@@ -478,7 +479,7 @@ class CallProcessor:
                 continue
 
             ensure_rel(
-                (caller_type, qn_key, caller_qn),
+                caller_spec,
                 calls_rel,
                 (callee_type, qn_key, callee_qn),
             )
