@@ -426,7 +426,8 @@ class GraphUpdater:
         eligible: list[Path] = []
         hash_name = cs.HASH_CACHE_FILENAME
         for dirpath, dirnames, filenames in os.walk(str(self.repo_path)):
-            rel_dir = cached_relative_path(Path(dirpath), self.repo_path).as_posix()
+            dirpath_obj = Path(dirpath)
+            rel_dir = cached_relative_path(dirpath_obj, self.repo_path).as_posix()
             dir_prefix = "" if rel_dir == "." else f"{rel_dir}/"
             dirnames[:] = sorted(
                 d for d in dirnames if self._should_keep_dir(d, dir_prefix)
@@ -434,7 +435,7 @@ class GraphUpdater:
             for fname in sorted(filenames):
                 if fname == hash_name:
                     continue
-                filepath = Path(dirpath) / fname
+                filepath = dirpath_obj / fname
                 if not should_skip_path(
                     filepath,
                     self.repo_path,
