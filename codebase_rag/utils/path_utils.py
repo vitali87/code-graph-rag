@@ -19,12 +19,14 @@ def should_skip_path(
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    is_file: bool | None = None,
 ) -> bool:
-    if path.is_file() and path.suffix in cs.IGNORE_SUFFIXES:
+    _is_file = path.is_file() if is_file is None else is_file
+    if _is_file and path.suffix in cs.IGNORE_SUFFIXES:
         return True
     rel_path = cached_relative_path(path, repo_path)
     rel_path_str = rel_path.as_posix()
-    dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
+    dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
     if exclude_paths and (
         not exclude_paths.isdisjoint(dir_parts)
         or rel_path_str in exclude_paths

@@ -426,6 +426,7 @@ class GraphUpdater:
                     filepath,
                     self.repo_path,
                     exclude_paths=self.exclude_paths,
+                    is_file=True,
                     unignore_paths=self.unignore_paths,
                 ):
                     eligible.append(filepath)
