@@ -153,13 +153,14 @@ class FunctionIngestMixin:
             self._module_prefix_cache[cache_key] = module_prefix
 
         func_qn = module_prefix + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+        simple_name = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
 
         is_exported = (
             cpp_utils.is_exported(func_node)
             if language == cs.SupportedLanguage.CPP
             else False
         )
-        return FunctionResolution(func_qn, func_name, is_exported)
+        return FunctionResolution(func_qn, simple_name, is_exported)
 
     def _fallback_function_resolution(
         self,

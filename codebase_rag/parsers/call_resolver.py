@@ -269,8 +269,11 @@ class CallResolver:
             )
             best_candidate_qn = min(
                 possible_matches,
-                key=lambda qn: self._import_distance_fast(
-                    qn, caller_parts, caller_len, caller_parent_prefix
+                key=lambda qn: (
+                    self._import_distance_fast(
+                        qn, caller_parts, caller_len, caller_parent_prefix
+                    ),
+                    qn,
                 ),
             )
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
