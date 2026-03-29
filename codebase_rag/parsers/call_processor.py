@@ -198,8 +198,6 @@ class CallProcessor:
             func_nodes = captures.get(cs.CAPTURE_FUNCTION, [])
             has_classes = bool(captures.get(cs.CAPTURE_CLASS))
         for func_node in func_nodes:
-            if not isinstance(func_node, Node):
-                continue
             if has_classes and self._is_method(func_node, lang_config):
                 continue
 
