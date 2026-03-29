@@ -258,12 +258,12 @@ class BoundedASTCache:
 
 def _hash_file(filepath: Path) -> str:
     data = filepath.read_bytes()
-    return hashlib.sha256(data).hexdigest()
+    return hashlib.md5(data).hexdigest()
 
 
 def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
     data = filepath.read_bytes()
-    return hashlib.sha256(data).hexdigest(), data
+    return hashlib.md5(data).hexdigest(), data
 
 
 def _load_hash_cache(cache_path: Path) -> FileHashCache:

@@ -41,7 +41,7 @@ class TestHashFile:
         f.write_text("hello")
         result = _hash_file(f)
         assert isinstance(result, str)
-        assert len(result) == 64
+        assert len(result) == 32
 
     def test_same_content_same_hash(self, temp_repo: Path) -> None:
         f1 = temp_repo / "a.py"
