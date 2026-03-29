@@ -161,7 +161,6 @@ def find_cpp_exported_classes(root_node: Node) -> list[Node]:
                     or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
                 ):
                     exported_class_nodes.append(node)
-        elif node.type == cs.TS_NAMESPACE_DEFINITION:
-            stack.extend(node.children)
+        stack.extend(node.children)
 
     return exported_class_nodes

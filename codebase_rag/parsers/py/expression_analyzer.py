@@ -48,7 +48,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     ast_cache: ASTCacheProtocol
 
     _method_return_type_cache: dict[str, str | None]
-    _self_assignment_cache: dict[tuple[int, str], dict[str, str] | None] = {}
+    _self_assignment_cache: dict[tuple[int, str], dict[str, str] | None]
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:

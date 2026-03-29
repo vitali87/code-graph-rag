@@ -345,6 +345,12 @@ class GraphUpdater:
         )
 
     def run(self, force: bool = False) -> None:
+        py_engine = self.factory.type_inference._python_type_inference
+        if py_engine is not None:
+            py_engine._available_classes_cache.clear()
+            py_engine._return_stmt_cache.clear()
+            py_engine._method_return_type_cache.clear()
+            py_engine._self_assignment_cache.clear()
         self.ingestor.ensure_node_batch(
             cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
         )

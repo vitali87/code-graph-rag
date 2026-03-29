@@ -215,9 +215,7 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
     module_types = lang_config.module_node_types
     body_field = cs.FIELD_BODY
 
-    for _ in range(6):
-        if current is None:
-            return False
+    while current is not None:
         current_type = current.type
         if current_type in module_types:
             return False
