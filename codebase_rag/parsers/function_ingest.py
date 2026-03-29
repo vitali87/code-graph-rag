@@ -88,13 +88,6 @@ class FunctionIngestMixin:
         has_classes = bool(captures.get(cs.CAPTURE_CLASS))
 
         for func_node in captures.get(cs.CAPTURE_FUNCTION, []):
-            if not isinstance(func_node, Node):
-                logger.warning(
-                    ls.FUNC_EXPECTED_NODE.format(
-                        actual_type=type(func_node), value=func_node
-                    )
-                )
-                continue
             if has_classes and self._is_method(func_node, lang_config):
                 continue
 
