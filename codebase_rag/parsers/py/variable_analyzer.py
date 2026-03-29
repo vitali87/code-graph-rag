@@ -110,10 +110,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return self._find_best_class_match(param_name, available_class_names)
 
     def _collect_available_classes(self, module_qn: str) -> list[str]:
-        if (
-            hasattr(self, "_available_classes_cache")
-            and module_qn in self._available_classes_cache
-        ):
+        if module_qn in self._available_classes_cache:
             return self._available_classes_cache[module_qn]
         available_class_names: list[str] = []
         for qn, node_type in self.function_registry.find_with_prefix(module_qn):
@@ -123,6 +120,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 available_class_names.append(qn.split(cs.SEPARATOR_DOT)[-1])
 
         if module_qn not in self.import_processor.import_mapping:
+            self._available_classes_cache[module_qn] = available_class_names
             return available_class_names
 
         for local_name, imported_qn in self.import_processor.import_mapping[
@@ -131,8 +129,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             if self.function_registry.get(imported_qn) == NodeType.CLASS:
                 available_class_names.append(local_name)
 
-        if hasattr(self, "_available_classes_cache"):
-            self._available_classes_cache[module_qn] = available_class_names
+        self._available_classes_cache[module_qn] = available_class_names
         return available_class_names
 
     def _find_best_class_match(

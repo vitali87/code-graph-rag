@@ -80,7 +80,7 @@ class PythonAstAnalyzerMixin(_AstBase):
     @abstractmethod
     def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None: ...
 
-    _return_stmt_cache: dict[int, list[Node]] = {}
+    _return_stmt_cache: dict[int, list[Node]]
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str

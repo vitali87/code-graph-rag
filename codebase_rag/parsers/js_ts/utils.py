@@ -54,12 +54,18 @@ def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node |
 
 
 _CLASS_BODY_CACHE: dict[tuple[int, str], Node | None] = {}
+_CLASS_BODY_CACHE_OWNER: int | None = None
 
 
 def find_method_in_ast(
     root_node: Node, class_name: str, method_name: str
 ) -> Node | None:
-    cache_key = (id(root_node), class_name)
+    global _CLASS_BODY_CACHE_OWNER
+    root_id = id(root_node)
+    if _CLASS_BODY_CACHE_OWNER != root_id:
+        _CLASS_BODY_CACHE.clear()
+        _CLASS_BODY_CACHE_OWNER = root_id
+    cache_key = (root_id, class_name)
     if cache_key in _CLASS_BODY_CACHE:
         body_node = _CLASS_BODY_CACHE[cache_key]
         if body_node is not None:

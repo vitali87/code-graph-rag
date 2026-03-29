@@ -52,9 +52,11 @@ class FunctionRegistryTrie:
         qualified_name = sys.intern(qualified_name)
         self._entries[qualified_name] = func_type
 
+        simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if self._simple_name_lookup is not None:
-            simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             self._simple_name_lookup[simple_name].add(qualified_name)
+        if self._ending_with_cache:
+            self._ending_with_cache.pop(simple_name, None)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         current: TrieNode = self.root
