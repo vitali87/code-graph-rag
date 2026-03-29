@@ -26,13 +26,19 @@ if TYPE_CHECKING:
     from ..types_defs import FunctionRegistryTrieProtocol
 
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
+_QUERY_LAST: tuple[tuple[int, str], Query] | None = None
 
 
 def get_cached_query(language_obj, query_text: str) -> Query:
+    global _QUERY_LAST
     key = (id(language_obj), query_text)
+    if _QUERY_LAST is not None and _QUERY_LAST[0] == key:
+        return _QUERY_LAST[1]
     if key not in _QUERY_CACHE:
         _QUERY_CACHE[key] = Query(language_obj, query_text)
-    return _QUERY_CACHE[key]
+    result = _QUERY_CACHE[key]
+    _QUERY_LAST = (key, result)
+    return result
 
 
 class FunctionCapturesResult(NamedTuple):
