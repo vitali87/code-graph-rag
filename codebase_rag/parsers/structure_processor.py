@@ -61,6 +61,11 @@ class StructureProcessor:
             ):
                 directories.add(path)
 
+        package_indicators: set[str] = set()
+        for lang_queries in self.queries.values():
+            lang_config = lang_queries[cs.QUERY_CONFIG]
+            package_indicators.update(lang_config.package_indicators)
+
         for root in sorted(directories):
             relative_root = cached_relative_path(root, self.repo_path)
 
@@ -68,12 +73,6 @@ class StructureProcessor:
             parent_container_qn = self.structural_elements.get(parent_rel_path)
 
             is_package = False
-            package_indicators: set[str] = set()
-
-            for lang_queries in self.queries.values():
-                lang_config = lang_queries[cs.QUERY_CONFIG]
-                package_indicators.update(lang_config.package_indicators)
-
             for indicator in package_indicators:
                 if (root / indicator).exists():
                     is_package = True
