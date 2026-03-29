@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
@@ -269,19 +268,6 @@ def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
         data = f.read()
     return hashlib.md5(data).hexdigest(), data
 
-
-def _pre_parse_worker(
-    args: tuple[Path, bytes, object, object | None],
-) -> tuple[Path, Node, dict[str, list] | None]:
-    filepath, source_bytes, language_obj, combined_query = args
-    thread_parser = Parser(language_obj)
-    tree = thread_parser.parse(source_bytes)
-    root_node = tree.root_node
-    combined_captures_result: dict[str, list] | None = None
-    if combined_query:
-        cursor = QueryCursor(combined_query)
-        combined_captures_result = sorted_captures(cursor, root_node)
-    return filepath, root_node, combined_captures_result
 
 
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
@@ -565,7 +551,7 @@ class GraphUpdater:
         self,
         changed_entries: list[tuple[Path, str, bool, bytes]],
     ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
-        work_items: list[tuple[Path, bytes, object, object | None]] = []
+        result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
         for filepath, _file_key, _is_new, file_bytes in changed_entries:
             lang_config = get_language_spec(filepath.suffix)
             if not (
@@ -578,19 +564,14 @@ class GraphUpdater:
             parser = self.queries[language].get(cs.KEY_PARSER)
             if not parser:
                 continue
-            language_obj = parser.language
+            tree = parser.parse(file_bytes)
+            root_node = tree.root_node
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
-            work_items.append((filepath, file_bytes, language_obj, combined_query))
-
-        if not work_items:
-            return {}
-
-        result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
-        with ThreadPoolExecutor() as pool:
-            for filepath, root_node, captures in pool.map(
-                _pre_parse_worker, work_items
-            ):
-                result[filepath] = (root_node, captures)
+            combined_captures: dict[str, list] | None = None
+            if combined_query:
+                cursor = QueryCursor(combined_query)
+                combined_captures = sorted_captures(cursor, root_node)
+            result[filepath] = (root_node, combined_captures)
         return result
 
     def _process_single_file(
