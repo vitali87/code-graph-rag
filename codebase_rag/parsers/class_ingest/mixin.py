@@ -145,7 +145,12 @@ class ClassIngestMixin:
     ) -> None:
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             self._ingest_rust_impl_methods(
-                class_node, module_qn, language, lang_queries
+                class_node,
+                module_qn,
+                language,
+                lang_queries,
+                sorted_func_nodes=sorted_func_nodes,
+                func_node_starts=func_node_starts,
             )
             return
 
@@ -212,24 +217,38 @@ class ClassIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
         if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
 
         class_qn = f"{module_qn}.{impl_target}"
         body_node = class_node.child_by_field_name("body")
-        method_query = lang_queries[cs.QUERY_FUNCTIONS]
 
-        if not body_node or not method_query:
+        if not body_node:
             return
 
         file_path = self.module_qn_to_file_path.get(module_qn)
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        method_cursor = QueryCursor(method_query)
-        method_captures = sorted_captures(method_cursor, body_node)
-        for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
-            if not isinstance(method_node, Node):
-                continue
+
+        if sorted_func_nodes is not None and func_node_starts is not None:
+            body_start = body_node.start_byte
+            body_end = body_node.end_byte
+            lo = bisect_left(func_node_starts, body_start)
+            hi = bisect_right(func_node_starts, body_end)
+            method_nodes = [
+                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
+            ]
+        else:
+            method_query = lang_queries[cs.QUERY_FUNCTIONS]
+            if not method_query:
+                return
+            method_cursor = QueryCursor(method_query)
+            method_captures = sorted_captures(method_cursor, body_node)
+            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+
+        for method_node in method_nodes:
             if _is_nested_inside_function(method_node, body_node, lang_config):
                 continue
             ingest_method(
