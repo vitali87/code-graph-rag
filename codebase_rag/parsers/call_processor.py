@@ -437,11 +437,13 @@ class CallProcessor:
             return
 
         is_java = language == cs.SupportedLanguage.JAVA
+        is_js_ts = language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS)
+        is_cpp = language == cs.SupportedLanguage.CPP
         method_invocation_type = cs.TS_METHOD_INVOCATION
         resolver = self._resolver
         resolve_func = resolver.resolve_function_call
-        resolve_builtin = resolver.resolve_builtin_call
-        resolve_cpp_op = resolver.resolve_cpp_operator_call
+        resolve_builtin = resolver.resolve_builtin_call if is_js_ts else None
+        resolve_cpp_op = resolver.resolve_cpp_operator_call if is_cpp else None
         get_target = self._get_call_target_name
         class_label = cs.NodeLabel.CLASS
         ensure_rel = self.ingestor.ensure_relationship_batch
@@ -470,9 +472,9 @@ class CallProcessor:
                 callee_info = resolve_func(
                     call_name, module_qn, local_var_types, class_context
                 )
-            if not callee_info:
+            if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
-            if not callee_info:
+            if not callee_info and resolve_cpp_op is not None:
                 callee_info = resolve_cpp_op(call_name, module_qn)
             if not callee_info:
                 continue
