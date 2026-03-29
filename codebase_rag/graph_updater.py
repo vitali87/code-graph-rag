@@ -269,7 +269,6 @@ def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
     return hashlib.md5(data).hexdigest(), data
 
 
-
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
     if not cache_path.is_file():
         return {}

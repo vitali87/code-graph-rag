@@ -120,15 +120,15 @@ class ClassIngestMixin:
 
         for class_node in class_nodes:
             self._process_class_node(
-                    class_node,
-                    module_qn,
-                    language,
-                    lang_queries,
-                    lang_config,
-                    file_path,
-                    sorted_func_nodes=sorted_func_nodes,
-                    func_node_starts=func_node_starts,
-                )
+                class_node,
+                module_qn,
+                language,
+                lang_queries,
+                lang_config,
+                file_path,
+                sorted_func_nodes=sorted_func_nodes,
+                func_node_starts=func_node_starts,
+            )
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
 
@@ -286,9 +286,7 @@ class ClassIngestMixin:
             lo = bisect_left(func_node_starts, body_start)
             hi = bisect_right(func_node_starts, body_end)
             method_nodes = [
-                n
-                for n in sorted_func_nodes[lo:hi]
-                if n.end_byte <= body_end
+                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
             ]
         else:
             method_query = lang_queries[cs.QUERY_FUNCTIONS]

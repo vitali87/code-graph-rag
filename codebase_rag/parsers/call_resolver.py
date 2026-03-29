@@ -752,7 +752,7 @@ class CallResolver:
         self,
         call_node: Node,
         module_qn: str,
-        local_var_types: dict[str, str],
+        local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         java_engine = self.type_inference.java_type_inference
 

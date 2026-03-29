@@ -27,6 +27,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
     __slots__ = ()
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
+    queries: dict[cs.SupportedLanguage, object]
+    _available_classes_cache: dict[str, list[str]]
 
     def _infer_parameter_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str

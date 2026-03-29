@@ -36,7 +36,7 @@ PATH_BASED_LABELS = frozenset({cs.NodeLabel.FOLDER, cs.NodeLabel.FILE})
 NAME_BASED_LABELS = frozenset({cs.NodeLabel.EXTERNAL_PACKAGE, cs.NodeLabel.PROJECT})
 
 
-_REL_TYPE_CACHE: dict[str, int | None] = {}
+_REL_TYPE_CACHE: dict = {}
 _MSG_CLASS_CACHE: dict[str, type | None] = {}
 
 
@@ -105,16 +105,20 @@ class ProtobufFileIngestor:
         if rel_type in _REL_TYPE_CACHE:
             rel_type_enum = _REL_TYPE_CACHE[rel_type]
         else:
-            rel_type_enum = getattr(pb.Relationship.RelationshipType, rel_type, None)
-            if rel_type_enum is None:
+            resolved = getattr(pb.Relationship.RelationshipType, rel_type, None)
+            if resolved is None:
                 logger.warning(ls.PROTOBUF_UNKNOWN_REL_TYPE.format(rel_type=rel_type))
-                rel_type_enum = (
+                resolved = (
                     pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
                 )
+            rel_type_enum = resolved
             _REL_TYPE_CACHE[rel_type] = rel_type_enum
 
-        from_label, _, from_val = from_spec
-        to_label, _, to_val = to_spec
+        from_label, _, from_val_raw = from_spec
+        to_label, _, to_val_raw = to_spec
+
+        from_val = str(from_val_raw) if from_val_raw is not None else ""
+        to_val = str(to_val_raw) if to_val_raw is not None else ""
 
         unique_key = (from_val, rel_type_enum, to_val)
         if unique_key in self._relationships:
@@ -122,11 +126,9 @@ class ProtobufFileIngestor:
                 self._relationships[unique_key].properties.update(properties)
             return
 
-        if not from_val or not from_val.strip() or not to_val or not to_val.strip():
+        if not from_val.strip() or not to_val.strip():
             logger.warning(
-                ls.PROTOBUF_INVALID_REL.format(
-                    source_id=from_val, target_id=to_val
-                )
+                ls.PROTOBUF_INVALID_REL.format(source_id=from_val, target_id=to_val)
             )
             return
 

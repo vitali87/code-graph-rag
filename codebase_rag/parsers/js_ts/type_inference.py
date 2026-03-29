@@ -56,9 +56,7 @@ class JsTypeInferenceEngine:
             lang_queries = self._queries.get(lang)
             if lang_queries and "language" in lang_queries:
                 try:
-                    q = get_cached_query(
-                        lang_queries["language"], _JS_DECLARATOR_QUERY
-                    )
+                    q = get_cached_query(lang_queries["language"], _JS_DECLARATOR_QUERY)
                     cursor = QueryCursor(q)
                     captures = cursor.captures(caller_node)
                     return captures.get("declarator", [])
@@ -67,7 +65,10 @@ class JsTypeInferenceEngine:
         return None
 
     def build_local_variable_type_map(
-        self, caller_node: ASTNode, module_qn: str, language: cs.SupportedLanguage | None = None
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
         declarator_count = 0
@@ -98,9 +99,7 @@ class JsTypeInferenceEngine:
                                     var_type=var_type,
                                 )
                             else:
-                                logger.debug(
-                                    ls.JS_VAR_INFER_FAILED, var_name=var_name
-                                )
+                                logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
         else:
             stack: list[ASTNode] = [caller_node]
             while stack:

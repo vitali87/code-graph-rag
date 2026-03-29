@@ -272,9 +272,7 @@ class CallProcessor:
             lo = bisect_left(func_node_starts, body_start)
             hi = bisect_right(func_node_starts, body_end)
             method_nodes = [
-                n
-                for n in sorted_func_nodes[lo:hi]
-                if n.end_byte <= body_end
+                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
             ]
         else:
             method_query = queries[language][cs.QUERY_FUNCTIONS]
@@ -450,16 +448,15 @@ class CallProcessor:
         calls_rel = cs.RelationshipType.CALLS
         qn_key = cs.KEY_QUALIFIED_NAME
         _id = id
-        has_cache = call_name_cache is not None
         caller_spec = (caller_type, qn_key, caller_qn)
 
         for call_node in call_nodes:
             node_id = _id(call_node)
-            if has_cache and node_id in call_name_cache:
+            if call_name_cache is not None and node_id in call_name_cache:
                 call_name = call_name_cache[node_id]
             else:
                 call_name = get_target(call_node)
-                if has_cache:
+                if call_name_cache is not None:
                     call_name_cache[node_id] = call_name
             if not call_name:
                 continue
