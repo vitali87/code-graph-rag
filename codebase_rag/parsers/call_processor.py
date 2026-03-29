@@ -358,11 +358,11 @@ class CallProcessor:
                     | cs.TS_SCOPED_IDENTIFIER
                 ):
                     if func_child.text is not None:
-                        return str(func_child.text.decode(cs.ENCODING_UTF8))
+                        return func_child.text.decode(cs.ENCODING_UTF8)
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:
-                        return str(field_node.text.decode(cs.ENCODING_UTF8))
+                        return field_node.text.decode(cs.ENCODING_UTF8)
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
 
@@ -380,15 +380,15 @@ class CallProcessor:
                 object_node = call_node.child_by_field_name(cs.FIELD_OBJECT)
                 name_node = call_node.child_by_field_name(cs.FIELD_NAME)
                 if name_node and name_node.text:
-                    method_name = str(name_node.text.decode(cs.ENCODING_UTF8))
+                    method_name = name_node.text.decode(cs.ENCODING_UTF8)
                     if not object_node or not object_node.text:
                         return method_name
-                    object_text = str(object_node.text.decode(cs.ENCODING_UTF8))
+                    object_text = object_node.text.decode(cs.ENCODING_UTF8)
                     return f"{object_text}{cs.SEPARATOR_DOT}{method_name}"
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
-                return str(name_node.text.decode(cs.ENCODING_UTF8))
+                return name_node.text.decode(cs.ENCODING_UTF8)
 
         return None
 
