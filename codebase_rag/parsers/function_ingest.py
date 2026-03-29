@@ -85,6 +85,7 @@ class FunctionIngestMixin:
                 return
             lang_config, captures = result
         file_path = self.module_qn_to_file_path.get(module_qn)
+        has_classes = bool(captures.get(cs.CAPTURE_CLASS))
 
         for func_node in captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(func_node, Node):
@@ -94,7 +95,7 @@ class FunctionIngestMixin:
                     )
                 )
                 continue
-            if self._is_method(func_node, lang_config):
+            if has_classes and self._is_method(func_node, lang_config):
                 continue
 
             if language == cs.SupportedLanguage.CPP:
