@@ -596,3 +596,88 @@ def generate_items(count: int) -> None:
             if result:
                 return result
         return None
+
+
+def _find_func_node(root_node, func_name: str):
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "function_definition":
+            name_node = node.child_by_field_name("name")
+            if name_node and name_node.text.decode() == func_name:
+                return node
+        stack.extend(reversed(node.children))
+    return None
+
+
+class TestTraverseSinglePassWithQueries:
+    @pytest.fixture
+    def engine_with_queries(
+        self,
+        import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> PythonTypeInferenceEngine:
+        from codebase_rag import constants as cs
+        from codebase_rag.parser_loader import load_parsers
+
+        parsers, queries = load_parsers()
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        return PythonTypeInferenceEngine(
+            import_processor=import_processor,
+            function_registry=mock_function_registry,
+            repo_path=Path("/test/repo"),
+            project_name="test_project",
+            ast_cache=mock_ast_cache,
+            queries=queries,
+            module_qn_to_file_path={},
+            class_inheritance={},
+            simple_name_lookup=defaultdict(set),
+            js_type_inference_getter=lambda: MagicMock(),
+        )
+
+    def test_traverse_with_query_path(
+        self,
+        python_parser: Parser,
+        engine_with_queries: PythonTypeInferenceEngine,
+    ) -> None:
+        python_code = b"""
+def process(name: str, count: int) -> None:
+    result = name.upper()
+    items = []
+    for i in range(count):
+        items.append(i)
+"""
+        tree = python_parser.parse(python_code)
+        func_node = _find_func_node(tree.root_node, "process")
+        assert func_node is not None
+
+        result = engine_with_queries.build_local_variable_type_map(
+            func_node, "test.module"
+        )
+
+        assert "name" in result
+        assert result["name"] == "str"
+        assert "count" in result
+        assert result["count"] == "int"
+
+    def test_traverse_with_query_path_caches_return_stmts(
+        self,
+        python_parser: Parser,
+        engine_with_queries: PythonTypeInferenceEngine,
+    ) -> None:
+        python_code = b"""
+def get_value(x: int) -> int:
+    return x + 1
+"""
+        tree = python_parser.parse(python_code)
+        func_node = _find_func_node(tree.root_node, "get_value")
+        assert func_node is not None
+
+        engine_with_queries.build_local_variable_type_map(func_node, "test.module")
+
+        return_nodes: list = []
+        engine_with_queries._find_return_statements(func_node, return_nodes)
+        assert len(return_nodes) >= 1

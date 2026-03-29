@@ -647,6 +647,78 @@ class TestExtractClassQnIntegration:
         assert result == "a.b.c.d.e"
 
 
+@pytest.mark.skipif(not JS_AVAILABLE, reason="tree-sitter-javascript not available")
+class TestFindMethodInAstCacheOwnerTracking:
+    def test_cache_invalidates_on_new_root_node(
+        self, js_parser: Parser, sample_js_project: Path
+    ) -> None:
+        from codebase_rag.parsers.js_ts import utils as js_utils
+
+        tree1 = parse_file(js_parser, sample_js_project / "singleton.js")
+        root1 = tree1.root_node
+        result1 = find_method_in_ast(root1, "DatabaseConnection", "getInstance")
+        assert result1 is not None
+        owner_after_first = js_utils._CLASS_BODY_CACHE_OWNER
+
+        tree2 = parse_file(js_parser, sample_js_project / "factory.js")
+        root2 = tree2.root_node
+        result2 = find_method_in_ast(root2, "Dog", "speak")
+        assert result2 is not None
+        owner_after_second = js_utils._CLASS_BODY_CACHE_OWNER
+
+        assert owner_after_first != owner_after_second
+
+    def test_cache_hit_returns_correct_result(
+        self, js_parser: Parser, sample_js_project: Path
+    ) -> None:
+        tree = parse_file(js_parser, sample_js_project / "factory.js")
+        root = tree.root_node
+
+        result1 = find_method_in_ast(root, "Dog", "speak")
+        assert result1 is not None
+
+        result2 = find_method_in_ast(root, "Dog", "fetch")
+        assert result2 is not None
+
+    def test_cache_miss_returns_none(
+        self, js_parser: Parser, sample_js_project: Path
+    ) -> None:
+        tree = parse_file(js_parser, sample_js_project / "factory.js")
+        root = tree.root_node
+
+        result = find_method_in_ast(root, "NonExistent", "method")
+        assert result is None
+
+        result2 = find_method_in_ast(root, "NonExistent", "other")
+        assert result2 is None
+
+
+@pytest.mark.skipif(not JS_AVAILABLE, reason="tree-sitter-javascript not available")
+class TestFindReturnStatementsWithLanguageObj:
+    def test_with_language_obj(
+        self, js_parser: Parser, sample_js_project: Path
+    ) -> None:
+        tree = parse_file(js_parser, sample_js_project / "complex_returns.js")
+        set_name = find_method_in_ast(tree.root_node, "Builder", "setName")
+        assert set_name is not None
+
+        language = Language(tsjs.language())
+        return_nodes: list = []
+        find_return_statements(set_name, return_nodes, language)
+        assert len(return_nodes) == 1
+
+    def test_fallback_without_language_obj(
+        self, js_parser: Parser, sample_js_project: Path
+    ) -> None:
+        tree = parse_file(js_parser, sample_js_project / "complex_returns.js")
+        set_name = find_method_in_ast(tree.root_node, "Builder", "setName")
+        assert set_name is not None
+
+        return_nodes: list = []
+        find_return_statements(set_name, return_nodes, None)
+        assert len(return_nodes) == 1
+
+
 @pytest.mark.skipif(not TS_AVAILABLE, reason="tree-sitter-typescript not available")
 class TestTypeScriptIntegration:
     def test_find_generic_class_methods(

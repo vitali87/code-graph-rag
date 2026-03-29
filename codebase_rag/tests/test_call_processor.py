@@ -1230,3 +1230,432 @@ class TestCallProcessorSlots:
         assert hasattr(call_processor, "repo_path")
         assert hasattr(call_processor, "project_name")
         assert hasattr(call_processor, "_resolver")
+
+
+class TestCollectAllCallNodes:
+    def test_returns_empty_when_no_calls_query(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "x = 1"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+
+        empty_queries: dict = {cs.SupportedLanguage.PYTHON: {cs.QUERY_CALLS: None}}
+        call_nodes, call_starts = call_processor._collect_all_call_nodes(
+            root, cs.SupportedLanguage.PYTHON, empty_queries
+        )
+        assert call_nodes == []
+        assert call_starts == []
+
+    def test_returns_call_nodes_for_code_with_calls(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = "foo()\nbar()"
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        call_nodes, call_starts = call_processor._collect_all_call_nodes(
+            root, cs.SupportedLanguage.PYTHON, queries
+        )
+        assert len(call_nodes) >= 2
+        assert len(call_starts) == len(call_nodes)
+        assert all(isinstance(s, int) for s in call_starts)
+
+
+class TestFilterCallsInNode:
+    def test_filters_calls_within_container(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        code = """
+def outer():
+    foo()
+
+def other():
+    bar()
+"""
+        root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
+        all_call_nodes, call_starts = call_processor._collect_all_call_nodes(
+            root, cs.SupportedLanguage.PYTHON, queries
+        )
+        assert len(all_call_nodes) >= 2
+
+        outer_func = find_first_node_of_type(root, "function_definition")
+        assert outer_func is not None
+
+        filtered = call_processor._filter_calls_in_node(
+            all_call_nodes, call_starts, outer_func
+        )
+        assert len(filtered) == 1
+
+
+class TestProcessCallsInFileWithoutCache:
+    def test_process_calls_without_func_class_captures_cache(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text(encoding="utf-8", data="def foo(): bar()")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(b"def foo(): bar()")
+        root_node = tree.root_node
+
+        cp.process_calls_in_file(
+            test_file,
+            root_node,
+            cs.SupportedLanguage.PYTHON,
+            queries,
+            func_class_captures_cache=None,
+        )
+
+    def test_process_calls_with_empty_combined_captures(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text(encoding="utf-8", data="x = 1")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(b"x = 1")
+        root_node = tree.root_node
+
+        from codebase_rag.parser_loader import COMBINED_FUNC_CLASS_QUERIES
+
+        original = COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON)
+        try:
+            COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] = None
+            cp.process_calls_in_file(
+                test_file,
+                root_node,
+                cs.SupportedLanguage.PYTHON,
+                queries,
+                func_class_captures_cache=None,
+            )
+        finally:
+            if original is not None:
+                COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] = original
+
+
+class TestProcessCallsInFunctionsWithoutCombined:
+    def test_without_combined_captures(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        code = "def foo(): bar()"
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(code.encode(cs.ENCODING_UTF8))
+        root_node = tree.root_node
+
+        cp._process_calls_in_functions(
+            root_node,
+            "proj.module",
+            cs.SupportedLanguage.PYTHON,
+            queries,
+            combined_captures=None,
+        )
+
+    def test_without_combined_captures_no_functions(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        code = "x = 1"
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(code.encode(cs.ENCODING_UTF8))
+        root_node = tree.root_node
+
+        cp._process_calls_in_functions(
+            root_node,
+            "proj.module",
+            cs.SupportedLanguage.PYTHON,
+            queries,
+            combined_captures=None,
+        )
+
+
+class TestProcessCallsInClassesWithoutCombined:
+    def test_without_combined_captures(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        code = """
+class MyClass:
+    def method(self):
+        foo()
+"""
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(code.encode(cs.ENCODING_UTF8))
+        root_node = tree.root_node
+
+        cp._process_calls_in_classes(
+            root_node,
+            "proj.module",
+            cs.SupportedLanguage.PYTHON,
+            queries,
+            combined_captures=None,
+        )
+
+
+class TestProcessMethodsInClassWithoutSortedFuncNodes:
+    def test_without_sorted_func_nodes(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        code = """
+class MyClass:
+    def method(self):
+        foo()
+"""
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(code.encode(cs.ENCODING_UTF8))
+        root_node = tree.root_node
+
+        class_node = find_first_node_of_type(root_node, "class_definition")
+        assert class_node is not None
+        body_node = class_node.child_by_field_name("body")
+        assert body_node is not None
+
+        cp._process_methods_in_class(
+            body_node,
+            "proj.module.MyClass",
+            "proj.module",
+            cs.SupportedLanguage.PYTHON,
+            queries,
+            sorted_func_nodes=None,
+            func_node_starts=None,
+        )
+
+
+class TestIngestFunctionCallsWithoutCallNodes:
+    def test_without_call_nodes(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        code = "def foo(): bar()"
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(code.encode(cs.ENCODING_UTF8))
+        root_node = tree.root_node
+
+        cp._ingest_function_calls(
+            root_node,
+            "proj.module.foo",
+            cs.NodeLabel.FUNCTION,
+            "proj.module",
+            cs.SupportedLanguage.PYTHON,
+            queries,
+            call_nodes=None,
+        )
+
+    def test_without_call_nodes_and_no_query(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        cp = updater.factory.call_processor
+
+        code = "x = 1"
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        tree = parser.parse(code.encode(cs.ENCODING_UTF8))
+        root_node = tree.root_node
+
+        empty_queries: dict = {
+            cs.SupportedLanguage.PYTHON: {cs.QUERY_CALLS: None, cs.QUERY_CONFIG: queries[cs.SupportedLanguage.PYTHON][cs.QUERY_CONFIG]}
+        }
+        cp._ingest_function_calls(
+            root_node,
+            "proj.module.foo",
+            cs.NodeLabel.FUNCTION,
+            "proj.module",
+            cs.SupportedLanguage.PYTHON,
+            empty_queries,
+            call_nodes=None,
+        )
+
+
+class TestCombinedQueryCompilationExceptionPaths:
+    def test_combined_func_class_query_exception_sets_none(
+        self,
+        parsers_and_queries: tuple,
+    ) -> None:
+        from tree_sitter import Query as RealQuery
+
+        from codebase_rag.parser_loader import (
+            COMBINED_FUNC_CLASS_IMPORT_QUERIES,
+            COMBINED_FUNC_CLASS_QUERIES,
+            _create_language_queries,
+        )
+
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        lang_queries = queries[cs.SupportedLanguage.PYTHON]
+        language_obj = lang_queries[cs.QUERY_LANGUAGE]
+        parser = parsers[cs.SupportedLanguage.PYTHON]
+        lang_config = lang_queries[cs.QUERY_CONFIG]
+
+        call_count = 0
+
+        def patched_query(language, pattern):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise RuntimeError("simulated combined query failure")
+            return RealQuery(language, pattern)
+
+        original_fc = COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON)
+        original_fci = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(cs.SupportedLanguage.PYTHON)
+        try:
+            with patch("codebase_rag.parser_loader.Query", side_effect=patched_query):
+                _create_language_queries(
+                    language_obj, parser, lang_config, cs.SupportedLanguage.PYTHON
+                )
+            assert COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] is None
+            assert COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] is None
+        finally:
+            if original_fc is not None:
+                COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] = original_fc
+            if original_fci is not None:
+                COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] = original_fci
+
+
+class TestGetRustImplClassName:
+    def test_rust_impl_fallback_to_children(
+        self,
+        call_processor: CallProcessor,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, _ = parsers_and_queries
+        if cs.SupportedLanguage.RUST not in parsers:
+            pytest.skip("Rust parser not available")
+
+        code = "impl MyStruct { fn foo(&self) {} }"
+        root = parse_code(code, cs.SupportedLanguage.RUST, parsers)
+        impl_node = find_first_node_of_type(root, "impl_item")
+        assert impl_node is not None
+
+        result = call_processor._get_rust_impl_class_name(impl_node)
+        assert result is not None

@@ -428,3 +428,89 @@ class TestBuildLocalVariableTypeMap:
         )
 
         assert result == {}
+
+
+class TestGetDeclaratorsViaQueryException:
+    def test_returns_none_when_queries_is_none(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_find_method_ast_node: MagicMock,
+    ) -> None:
+        engine = JsTypeInferenceEngine(
+            import_processor=mock_import_processor,
+            function_registry=mock_function_registry,
+            project_name="test_project",
+            find_method_ast_node_func=mock_find_method_ast_node,
+            queries=None,
+        )
+        root_node = create_mock_node("program", children=[])
+        result = engine._get_declarators_via_query(
+            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+        )
+        assert result is None
+
+    def test_exception_in_query_continues_to_next_language(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_find_method_ast_node: MagicMock,
+    ) -> None:
+        bad_language_obj = MagicMock()
+        bad_language_obj.side_effect = Exception("bad query")
+
+        queries = {
+            cs.SupportedLanguage.JS: {"language": bad_language_obj},
+            cs.SupportedLanguage.TS: {"language": bad_language_obj},
+        }
+
+        engine = JsTypeInferenceEngine(
+            import_processor=mock_import_processor,
+            function_registry=mock_function_registry,
+            project_name="test_project",
+            find_method_ast_node_func=mock_find_method_ast_node,
+            queries=queries,
+        )
+        root_node = create_mock_node("program", children=[])
+        result = engine._get_declarators_via_query(
+            root_node,  # ty: ignore[invalid-argument-type]  # (H) MockNode not Node
+        )
+        assert result is None
+
+
+class TestGetLanguageObj:
+    def test_returns_none_when_queries_is_none(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_find_method_ast_node: MagicMock,
+    ) -> None:
+        engine = JsTypeInferenceEngine(
+            import_processor=mock_import_processor,
+            function_registry=mock_function_registry,
+            project_name="test_project",
+            find_method_ast_node_func=mock_find_method_ast_node,
+            queries=None,
+        )
+        result = engine._get_language_obj()
+        assert result is None
+
+    def test_returns_language_when_available(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_find_method_ast_node: MagicMock,
+    ) -> None:
+        lang_obj = MagicMock()
+        queries = {
+            cs.SupportedLanguage.JS: {"language": lang_obj},
+        }
+        engine = JsTypeInferenceEngine(
+            import_processor=mock_import_processor,
+            function_registry=mock_function_registry,
+            project_name="test_project",
+            find_method_ast_node_func=mock_find_method_ast_node,
+            queries=queries,
+        )
+        result = engine._get_language_obj()
+        assert result is lang_obj
