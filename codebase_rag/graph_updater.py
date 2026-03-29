@@ -262,7 +262,8 @@ def _hash_file(filepath: Path) -> str:
 
 
 def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
-    data = filepath.read_bytes()
+    with open(filepath, "rb") as f:
+        data = f.read()
     return hashlib.md5(data).hexdigest(), data
 
 
