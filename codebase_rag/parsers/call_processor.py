@@ -267,7 +267,7 @@ class CallProcessor:
             method_nodes = [
                 n
                 for n in sorted_func_nodes[lo:hi]
-                if n.end_byte <= body_end and isinstance(n, Node)
+                if n.end_byte <= body_end
             ]
         else:
             method_query = queries[language][cs.QUERY_FUNCTIONS]
@@ -277,8 +277,6 @@ class CallProcessor:
             method_captures = sorted_captures(method_cursor, body_node)
             method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         for method_node in method_nodes:
-            if not isinstance(method_node, Node):
-                continue
             if language == cs.SupportedLanguage.CPP:
                 method_name = cpp_utils.extract_function_name(method_node)
             else:
