@@ -126,7 +126,6 @@ class CallProcessor:
             cached_calls = combined_captures.get(cs.CAPTURE_CALL)
             if cached_calls is not None:
                 all_call_nodes = cached_calls
-                call_starts = [n.start_byte for n in all_call_nodes]
             else:
                 all_call_nodes, call_starts = self._collect_all_call_nodes(
                     root_node, language, queries
@@ -135,9 +134,17 @@ class CallProcessor:
                 return
 
             sorted_func_nodes = combined_captures.get(cs.CAPTURE_FUNCTION)
-            func_node_starts = (
-                [n.start_byte for n in sorted_func_nodes] if sorted_func_nodes else None
-            )
+            if sorted_func_nodes or combined_captures.get(cs.CAPTURE_CLASS):
+                if cached_calls is not None:
+                    call_starts = [n.start_byte for n in all_call_nodes]
+                func_node_starts = (
+                    [n.start_byte for n in sorted_func_nodes]
+                    if sorted_func_nodes
+                    else None
+                )
+            else:
+                call_starts = None
+                func_node_starts = None
 
             self._process_calls_in_functions(
                 root_node,
