@@ -2,19 +2,22 @@ import hashlib
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, ItemsView, KeysView
 from pathlib import Path
 
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from tree_sitter import Node, Parser
+from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
 from . import logs as ls
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
+from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers.factory import ProcessorFactory
+from .parsers.utils import sorted_captures
 from .services import IngestorProtocol, QueryProtocol
 from .types_defs import (
     EmbeddingQueryResult,
@@ -267,6 +270,20 @@ def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
     return hashlib.md5(data).hexdigest(), data
 
 
+def _pre_parse_worker(
+    args: tuple[Path, bytes, object, object | None],
+) -> tuple[Path, Node, dict[str, list] | None]:
+    filepath, source_bytes, language_obj, combined_query = args
+    thread_parser = Parser(language_obj)
+    tree = thread_parser.parse(source_bytes)
+    root_node = tree.root_node
+    combined_captures_result: dict[str, list] | None = None
+    if combined_query:
+        cursor = QueryCursor(combined_query)
+        combined_captures_result = sorted_captures(cursor, root_node)
+    return filepath, root_node, combined_captures_result
+
+
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
     if not cache_path.is_file():
         return {}
@@ -463,6 +480,32 @@ class GraphUpdater:
 
         processed_since_flush = 0
 
+        changed_entries: list[tuple[Path, str, bool, bytes]] = []
+        for filepath in eligible_files:
+            file_key = str(cached_relative_path(filepath, self.repo_path))
+            current_file_keys.add(file_key)
+
+            current_hash, file_bytes = _hash_file_with_bytes(filepath)
+            new_hashes[file_key] = current_hash
+
+            if (
+                not force
+                and file_key in old_hashes
+                and old_hashes[file_key] == current_hash
+            ):
+                logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
+                skipped_count += 1
+                continue
+
+            is_new = file_key not in old_hashes
+            if not is_new:
+                logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
+            else:
+                logger.debug(ls.FILE_HASH_NEW, path=file_key)
+            changed_entries.append((filepath, file_key, is_new, file_bytes))
+
+        pre_parsed = self._pre_parse_changed_files(changed_entries)
+
         with Progress(
             SpinnerColumn(),
             TextColumn(ls.PROGRESS_INDEXING_LABEL),
@@ -471,32 +514,19 @@ class GraphUpdater:
             disable=not sys.stderr.isatty(),
         ) as progress:
             task = progress.add_task("", total=len(eligible_files))
+            if skipped_count:
+                progress.advance(task, skipped_count)
 
-            for filepath in eligible_files:
-                file_key = str(cached_relative_path(filepath, self.repo_path))
-                current_file_keys.add(file_key)
-
-                current_hash, file_bytes = _hash_file_with_bytes(filepath)
-                new_hashes[file_key] = current_hash
-
-                if (
-                    not force
-                    and file_key in old_hashes
-                    and old_hashes[file_key] == current_hash
-                ):
-                    logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
-                    skipped_count += 1
-                    progress.advance(task)
-                    continue
-
-                if file_key in old_hashes:
-                    logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
+            for filepath, file_key, is_new, file_bytes in changed_entries:
+                if not is_new:
                     self.remove_file_from_state(filepath)
-                else:
-                    logger.debug(ls.FILE_HASH_NEW, path=file_key)
 
                 changed_count += 1
-                self._process_single_file(filepath, file_bytes=file_bytes)
+                self._process_single_file(
+                    filepath,
+                    file_bytes=file_bytes,
+                    pre_parsed=pre_parsed.get(filepath),
+                )
 
                 processed_since_flush += 1
                 if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
@@ -531,8 +561,43 @@ class GraphUpdater:
 
         _save_hash_cache(cache_path, new_hashes)
 
+    def _pre_parse_changed_files(
+        self,
+        changed_entries: list[tuple[Path, str, bool, bytes]],
+    ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
+        work_items: list[tuple[Path, bytes, object, object | None]] = []
+        for filepath, _file_key, _is_new, file_bytes in changed_entries:
+            lang_config = get_language_spec(filepath.suffix)
+            if not (
+                lang_config
+                and isinstance(lang_config.language, cs.SupportedLanguage)
+                and lang_config.language in self.parsers
+            ):
+                continue
+            language = lang_config.language
+            parser = self.queries[language].get(cs.KEY_PARSER)
+            if not parser:
+                continue
+            language_obj = parser.language
+            combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+            work_items.append((filepath, file_bytes, language_obj, combined_query))
+
+        if not work_items:
+            return {}
+
+        result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
+        with ThreadPoolExecutor() as pool:
+            for filepath, root_node, captures in pool.map(
+                _pre_parse_worker, work_items
+            ):
+                result[filepath] = (root_node, captures)
+        return result
+
     def _process_single_file(
-        self, filepath: Path, file_bytes: bytes | None = None
+        self,
+        filepath: Path,
+        file_bytes: bytes | None = None,
+        pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
     ) -> None:
         lang_config = get_language_spec(filepath.suffix)
         if (
@@ -546,6 +611,7 @@ class GraphUpdater:
                 self.queries,
                 self.factory.structure_processor.structural_elements,
                 source_bytes=file_bytes,
+                pre_parsed=pre_parsed,
             )
             if result:
                 root_node, language = result

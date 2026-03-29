@@ -63,6 +63,7 @@ class DefinitionProcessor(
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
         source_bytes: bytes | None = None,
+        pre_parsed: tuple[ASTNode, dict[str, list] | None] | None = None,
     ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
         if isinstance(file_path, str):
             file_path = Path(file_path)
@@ -82,16 +83,19 @@ class DefinitionProcessor(
                 return None
 
             self._handler = get_handler(language)
-            if source_bytes is None:
-                source_bytes = file_path.read_bytes()
-            lang_queries = queries[language]
-            parser = lang_queries.get(cs.KEY_PARSER)
-            if not parser:
-                logger.warning(ls.DEF_NO_PARSER.format(language=language))
-                return None
-
-            tree = parser.parse(source_bytes)
-            root_node = tree.root_node
+            if pre_parsed is not None:
+                root_node, pre_combined_captures = pre_parsed
+            else:
+                if source_bytes is None:
+                    source_bytes = file_path.read_bytes()
+                lang_queries = queries[language]
+                parser = lang_queries.get(cs.KEY_PARSER)
+                if not parser:
+                    logger.warning(ls.DEF_NO_PARSER.format(language=language))
+                    return None
+                tree = parser.parse(source_bytes)
+                root_node = tree.root_node
+                pre_combined_captures = None
 
             module_qn = cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
@@ -129,18 +133,21 @@ class DefinitionProcessor(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             )
 
-            combined_captures: dict[str, list] | None = None
-            combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
-            if combined_query:
-                cursor = QueryCursor(combined_query)
-                combined_captures = sorted_captures(cursor, root_node)
-                if self._func_class_captures_cache is not None and combined_captures:
-                    cache_entry: dict[str, list] = {}
-                    for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
-                        if key in combined_captures:
-                            cache_entry[key] = combined_captures[key]
-                    if cache_entry:
-                        self._func_class_captures_cache[file_path] = cache_entry
+            if pre_combined_captures is not None:
+                combined_captures = pre_combined_captures
+            else:
+                combined_captures = None
+                combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+                if combined_query:
+                    cursor = QueryCursor(combined_query)
+                    combined_captures = sorted_captures(cursor, root_node)
+            if self._func_class_captures_cache is not None and combined_captures:
+                cache_entry: dict[str, list] = {}
+                for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
+                    if key in combined_captures:
+                        cache_entry[key] = combined_captures[key]
+                if cache_entry:
+                    self._func_class_captures_cache[file_path] = cache_entry
 
             self.import_processor.parse_imports(
                 root_node,
