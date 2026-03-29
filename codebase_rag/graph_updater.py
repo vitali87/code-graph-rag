@@ -436,7 +436,7 @@ class GraphUpdater:
             for fname in sorted(filenames):
                 if fname == hash_name:
                     continue
-                filepath = dirpath_obj / fname
+                filepath = Path(f"{dirpath}/{fname}")
                 if not should_skip_path(
                     filepath,
                     self.repo_path,
