@@ -9,21 +9,28 @@
   <img src="assets/logo-light-any.png" alt="Code-Graph-RAG Logo" width="480">
 
   <p>
+  <!-- Badges below are commented out while the GitHub account is suspended. Restore them when the account is reinstated.
+       Stars/Forks: shields.io hits GitHub's API (returns "repo not found" for suspended accounts).
+       gitcgr: indexes from GitHub (shows "not indexed" while unavailable).
+       MseeP.ai: badge PNG ignores inline height on Bitbucket and renders as a full-size tile.
   <a href="https://github.com/vitali87/code-graph-rag/stargazers">
     <img src="https://img.shields.io/github/stars/vitali87/code-graph-rag?style=social" alt="GitHub stars" />
   </a>
   <a href="https://github.com/vitali87/code-graph-rag/network/members">
     <img src="https://img.shields.io/github/forks/vitali87/code-graph-rag?style=social" alt="GitHub forks" />
   </a>
+  -->
   <a href="https://codecov.io/gh/vitali87/code-graph-rag">
     <img src="https://codecov.io/gh/vitali87/code-graph-rag/graph/badge.svg" alt="Codecov" />
   </a>
   <a href="https://sonarcloud.io/summary/overall?id=vitali87_code-graph-rag">
     <img src="https://sonarcloud.io/api/project_badges/measure?project=vitali87_code-graph-rag&metric=alert_status" alt="Quality Gate Status" />
   </a>
+  <!--
   <a href="https://mseep.ai/app/vitali87-code-graph-rag">
     <img src="https://mseep.net/pr/vitali87-code-graph-rag-badge.png" alt="MseeP.ai Security Assessment" height="20" />
   </a>
+  -->
   <a href="https://code-graph-rag.com">
     <img src="https://img.shields.io/badge/Enterprise-Support%20%26%20Services-6366f1" alt="Enterprise Support" />
   </a>
@@ -33,9 +40,11 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/vitali87/code-graph-rag">
     <img src="https://api.scorecard.dev/projects/github.com/vitali87/code-graph-rag/badge" alt="OpenSSF Scorecard" />
   </a>
+  <!--
   <a href="https://gitcgr.com/vitali87/code-graph-rag">
     <img src="https://gitcgr.com/badge/vitali87/code-graph-rag.svg" alt="gitcgr" />
   </a>
+  -->
 </p>
 </div>
 
