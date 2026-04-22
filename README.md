@@ -1,9 +1,12 @@
 <div align="center">
+  <!-- Bitbucket strips <picture>/<source> tags, so we use a single light-mode <img>. Restore the theme-aware <picture> block below when the GitHub account is reinstated:
   <picture>
     <source srcset="assets/logo-dark-any.png" media="(prefers-color-scheme: dark)">
     <source srcset="assets/logo-light-any.png" media="(prefers-color-scheme: light)">
     <img src="assets/logo-dark-any.png" alt="Code-Graph-RAG Logo" width="480">
   </picture>
+  -->
+  <img src="assets/logo-light-any.png" alt="Code-Graph-RAG Logo" width="480">
 
   <p>
   <a href="https://github.com/vitali87/code-graph-rag/stargazers">
