@@ -589,7 +589,7 @@ claude mcp add --transport stdio code-graph-rag \
 | `write_file` | Write content to a file, creating it if it doesn't exist. |
 | `list_directory` | List contents of a directory in the project. |
 | `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Requires the 'semantic' extra to be installed. |
-| `ask_agent` | Ask the RAG agent a question about the codebase. Wraps the full RAG pipeline (graph query, LLM response) as an MCP tool. |
+| `ask_agent` | Ask the Code Graph RAG agent a question about the codebase. Uses the full RAG pipeline to analyze the code graph and provide a detailed answer. Use this for general questions about architecture, functionality, and code relationships. |
 <!-- /SECTION:mcp_tools -->
 
 ### Example Usage
@@ -731,7 +731,7 @@ my_build_output
 - **pydantic-settings**: Settings management using Pydantic
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
-- **tiktoken**: Fast BPE tokeniser used for token counting and context window management
+- **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
 - **toml**: Python Library for Tom's Obvious, Minimal Language
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library

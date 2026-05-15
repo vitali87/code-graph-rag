@@ -4,16 +4,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from tree_sitter import QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
+from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
 from .handlers import get_handler
 from .js_ts.ingest import JsTsIngestMixin
-from .utils import safe_decode_with_fallback
+from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -38,6 +41,7 @@ class DefinitionProcessor(
         simple_name_lookup: SimpleNameLookup,
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
+        func_class_captures_cache: dict[Path, dict] | None = None,
     ):
         super().__init__()
         self.ingestor = ingestor
@@ -50,6 +54,7 @@ class DefinitionProcessor(
         self.class_inheritance: dict[str, list[str]] = {}
         self._deferred_cpp_methods: list = []
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
+        self._func_class_captures_cache = func_class_captures_cache
 
     def process_file(
         self,
@@ -57,10 +62,12 @@ class DefinitionProcessor(
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
+        source_bytes: bytes | None = None,
+        pre_parsed: tuple[ASTNode, dict[str, list] | None] | None = None,
     ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
         if isinstance(file_path, str):
             file_path = Path(file_path)
-        relative_path = file_path.relative_to(self.repo_path)
+        relative_path = cached_relative_path(file_path, self.repo_path)
         relative_path_str = str(relative_path)
         logger.info(
             ls.DEF_PARSING_AST.format(language=language, path=relative_path_str)
@@ -76,15 +83,19 @@ class DefinitionProcessor(
                 return None
 
             self._handler = get_handler(language)
-            source_bytes = file_path.read_bytes()
-            lang_queries = queries[language]
-            parser = lang_queries.get(cs.KEY_PARSER)
-            if not parser:
-                logger.warning(ls.DEF_NO_PARSER.format(language=language))
-                return None
-
-            tree = parser.parse(source_bytes)
-            root_node = tree.root_node
+            if pre_parsed is not None:
+                root_node, pre_combined_captures = pre_parsed
+            else:
+                if source_bytes is None:
+                    source_bytes = file_path.read_bytes()
+                lang_queries = queries[language]
+                parser = lang_queries.get(cs.KEY_PARSER)
+                if not parser:
+                    logger.warning(ls.DEF_NO_PARSER.format(language=language))
+                    return None
+                tree = parser.parse(source_bytes)
+                root_node = tree.root_node
+                pre_combined_captures = None
 
             module_qn = cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
@@ -101,7 +112,7 @@ class DefinitionProcessor(
                     cs.KEY_QUALIFIED_NAME: module_qn,
                     cs.KEY_NAME: file_path.name,
                     cs.KEY_PATH: relative_path_str,
-                    cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
+                    cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
                 },
             )
 
@@ -122,22 +133,61 @@ class DefinitionProcessor(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             )
 
-            self.import_processor.parse_imports(root_node, module_qn, language, queries)
-            self._ingest_missing_import_patterns(
-                root_node, module_qn, language, queries
+            if pre_combined_captures is not None:
+                combined_captures = pre_combined_captures
+            else:
+                combined_captures = None
+                combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+                if combined_query:
+                    cursor = QueryCursor(combined_query)
+                    combined_captures = sorted_captures(cursor, root_node)
+            if self._func_class_captures_cache is not None and combined_captures:
+                cache_entry: dict[str, list] = {}
+                for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
+                    if key in combined_captures:
+                        cache_entry[key] = combined_captures[key]
+                if cache_entry:
+                    self._func_class_captures_cache[file_path] = cache_entry
+
+            self.import_processor.parse_imports(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                pre_captures=combined_captures,
             )
+            if language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+                self._ingest_missing_import_patterns(
+                    root_node, module_qn, language, queries
+                )
             if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
-            self._ingest_all_functions(root_node, module_qn, language, queries)
-            self._ingest_classes_and_methods(root_node, module_qn, language, queries)
-            self._ingest_object_literal_methods(root_node, module_qn, language, queries)
-            self._ingest_commonjs_exports(root_node, module_qn, language, queries)
-            if language in {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}:
-                self._ingest_es6_exports(root_node, module_qn, language, queries)
-            self._ingest_assignment_arrow_functions(
-                root_node, module_qn, language, queries
+            self._ingest_all_functions(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
             )
-            self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
+            self._ingest_classes_and_methods(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
+            if language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+                self._ingest_object_literal_methods(
+                    root_node, module_qn, language, queries
+                )
+                self._ingest_commonjs_exports(root_node, module_qn, language, queries)
+                self._ingest_es6_exports(root_node, module_qn, language, queries)
+                self._ingest_assignment_arrow_functions(
+                    root_node, module_qn, language, queries
+                )
+                self._ingest_prototype_inheritance(
+                    root_node, module_qn, language, queries
+                )
 
             return (root_node, language)
 

@@ -18,11 +18,27 @@ from ..types_defs import (
     SimpleNameLookup,
     TreeSitterNodeProtocol,
 )
+from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
     from ..services import IngestorProtocol
     from ..types_defs import FunctionRegistryTrieProtocol
+
+_QUERY_CACHE: dict[tuple[int, str], Query] = {}
+_QUERY_LAST: tuple[tuple[int, str], Query] | None = None
+
+
+def get_cached_query(language_obj, query_text: str) -> Query:
+    global _QUERY_LAST
+    key = (id(language_obj), query_text)
+    if _QUERY_LAST is not None and _QUERY_LAST[0] == key:
+        return _QUERY_LAST[1]
+    if key not in _QUERY_CACHE:
+        _QUERY_CACHE[key] = Query(language_obj, query_text)
+    result = _QUERY_CACHE[key]
+    _QUERY_LAST = (key, result)
+    return result
 
 
 class FunctionCapturesResult(NamedTuple):
@@ -34,9 +50,25 @@ def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNod
     # (H) tree-sitter v0.25 captures() returns nodes in non-deterministic order
     # across process invocations; sort by start_byte for reproducibility
     raw = cursor.captures(node)
-    return {
-        name: sorted(nodes, key=lambda n: n.start_byte) for name, nodes in raw.items()
-    }
+    result: dict[str, list[ASTNode]] = {}
+    for name, nodes in raw.items():
+        if len(nodes) <= 1:
+            result[name] = nodes
+        else:
+            is_sorted = True
+            prev_byte = nodes[0].start_byte
+            for i in range(1, len(nodes)):
+                cur_byte = nodes[i].start_byte
+                if cur_byte < prev_byte:
+                    is_sorted = False
+                    break
+                prev_byte = cur_byte
+            result[name] = nodes if is_sorted else sorted(nodes, key=_start_byte_key)
+    return result
+
+
+def _start_byte_key(n: ASTNode) -> int:
+    return n.start_byte
 
 
 def get_function_captures(
@@ -122,8 +154,10 @@ def ingest_method(
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
     }
     if file_path is not None and repo_path is not None:
-        method_props[cs.KEY_PATH] = file_path.relative_to(repo_path).as_posix()
-        method_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+        method_props[cs.KEY_PATH] = cached_relative_path(
+            file_path, repo_path
+        ).as_posix()
+        method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
@@ -176,13 +210,21 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
     if not isinstance(current, Node):
         return False
 
-    while current and current.type not in lang_config.module_node_types:
+    class_types = lang_config.class_node_types
+    func_types = lang_config.function_node_types
+    module_types = lang_config.module_node_types
+    body_field = cs.FIELD_BODY
+
+    while current is not None:
+        current_type = current.type
+        if current_type in module_types:
+            return False
+        if current_type in class_types:
+            return True
         if (
-            current.type in lang_config.function_node_types
-            and current.child_by_field_name(cs.FIELD_BODY) is not None
+            current_type in func_types
+            and current.child_by_field_name(body_field) is not None
         ):
             return False
-        if current.type in lang_config.class_node_types:
-            return True
         current = current.parent
     return False

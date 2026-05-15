@@ -96,6 +96,7 @@ class TypeInferenceEngine:
                 function_registry=self.function_registry,
                 project_name=self.project_name,
                 find_method_ast_node_func=self.python_type_inference._find_method_ast_node,
+                queries=self.queries,
             )
         return self._js_type_inference
 
@@ -126,7 +127,7 @@ class TypeInferenceEngine:
                 )
             case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 return self.js_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
+                    caller_node, module_qn, language
                 )
             case cs.SupportedLanguage.JAVA:
                 return self.java_type_inference.build_variable_type_map(

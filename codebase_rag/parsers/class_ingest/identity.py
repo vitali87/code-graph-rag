@@ -7,13 +7,14 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
-from ...utils.fqn_resolver import resolve_fqn_from_ast
 from ..cpp import utils as cpp_utils
 from ..rs import utils as rs_utils
 from ..utils import safe_decode_text
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
+
+_CLASS_MODULE_PREFIX_CACHE: dict[tuple[Path, int], str] = {}
 
 
 def resolve_class_identity(
@@ -26,14 +27,26 @@ def resolve_class_identity(
     project_name: str,
 ) -> tuple[str, str, bool] | None:
     if (fqn_config := LANGUAGE_FQN_SPECS.get(language)) and file_path:
-        if class_qn := resolve_fqn_from_ast(
-            class_node,
-            file_path,
-            repo_path,
-            project_name,
-            fqn_config,
-        ):
-            class_name = class_qn.split(cs.SEPARATOR_DOT)[-1]
+        class_name = fqn_config.get_name(class_node)
+        if class_name:
+            parts = [class_name]
+            current = class_node.parent
+            while current:
+                if current.type in fqn_config.scope_node_types:
+                    if scope_name := fqn_config.get_name(current):
+                        parts.append(scope_name)
+                current = current.parent
+            parts.reverse()
+
+            cache_key = (file_path, id(fqn_config))
+            if cache_key in _CLASS_MODULE_PREFIX_CACHE:
+                module_prefix = _CLASS_MODULE_PREFIX_CACHE[cache_key]
+            else:
+                module_parts = fqn_config.file_to_module_parts(file_path, repo_path)
+                module_prefix = cs.SEPARATOR_DOT.join([project_name] + module_parts)
+                _CLASS_MODULE_PREFIX_CACHE[cache_key] = module_prefix
+
+            class_qn = module_prefix + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
             is_exported = language == cs.SupportedLanguage.CPP and (
                 class_node.type == cs.CppNodeType.FUNCTION_DEFINITION
                 or cpp_utils.is_exported(class_node)

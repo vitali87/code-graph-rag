@@ -193,7 +193,9 @@ class TestBuildLocalVariableTypeMapDispatch:
             )
 
         assert result == expected
-        mock_method.assert_called_once_with(mock_node, "proj.module")
+        mock_method.assert_called_once_with(
+            mock_node, "proj.module", cs.SupportedLanguage.JS
+        )
 
     def test_dispatches_to_ts_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock
@@ -211,7 +213,9 @@ class TestBuildLocalVariableTypeMapDispatch:
             )
 
         assert result == expected
-        mock_method.assert_called_once_with(mock_node, "proj.module")
+        mock_method.assert_called_once_with(
+            mock_node, "proj.module", cs.SupportedLanguage.TS
+        )
 
     def test_dispatches_to_java_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock

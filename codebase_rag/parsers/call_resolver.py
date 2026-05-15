@@ -14,7 +14,9 @@ from .py import resolve_class_name
 from .type_inference import TypeInferenceEngine
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
+_SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
+_QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 
 
 class CallResolver:
@@ -23,6 +25,8 @@ class CallResolver:
         "import_processor",
         "type_inference",
         "class_inheritance",
+        "_simple_resolution_cache",
+        "_wildcard_cache",
     )
 
     def __init__(
@@ -36,6 +40,10 @@ class CallResolver:
         self.import_processor = import_processor
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        self._simple_resolution_cache: dict[
+            tuple[str, str], tuple[str, str] | None
+        ] = {}
+        self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
 
     def _resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
@@ -61,6 +69,12 @@ class CallResolver:
         local_var_types: dict[str, str] | None = None,
         class_context: str | None = None,
     ) -> tuple[str, str] | None:
+        use_cache = not local_var_types
+        if use_cache:
+            cache_key = (call_name, module_qn)
+            if cache_key in self._simple_resolution_cache:
+                return self._simple_resolution_cache[cache_key]
+
         if result := self._try_resolve_iife(call_name, module_qn):
             return result
 
@@ -73,12 +87,19 @@ class CallResolver:
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types
         ):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
             return result
 
         if result := self._try_resolve_same_module(call_name, module_qn):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
             return result
 
-        return self._try_resolve_via_trie(call_name, module_qn)
+        result = self._try_resolve_via_trie(call_name, module_qn)
+        if use_cache:
+            self._simple_resolution_cache[cache_key] = result
+        return result
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
@@ -141,10 +162,15 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
-        if not self._has_separator(call_name):
+        if cs.SEPARATOR_DOUBLE_COLON in call_name:
+            separator = cs.SEPARATOR_DOUBLE_COLON
+        elif cs.SEPARATOR_COLON in call_name:
+            separator = cs.SEPARATOR_COLON
+        elif cs.SEPARATOR_DOT in call_name:
+            separator = cs.SEPARATOR_DOT
+        else:
             return None
 
-        separator = self._get_separator(call_name)
         parts = call_name.split(separator)
 
         if len(parts) == 2:
@@ -179,9 +205,17 @@ class CallResolver:
     def _try_resolve_wildcard_imports(
         self, call_name: str, import_map: dict[str, str]
     ) -> tuple[str, str] | None:
-        for local_name, imported_qn in import_map.items():
-            if not local_name.startswith("*"):
-                continue
+        map_id = id(import_map)
+        if map_id not in self._wildcard_cache:
+            self._wildcard_cache[map_id] = (
+                [(k, v) for k, v in import_map.items() if k[0] == "*"]
+                if import_map
+                else []
+            )
+        wildcards = self._wildcard_cache[map_id]
+        if not wildcards:
+            return None
+        for _, imported_qn in wildcards:
             if result := self._try_wildcard_qns(call_name, imported_qn):
                 return result
         return None
@@ -214,16 +248,34 @@ class CallResolver:
     def _try_resolve_via_trie(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
+        search_name = _SEARCH_NAME_CACHE.get(call_name)
+        if search_name is None:
+            search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
+            _SEARCH_NAME_CACHE[call_name] = search_name
         possible_matches = self.function_registry.find_ending_with(search_name)
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
 
-        possible_matches.sort(
-            key=lambda qn: (self._calculate_import_distance(qn, module_qn), qn)
-        )
-        best_candidate_qn = possible_matches[0]
+        if len(possible_matches) == 1:
+            best_candidate_qn = possible_matches[0]
+        else:
+            caller_parts = module_qn.split(cs.SEPARATOR_DOT)
+            caller_len = len(caller_parts)
+            caller_parent_prefix = (
+                cs.SEPARATOR_DOT.join(caller_parts[:-1]) + cs.SEPARATOR_DOT
+                if caller_len > 1
+                else ""
+            )
+            best_candidate_qn = min(
+                possible_matches,
+                key=lambda qn: (
+                    self._import_distance_fast(
+                        qn, caller_parts, caller_len, caller_parent_prefix
+                    ),
+                    qn,
+                ),
+            )
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         return self.function_registry[best_candidate_qn], best_candidate_qn
 
@@ -670,6 +722,30 @@ class CallResolver:
 
         return base_distance
 
+    def _import_distance_fast(
+        self,
+        candidate_qn: str,
+        caller_parts: list[str],
+        caller_len: int,
+        caller_parent_prefix: str,
+    ) -> int:
+        if candidate_qn in _QN_SPLIT_CACHE:
+            candidate_parts, candidate_len = _QN_SPLIT_CACHE[candidate_qn]
+        else:
+            candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
+            candidate_len = len(candidate_parts)
+            _QN_SPLIT_CACHE[candidate_qn] = (candidate_parts, candidate_len)
+        common_prefix = 0
+        for i in range(min(caller_len, candidate_len)):
+            if caller_parts[i] == candidate_parts[i]:
+                common_prefix += 1
+            else:
+                break
+        base_distance = max(caller_len, candidate_len) - common_prefix
+        if caller_parent_prefix and candidate_qn.startswith(caller_parent_prefix):
+            base_distance -= 1
+        return base_distance
+
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
@@ -679,7 +755,7 @@ class CallResolver:
         self,
         call_node: Node,
         module_qn: str,
-        local_var_types: dict[str, str],
+        local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         java_engine = self.type_inference.java_type_inference
 

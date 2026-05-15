@@ -2145,3 +2145,81 @@ def test_multiple_inheritance_creates_all_relationships(
     ]
 
     assert len(derived_inherits) >= 1, "Derived should have inheritance relationships"
+
+
+class TestIngestClassesAndMethodsWithoutCombinedCaptures:
+    @pytest.fixture
+    def python_class_project(self, temp_repo: Path) -> Path:
+        project_path = temp_repo / "py_class_test"
+        project_path.mkdir()
+
+        main_file = project_path / "main.py"
+        main_file.write_text(
+            encoding="utf-8",
+            data="""
+class MyService:
+    def handle(self):
+        pass
+
+    def process(self):
+        pass
+""",
+        )
+
+        return project_path
+
+    def test_classes_ingested_without_combined_captures(
+        self, python_class_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        run_updater(python_class_project, mock_ingestor, skip_if_missing="python")
+
+        project_name = python_class_project.name
+        from codebase_rag.tests.conftest import get_node_names
+
+        classes = get_node_names(mock_ingestor, "Class")
+        assert f"{project_name}.main.MyService" in classes
+
+        methods = get_node_names(mock_ingestor, "Method")
+        assert f"{project_name}.main.MyService.handle" in methods
+        assert f"{project_name}.main.MyService.process" in methods
+
+
+class TestIngestRustImplMethodsWithoutSortedFuncNodes:
+    @pytest.fixture
+    def rust_impl_project(self, temp_repo: Path) -> Path:
+        project_path = temp_repo / "rust_impl_test"
+        project_path.mkdir()
+
+        main_file = project_path / "main.rs"
+        main_file.write_text(
+            encoding="utf-8",
+            data="""
+struct Calculator {
+    value: i32,
+}
+
+impl Calculator {
+    fn new() -> Calculator {
+        Calculator { value: 0 }
+    }
+
+    fn add(&mut self, x: i32) {
+        self.value += x;
+    }
+}
+""",
+        )
+
+        return project_path
+
+    def test_rust_impl_methods_ingested(
+        self, rust_impl_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        run_updater(rust_impl_project, mock_ingestor, skip_if_missing="rust")
+
+        from codebase_rag.tests.conftest import get_node_names
+
+        methods = get_node_names(mock_ingestor, "Method")
+        project_name = rust_impl_project.name
+        assert any("Calculator" in m and "new" in m for m in methods)
+        assert any("Calculator" in m and "add" in m for m in methods)

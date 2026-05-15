@@ -6,12 +6,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Query, QueryCursor
+from tree_sitter import QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode
 from ..utils import (
+    get_cached_query,
     ingest_exported_function,
     safe_decode_text,
     safe_decode_with_fallback,
@@ -61,7 +62,7 @@ class JsTsModuleSystemMixin:
 
         try:
             try:
-                query = Query(language_obj, cs.JS_COMMONJS_DESTRUCTURE_QUERY)
+                query = get_cached_query(language_obj, cs.JS_COMMONJS_DESTRUCTURE_QUERY)
                 cursor = QueryCursor(query)
                 captures = sorted_captures(cursor, root_node)
 
@@ -281,7 +282,7 @@ class JsTsModuleSystemMixin:
 
         for query_text in query_texts:
             try:
-                cursor = QueryCursor(Query(language_obj, query_text))
+                cursor = QueryCursor(get_cached_query(language_obj, query_text))
                 captures = sorted_captures(cursor, root_node)
 
                 self._process_exports_pattern(
@@ -318,7 +319,7 @@ class JsTsModuleSystemMixin:
             ]:
                 try:
                     cleaned_query = textwrap.dedent(query_text).strip()
-                    query = Query(lang_query, cleaned_query)
+                    query = get_cached_query(lang_query, cleaned_query)
                     cursor = QueryCursor(query)
                     captures = sorted_captures(cursor, root_node)
 

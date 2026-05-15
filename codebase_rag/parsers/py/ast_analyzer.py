@@ -10,7 +10,14 @@ from ... import constants as cs
 from ... import logs as lg
 from ...types_defs import LanguageQueries
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
-from ..utils import safe_decode_text, sorted_captures
+from ..utils import get_cached_query, safe_decode_text, sorted_captures
+
+_PY_TRAVERSE_QUERY = (
+    f"({cs.TS_PY_ASSIGNMENT}) @assignment "
+    f"({cs.TS_PY_LIST_COMPREHENSION}) @comprehension "
+    f"({cs.TS_PY_FOR_STATEMENT}) @for_stmt "
+    f"({cs.TS_PY_RETURN_STATEMENT}) @return_stmt"
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,6 +80,8 @@ class PythonAstAnalyzerMixin(_AstBase):
     @abstractmethod
     def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None: ...
 
+    _return_stmt_cache: dict[int, list[Node]]
+
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
@@ -80,19 +89,35 @@ class PythonAstAnalyzerMixin(_AstBase):
         comprehensions: list[Node] = []
         for_statements: list[Node] = []
 
-        stack: list[Node] = [node]
-        while stack:
-            current = stack.pop()
-            node_type = current.type
+        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
+        if py_lang_obj is not None:
+            try:
+                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
+                cursor = QueryCursor(q)
+                captures = cursor.captures(node)
+                assignments = captures.get("assignment", [])
+                comprehensions = captures.get("comprehension", [])
+                for_statements = captures.get("for_stmt", [])
+                if return_stmts := captures.get("return_stmt"):
+                    self._return_stmt_cache[id(node)] = return_stmts
+            except Exception:
+                py_lang_obj = None
 
-            if node_type == cs.TS_PY_ASSIGNMENT:
-                assignments.append(current)
-            elif node_type == cs.TS_PY_LIST_COMPREHENSION:
-                comprehensions.append(current)
-            elif node_type == cs.TS_PY_FOR_STATEMENT:
-                for_statements.append(current)
+        if py_lang_obj is None:
+            stack: list[Node] = [node]
+            while stack:
+                current = stack.pop()
+                node_type = current.type
 
-            stack.extend(reversed(current.children))
+                if node_type == cs.TS_PY_ASSIGNMENT:
+                    assignments.append(current)
+                elif node_type == cs.TS_PY_LIST_COMPREHENSION:
+                    comprehensions.append(current)
+                elif node_type == cs.TS_PY_FOR_STATEMENT:
+                    for_statements.append(current)
+
+                stack.extend(reversed(current.children))
 
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)
@@ -273,13 +298,26 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
+        cached = self._return_stmt_cache.get(id(node))
+        if cached is not None:
+            return_nodes.extend(cached)
+            return
+        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
+        if py_lang_obj is not None:
+            try:
+                q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
+                cursor = QueryCursor(q)
+                captures = cursor.captures(node)
+                return_nodes.extend(captures.get("return_stmt", []))
+                return
+            except Exception:
+                pass
         stack: list[Node] = [node]
-
         while stack:
             current = stack.pop()
             if current.type == cs.TS_PY_RETURN_STATEMENT:
                 return_nodes.append(current)
-
             stack.extend(reversed(current.children))
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:

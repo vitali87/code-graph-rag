@@ -1,13 +1,22 @@
+from __future__ import annotations
+
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from loguru import logger
+from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
-from ..utils import safe_decode_text
+from ..utils import get_cached_query, safe_decode_text
 from . import utils as ut
+
+if TYPE_CHECKING:
+    from ...types_defs import LanguageQueries
+
+_JS_DECLARATOR_QUERY = "(variable_declarator) @declarator"
 
 
 class JsTypeInferenceEngine:
@@ -16,6 +25,7 @@ class JsTypeInferenceEngine:
         "function_registry",
         "project_name",
         "_find_method_ast_node",
+        "_queries",
     )
 
     def __init__(
@@ -24,29 +34,51 @@ class JsTypeInferenceEngine:
         function_registry: FunctionRegistryTrieProtocol,
         project_name: str,
         find_method_ast_node_func: Callable[[str], ASTNode | None],
+        queries: dict[cs.SupportedLanguage, LanguageQueries] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.project_name = project_name
         self._find_method_ast_node = find_method_ast_node_func
+        self._queries = queries
+
+    def _get_declarators_via_query(
+        self, caller_node: ASTNode, language: cs.SupportedLanguage | None = None
+    ) -> list[Node] | None:
+        if self._queries is None:
+            return None
+        langs = (
+            [language]
+            if language is not None
+            else [cs.SupportedLanguage.JS, cs.SupportedLanguage.TS]
+        )
+        for lang in langs:
+            lang_queries = self._queries.get(lang)
+            if lang_queries and "language" in lang_queries:
+                try:
+                    q = get_cached_query(lang_queries["language"], _JS_DECLARATOR_QUERY)
+                    cursor = QueryCursor(q)
+                    captures = cursor.captures(caller_node)
+                    return captures.get("declarator", [])
+                except Exception:
+                    continue
+        return None
 
     def build_local_variable_type_map(
-        self, caller_node: ASTNode, module_qn: str
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
-
-        stack: list[ASTNode] = [caller_node]
-
         declarator_count = 0
 
-        while stack:
-            current = stack.pop()
-
-            if current.type == cs.TS_VARIABLE_DECLARATOR:
+        declarator_nodes = self._get_declarators_via_query(caller_node, language)
+        if declarator_nodes is not None:
+            for current in declarator_nodes:
                 declarator_count += 1
                 name_node = current.child_by_field_name("name")
                 value_node = current.child_by_field_name("value")
-
                 if name_node and value_node:
                     var_name_text = name_node.text
                     if var_name_text:
@@ -57,7 +89,6 @@ class JsTypeInferenceEngine:
                                 var_name=var_name,
                                 module_qn=module_qn,
                             )
-
                             if var_type := self._infer_js_variable_type_from_value(
                                 value_node, module_qn
                             ):
@@ -69,8 +100,38 @@ class JsTypeInferenceEngine:
                                 )
                             else:
                                 logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
-
-            stack.extend(reversed(current.children))
+        else:
+            stack: list[ASTNode] = [caller_node]
+            while stack:
+                current = stack.pop()
+                if current.type == cs.TS_VARIABLE_DECLARATOR:
+                    declarator_count += 1
+                    name_node = current.child_by_field_name("name")
+                    value_node = current.child_by_field_name("value")
+                    if name_node and value_node:
+                        var_name_text = name_node.text
+                        if var_name_text:
+                            var_name = safe_decode_text(name_node)
+                            if var_name is not None:
+                                logger.debug(
+                                    ls.JS_VAR_DECLARATOR_FOUND,
+                                    var_name=var_name,
+                                    module_qn=module_qn,
+                                )
+                                if var_type := self._infer_js_variable_type_from_value(
+                                    value_node, module_qn
+                                ):
+                                    local_var_types[var_name] = var_type
+                                    logger.debug(
+                                        ls.JS_VAR_INFERRED,
+                                        var_name=var_name,
+                                        var_type=var_type,
+                                    )
+                                else:
+                                    logger.debug(
+                                        ls.JS_VAR_INFER_FAILED, var_name=var_name
+                                    )
+                stack.extend(reversed(current.children))
 
         logger.debug(
             ls.JS_VAR_TYPE_MAP_BUILT,
@@ -176,11 +237,20 @@ class JsTypeInferenceEngine:
 
         return None
 
+    def _get_language_obj(self) -> object | None:
+        if self._queries is None:
+            return None
+        for lang in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+            lang_queries = self._queries.get(lang)
+            if lang_queries and "language" in lang_queries:
+                return lang_queries["language"]
+        return None
+
     def _analyze_return_statements(
         self, method_node: ASTNode, method_qn: str
     ) -> str | None:
         return_nodes: list[ASTNode] = []
-        ut.find_return_statements(method_node, return_nodes)
+        ut.find_return_statements(method_node, return_nodes, self._get_language_obj())
 
         for return_node in return_nodes:
             for child in return_node.children:

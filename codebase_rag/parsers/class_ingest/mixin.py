@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ from ... import constants as cs
 from ... import logs
 from ...language_spec import LanguageSpec
 from ...types_defs import ASTNode, PropertyDict
+from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
@@ -89,32 +91,44 @@ class ClassIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None = None,
     ) -> None:
         lang_queries = queries[language]
-        if not (query := lang_queries[cs.QUERY_CLASSES]):
-            return
-
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        cursor = QueryCursor(query)
-        captures = sorted_captures(cursor, root_node)
-        class_nodes = captures.get(cs.CAPTURE_CLASS, [])
-        module_nodes = captures.get(cs.ONEOF_MODULE, [])
+
+        if combined_captures is not None:
+            class_nodes = list(combined_captures.get(cs.CAPTURE_CLASS, []))
+            module_nodes = combined_captures.get(cs.ONEOF_MODULE, [])
+        else:
+            if not (query := lang_queries[cs.QUERY_CLASSES]):
+                return
+            cursor = QueryCursor(query)
+            captures = sorted_captures(cursor, root_node)
+            class_nodes = captures.get(cs.CAPTURE_CLASS, [])
+            module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
         if language == cs.SupportedLanguage.CPP:
             class_nodes.extend(self._find_cpp_exported_classes(root_node))
 
         file_path = self.module_qn_to_file_path.get(module_qn)
 
+        sorted_func_nodes: list[Node] | None = None
+        func_node_starts: list[int] | None = None
+        if combined_captures is not None and cs.CAPTURE_FUNCTION in combined_captures:
+            sorted_func_nodes = combined_captures[cs.CAPTURE_FUNCTION]
+            func_node_starts = [n.start_byte for n in sorted_func_nodes]
+
         for class_node in class_nodes:
-            if isinstance(class_node, Node):
-                self._process_class_node(
-                    class_node,
-                    module_qn,
-                    language,
-                    lang_queries,
-                    lang_config,
-                    file_path,
-                )
+            self._process_class_node(
+                class_node,
+                module_qn,
+                language,
+                lang_queries,
+                lang_config,
+                file_path,
+                sorted_func_nodes=sorted_func_nodes,
+                func_node_starts=func_node_starts,
+            )
 
         self._process_inline_modules(module_nodes, module_qn, lang_config)
 
@@ -126,10 +140,17 @@ class ClassIngestMixin:
         lang_queries: LanguageQueries,
         lang_config: LanguageSpec,
         file_path: Path | None,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             self._ingest_rust_impl_methods(
-                class_node, module_qn, language, lang_queries
+                class_node,
+                module_qn,
+                language,
+                lang_queries,
+                sorted_func_nodes=sorted_func_nodes,
+                func_node_starts=func_node_starts,
             )
             return
 
@@ -158,8 +179,10 @@ class ClassIngestMixin:
             cs.KEY_IS_EXPORTED: is_exported,
         }
         if file_path is not None:
-            class_props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
-            class_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
+            class_props[cs.KEY_PATH] = cached_relative_path(
+                file_path, self.repo_path
+            ).as_posix()
+            class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -179,7 +202,13 @@ class ClassIngestMixin:
             self.function_registry,
         )
         self._ingest_class_methods(
-            class_node, class_qn, language, lang_queries, file_path
+            class_node,
+            class_qn,
+            language,
+            lang_queries,
+            file_path,
+            sorted_func_nodes=sorted_func_nodes,
+            func_node_starts=func_node_starts,
         )
 
     def _ingest_rust_impl_methods(
@@ -188,24 +217,38 @@ class ClassIngestMixin:
         module_qn: str,
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
         if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
 
         class_qn = f"{module_qn}.{impl_target}"
         body_node = class_node.child_by_field_name("body")
-        method_query = lang_queries[cs.QUERY_FUNCTIONS]
 
-        if not body_node or not method_query:
+        if not body_node:
             return
 
         file_path = self.module_qn_to_file_path.get(module_qn)
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        method_cursor = QueryCursor(method_query)
-        method_captures = sorted_captures(method_cursor, body_node)
-        for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
-            if not isinstance(method_node, Node):
-                continue
+
+        if sorted_func_nodes is not None and func_node_starts is not None:
+            body_start = body_node.start_byte
+            body_end = body_node.end_byte
+            lo = bisect_left(func_node_starts, body_start)
+            hi = bisect_right(func_node_starts, body_end)
+            method_nodes = [
+                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
+            ]
+        else:
+            method_query = lang_queries[cs.QUERY_FUNCTIONS]
+            if not method_query:
+                return
+            method_cursor = QueryCursor(method_query)
+            method_captures = sorted_captures(method_cursor, body_node)
+            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+
+        for method_node in method_nodes:
             if _is_nested_inside_function(method_node, body_node, lang_config):
                 continue
             ingest_method(
@@ -228,18 +271,32 @@ class ClassIngestMixin:
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
         file_path: Path | None = None,
+        sorted_func_nodes: list[Node] | None = None,
+        func_node_starts: list[int] | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
-        method_query = lang_queries[cs.QUERY_FUNCTIONS]
-        if not body_node or not method_query:
+        if not body_node:
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        method_cursor = QueryCursor(method_query)
-        method_captures = sorted_captures(method_cursor, body_node)
-        for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
-            if not isinstance(method_node, Node):
-                continue
+
+        if sorted_func_nodes is not None and func_node_starts is not None:
+            body_start = body_node.start_byte
+            body_end = body_node.end_byte
+            lo = bisect_left(func_node_starts, body_start)
+            hi = bisect_right(func_node_starts, body_end)
+            method_nodes = [
+                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
+            ]
+        else:
+            method_query = lang_queries[cs.QUERY_FUNCTIONS]
+            if not method_query:
+                return
+            method_cursor = QueryCursor(method_query)
+            method_captures = sorted_captures(method_cursor, body_node)
+            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+
+        for method_node in method_nodes:
             if _is_nested_inside_function(method_node, body_node, lang_config):
                 continue
 

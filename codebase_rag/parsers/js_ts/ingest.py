@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Query, QueryCursor
+from tree_sitter import QueryCursor
 
 from ... import constants as cs
 from ... import logs as lg
@@ -16,7 +16,12 @@ from ...types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
-from ..utils import safe_decode_text, safe_decode_with_fallback, sorted_captures
+from ..utils import (
+    get_cached_query,
+    safe_decode_text,
+    safe_decode_with_fallback,
+    sorted_captures,
+)
 from .module_system import JsTsModuleSystemMixin
 from .utils import get_js_ts_language_obj
 
@@ -94,7 +99,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _process_prototype_inheritance_captures(
         self, language_obj, root_node, module_qn
     ):
-        query = Query(language_obj, cs.JS_PROTOTYPE_INHERITANCE_QUERY)
+        query = get_cached_query(language_obj, cs.JS_PROTOTYPE_INHERITANCE_QUERY)
         cursor = QueryCursor(query)
         captures = sorted_captures(cursor, root_node)
 
@@ -145,7 +150,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             logger.debug(lg.JS_PROTOTYPE_METHODS_FAILED, error=e)
 
     def _process_prototype_method_captures(self, language_obj, root_node, module_qn):
-        method_query = Query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
+        method_query = get_cached_query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
         method_cursor = QueryCursor(method_query)
         method_captures = sorted_captures(method_cursor, root_node)
 
@@ -223,7 +228,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config,
     ) -> None:
         try:
-            query = Query(language_obj, query_text)
+            query = get_cached_query(language_obj, query_text)
             cursor = QueryCursor(query)
             captures = sorted_captures(cursor, root_node)
 
@@ -360,7 +365,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config,
     ) -> None:
         try:
-            query = Query(lang_query, query_text)
+            query = get_cached_query(lang_query, query_text)
             cursor = QueryCursor(query)
             captures = sorted_captures(cursor, root_node)
 

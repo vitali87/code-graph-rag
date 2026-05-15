@@ -8,13 +8,15 @@ from pathlib import Path
 
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from tree_sitter import Node, Parser
+from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
 from . import logs as ls
 from .config import settings
 from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
+from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers.factory import ProcessorFactory
+from .parsers.utils import sorted_captures
 from .services import IngestorProtocol, QueryProtocol
 from .types_defs import (
     EmbeddingQueryResult,
@@ -28,22 +30,33 @@ from .types_defs import (
 )
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
-from .utils.path_utils import should_skip_path
+from .utils.path_utils import (
+    cached_relative_path,
+    should_skip_path,
+)
 from .utils.source_extraction import extract_source_with_fallback
 
 type FileHashCache = dict[str, str]
 
 
 class FunctionRegistryTrie:
-    __slots__ = ("root", "_entries", "_simple_name_lookup")
+    __slots__ = ("root", "_entries", "_simple_name_lookup", "_ending_with_cache")
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
         self.root: TrieNode = {}
         self._entries: FunctionRegistry = {}
         self._simple_name_lookup = simple_name_lookup
+        self._ending_with_cache: dict[str, list[QualifiedName]] = {}
 
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
+        qualified_name = sys.intern(qualified_name)
         self._entries[qualified_name] = func_type
+
+        simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if self._simple_name_lookup is not None:
+            self._simple_name_lookup[simple_name].add(qualified_name)
+        if self._ending_with_cache:
+            self._ending_with_cache.pop(simple_name, None)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         current: TrieNode = self.root
@@ -77,6 +90,14 @@ class FunctionRegistryTrie:
             return
 
         del self._entries[qualified_name]
+        simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+
+        if self._ending_with_cache:
+            self._ending_with_cache.pop(simple_name, None)
+
+        if self._simple_name_lookup is not None:
+            if simple_name in self._simple_name_lookup:
+                self._simple_name_lookup[simple_name].discard(qualified_name)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
@@ -156,11 +177,20 @@ class FunctionRegistryTrie:
         return [qn for qn, _ in matches]
 
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
-        if self._simple_name_lookup is not None and suffix in self._simple_name_lookup:
-            # (H) O(1) lookup using the simple_name_lookup index
-            return sorted(self._simple_name_lookup[suffix])
-        # (H) Fallback to linear scan if no index available
-        return sorted(qn for qn in self._entries.keys() if qn.endswith(f".{suffix}"))
+        cached = self._ending_with_cache.get(suffix)
+        if cached is not None:
+            return cached
+        if self._simple_name_lookup is not None:
+            if suffix in self._simple_name_lookup:
+                result = sorted(self._simple_name_lookup[suffix])
+            else:
+                result = []
+        else:
+            result = sorted(
+                qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
+            )
+        self._ending_with_cache[suffix] = result
+        return result
 
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
@@ -231,11 +261,14 @@ class BoundedASTCache:
 
 
 def _hash_file(filepath: Path) -> str:
-    hasher = hashlib.sha256()
-    with filepath.open("rb") as f:
-        while chunk := f.read(8192):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    data = filepath.read_bytes()
+    return hashlib.md5(data, usedforsecurity=False).hexdigest()
+
+
+def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
+    with open(filepath, "rb") as f:
+        data = f.read()
+    return hashlib.md5(data, usedforsecurity=False).hexdigest(), data
 
 
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
@@ -312,6 +345,12 @@ class GraphUpdater:
         )
 
     def run(self, force: bool = False) -> None:
+        py_engine = self.factory.type_inference._python_type_inference
+        if py_engine is not None:
+            py_engine._available_classes_cache.clear()
+            py_engine._return_stmt_cache.clear()
+            py_engine._method_return_type_cache.clear()
+            py_engine._self_assignment_cache.clear()
         self.ingestor.ensure_node_batch(
             cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
         )
@@ -347,7 +386,7 @@ class GraphUpdater:
             del self.ast_cache[file_path]
             logger.debug(ls.REMOVED_FROM_CACHE)
 
-        relative_path = file_path.relative_to(self.repo_path)
+        relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
             relative_path.parent.parts
             if file_path.name == cs.INIT_PY
@@ -399,7 +438,8 @@ class GraphUpdater:
         eligible: list[Path] = []
         hash_name = cs.HASH_CACHE_FILENAME
         for dirpath, dirnames, filenames in os.walk(str(self.repo_path)):
-            rel_dir = Path(dirpath).relative_to(self.repo_path).as_posix()
+            dirpath_obj = Path(dirpath)
+            rel_dir = cached_relative_path(dirpath_obj, self.repo_path).as_posix()
             dir_prefix = "" if rel_dir == "." else f"{rel_dir}/"
             dirnames[:] = sorted(
                 d for d in dirnames if self._should_keep_dir(d, dir_prefix)
@@ -407,11 +447,12 @@ class GraphUpdater:
             for fname in sorted(filenames):
                 if fname == hash_name:
                     continue
-                filepath = Path(dirpath) / fname
+                filepath = Path(f"{dirpath}/{fname}")
                 if not should_skip_path(
                     filepath,
                     self.repo_path,
                     exclude_paths=self.exclude_paths,
+                    is_file=True,
                     unignore_paths=self.unignore_paths,
                 ):
                     eligible.append(filepath)
@@ -432,39 +473,53 @@ class GraphUpdater:
 
         processed_since_flush = 0
 
+        changed_entries: list[tuple[Path, str, bool, bytes]] = []
+        for filepath in eligible_files:
+            file_key = str(cached_relative_path(filepath, self.repo_path))
+            current_file_keys.add(file_key)
+
+            current_hash, file_bytes = _hash_file_with_bytes(filepath)
+            new_hashes[file_key] = current_hash
+
+            if (
+                not force
+                and file_key in old_hashes
+                and old_hashes[file_key] == current_hash
+            ):
+                logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
+                skipped_count += 1
+                continue
+
+            is_new = file_key not in old_hashes
+            if not is_new:
+                logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
+            else:
+                logger.debug(ls.FILE_HASH_NEW, path=file_key)
+            changed_entries.append((filepath, file_key, is_new, file_bytes))
+
+        pre_parsed = self._pre_parse_changed_files(changed_entries)
+
         with Progress(
             SpinnerColumn(),
             TextColumn(ls.PROGRESS_INDEXING_LABEL),
             TextColumn("[progress.description]{task.description}"),
             transient=True,
+            disable=not sys.stderr.isatty(),
         ) as progress:
             task = progress.add_task("", total=len(eligible_files))
+            if skipped_count:
+                progress.advance(task, skipped_count)
 
-            for filepath in eligible_files:
-                file_key = str(filepath.relative_to(self.repo_path))
-                current_file_keys.add(file_key)
-
-                current_hash = _hash_file(filepath)
-                new_hashes[file_key] = current_hash
-
-                if (
-                    not force
-                    and file_key in old_hashes
-                    and old_hashes[file_key] == current_hash
-                ):
-                    logger.debug(ls.FILE_HASH_UNCHANGED, path=file_key)
-                    skipped_count += 1
-                    progress.advance(task)
-                    continue
-
-                if file_key in old_hashes:
-                    logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
+            for filepath, file_key, is_new, file_bytes in changed_entries:
+                if not is_new:
                     self.remove_file_from_state(filepath)
-                else:
-                    logger.debug(ls.FILE_HASH_NEW, path=file_key)
 
                 changed_count += 1
-                self._process_single_file(filepath)
+                self._process_single_file(
+                    filepath,
+                    file_bytes=file_bytes,
+                    pre_parsed=pre_parsed.get(filepath),
+                )
 
                 processed_since_flush += 1
                 if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
@@ -499,7 +554,39 @@ class GraphUpdater:
 
         _save_hash_cache(cache_path, new_hashes)
 
-    def _process_single_file(self, filepath: Path) -> None:
+    def _pre_parse_changed_files(
+        self,
+        changed_entries: list[tuple[Path, str, bool, bytes]],
+    ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
+        result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
+        for filepath, _file_key, _is_new, file_bytes in changed_entries:
+            lang_config = get_language_spec(filepath.suffix)
+            if not (
+                lang_config
+                and isinstance(lang_config.language, cs.SupportedLanguage)
+                and lang_config.language in self.parsers
+            ):
+                continue
+            language = lang_config.language
+            parser = self.queries[language].get(cs.KEY_PARSER)
+            if not parser:
+                continue
+            tree = parser.parse(file_bytes)
+            root_node = tree.root_node
+            combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+            combined_captures: dict[str, list] | None = None
+            if combined_query:
+                cursor = QueryCursor(combined_query)
+                combined_captures = sorted_captures(cursor, root_node)
+            result[filepath] = (root_node, combined_captures)
+        return result
+
+    def _process_single_file(
+        self,
+        filepath: Path,
+        file_bytes: bytes | None = None,
+        pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
+    ) -> None:
         lang_config = get_language_spec(filepath.suffix)
         if (
             lang_config
@@ -511,6 +598,8 @@ class GraphUpdater:
                 lang_config.language,
                 self.queries,
                 self.factory.structure_processor.structural_elements,
+                source_bytes=file_bytes,
+                pre_parsed=pre_parsed,
             )
             if result:
                 root_node, language = result
@@ -521,10 +610,21 @@ class GraphUpdater:
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 
     def _process_function_calls(self) -> None:
+        captures_cache = self.factory._func_class_captures_cache
         ast_cache_items = list(self.ast_cache.items())
         for file_path, (root_node, language) in ast_cache_items:
+            if captures_cache is not None and file_path in captures_cache:
+                cached = captures_cache[file_path]
+                if not cached.get(cs.CAPTURE_CALL) and not cached.get(
+                    cs.CAPTURE_FUNCTION
+                ):
+                    continue
             self.factory.call_processor.process_calls_in_file(
-                file_path, root_node, language, self.queries
+                file_path,
+                root_node,
+                language,
+                self.queries,
+                func_class_captures_cache=captures_cache,
             )
 
     def _prune_orphan_nodes(self) -> None:

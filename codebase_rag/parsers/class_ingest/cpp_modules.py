@@ -8,6 +8,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs
+from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..utils import safe_decode_text, safe_decode_with_fallback
 from .utils import decode_node_stripped
 
@@ -41,7 +42,7 @@ def ingest_cpp_module_declarations(
 def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
     module_declarations: list[tuple[Node, str]] = []
 
-    def find_declarations(node: Node) -> None:
+    for node in root_node.children:
         if node.type == cs.TS_MODULE_DECLARATION:
             module_declarations.append((node, decode_node_stripped(node)))
         elif node.type == cs.CppNodeType.DECLARATION:
@@ -56,10 +57,6 @@ def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
             if has_module:
                 module_declarations.append((node, decode_node_stripped(node)))
 
-        for child in node.children:
-            find_declarations(child)
-
-    find_declarations(root_node)
     return module_declarations
 
 
@@ -83,8 +80,8 @@ def _process_export_module(
         {
             cs.KEY_QUALIFIED_NAME: interface_qn,
             cs.KEY_NAME: module_name,
-            cs.KEY_PATH: str(file_path.relative_to(repo_path)),
-            cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
+            cs.KEY_PATH: cached_relative_path(file_path, repo_path).as_posix(),
+            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
             cs.KEY_MODULE_TYPE: cs.CPP_MODULE_TYPE_INTERFACE,
         },
     )
@@ -118,8 +115,8 @@ def _process_module_implementation(
         {
             cs.KEY_QUALIFIED_NAME: impl_qn,
             cs.KEY_NAME: f"{module_name}{cs.CPP_IMPL_SUFFIX}",
-            cs.KEY_PATH: str(file_path.relative_to(repo_path)),
-            cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
+            cs.KEY_PATH: cached_relative_path(file_path, repo_path).as_posix(),
+            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
             cs.KEY_IMPLEMENTS_MODULE: module_name,
             cs.KEY_MODULE_TYPE: cs.CPP_MODULE_TYPE_IMPLEMENTATION,
         },
@@ -143,27 +140,27 @@ def _process_module_implementation(
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:
     exported_class_nodes: list[Node] = []
+    stack = list(root_node.children)
 
-    def traverse(node: Node) -> None:
+    while stack:
+        node = stack.pop()
         if node.type == cs.CppNodeType.FUNCTION_DEFINITION:
             node_text = decode_node_stripped(node)
 
             if node_text.startswith(cs.CPP_EXPORT_PREFIXES):
+                found = False
                 for child in node.children:
                     if child.type == cs.TS_ERROR and child.text:
                         error_text = safe_decode_text(child)
                         if error_text in cs.CPP_EXPORTED_CLASS_KEYWORDS:
                             exported_class_nodes.append(node)
+                            found = True
                             break
-                else:
-                    if (
-                        cs.CPP_EXPORT_CLASS_PREFIX in node_text
-                        or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
-                    ):
-                        exported_class_nodes.append(node)
+                if not found and (
+                    cs.CPP_EXPORT_CLASS_PREFIX in node_text
+                    or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
+                ):
+                    exported_class_nodes.append(node)
+        stack.extend(node.children)
 
-        for child in node.children:
-            traverse(child)
-
-    traverse(root_node)
     return exported_class_nodes

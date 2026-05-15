@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
-from tree_sitter import Language, Node
+from tree_sitter import Language, Node, QueryCursor
 
 from ... import constants as cs
-from ..utils import safe_decode_text
+from ..utils import get_cached_query, safe_decode_text
 
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
@@ -53,11 +53,26 @@ def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node |
     return None
 
 
+_CLASS_BODY_CACHE: dict[tuple[int, str], Node | None] = {}
+_CLASS_BODY_CACHE_OWNER: int | None = None
+
+
 def find_method_in_ast(
     root_node: Node, class_name: str, method_name: str
 ) -> Node | None:
-    stack: list[Node] = [root_node]
+    global _CLASS_BODY_CACHE_OWNER
+    root_id = id(root_node)
+    if _CLASS_BODY_CACHE_OWNER != root_id:
+        _CLASS_BODY_CACHE.clear()
+        _CLASS_BODY_CACHE_OWNER = root_id
+    cache_key = (root_id, class_name)
+    if cache_key in _CLASS_BODY_CACHE:
+        body_node = _CLASS_BODY_CACHE[cache_key]
+        if body_node is not None:
+            return find_method_in_class_body(body_node, method_name)
+        return None
 
+    stack: list[Node] = [root_node]
     while stack:
         current = stack.pop()
 
@@ -66,23 +81,38 @@ def find_method_in_ast(
             if name_node and name_node.text:
                 found_class_name = safe_decode_text(name_node)
                 if found_class_name == class_name:
-                    if body_node := current.child_by_field_name(cs.FIELD_BODY):
+                    body_node = current.child_by_field_name(cs.FIELD_BODY)
+                    _CLASS_BODY_CACHE[cache_key] = body_node
+                    if body_node:
                         return find_method_in_class_body(body_node, method_name)
+                    return None
 
         stack.extend(reversed(current.children))
 
+    _CLASS_BODY_CACHE[cache_key] = None
     return None
 
 
-def find_return_statements(node: Node, return_nodes: list[Node]) -> None:
-    stack: list[Node] = [node]
+_JS_RETURN_QUERY = "(return_statement) @return_stmt"
 
+
+def find_return_statements(
+    node: Node, return_nodes: list[Node], language_obj=None
+) -> None:
+    if language_obj is not None:
+        try:
+            q = get_cached_query(language_obj, _JS_RETURN_QUERY)
+            cursor = QueryCursor(q)
+            captures = cursor.captures(node)
+            return_nodes.extend(captures.get("return_stmt", []))
+            return
+        except Exception:
+            pass
+    stack: list[Node] = [node]
     while stack:
         current = stack.pop()
-
         if current.type == cs.TS_RETURN_STATEMENT:
             return_nodes.append(current)
-
         stack.extend(reversed(current.children))
 
 
