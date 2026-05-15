@@ -161,6 +161,25 @@ class TestQueryCodebaseKnowledgeGraph:
         assert result.results == []
         assert "error" in result.summary.lower()
 
+    async def test_query_timeout_handled(
+        self,
+        mock_ingestor: MagicMock,
+        mock_cypher_gen: MagicMock,
+        mock_console: Console,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import time
+
+        from codebase_rag.config import settings
+
+        monkeypatch.setattr(settings, "QUERY_TIMEOUT_S", 0.05)
+        mock_ingestor.fetch_all.side_effect = lambda *a, **k: time.sleep(1.0)
+        tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
+        result = await tool.function(natural_language_query="long running query")
+        assert result.results == []
+        assert "timeout" in result.summary.lower()
+        assert result.query_used == "MATCH (n) RETURN n"
+
 
 class TestQueryResultFormatting:
     async def test_result_contains_query_used(

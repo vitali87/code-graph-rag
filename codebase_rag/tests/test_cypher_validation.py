@@ -7,6 +7,7 @@ from codebase_rag import exceptions as ex
 from codebase_rag.services.llm import (
     _build_keyword_pattern,
     _validate_cypher_read_only,
+    _validate_no_unbounded_paths,
 )
 
 
@@ -163,3 +164,43 @@ class TestValidateCypherReadOnly:
     def test_rejects_multiline_block_comment_bypass(self) -> None:
         with pytest.raises(ex.LLMGenerationError):
             _validate_cypher_read_only("LOAD/*\nbypass\n*/CSV FROM 'http://evil.com';")
+
+
+class TestValidateNoUnboundedPaths:
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (n) RETURN n;",
+            "MATCH (a)-[:CALLS]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*5]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*1..6]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*..6]->(b) RETURN a, b;",
+            "MATCH (a)-[r:CALLS*1..6]->(b) RETURN r;",
+            "MATCH (a)-[*1..3]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*2..2]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*1..6 {weight: 1}]->(b) RETURN a, b;",
+        ],
+    )
+    def test_bounded_or_no_varlen_passes(self, query: str) -> None:
+        _validate_no_unbounded_paths(query)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH path = (a)-[:CALLS*]->(b) RETURN path;",
+            "MATCH (a)-[:CALLS*1..]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*..]->(b) RETURN a, b;",
+            "MATCH (a)-[*]->(b) RETURN a, b;",
+            "MATCH (a)-[r:CALLS*]->(b) RETURN r;",
+            "MATCH (a)-[:CALLS*10..]->(b) RETURN a, b;",
+        ],
+    )
+    def test_unbounded_varlen_rejected(self, query: str) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="unbounded"):
+            _validate_no_unbounded_paths(query)
+
+    def test_error_includes_query(self) -> None:
+        query = "MATCH (a)-[:CALLS*]->(b) RETURN a;"
+        with pytest.raises(ex.LLMGenerationError) as exc_info:
+            _validate_no_unbounded_paths(query)
+        assert query in str(exc_info.value)

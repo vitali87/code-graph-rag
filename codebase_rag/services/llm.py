@@ -27,16 +27,8 @@ def _create_provider_model(config: ModelConfig) -> Model:
 
 
 def _clean_cypher_response(response_text: str) -> str:
-    """Clean LLM response to extract pure Cypher query.
-
-    Handles markdown formatting that models sometimes output:
-    - Triple backticks (```cypher ... ```)
-    - Bold text (**Cypher Query:**)
-    - Headers and other markdown
-    """
     query = response_text.strip()
 
-    # Extract content from code blocks (```cypher ... ``` or ``` ... ```)
     if "```" in query:
         parts = query.split("```")
         if len(parts) >= 3:
@@ -45,7 +37,6 @@ def _clean_cypher_response(response_text: str) -> str:
                 block = block[len("cypher") :]
             query = block.strip()
     else:
-        # Remove markdown bold/headers (e.g., **Cypher Query:**)
         while "**" in query:
             start = query.index("**")
             end = query.find("**", start + 2)
@@ -55,9 +46,7 @@ def _clean_cypher_response(response_text: str) -> str:
             if after < len(query) and query[after] == ":":
                 after += 1
             query = query[:start] + query[after:].lstrip()
-        # Remove single backticks
         query = query.replace(cs.CYPHER_BACKTICK, "")
-        # Remove "cypher" prefix if present
         if query.lower().startswith(cs.CYPHER_PREFIX):
             query = query[len(cs.CYPHER_PREFIX) :].strip()
 
@@ -82,6 +71,9 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+_VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
+
+
 def _validate_cypher_read_only(query: str) -> None:
     upper_query = query.upper()
     for keyword, pattern in _CYPHER_DANGEROUS_PATTERNS:
@@ -89,6 +81,17 @@ def _validate_cypher_read_only(query: str) -> None:
             raise ex.LLMGenerationError(
                 ex.LLM_DANGEROUS_QUERY.format(keyword=keyword, query=query)
             )
+
+
+def _validate_no_unbounded_paths(query: str) -> None:
+    for match in _VARLEN_PATTERN.finditer(query):
+        spec = match.group(1).strip()
+        if not spec:
+            raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
+        if ".." in spec:
+            upper = spec.split("..", 1)[1].lstrip()
+            if not upper or not upper[0].isdigit():
+                raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
 
 
 class CypherGenerator:
@@ -128,6 +131,7 @@ class CypherGenerator:
 
             query = _clean_cypher_response(result.output)
             _validate_cypher_read_only(query)
+            _validate_no_unbounded_paths(query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:

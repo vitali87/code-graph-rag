@@ -1196,7 +1196,13 @@ QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
 QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
+QUERY_SUMMARY_TIMEOUT = (
+    "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
+    "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
+)
 QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
+CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
+CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"
 
 # (H) File editor constants
 TMP_EXTENSION = ".tmp"

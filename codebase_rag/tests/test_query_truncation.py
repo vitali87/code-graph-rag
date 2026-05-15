@@ -32,6 +32,7 @@ class TestQueryTruncation:
         with patch("codebase_rag.tools.codebase_query.settings") as mock_settings:
             mock_settings.QUERY_RESULT_ROW_CAP = 500
             mock_settings.QUERY_RESULT_MAX_TOKENS = 100000
+            mock_settings.QUERY_TIMEOUT_S = 60.0
             result = await tool.function(natural_language_query="list all nodes")
 
         assert len(result.results) <= 500
@@ -51,6 +52,7 @@ class TestQueryTruncation:
         with patch("codebase_rag.tools.codebase_query.settings") as mock_settings:
             mock_settings.QUERY_RESULT_ROW_CAP = 500
             mock_settings.QUERY_RESULT_MAX_TOKENS = 500
+            mock_settings.QUERY_TIMEOUT_S = 60.0
             result = await tool.function(natural_language_query="list functions")
 
         assert len(result.results) < 100
@@ -67,6 +69,7 @@ class TestQueryTruncation:
         with patch("codebase_rag.tools.codebase_query.settings") as mock_settings:
             mock_settings.QUERY_RESULT_ROW_CAP = 500
             mock_settings.QUERY_RESULT_MAX_TOKENS = 16000
+            mock_settings.QUERY_TIMEOUT_S = 60.0
             result = await tool.function(natural_language_query="small query")
 
         assert len(result.results) == 5

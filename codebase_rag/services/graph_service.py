@@ -17,6 +17,9 @@ from codebase_rag.types_defs import CursorProtocol, ResultValue
 from .. import exceptions as ex
 from .. import logs as ls
 from ..constants import (
+    CYPHER_MEMORY_LIMIT_SUFFIX,
+    CYPHER_MEMORY_LIMIT_TOKEN,
+    CYPHER_SEMICOLON,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     KEY_CREATED,
@@ -53,6 +56,17 @@ from ..types_defs import (
     RelBatchRow,
     ResultRow,
 )
+
+
+def _apply_memory_limit(query: str, mb: int) -> str:
+    if CYPHER_MEMORY_LIMIT_TOKEN in query.upper():
+        return query
+    stripped = query.rstrip()
+    had_semicolon = stripped.endswith(CYPHER_SEMICOLON)
+    if had_semicolon:
+        stripped = stripped[: -len(CYPHER_SEMICOLON)].rstrip()
+    suffix = CYPHER_MEMORY_LIMIT_SUFFIX.format(mb=mb)
+    return f"{stripped}{suffix}{CYPHER_SEMICOLON}"
 
 
 class MemgraphIngestor:
@@ -548,8 +562,9 @@ class MemgraphIngestor:
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> list[ResultRow]:
-        logger.debug(ls.MG_FETCH_QUERY, query=query, params=params)
-        return self._execute_query(query, params)
+        bounded_query = _apply_memory_limit(query, settings.QUERY_MEMORY_LIMIT_MB)
+        logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=params)
+        return self._execute_query(bounded_query, params)
 
     def execute_write(
         self, query: str, params: dict[str, PropertyValue] | None = None

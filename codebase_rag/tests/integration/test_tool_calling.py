@@ -76,10 +76,17 @@ def log_message_history(messages: list[ModelMessage], label: str) -> None:
 async def run_agent_test(
     agent: Agent, prompt: str, tracker: ToolCallTracker, label: str
 ) -> tuple[list[str], list[str]]:
+    from pydantic_ai.exceptions import ModelHTTPError
+
     tracker.clear()
     logger.info(f"\n{'#' * 60}\nRunning: {label}\nPrompt: {prompt}\n{'#' * 60}")
 
-    result = await agent.run(prompt)
+    try:
+        result = await agent.run(prompt)
+    except ModelHTTPError as e:
+        if e.status_code in (401, 403):
+            pytest.skip(f"Live API rejected credentials ({e.status_code}); skipping.")
+        raise
 
     messages = result.all_messages()
     log_message_history(messages, label)
@@ -107,12 +114,29 @@ def tracking_tools(tracker: ToolCallTracker) -> list[Tool]:
     return create_tracking_tools(tracker)
 
 
+def _api_key_configured() -> bool:
+    from codebase_rag.config import settings
+
+    config = settings.active_orchestrator_config
+    key = config.api_key
+    if not key or not key.strip():
+        return False
+    if key.startswith("op://"):
+        return False
+    return True
+
+
 @pytest.fixture(scope="module")
 def agent(tracking_tools: list[Tool]) -> Agent:
+    if not _api_key_configured():
+        pytest.skip(
+            "Live orchestrator API key not resolved "
+            "(unset or unresolved op:// reference); skipping live API integration."
+        )
     try:
         return create_rag_orchestrator(tracking_tools)
     except Exception as e:
-        pytest.skip(f"Ollama server not available: {e}")
+        pytest.skip(f"Orchestrator unavailable: {e}")
 
 
 PARALLEL_PROMPT = """Execute ALL of these tasks in parallel, not sequentially:

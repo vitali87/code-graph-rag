@@ -59,6 +59,11 @@ NO_LANGUAGES = "No Tree-sitter languages available."
 LLM_INIT_CYPHER = "Failed to initialize CypherGenerator: {error}"
 LLM_INVALID_QUERY = "LLM did not generate a valid query. Output: {output}"
 LLM_DANGEROUS_QUERY = "LLM generated a destructive Cypher query (found '{keyword}'). Query rejected: {query}"
+LLM_UNBOUNDED_PATH = (
+    "LLM generated an unbounded variable-length path pattern "
+    "(e.g. [:TYPE*] or [:TYPE*N..]) which causes memory exhaustion on cyclic graphs. "
+    "Add an upper bound such as [:TYPE*1..6]. Query rejected: {query}"
+)
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
 LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 

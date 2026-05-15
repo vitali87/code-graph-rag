@@ -16,6 +16,7 @@ from ..constants import (
     QUERY_RESULTS_PANEL_TITLE,
     QUERY_SUMMARY_DB_ERROR,
     QUERY_SUMMARY_SUCCESS,
+    QUERY_SUMMARY_TIMEOUT,
     QUERY_SUMMARY_TRANSLATION_FAILED,
     QUERY_SUMMARY_TRUNCATED,
 )
@@ -42,7 +43,10 @@ def create_query_tool(
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
 
-            results = await asyncio.to_thread(ingestor.fetch_all, cypher_query)
+            results = await asyncio.wait_for(
+                asyncio.to_thread(ingestor.fetch_all, cypher_query),
+                timeout=settings.QUERY_TIMEOUT_S,
+            )
 
             total_count = len(results)
             if total_count > settings.QUERY_RESULT_ROW_CAP:
@@ -101,6 +105,17 @@ def create_query_tool(
                 query_used=QUERY_NOT_AVAILABLE,
                 results=[],
                 summary=QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
+            )
+        except TimeoutError:
+            logger.warning(
+                ls.TOOL_QUERY_TIMEOUT.format(
+                    timeout=settings.QUERY_TIMEOUT_S, query=cypher_query
+                )
+            )
+            return QueryGraphData(
+                query_used=cypher_query,
+                results=[],
+                summary=QUERY_SUMMARY_TIMEOUT.format(timeout=settings.QUERY_TIMEOUT_S),
             )
         except Exception as e:
             logger.exception(ls.TOOL_QUERY_ERROR.format(error=e))

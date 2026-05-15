@@ -487,6 +487,8 @@ class TestFlushAll:
 
 class TestFetchAllAndExecuteWrite:
     def test_fetch_all_delegates_to_execute_query(self) -> None:
+        from codebase_rag.config import settings
+
         ingestor = MemgraphIngestor(host="localhost", port=7687)
 
         with patch.object(
@@ -494,8 +496,22 @@ class TestFetchAllAndExecuteWrite:
         ) as mock_exec:
             result = ingestor.fetch_all("MATCH (n) RETURN n", {"limit": 10})
 
-            mock_exec.assert_called_once_with("MATCH (n) RETURN n", {"limit": 10})
+            expected_query = (
+                f"MATCH (n) RETURN n QUERY MEMORY LIMIT "
+                f"{settings.QUERY_MEMORY_LIMIT_MB} MB;"
+            )
+            mock_exec.assert_called_once_with(expected_query, {"limit": 10})
             assert result == [{"n": "result"}]
+
+    def test_fetch_all_preserves_existing_memory_limit(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        query_with_hint = "MATCH (n) RETURN n QUERY MEMORY LIMIT 512 MB;"
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", return_value=[]
+        ) as mock_exec:
+            ingestor.fetch_all(query_with_hint)
+            mock_exec.assert_called_once_with(query_with_hint, None)
 
     def test_execute_write_delegates_to_execute_query(self) -> None:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
