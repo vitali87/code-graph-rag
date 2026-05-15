@@ -64,6 +64,10 @@ LLM_UNBOUNDED_PATH = (
     "(e.g. [:TYPE*] or [:TYPE*N..]) which causes memory exhaustion on cyclic graphs. "
     "Add an upper bound such as [:TYPE*1..6]. Query rejected: {query}"
 )
+LLM_DISALLOWED_PROCEDURE = (
+    "LLM generated a CALL to procedure '{name}' which is outside the read-only "
+    "MAGE allowlist. Query rejected: {query}"
+)
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
 LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 

@@ -6,6 +6,7 @@ from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag.services.llm import (
     _build_keyword_pattern,
+    _validate_call_procedures,
     _validate_cypher_read_only,
     _validate_no_unbounded_paths,
 )
@@ -151,9 +152,8 @@ class TestValidateCypherReadOnly:
         with pytest.raises(ex.LLMGenerationError, match="REMOVE"):
             _validate_cypher_read_only("MATCH (n) REMOVE n.prop;")
 
-    def test_rejects_call(self) -> None:
-        with pytest.raises(ex.LLMGenerationError, match="CALL"):
-            _validate_cypher_read_only("CALL db.schema.visualization();")
+    def test_call_no_longer_in_keyword_blocklist(self) -> None:
+        _validate_cypher_read_only("CALL nxalg.strongly_connected_components();")
 
     def test_rejects_create_constraint(self) -> None:
         with pytest.raises(ex.LLMGenerationError, match="CREATE CONSTRAINT"):
@@ -204,3 +204,55 @@ class TestValidateNoUnboundedPaths:
         with pytest.raises(ex.LLMGenerationError) as exc_info:
             _validate_no_unbounded_paths(query)
         assert query in str(exc_info.value)
+
+
+class TestValidateCallProcedures:
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (n) RETURN n;",
+            "CALL nxalg.strongly_connected_components() YIELD components RETURN components;",
+            "CALL nxalg.simple_cycles() YIELD cycles RETURN cycles LIMIT 10;",
+            "CALL nxalg.topological_sort() YIELD nodes RETURN nodes;",
+            "CALL pagerank.get() YIELD node, rank RETURN node, rank ORDER BY rank DESC LIMIT 10;",
+            "CALL betweenness_centrality.get() YIELD node, betweenness_centrality RETURN node;",
+            "CALL community_detection.get() YIELD node, community_id RETURN node, community_id;",
+            "CALL leiden_community_detection.get() YIELD node, community_id RETURN node;",
+            "CALL weakly_connected_components.get() YIELD node, component_id RETURN node;",
+            "CALL graph_util.ancestors(node) YIELD ancestors RETURN ancestors;",
+            "CALL path.expand(start, ['CALLS>'], ['Function'], 1, 6) YIELD path RETURN path;",
+            "CALL algo.all_simple_paths(src, tgt, ['CALLS'], 10) YIELD paths RETURN paths;",
+            "CALL bridges.get() YIELD bridges RETURN bridges;",
+            "CALL biconnected_components.get() YIELD components RETURN components;",
+        ],
+    )
+    def test_allowed_procedure_passes(self, query: str) -> None:
+        _validate_call_procedures(query)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "CALL db.schema.visualization();",
+            "CALL refactor.merge_nodes([a, b]) YIELD node RETURN node;",
+            "CALL create.node(['Foo'], {x: 1}) YIELD node RETURN node;",
+            "CALL export_util.json('out.json');",
+            "CALL migrate.postgresql('...') YIELD row RETURN row;",
+            "CALL mg.load('mod');",
+            "CALL csv_utils.create_csv_file('a','b');",
+            "CALL link_prediction.train();",
+        ],
+    )
+    def test_disallowed_procedure_rejected(self, query: str) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="outside the read-only"):
+            _validate_call_procedures(query)
+
+    def test_call_is_case_insensitive(self) -> None:
+        _validate_call_procedures(
+            "call nxalg.strongly_connected_components() YIELD components RETURN components;"
+        )
+
+    def test_error_includes_procedure_name(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="refactor.merge_nodes"):
+            _validate_call_procedures(
+                "CALL refactor.merge_nodes([a, b]) YIELD n RETURN n;"
+            )

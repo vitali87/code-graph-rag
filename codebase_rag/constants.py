@@ -1037,9 +1037,33 @@ CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
         "SET",
         "MERGE",
         "CREATE",
-        "CALL",
         "LOAD CSV",
         "FOREACH",
+    }
+)
+
+CYPHER_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset(
+    {
+        "algo.",
+        "betweenness_centrality.",
+        "biconnected_components.",
+        "bridges.",
+        "community_detection.",
+        "cycles.",
+        "degree_centrality.",
+        "graph_analyzer.",
+        "graph_util.",
+        "igraphalg.",
+        "katz_centrality.",
+        "leiden_community_detection.",
+        "neighbors.",
+        "node_similarity.",
+        "nxalg.",
+        "pagerank.",
+        "path.",
+        "schema.",
+        "weakly_connected_components.",
+        "wcc.",
     }
 )
 

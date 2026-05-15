@@ -40,7 +40,37 @@ CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
 - **Use `STARTS WITH` for Paths**: When matching paths, always use `STARTS WITH` for robustness (e.g., `WHERE n.path STARTS WITH 'workflows/src'`). Do not use `=`.
 - **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{name: 'VatManager'}` equality matching.
 - **Use `toLower()` for Searches**: For case-insensitive searching on string properties, use `toLower()`.
-- **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`)."""
+- **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`).
+- **NEVER use unbounded variable-length paths**: Patterns like `[:CALLS*]`, `[*]`, `[:CALLS*1..]` enumerate every path in the graph and exhaust memory. Always cap with an upper bound, e.g. `[:CALLS*1..6]`. If you genuinely need unbounded reachability, use a MAGE procedure (see Section 2b) instead of variable-length Cypher.
+
+**2b. Graph Algorithm Procedures (MAGE)**
+
+For algorithmic questions (longest/shortest paths, cycles, recursion clusters, centrality, communities, reachability), prefer calling a MAGE procedure over writing variable-length Cypher. Cypher path patterns enumerate all matches with no memoization, so they OOM on cyclic graphs; MAGE procedures run real graph algorithms in bounded memory.
+
+Use these read-only procedures (call them with `CALL <procedure>(...) YIELD ... RETURN ...`):
+
+- **Strongly connected components / recursion clusters**: `CALL nxalg.strongly_connected_components() YIELD components`
+- **Weakly connected components**: `CALL weakly_connected_components.get() YIELD node, component_id` or `CALL wcc.get_components(nodes, edges)`
+- **Cycles**: `CALL nxalg.simple_cycles() YIELD cycles` (all cycles), `CALL nxalg.find_cycle() YIELD cycle` (one cycle)
+- **All simple paths between two nodes (bounded)**: `CALL nxalg.all_simple_paths(source, target, cutoff)` or `CALL algo.all_simple_paths(source, target, [:CALLS], maxHops)`
+- **Shortest path**: `CALL nxalg.shortest_path(source, target)` or `CALL algo.astar(source, target, config)`
+- **Reachability**: `CALL graph_util.ancestors(node)`, `CALL graph_util.descendants(node)`
+- **Topological order (DAGs only)**: `CALL nxalg.topological_sort() YIELD nodes` or `CALL graph_util.topological_sort()`
+- **PageRank**: `CALL pagerank.get() YIELD node, rank` or `CALL nxalg.pagerank() YIELD node, rank`
+- **Betweenness centrality**: `CALL betweenness_centrality.get() YIELD node, betweenness_centrality`
+- **Degree centrality**: `CALL degree_centrality.get() YIELD node, degree`
+- **Communities**: `CALL community_detection.get() YIELD node, community_id`, `CALL leiden_community_detection.get() YIELD node, community_id`
+- **Articulation / bridges**: `CALL bridges.get() YIELD ...`, `CALL nxalg.biconnected_components() YIELD nodes`
+- **Dominators**: `CALL nxalg.immediate_dominators(start) YIELD node, dominator`
+- **Path expansion (bounded BFS over filtered edges)**: `CALL path.expand(start, relationships, labels, minHops, maxHops) YIELD path`
+
+Important: MAGE procedures named `nxalg.*` and several others operate on the **entire graph**, ignoring edge-type filters. To restrict to a specific edge type (e.g., only `CALLS`), follow the procedure call with a `WHERE` clause that checks `EXISTS((a)-[:CALLS]->(b))` or use `path.expand` which accepts a relationship-type filter.
+
+**2c. When Cypher Can't Answer**
+
+If a question cannot be expressed as a bounded Cypher pattern or as a single MAGE procedure call (e.g., "longest call chain in a graph with cycles"), return your best bounded approximation rather than an unbounded path query. Examples:
+- "longest call chain" → `CALL nxalg.strongly_connected_components() YIELD components RETURN components` (let the orchestrator post-process), or use `CALL path.expand` with a generous but finite `maxHops`.
+- "find a deeply-nested call site" → use a bounded depth such as `[:CALLS*1..10]` with `ORDER BY ... LIMIT 1`."""
 
 
 def build_graph_schema_and_rules() -> str:

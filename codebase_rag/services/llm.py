@@ -72,6 +72,7 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 
 _VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
+_PROCEDURE_CALL_PATTERN = re.compile(r"\bCALL\s+([\w\.]+)", re.IGNORECASE)
 
 
 def _validate_cypher_read_only(query: str) -> None:
@@ -92,6 +93,17 @@ def _validate_no_unbounded_paths(query: str) -> None:
             upper = spec.split("..", 1)[1].lstrip()
             if not upper or not upper[0].isdigit():
                 raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
+
+
+def _validate_call_procedures(query: str) -> None:
+    for match in _PROCEDURE_CALL_PATTERN.finditer(query):
+        name = match.group(1)
+        if not any(
+            name.startswith(prefix) for prefix in cs.CYPHER_ALLOWED_PROCEDURE_PREFIXES
+        ):
+            raise ex.LLMGenerationError(
+                ex.LLM_DISALLOWED_PROCEDURE.format(name=name, query=query)
+            )
 
 
 class CypherGenerator:
@@ -132,6 +144,7 @@ class CypherGenerator:
             query = _clean_cypher_response(result.output)
             _validate_cypher_read_only(query)
             _validate_no_unbounded_paths(query)
+            _validate_call_procedures(query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:
