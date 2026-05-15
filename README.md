@@ -20,12 +20,14 @@
     <img src="https://img.shields.io/github/forks/vitali87/code-graph-rag?style=social" alt="GitHub forks" />
   </a>
   -->
+  <!-- Codecov, SonarCloud, and OpenSSF Scorecard badges were fed by GitHub-side CI. They no longer update after the move to Codeberg. Restore once equivalent CI is in place on Codeberg (Woodpecker).
   <a href="https://codecov.io/gh/vitali87/code-graph-rag">
     <img src="https://codecov.io/gh/vitali87/code-graph-rag/graph/badge.svg" alt="Codecov" />
   </a>
   <a href="https://sonarcloud.io/summary/overall?id=vitali87_code-graph-rag">
     <img src="https://sonarcloud.io/api/project_badges/measure?project=vitali87_code-graph-rag&metric=alert_status" alt="Quality Gate Status" />
   </a>
+  -->
   <!--
   <a href="https://mseep.ai/app/vitali87-code-graph-rag">
     <img src="https://mseep.net/pr/vitali87-code-graph-rag-badge.png" alt="MseeP.ai Security Assessment" height="20" />
@@ -37,9 +39,11 @@
   <a href="https://pepy.tech/projects/code-graph-rag">
     <img src="https://static.pepy.tech/personalized-badge/code-graph-rag?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads" />
   </a>
+  <!-- OpenSSF Scorecard only tracks GitHub-hosted repos. Restore if the project is mirrored back to GitHub or scorecard.dev adds Codeberg support.
   <a href="https://scorecard.dev/viewer/?uri=github.com/vitali87/code-graph-rag">
     <img src="https://api.scorecard.dev/projects/github.com/vitali87/code-graph-rag/badge" alt="OpenSSF Scorecard" />
   </a>
+  -->
   <!--
   <a href="https://gitcgr.com/vitali87/code-graph-rag">
     <img src="https://gitcgr.com/badge/vitali87/code-graph-rag.svg" alt="gitcgr" />
@@ -138,7 +142,7 @@ sudo dnf install ripgrep
 ## 🛠️ Installation
 
 ```bash
-git clone https://github.com/vitali87/code-graph-rag.git
+git clone https://codeberg.org/vitali87/code-graph-rag.git
 
 cd code-graph-rag
 ```
@@ -788,7 +792,7 @@ Code-Graph-RAG makes it easy to add support for any language that has a Tree-sit
 
 > **⚠️ Recommendation**: While you can add languages yourself, we recommend waiting for official full support to ensure optimal parsing quality, comprehensive feature coverage, and robust integration. The languages marked as "In Development" above will receive dedicated optimization and testing.
 
-> **💡 Request Support**: If you want a specific language to be officially supported, please [submit an issue](https://github.com/vitali87/code-graph-rag/issues) with your language request.
+> **💡 Request Support**: If you want a specific language to be officially supported, please [submit an issue](https://codeberg.org/vitali87/code-graph-rag/issues) with your language request.
 
 #### Quick Start: Add a Language
 

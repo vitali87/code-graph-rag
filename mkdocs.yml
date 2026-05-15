@@ -7,8 +7,8 @@ site_description: >-
 site_author: Vitali Avagyan
 
 repo_name: vitali87/code-graph-rag
-repo_url: https://github.com/vitali87/code-graph-rag
-edit_uri: edit/main/docs/
+repo_url: https://codeberg.org/vitali87/code-graph-rag
+edit_uri: _edit/branch/main/docs/
 
 copyright: Copyright &copy; 2024 Vitali Avagyan
 
@@ -109,8 +109,8 @@ extra_css:
 
 extra:
   social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/vitali87/code-graph-rag
+    - icon: fontawesome/brands/git-alt
+      link: https://codeberg.org/vitali87/code-graph-rag
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/code-graph-rag/
   generator: false

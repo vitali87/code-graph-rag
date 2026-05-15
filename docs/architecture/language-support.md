@@ -31,4 +31,4 @@ All languages share a unified graph schema, meaning queries work the same way re
 Code-Graph-RAG makes it easy to add support for any language that has a Tree-sitter grammar. See the [Adding Languages](../advanced/adding-languages.md) guide.
 
 !!! tip
-    While you can add languages yourself, we recommend waiting for official full support for optimal parsing quality and comprehensive feature coverage. [Submit a language request](https://github.com/vitali87/code-graph-rag/issues) if you need a specific language supported.
+    While you can add languages yourself, we recommend waiting for official full support for optimal parsing quality and comprehensive feature coverage. [Submit a language request](https://codeberg.org/vitali87/code-graph-rag/issues) if you need a specific language supported.
