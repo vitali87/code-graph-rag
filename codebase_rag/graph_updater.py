@@ -687,7 +687,7 @@ class GraphUpdater:
             return
 
         try:
-            from .embedder import embed_code, get_embedding_cache
+            from .embedder import embed_code_batch, get_embedding_cache
             from .vector_store import (
                 close_qdrant_client,
                 store_embedding_batch,
@@ -708,8 +708,33 @@ class GraphUpdater:
 
             embedded_count = 0
             expected_ids: set[int] = set()
-            batch_buffer: list[tuple[int, list[float], str]] = []
-            batch_size = settings.QDRANT_BATCH_SIZE
+            pending: list[tuple[int, str, str]] = []
+            flush_at = settings.QDRANT_BATCH_SIZE
+
+            def flush() -> int:
+                nonlocal pending
+                if not pending:
+                    return 0
+                snippets = [item[2] for item in pending]
+                try:
+                    embeddings = embed_code_batch(snippets)
+                except Exception as e:
+                    logger.warning(
+                        ls.EMBEDDING_BATCH_COMPUTE_FAILED,
+                        count=len(pending),
+                        error=e,
+                    )
+                    pending = []
+                    return 0
+                points: list[tuple[int, list[float], str]] = [
+                    (node_id, emb, qname)
+                    for (node_id, qname, _), emb in zip(pending, embeddings)
+                ]
+                for node_id, _qname, _src in pending:
+                    expected_ids.add(node_id)
+                stored = store_embedding_batch(points)
+                pending = []
+                return stored
 
             for row in results:
                 parsed = self._parse_embedding_result(row)
@@ -729,15 +754,9 @@ class GraphUpdater:
                 if source_code := self._extract_source_code(
                     qualified_name, file_path, start_line, end_line
                 ):
-                    try:
-                        embedding = embed_code(source_code)
-                        batch_buffer.append((node_id, embedding, qualified_name))
-                        expected_ids.add(node_id)
-
-                        if len(batch_buffer) >= batch_size:
-                            embedded_count += store_embedding_batch(batch_buffer)
-                            batch_buffer = []
-
+                    pending.append((node_id, qualified_name, source_code))
+                    if len(pending) >= flush_at:
+                        embedded_count += flush()
                         if (
                             embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0
                             and embedded_count > 0
@@ -747,16 +766,10 @@ class GraphUpdater:
                                 done=embedded_count,
                                 total=len(results),
                             )
-
-                    except Exception as e:
-                        logger.warning(
-                            ls.EMBEDDING_FAILED, name=qualified_name, error=e
-                        )
                 else:
                     logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
 
-            if batch_buffer:
-                embedded_count += store_embedding_batch(batch_buffer)
+            embedded_count += flush()
 
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 

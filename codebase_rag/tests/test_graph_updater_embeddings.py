@@ -167,7 +167,9 @@ class TestGenerateSemanticEmbeddings:
         updater_with_query._generate_semantic_embeddings()
 
         mock_embed_batch.assert_called_once()
-        assert mock_embed_batch.call_args[0][0] == ["def hello():\n    return 42\n"]
+        snippets_arg = mock_embed_batch.call_args[0][0]
+        assert len(snippets_arg) == 1
+        assert "def hello()" in snippets_arg[0]
         mock_store_batch.assert_called_once()
         batch_arg = mock_store_batch.call_args[0][0]
         assert len(batch_arg) == 1

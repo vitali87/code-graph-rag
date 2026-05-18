@@ -45,6 +45,7 @@ NO_FUNCTIONS_FOR_EMBEDDING = "No functions or methods found for embedding genera
 GENERATING_EMBEDDINGS = "Generating embeddings for {count} functions/methods"
 EMBEDDING_PROGRESS = "Generated {done}/{total} embeddings"
 EMBEDDING_FAILED = "Failed to embed {name}: {error}"
+EMBEDDING_BATCH_COMPUTE_FAILED = "Failed to embed batch of {count}: {error}"
 NO_SOURCE_FOR = "No source code found for {name}"
 EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
