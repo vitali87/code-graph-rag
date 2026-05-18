@@ -248,6 +248,7 @@ class AppConfig(BaseSettings):
     )
 
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
+    QDRANT_URL: str | None = None
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5
