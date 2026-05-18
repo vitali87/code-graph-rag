@@ -214,13 +214,6 @@ SCALA_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
-CSHARP_FQN_SPEC = FQNSpec(
-    scope_node_types=frozenset(cs.FQN_CS_SCOPE_TYPES),
-    function_node_types=frozenset(cs.FQN_CS_FUNCTION_TYPES),
-    get_name=_generic_get_name,
-    file_to_module_parts=_generic_file_to_module,
-)
-
 PHP_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PHP_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PHP_FUNCTION_TYPES),
@@ -239,7 +232,6 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.LUA: LUA_FQN_SPEC,
     cs.SupportedLanguage.GO: GO_FQN_SPEC,
     cs.SupportedLanguage.SCALA: SCALA_FQN_SPEC,
-    cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
 }
 
@@ -442,16 +434,6 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     (new_expression) @call
     (delete_expression) @call
     """,
-    ),
-    cs.SupportedLanguage.CSHARP: LanguageSpec(
-        language=cs.SupportedLanguage.CSHARP,
-        file_extensions=cs.CS_EXTENSIONS,
-        function_node_types=cs.SPEC_CS_FUNCTION_TYPES,
-        class_node_types=cs.SPEC_CS_CLASS_TYPES,
-        module_node_types=cs.SPEC_CS_MODULE_TYPES,
-        call_node_types=cs.SPEC_CS_CALL_TYPES,
-        import_node_types=cs.IMPORT_NODES_USING,
-        import_from_node_types=cs.IMPORT_NODES_USING,
     ),
     cs.SupportedLanguage.PHP: LanguageSpec(
         language=cs.SupportedLanguage.PHP,

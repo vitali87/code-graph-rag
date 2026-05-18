@@ -5,7 +5,6 @@ import pytest
 from codebase_rag.constants import (
     C_EXTENSIONS,
     CPP_EXTENSIONS,
-    CS_EXTENSIONS,
     GO_EXTENSIONS,
     JAVA_EXTENSIONS,
     JS_EXTENSIONS,
@@ -63,7 +62,6 @@ LANGUAGE_SPEC_PARAMS = [
     (SupportedLanguage.JAVA, JAVA_EXTENSIONS),
     (SupportedLanguage.C, C_EXTENSIONS),
     (SupportedLanguage.CPP, CPP_EXTENSIONS),
-    (SupportedLanguage.CSHARP, CS_EXTENSIONS),
     (SupportedLanguage.PHP, PHP_EXTENSIONS),
     (SupportedLanguage.LUA, LUA_EXTENSIONS),
 ]
@@ -94,7 +92,6 @@ EXTENSION_MAPPING_PARAMS = [
     (".h", SupportedLanguage.CPP),
     (".hpp", SupportedLanguage.CPP),
     (".cc", SupportedLanguage.CPP),
-    (".cs", SupportedLanguage.CSHARP),
     (".php", SupportedLanguage.PHP),
     (".lua", SupportedLanguage.LUA),
 ]

@@ -260,7 +260,6 @@ class TestBuildLocalVariableTypeMapDispatch:
             cs.SupportedLanguage.GO,
             cs.SupportedLanguage.SCALA,
             cs.SupportedLanguage.CPP,
-            cs.SupportedLanguage.CSHARP,
             cs.SupportedLanguage.PHP,
         ],
     )

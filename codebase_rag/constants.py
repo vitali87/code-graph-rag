@@ -36,6 +36,12 @@ class KeyBinding(StrEnum):
     CTRL_J = "c-j"
     ENTER = "enter"
     CTRL_C = "c-c"
+    SHIFT_TAB = "s-tab"
+
+
+class PermissionMode(StrEnum):
+    NORMAL = "normal"
+    YOLO = "yolo"
 
 
 class StyleModifier(StrEnum):
@@ -88,7 +94,6 @@ EXT_IXX = ".ixx"
 EXT_CPPM = ".cppm"
 EXT_CCM = ".ccm"
 EXT_C = ".c"
-EXT_CS = ".cs"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
 
@@ -113,7 +118,6 @@ CPP_EXTENSIONS = (
     EXT_CPPM,
     EXT_CCM,
 )
-CS_EXTENSIONS = (EXT_CS,)
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
 
@@ -469,7 +473,6 @@ class SupportedLanguage(StrEnum):
     JAVA = "java"
     C = "c"
     CPP = "cpp"
-    CSHARP = "c-sharp"
     PHP = "php"
     LUA = "lua"
 
@@ -536,11 +539,6 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Case classes, objects",
         "Scala",
     ),
-    SupportedLanguage.CSHARP: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Classes, interfaces, generics (planned)",
-        "C#",
-    ),
     SupportedLanguage.PHP: LanguageMetadata(
         LanguageStatus.FULL,
         "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
@@ -589,7 +587,6 @@ IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
 IMPORT_NODES_FROM = ("import_from_statement",)
 IMPORT_NODES_MODULE = ("lexical_declaration", "export_statement")
 IMPORT_NODES_INCLUDE = ("preproc_include",)
-IMPORT_NODES_USING = ("using_directive",)
 
 # (H) JS/TS specific node types
 JS_TS_FUNCTION_NODES = (
@@ -717,7 +714,12 @@ DEFAULT_TABLE_TITLE = "Code-Graph-RAG Initializing..."
 OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
 PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
-MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
+MULTILINE_INPUT_HINT = (
+    "(Press Ctrl+J to submit, Enter for new line, Shift+Tab to toggle mode)"
+)
+PERMISSION_MODE_NORMAL_LABEL = "● Normal mode (asks before destructive)"
+PERMISSION_MODE_YOLO_LABEL = "● YOLO mode (auto-approve, allowlist off)"
+PERMISSION_MODE_TOGGLED = "Permission mode: {label}"
 
 # (H) Interactive setup prompt - grouped view
 INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"
@@ -1804,16 +1806,6 @@ TS_SCALA_FIELD_EXPRESSION = "field_expression"
 TS_SCALA_INFIX_EXPRESSION = "infix_expression"
 TS_SCALA_IMPORT_DECLARATION = "import_declaration"
 
-# (H) Tree-sitter C# node types
-TS_CS_STRUCT_DECLARATION = "struct_declaration"
-TS_CS_COMPILATION_UNIT = "compilation_unit"
-TS_CS_DESTRUCTOR_DECLARATION = "destructor_declaration"
-TS_CS_LOCAL_FUNCTION_STATEMENT = "local_function_statement"
-TS_CS_FUNCTION_POINTER_TYPE = "function_pointer_type"
-TS_CS_ANONYMOUS_METHOD_EXPRESSION = "anonymous_method_expression"
-TS_CS_LAMBDA_EXPRESSION = "lambda_expression"
-TS_CS_INVOCATION_EXPRESSION = "invocation_expression"
-
 # (H) Tree-sitter PHP node types
 TS_PHP_FUNCTION_DEFINITION = "function_definition"
 TS_PHP_METHOD_DECLARATION = "method_declaration"
@@ -2719,23 +2711,6 @@ FQN_SCALA_FUNCTION_TYPES = (
     TS_SCALA_FUNCTION_DECLARATION,
 )
 
-# (H) FQN node type tuples for C#
-FQN_CS_SCOPE_TYPES = (
-    TS_CLASS_DECLARATION,
-    TS_CS_STRUCT_DECLARATION,
-    TS_INTERFACE_DECLARATION,
-    TS_CS_COMPILATION_UNIT,
-)
-FQN_CS_FUNCTION_TYPES = (
-    TS_CS_DESTRUCTOR_DECLARATION,
-    TS_CS_LOCAL_FUNCTION_STATEMENT,
-    TS_CS_FUNCTION_POINTER_TYPE,
-    TS_CONSTRUCTOR_DECLARATION,
-    TS_CS_ANONYMOUS_METHOD_EXPRESSION,
-    TS_CS_LAMBDA_EXPRESSION,
-    TS_METHOD_DECLARATION,
-)
-
 # (H) FQN node type tuples for PHP
 FQN_PHP_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
@@ -2909,25 +2884,6 @@ SPEC_C_CLASS_TYPES = (
 SPEC_C_MODULE_TYPES = (TS_CPP_TRANSLATION_UNIT,)
 SPEC_C_CALL_TYPES = (TS_CPP_CALL_EXPRESSION,)
 SPEC_C_PACKAGE_INDICATORS = (PKG_CMAKE_LISTS, PKG_MAKEFILE)
-
-# (H) LANGUAGE_SPECS node type tuples for C#
-SPEC_CS_FUNCTION_TYPES = (
-    TS_CS_DESTRUCTOR_DECLARATION,
-    TS_CS_LOCAL_FUNCTION_STATEMENT,
-    TS_CS_FUNCTION_POINTER_TYPE,
-    TS_CONSTRUCTOR_DECLARATION,
-    TS_CS_ANONYMOUS_METHOD_EXPRESSION,
-    TS_CS_LAMBDA_EXPRESSION,
-    TS_METHOD_DECLARATION,
-)
-SPEC_CS_CLASS_TYPES = (
-    TS_CLASS_DECLARATION,
-    TS_CS_STRUCT_DECLARATION,
-    TS_ENUM_DECLARATION,
-    TS_INTERFACE_DECLARATION,
-)
-SPEC_CS_MODULE_TYPES = (TS_CS_COMPILATION_UNIT,)
-SPEC_CS_CALL_TYPES = (TS_CS_INVOCATION_EXPRESSION,)
 
 # (H) LANGUAGE_SPECS node type tuples for PHP
 SPEC_PHP_FUNCTION_TYPES = (
