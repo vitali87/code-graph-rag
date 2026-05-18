@@ -548,6 +548,12 @@ def test_embed_code_batch_raises_without_dependencies() -> None:
         embed_code_batch(["x = 1"])
 
 
+def test_embedding_default_batch_size_at_least_64() -> None:
+    from codebase_rag import constants as cs
+
+    assert cs.EMBEDDING_DEFAULT_BATCH_SIZE >= 64
+
+
 def test_embedding_cache_persistence_roundtrip() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         cache_path = Path(tmpdir) / "subdir" / "cache.json"
