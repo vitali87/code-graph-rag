@@ -702,6 +702,10 @@ PRUNE_SKIP = "No orphan nodes found. Graph is clean."
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"
+FILE_UNREADABLE = (
+    "Skipping unreadable file (broken symlink or removed): {path} ({error})"
+)
+INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
 
 # (H) Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"

@@ -265,9 +265,13 @@ def _hash_file(filepath: Path) -> str:
     return hashlib.md5(data, usedforsecurity=False).hexdigest()
 
 
-def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes]:
-    with open(filepath, "rb") as f:
-        data = f.read()
+def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
+    try:
+        with open(filepath, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        logger.warning(ls.FILE_UNREADABLE, path=filepath, error=e)
+        return None
     return hashlib.md5(data, usedforsecurity=False).hexdigest(), data
 
 
@@ -468,6 +472,7 @@ class GraphUpdater:
         new_hashes: FileHashCache = {}
         skipped_count = 0
         changed_count = 0
+        unreadable_count = 0
 
         current_file_keys: set[str] = set()
 
@@ -476,9 +481,14 @@ class GraphUpdater:
         changed_entries: list[tuple[Path, str, bool, bytes]] = []
         for filepath in eligible_files:
             file_key = str(cached_relative_path(filepath, self.repo_path))
-            current_file_keys.add(file_key)
 
-            current_hash, file_bytes = _hash_file_with_bytes(filepath)
+            hashed = _hash_file_with_bytes(filepath)
+            if hashed is None:
+                unreadable_count += 1
+                continue
+            current_hash, file_bytes = hashed
+
+            current_file_keys.add(file_key)
             new_hashes[file_key] = current_hash
 
             if (
@@ -507,8 +517,8 @@ class GraphUpdater:
             disable=not sys.stderr.isatty(),
         ) as progress:
             task = progress.add_task("", total=len(eligible_files))
-            if skipped_count:
-                progress.advance(task, skipped_count)
+            if skipped_count or unreadable_count:
+                progress.advance(task, skipped_count + unreadable_count)
 
             for filepath, file_key, is_new, file_bytes in changed_entries:
                 if not is_new:
@@ -551,6 +561,8 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_SKIPPED, count=skipped_count)
         if changed_count > 0:
             logger.info(ls.INCREMENTAL_CHANGED, count=changed_count)
+        if unreadable_count > 0:
+            logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
 
         _save_hash_cache(cache_path, new_hashes)
 

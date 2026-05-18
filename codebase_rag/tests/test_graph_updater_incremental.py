@@ -10,6 +10,7 @@ from codebase_rag.graph_updater import (
     FunctionRegistryTrie,
     GraphUpdater,
     _hash_file,
+    _hash_file_with_bytes,
     _load_hash_cache,
     _save_hash_cache,
 )
@@ -56,6 +57,18 @@ class TestHashFile:
         f1.write_text("content one")
         f2.write_text("content two")
         assert _hash_file(f1) != _hash_file(f2)
+
+    def test_hash_with_bytes_returns_none_for_broken_symlink(
+        self, temp_repo: Path
+    ) -> None:
+        link = temp_repo / "result"
+        link.symlink_to(temp_repo / "missing-target")
+        assert _hash_file_with_bytes(link) is None
+
+    def test_hash_with_bytes_returns_none_for_missing_file(
+        self, temp_repo: Path
+    ) -> None:
+        assert _hash_file_with_bytes(temp_repo / "does-not-exist") is None
 
 
 class TestHashCacheIO:
@@ -243,6 +256,29 @@ class TestIncrementalUpdates:
             data = json.load(f)
         assert isinstance(data, dict)
         assert len(data) > 0
+
+    def test_broken_symlink_does_not_crash_indexing(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        broken = py_project / "result"
+        broken.symlink_to(py_project / "missing-nix-store-path")
+
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+        updater.run()
+
+        cache_path = py_project / cs.HASH_CACHE_FILENAME
+        assert cache_path.is_file()
+        with cache_path.open() as f:
+            data = json.load(f)
+        assert "result" not in data
+        assert "module_a.py" in data
 
     def test_deleted_file_removed_from_hash_cache(
         self, py_project: Path, mock_ingestor: MagicMock
