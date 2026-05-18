@@ -228,23 +228,29 @@ def _process_tool_approvals(
         tool_args = _to_tool_args(
             call.tool_name, RawToolArgs(**call.args_as_dict()), tool_names
         )
-        app_context.console.print(
-            f"\n{cs.UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
+        will_prompt = (
+            app_context.session.confirm_edits and not app_context.session.is_yolo()
         )
+
+        if will_prompt:
+            app_context.console.print(
+                f"\n{cs.UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
+            )
         _display_tool_call_diff(call.tool_name, tool_args, tool_names)
 
-        if app_context.session.confirm_edits and not app_context.session.is_yolo():
-            if Confirm.ask(style(approval_prompt, cs.Color.CYAN)):
-                deferred_results.approvals[call.tool_call_id] = True
-            else:
-                feedback = Prompt.ask(
-                    cs.UI_FEEDBACK_PROMPT,
-                    default="",
-                )
-                denial_msg = feedback.strip() or denial_default
-                deferred_results.approvals[call.tool_call_id] = ToolDenied(denial_msg)
-        else:
+        if not will_prompt:
             deferred_results.approvals[call.tool_call_id] = True
+            continue
+
+        if Confirm.ask(style(approval_prompt, cs.Color.CYAN)):
+            deferred_results.approvals[call.tool_call_id] = True
+        else:
+            feedback = Prompt.ask(
+                cs.UI_FEEDBACK_PROMPT,
+                default="",
+            )
+            denial_msg = feedback.strip() or denial_default
+            deferred_results.approvals[call.tool_call_id] = ToolDenied(denial_msg)
 
     return deferred_results
 
