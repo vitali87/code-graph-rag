@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from rich.console import Console
 
-from .constants import SupportedLanguage
+from .constants import PermissionMode, SupportedLanguage
 from .types_defs import MCPHandlerType, MCPInputSchema, PropertyValue
 
 if TYPE_CHECKING:
@@ -17,9 +17,21 @@ class SessionState:
     confirm_edits: bool = True
     log_file: Path | None = None
     cancelled: bool = False
+    permission_mode: PermissionMode = PermissionMode.NORMAL
 
     def reset_cancelled(self) -> None:
         self.cancelled = False
+
+    def is_yolo(self) -> bool:
+        return self.permission_mode == PermissionMode.YOLO
+
+    def cycle_permission_mode(self) -> PermissionMode:
+        self.permission_mode = (
+            PermissionMode.YOLO
+            if self.permission_mode == PermissionMode.NORMAL
+            else PermissionMode.NORMAL
+        )
+        return self.permission_mode
 
 
 def _default_console() -> Console:

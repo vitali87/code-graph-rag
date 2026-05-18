@@ -275,6 +275,64 @@ class TestValidateSegment:
         available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
         assert _validate_segment("", available) is None
 
+    def test_bypass_allowlist_skips_allowlist_error(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        assert (
+            _validate_segment(
+                "curl http://example.com", available, bypass_allowlist=True
+            )
+            is None
+        )
+
+    def test_bypass_allowlist_still_blocks_dangerous_rm(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        error = _validate_segment("rm -rf /", available, bypass_allowlist=True)
+        assert error is not None
+        assert "dangerous" in error.lower()
+
+
+class TestYoloMode:
+    async def test_yolo_skips_approval_for_write_command(
+        self, temp_project_root: Path
+    ) -> None:
+        test_file = temp_project_root / "yolo_target.txt"
+        test_file.write_text("bye", encoding="utf-8")
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "rm yolo_target.txt")
+        assert result.return_code == 0
+        assert not test_file.exists()
+
+    async def test_yolo_runs_non_allowlist_command(
+        self, temp_project_root: Path
+    ) -> None:
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        assert "printf" not in settings.SHELL_COMMAND_ALLOWLIST
+        result = await tool.function(mock_ctx, "printf hello")
+        assert "not in the allowlist" not in result.stderr
+
+    async def test_yolo_still_blocks_dangerous_rm_rf(
+        self, temp_project_root: Path
+    ) -> None:
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "rm -rf /")
+        assert result.return_code != 0
+        assert "dangerous" in result.stderr.lower()
+
 
 class TestHasRedirectOperators:
     def test_output_redirect(self) -> None:

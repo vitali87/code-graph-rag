@@ -34,7 +34,7 @@ SLOTS_CLASSES: list[tuple[type, tuple[str, ...]]] = [
     (FileWriter, ("project_root",)),
     (DirectoryLister, ("project_root",)),
     (CommandGroup, ("commands", "operator")),
-    (ShellCommander, ("project_root", "timeout")),
+    (ShellCommander, ("project_root", "timeout", "is_yolo")),
     (HealthChecker, ("results",)),
     (CypherGenerator, ("agent",)),
     (ModelProvider, ("config",)),

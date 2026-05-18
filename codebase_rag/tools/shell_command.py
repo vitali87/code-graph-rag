@@ -7,6 +7,7 @@ import shlex
 import shutil
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
@@ -196,7 +197,9 @@ def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool
     return False, ""
 
 
-def _validate_segment(segment: str, available_commands: str) -> str | None:
+def _validate_segment(
+    segment: str, available_commands: str, bypass_allowlist: bool = False
+) -> str | None:
     try:
         cmd_parts = shlex.split(segment)
     except ValueError:
@@ -207,7 +210,7 @@ def _validate_segment(segment: str, available_commands: str) -> str | None:
 
     base_cmd = cmd_parts[0]
 
-    if base_cmd not in settings.SHELL_COMMAND_ALLOWLIST:
+    if not bypass_allowlist and base_cmd not in settings.SHELL_COMMAND_ALLOWLIST:
         suggestion = cs.GREP_SUGGESTION if base_cmd == cs.SHELL_CMD_GREP else ""
         return te.COMMAND_NOT_ALLOWED.format(
             cmd=base_cmd, suggestion=suggestion, available=available_commands
@@ -265,11 +268,17 @@ def _requires_approval(command: str) -> bool:
 
 
 class ShellCommander:
-    __slots__ = ("project_root", "timeout")
+    __slots__ = ("project_root", "timeout", "is_yolo")
 
-    def __init__(self, project_root: str = ".", timeout: int = 30):
+    def __init__(
+        self,
+        project_root: str = ".",
+        timeout: int = 30,
+        is_yolo: Callable[[], bool] | None = None,
+    ):
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
+        self.is_yolo = is_yolo or (lambda: False)
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
     async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
@@ -356,9 +365,12 @@ class ShellCommander:
                 )
 
             available_commands = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+            bypass_allowlist = self.is_yolo()
             for group in groups:
                 for segment in group.commands:
-                    if err_msg := _validate_segment(segment, available_commands):
+                    if err_msg := _validate_segment(
+                        segment, available_commands, bypass_allowlist=bypass_allowlist
+                    ):
                         logger.error(err_msg)
                         return ShellCommandResult(
                             return_code=cs.SHELL_RETURN_CODE_ERROR,
@@ -441,7 +453,11 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
-        if _requires_approval(command) and not ctx.tool_call_approved:
+        if (
+            not shell_commander.is_yolo()
+            and _requires_approval(command)
+            and not ctx.tool_call_approved
+        ):
             raise ApprovalRequired(metadata={"command": command})
 
         return await shell_commander.execute(command)

@@ -233,7 +233,7 @@ def _process_tool_approvals(
         )
         _display_tool_call_diff(call.tool_name, tool_args, tool_names)
 
-        if app_context.session.confirm_edits:
+        if app_context.session.confirm_edits and not app_context.session.is_yolo():
             if Confirm.ask(style(approval_prompt, cs.Color.CYAN)):
                 deferred_results.approvals[call.tool_call_id] = True
             else:
@@ -507,6 +507,14 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
     return updated_question
 
 
+def _permission_mode_label() -> str:
+    return (
+        cs.PERMISSION_MODE_YOLO_LABEL
+        if app_context.session.is_yolo()
+        else cs.PERMISSION_MODE_NORMAL_LABEL
+    )
+
+
 def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     bindings = KeyBindings()
 
@@ -521,6 +529,11 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     @bindings.add(cs.KeyBinding.CTRL_C)
     def keyboard_interrupt(event: KeyPressEvent) -> None:
         event.app.exit(exception=KeyboardInterrupt)
+
+    @bindings.add(cs.KeyBinding.SHIFT_TAB)
+    def toggle_permission_mode(event: KeyPressEvent) -> None:
+        app_context.session.cycle_permission_mode()
+        event.app.invalidate()
 
     clean_prompt = Text.from_markup(prompt_text).plain
 
@@ -538,6 +551,8 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         key_bindings=bindings,
         wrap_lines=True,
         style=ORANGE_STYLE,
+        bottom_toolbar=lambda: _permission_mode_label(),
+        refresh_interval=0.5,
     )
     if result is None:
         raise EOFError
@@ -984,7 +999,9 @@ def _initialize_services_and_agent(
     file_writer = FileWriter(project_root=repo_path)
     file_editor = FileEditor(project_root=repo_path)
     shell_commander = ShellCommander(
-        project_root=repo_path, timeout=settings.SHELL_COMMAND_TIMEOUT
+        project_root=repo_path,
+        timeout=settings.SHELL_COMMAND_TIMEOUT,
+        is_yolo=app_context.session.is_yolo,
     )
     directory_lister = DirectoryLister(project_root=repo_path)
     document_analyzer = DocumentAnalyzer(project_root=repo_path)
