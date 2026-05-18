@@ -157,6 +157,65 @@ def test_get_model_does_not_use_cuda_when_unavailable(reset_model_cache: None) -
 
 
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
+def test_select_device_prefers_cuda() -> None:
+    from codebase_rag.embedder import (
+        _select_device,  # ty: ignore[possibly-missing-import]
+    )
+
+    with patch("codebase_rag.embedder.torch.cuda.is_available", return_value=True):
+        with patch(
+            "codebase_rag.embedder.torch.backends.mps.is_available", return_value=True
+        ):
+            assert _select_device() == "cuda"
+
+
+@pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
+def test_select_device_uses_mps_when_cuda_unavailable() -> None:
+    from codebase_rag.embedder import (
+        _select_device,  # ty: ignore[possibly-missing-import]
+    )
+
+    with patch("codebase_rag.embedder.torch.cuda.is_available", return_value=False):
+        with patch(
+            "codebase_rag.embedder.torch.backends.mps.is_available", return_value=True
+        ):
+            assert _select_device() == "mps"
+
+
+@pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
+def test_select_device_falls_back_to_cpu() -> None:
+    from codebase_rag.embedder import (
+        _select_device,  # ty: ignore[possibly-missing-import]
+    )
+
+    with patch("codebase_rag.embedder.torch.cuda.is_available", return_value=False):
+        with patch(
+            "codebase_rag.embedder.torch.backends.mps.is_available", return_value=False
+        ):
+            assert _select_device() == "cpu"
+
+
+@pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
+def test_get_model_moves_to_mps_when_available(reset_model_cache: None) -> None:
+    from codebase_rag.embedder import get_model  # ty: ignore[possibly-missing-import]
+
+    with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:
+        mock_instance = MagicMock()
+        mock_instance.eval.return_value = mock_instance
+        mock_instance.to.return_value = mock_instance
+        mock_unixcoder_class.return_value = mock_instance
+
+        with patch("codebase_rag.embedder.torch.cuda.is_available", return_value=False):
+            with patch(
+                "codebase_rag.embedder.torch.backends.mps.is_available",
+                return_value=True,
+            ):
+                get_model()
+
+    mock_instance.to.assert_called_once_with("mps")
+
+
+@pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 @pytest.mark.slow
 def test_embed_code_integration(reset_model_cache: None) -> None:
     from codebase_rag.embedder import embed_code
