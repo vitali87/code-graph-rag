@@ -732,6 +732,26 @@ STATUS_BAR_DIRTY_MARKER = " ±"
 STATUS_BAR_SPINNER = "dots"
 STATUS_BAR_SEPARATOR_CHAR = "─"
 STATUS_BAR_SEPARATOR_COLOR = "#666666"
+STATUS_BAR_TOKEN_HTML = '  <style fg="{color}">{used} / {max_ctx} ({pct})</style>'
+TOKEN_THRESHOLD_WARNING = 50
+TOKEN_THRESHOLD_CRITICAL = 80
+TOKEN_COLOR_OK = "green"
+TOKEN_COLOR_WARNING = "yellow"
+TOKEN_COLOR_CRITICAL = "red"
+
+DEFAULT_CONTEXT_WINDOW = 200_000
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-opus-4-7": 1_000_000,
+    "claude-opus-4-6": 200_000,
+    "claude-opus-4-5": 200_000,
+    "claude-opus-4-1": 200_000,
+    "claude-opus-4-0": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-sonnet-4-5": 200_000,
+    "claude-sonnet-4-0": 200_000,
+    "claude-haiku-4-5": 200_000,
+    "claude-haiku-4-0": 200_000,
+}
 
 # (H) Interactive setup prompt - grouped view
 INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"

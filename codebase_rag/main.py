@@ -427,6 +427,12 @@ async def _run_agent_response_loop(
             app_context.session.cancelled = True
             break
 
+        try:
+            usage = response.usage()
+            app_context.session.total_tokens_used += usage.total_tokens or 0
+        except Exception:
+            pass
+
         if isinstance(response.output, DeferredToolRequests):
             deferred_results = _process_tool_approvals(
                 response.output,
@@ -556,6 +562,34 @@ def _terminal_columns() -> int:
     return shutil.get_terminal_size((80, 24)).columns
 
 
+def _format_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+def _token_color(pct: float) -> str:
+    if pct >= cs.TOKEN_THRESHOLD_CRITICAL:
+        return cs.TOKEN_COLOR_CRITICAL
+    if pct >= cs.TOKEN_THRESHOLD_WARNING:
+        return cs.TOKEN_COLOR_WARNING
+    return cs.TOKEN_COLOR_OK
+
+
+def _token_usage() -> tuple[int, int, float]:
+    used = app_context.session.total_tokens_used
+    try:
+        model_id = settings.active_orchestrator_config.model_id or ""
+    except Exception:
+        model_id = ""
+    bare = model_id.split(":", 1)[-1]
+    max_ctx = cs.MODEL_CONTEXT_WINDOWS.get(bare, cs.DEFAULT_CONTEXT_WINDOW)
+    pct = (used / max_ctx * 100) if max_ctx > 0 else 0.0
+    return used, max_ctx, pct
+
+
 def _status_bar_label() -> HTML | str:
     mode = _permission_mode_label()
     state = _git_state()
@@ -565,25 +599,41 @@ def _status_bar_label() -> HTML | str:
         f"</style>"
     )
     if state is None:
-        return HTML(f"{sep_html}\n{html_escape(mode)}")
-    branch, is_dirty = state
-    template = (
-        cs.STATUS_BAR_WITH_BRANCH_DIRTY if is_dirty else cs.STATUS_BAR_WITH_BRANCH_CLEAN
+        body = html_escape(mode)
+    else:
+        branch, is_dirty = state
+        template = (
+            cs.STATUS_BAR_WITH_BRANCH_DIRTY
+            if is_dirty
+            else cs.STATUS_BAR_WITH_BRANCH_CLEAN
+        )
+        body = template.format(mode=html_escape(mode), branch=html_escape(branch))
+    used, max_ctx, pct = _token_usage()
+    body += cs.STATUS_BAR_TOKEN_HTML.format(
+        color=_token_color(pct),
+        used=_format_tokens(used),
+        max_ctx=_format_tokens(max_ctx),
+        pct=f"{pct:.1f}%",
     )
-    body = template.format(mode=html_escape(mode), branch=html_escape(branch))
     return HTML(f"{sep_html}\n{body}")
 
 
 def _rich_status_bar() -> Text:
-    line = Text(_permission_mode_label(), style="dim")
+    line = Text()
+    line.append(_permission_mode_label(), style="dim")
     state = _git_state()
-    if state is None:
-        return line
-    branch, is_dirty = state
-    style = cs.STATUS_BAR_DIRTY_STYLE if is_dirty else cs.STATUS_BAR_CLEAN_STYLE
-    marker = cs.STATUS_BAR_DIRTY_MARKER if is_dirty else ""
+    if state is not None:
+        branch, is_dirty = state
+        style = cs.STATUS_BAR_DIRTY_STYLE if is_dirty else cs.STATUS_BAR_CLEAN_STYLE
+        marker = cs.STATUS_BAR_DIRTY_MARKER if is_dirty else ""
+        line.append("  ")
+        line.append(f" ⎇ {branch}{marker} ", style=style)
+    used, max_ctx, pct = _token_usage()
     line.append("  ")
-    line.append(f" ⎇ {branch}{marker} ", style=style)
+    line.append(
+        f"{_format_tokens(used)} / {_format_tokens(max_ctx)} ({pct:.1f}%)",
+        style=_token_color(pct),
+    )
     return line
 
 
