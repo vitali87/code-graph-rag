@@ -256,7 +256,13 @@ class AgentLoopUI(NamedTuple):
     panel_title: str
 
 
-ORANGE_STYLE = Style.from_dict({"": "#ff8c00"})
+ORANGE_STYLE = Style.from_dict(
+    {
+        "": "#ff8c00",
+        "bottom-toolbar": "noreverse fg:#888888",
+        "bottom-toolbar.text": "noreverse fg:#888888",
+    }
+)
 
 OPTIMIZATION_LOOP_UI = AgentLoopUI(
     status_message="[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]",

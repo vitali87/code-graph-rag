@@ -720,6 +720,18 @@ MULTILINE_INPUT_HINT = (
 PERMISSION_MODE_NORMAL_LABEL = "● Normal mode (asks before destructive)"
 PERMISSION_MODE_YOLO_LABEL = "● YOLO mode (auto-approve, allowlist off)"
 PERMISSION_MODE_TOGGLED = "Permission mode: {label}"
+STATUS_BAR_WITH_BRANCH_CLEAN = (
+    '{mode}  <style bg="ansigreen" fg="ansiblack"> ⎇ {branch} </style>'
+)
+STATUS_BAR_WITH_BRANCH_DIRTY = (
+    '{mode}  <style bg="ansiyellow" fg="ansiblack"> ⎇ {branch} ± </style>'
+)
+STATUS_BAR_CLEAN_STYLE = "black on green"
+STATUS_BAR_DIRTY_STYLE = "black on yellow"
+STATUS_BAR_DIRTY_MARKER = " ±"
+STATUS_BAR_SPINNER = "dots"
+STATUS_BAR_SEPARATOR_CHAR = "─"
+STATUS_BAR_SEPARATOR_COLOR = "#666666"
 
 # (H) Interactive setup prompt - grouped view
 INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"

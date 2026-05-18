@@ -6,11 +6,14 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import uuid
 from collections import deque
 from collections.abc import Coroutine
+from contextlib import contextmanager
 from dataclasses import replace
+from html import escape as html_escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,9 +23,12 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied
+from rich.console import Group
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
+from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
@@ -255,9 +261,13 @@ def _process_tool_approvals(
     return deferred_results
 
 
+def _rich_log_sink(message: object) -> None:
+    app_context.console.print(str(message), end="", markup=False, highlight=False)
+
+
 def _setup_common_initialization(repo_path: str) -> Path:
     logger.remove()
-    logger.add(sys.stdout, format=cs.LOG_FORMAT)
+    logger.add(_rich_log_sink, format=cs.LOG_FORMAT, colorize=False)
 
     project_root = Path(repo_path).resolve()
     tmp_dir = project_root / cs.TMP_DIR
@@ -402,7 +412,7 @@ async def _run_agent_response_loop(
     deferred_results: DeferredToolResults | None = None
 
     while True:
-        with app_context.console.status(config.status_message):
+        with _thinking_with_status_bar(config.status_message):
             response = await run_with_cancellation(
                 rag_agent.run(
                     question_with_context,
@@ -521,6 +531,82 @@ def _permission_mode_label() -> str:
     )
 
 
+def _git_state() -> tuple[str, bool] | None:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--branch"],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=True,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+    lines = result.stdout.splitlines()
+    if not lines or not lines[0].startswith("## "):
+        return None
+    header = lines[0][3:].split("...", 1)[0].split(" ", 1)[0]
+    if header in ("HEAD", "No"):
+        return None
+    is_dirty = any(line for line in lines[1:])
+    return header, is_dirty
+
+
+def _terminal_columns() -> int:
+    return shutil.get_terminal_size((80, 24)).columns
+
+
+def _status_bar_label() -> HTML | str:
+    mode = _permission_mode_label()
+    state = _git_state()
+    sep_html = (
+        f'<style fg="{cs.STATUS_BAR_SEPARATOR_COLOR}">'
+        f"{cs.STATUS_BAR_SEPARATOR_CHAR * _terminal_columns()}"
+        f"</style>"
+    )
+    if state is None:
+        return HTML(f"{sep_html}\n{html_escape(mode)}")
+    branch, is_dirty = state
+    template = (
+        cs.STATUS_BAR_WITH_BRANCH_DIRTY if is_dirty else cs.STATUS_BAR_WITH_BRANCH_CLEAN
+    )
+    body = template.format(mode=html_escape(mode), branch=html_escape(branch))
+    return HTML(f"{sep_html}\n{body}")
+
+
+def _rich_status_bar() -> Text:
+    line = Text(_permission_mode_label(), style="dim")
+    state = _git_state()
+    if state is None:
+        return line
+    branch, is_dirty = state
+    style = cs.STATUS_BAR_DIRTY_STYLE if is_dirty else cs.STATUS_BAR_CLEAN_STYLE
+    marker = cs.STATUS_BAR_DIRTY_MARKER if is_dirty else ""
+    line.append("  ")
+    line.append(f" ⎇ {branch}{marker} ", style=style)
+    return line
+
+
+@contextmanager
+def _thinking_with_status_bar(message: str):
+    separator = Text(
+        cs.STATUS_BAR_SEPARATOR_CHAR * _terminal_columns(),
+        style=cs.STATUS_BAR_SEPARATOR_COLOR,
+    )
+    renderable = Group(
+        separator,
+        Spinner(cs.STATUS_BAR_SPINNER, text=Text.from_markup(message)),
+        _rich_status_bar(),
+    )
+    with Live(
+        renderable,
+        console=app_context.console,
+        refresh_per_second=4,
+        transient=True,
+    ) as live:
+        yield live
+
+
 def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     bindings = KeyBindings()
 
@@ -557,7 +643,7 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         key_bindings=bindings,
         wrap_lines=True,
         style=ORANGE_STYLE,
-        bottom_toolbar=lambda: _permission_mode_label(),
+        bottom_toolbar=lambda: _status_bar_label(),
         refresh_interval=0.5,
     )
     if result is None:
