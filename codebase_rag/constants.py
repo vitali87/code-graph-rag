@@ -154,7 +154,7 @@ V1_PATH = "/v1"
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
-EMBEDDING_DEFAULT_BATCH_SIZE = 32
+EMBEDDING_DEFAULT_BATCH_SIZE = 64
 EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
 KEY_NODES = "nodes"
