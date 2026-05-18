@@ -427,11 +427,8 @@ async def _run_agent_response_loop(
             app_context.session.cancelled = True
             break
 
-        try:
-            usage = response.usage()
-            app_context.session.total_tokens_used += usage.total_tokens or 0
-        except Exception:
-            pass
+        message_history.extend(response.new_messages())
+        asyncio.create_task(_refresh_context_tokens(list(message_history)))
 
         if isinstance(response.output, DeferredToolRequests):
             deferred_results = _process_tool_approvals(
@@ -440,7 +437,6 @@ async def _run_agent_response_loop(
                 config.denial_default,
                 tool_names,
             )
-            message_history.extend(response.new_messages())
             continue
 
         output_text = response.output
@@ -456,7 +452,6 @@ async def _run_agent_response_loop(
         )
 
         log_session_event(f"{cs.SESSION_PREFIX_ASSISTANT}{output_text}")
-        message_history.extend(response.new_messages())
         break
 
 
@@ -579,7 +574,7 @@ def _token_color(pct: float) -> str:
 
 
 def _token_usage() -> tuple[int, int, float]:
-    used = app_context.session.total_tokens_used
+    used = app_context.session.context_tokens
     try:
         model_id = settings.active_orchestrator_config.model_id or ""
     except Exception:
@@ -588,6 +583,22 @@ def _token_usage() -> tuple[int, int, float]:
     max_ctx = cs.MODEL_CONTEXT_WINDOWS.get(bare, cs.DEFAULT_CONTEXT_WINDOW)
     pct = (used / max_ctx * 100) if max_ctx > 0 else 0.0
     return used, max_ctx, pct
+
+
+async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
+    try:
+        config = settings.active_orchestrator_config
+    except Exception:
+        return
+    if config.provider != cs.Provider.ANTHROPIC or not config.api_key:
+        return
+    try:
+        from .services.anthropic_token_counter import count_anthropic_context
+
+        count = await count_anthropic_context(config.api_key, config.model_id, messages)
+        app_context.session.context_tokens = count
+    except Exception as e:
+        logger.debug(ls.CONTEXT_TOKEN_COUNT_FAILED.format(error=e))
 
 
 def _status_bar_label() -> HTML | str:

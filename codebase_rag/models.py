@@ -18,7 +18,7 @@ class SessionState:
     log_file: Path | None = None
     cancelled: bool = False
     permission_mode: PermissionMode = PermissionMode.NORMAL
-    total_tokens_used: int = 0
+    context_tokens: int = 0
 
     def reset_cancelled(self) -> None:
         self.cancelled = False

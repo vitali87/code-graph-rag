@@ -739,6 +739,14 @@ TOKEN_COLOR_OK = "green"
 TOKEN_COLOR_WARNING = "yellow"
 TOKEN_COLOR_CRITICAL = "red"
 
+ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_HEADER_API_KEY = "x-api-key"
+ANTHROPIC_HEADER_VERSION = "anthropic-version"
+HEADER_CONTENT_TYPE = "content-type"
+CONTENT_TYPE_JSON = "application/json"
+ANTHROPIC_COUNT_TIMEOUT_S = 10.0
+
 DEFAULT_CONTEXT_WINDOW = 200_000
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-opus-4-7": 1_000_000,
