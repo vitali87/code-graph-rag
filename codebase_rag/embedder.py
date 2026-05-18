@@ -98,12 +98,22 @@ if has_torch() and has_transformers():
 
     from .unixcoder import UniXcoder
 
+    def _select_device() -> str:
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
     @lru_cache(maxsize=1)
     def get_model() -> UniXcoder:
         model = UniXcoder(cs.UNIXCODER_MODEL)
         model.eval()
-        if torch.cuda.is_available():
+        device = _select_device()
+        if device == "cuda":
             model = model.cuda()
+        elif device == "mps":
+            model = model.to("mps")
         return model
 
     def embed_code(code: str, max_length: int | None = None) -> list[float]:
