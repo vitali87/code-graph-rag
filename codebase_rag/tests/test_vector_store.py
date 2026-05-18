@@ -79,6 +79,37 @@ def integration_client(
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
+    import codebase_rag.vector_store as vs
+
+    with patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"):
+        with patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls:
+            instance = MagicMock()
+            instance.collection_exists.return_value = True
+            mock_client_cls.return_value = instance
+            vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(url="http://localhost:6333")
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+def test_get_qdrant_client_uses_path_when_url_unset(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with patch.object(vs.settings, "QDRANT_URL", None):
+        with patch.object(vs.settings, "QDRANT_DB_PATH", "/tmp/qd"):
+            with patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls:
+                instance = MagicMock()
+                instance.collection_exists.return_value = True
+                mock_client_cls.return_value = instance
+                vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(path="/tmp/qd")
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_store_embedding_calls_upsert(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
