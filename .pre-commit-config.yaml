@@ -19,10 +19,10 @@ repos:
     hooks:
       - id: ty
         name: ty check
-        entry: uv run ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude optimize/ --exclude codec/
+        entry: uv run ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude optimize/ --exclude codec/ --exclude grammars/ --exclude query_modules/
         language: system
         types: [python]
-        exclude: ^(codec/.*_pb2\.py|benchmarks/|optimize/)$
+        exclude: ^(codec/.*_pb2\.py|benchmarks/|optimize/|grammars/|query_modules/)$
         pass_filenames: false
   - repo: local
     hooks:
