@@ -291,7 +291,6 @@ class LanguageImport(NamedTuple):
 class ToolNames(NamedTuple):
     query_graph: str
     read_file: str
-    analyze_document: str
     semantic_search: str
     create_file: str
     edit_file: str

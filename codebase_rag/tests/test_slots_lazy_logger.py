@@ -15,7 +15,6 @@ from codebase_rag.providers.base import (
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.tools.code_retrieval import CodeRetriever
 from codebase_rag.tools.directory_lister import DirectoryLister
-from codebase_rag.tools.document_analyzer import DocumentAnalyzer, _NotSupportedClient
 from codebase_rag.tools.file_editor import FileEditor
 from codebase_rag.tools.file_reader import FileReader
 from codebase_rag.tools.file_writer import FileWriter
@@ -26,8 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 SLOTS_CLASSES: list[tuple[type, tuple[str, ...]]] = [
-    (_NotSupportedClient, ()),
-    (DocumentAnalyzer, ("project_root", "client")),
     (FileEditor, ("project_root", "dmp", "parsers")),
     (CodeRetriever, ("project_root", "ingestor")),
     (FileReader, ("project_root",)),
@@ -82,11 +79,6 @@ class TestSlotsPresence:
 
 
 class TestSlotsBlockDict:
-    def test_not_supported_client_no_dict(self) -> None:
-        obj = _NotSupportedClient()
-        with pytest.raises(NotImplementedError):
-            obj.__dict__
-
     def test_command_group_no_dict(self) -> None:
         obj = CommandGroup(commands=["ls"], operator=None)
         assert not hasattr(obj, "__dict__")
@@ -118,11 +110,6 @@ class TestSlotsBlockDict:
 
 
 class TestSlotsRejectArbitraryAttrs:
-    def test_not_supported_client_rejects_attr(self) -> None:
-        obj = _NotSupportedClient()
-        with pytest.raises((AttributeError, NotImplementedError)):
-            obj.arbitrary = 42
-
     def test_command_group_rejects_attr(self) -> None:
         obj = CommandGroup(commands=["ls"], operator=None)
         with pytest.raises(AttributeError):
@@ -148,7 +135,6 @@ LAZY_LOGGER_FILES: list[str] = [
     "parser_loader.py",
     "utils/fqn_resolver.py",
     "utils/source_extraction.py",
-    "tools/document_analyzer.py",
     "tools/file_editor.py",
 ]
 

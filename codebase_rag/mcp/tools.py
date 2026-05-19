@@ -25,10 +25,6 @@ from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
 )
-from codebase_rag.tools.document_analyzer import (
-    DocumentAnalyzer,
-    create_document_analyzer_tool,
-)
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
@@ -71,7 +67,6 @@ class MCPToolsRegistry:
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
         self.shell_commander = ShellCommander(project_root=project_root)
-        self.document_analyzer = DocumentAnalyzer(project_root=project_root)
 
         stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
         self._query_tool = create_query_tool(
@@ -86,9 +81,6 @@ class MCPToolsRegistry:
         )
         self._shell_command_tool = create_shell_command_tool(
             shell_commander=self.shell_commander
-        )
-        self._document_analyzer_tool = create_document_analyzer_tool(
-            self.document_analyzer
         )
 
         self._rag_agent: Agent | None = None
@@ -352,7 +344,6 @@ class MCPToolsRegistry:
                 self._file_editor_tool,
                 self._shell_command_tool,
                 self._directory_lister_tool,
-                self._document_analyzer_tool,
                 create_get_function_source_tool(),
             ]
             if self._semantic_search_tool is not None:

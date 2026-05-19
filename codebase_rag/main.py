@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import mimetypes
 import os
 import shlex
 import shutil
@@ -22,7 +23,13 @@ from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai import (
+    BinaryContent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolDenied,
+)
+from pydantic_ai.messages import UserContent
 from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -45,7 +52,6 @@ from .services.llm import CypherGenerator, create_rag_orchestrator
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
-from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_tool
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
@@ -404,7 +410,7 @@ async def run_with_cancellation[T](
 async def _run_agent_response_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
-    question_with_context: str,
+    question_with_context: str | list[UserContent],
     config: AgentLoopUI,
     tool_names: ConfirmationToolNames,
     model_override: Model | None = None,
@@ -455,31 +461,26 @@ async def _run_agent_response_loop(
         break
 
 
-def _find_image_paths(question: str) -> list[Path]:
+def _find_multimodal_paths(question: str) -> list[Path]:
     try:
         if os.name == "nt":
-            # (H) On Windows, shlex.split with posix=False to preserve backslashes
             tokens = shlex.split(question, posix=False)
         else:
             tokens = shlex.split(question)
     except ValueError:
         tokens = question.split()
 
-    image_paths: list[Path] = []
+    paths: list[Path] = []
     for token in tokens:
-        # (H) Strip quotes if they remain (shlex with posix=False might keep some)
         token = token.strip("'\"")
-        # (H) Check if it looks like an image path
-        if token.lower().endswith(cs.IMAGE_EXTENSIONS):
-            # (H) On Windows, could be C:\... or \...
-            # (H) On POSIX, starts with /
+        if token.lower().endswith(cs.MULTIMODAL_EXTENSIONS):
             p = Path(token)
             if p.is_absolute() or token.startswith("/") or token.startswith("\\"):
-                image_paths.append(p)
-    return image_paths
+                paths.append(p)
+    return paths
 
 
-def _get_path_variants(path_str: str) -> tuple[str, ...]:
+def _path_variants(path_str: str) -> tuple[str, ...]:
     return (
         path_str.replace(" ", r"\ "),
         f"'{path_str}'",
@@ -488,40 +489,47 @@ def _get_path_variants(path_str: str) -> tuple[str, ...]:
     )
 
 
-def _replace_path_in_question(question: str, old_path: str, new_path: str) -> str:
-    for variant in _get_path_variants(old_path):
-        if variant in question:
-            return question.replace(variant, new_path)
-    logger.warning(ls.PATH_NOT_IN_QUESTION.format(path=old_path))
-    return question
+def _guess_media_type(path: Path) -> str:
+    mime, _ = mimetypes.guess_type(str(path))
+    return mime or cs.MIME_TYPE_FALLBACK
 
 
-def _handle_chat_images(question: str, project_root: Path) -> str:
-    image_files = _find_image_paths(question)
-    if not image_files:
+def _build_user_prompt(question: str) -> str | list[UserContent]:
+    paths = _find_multimodal_paths(question)
+    if not paths:
         return question
 
-    tmp_dir = project_root / cs.TMP_DIR
-    tmp_dir.mkdir(exist_ok=True)
-    updated_question = question
-
-    for original_path in image_files:
-        if not original_path.exists() or not original_path.is_file():
-            logger.warning(ls.IMAGE_NOT_FOUND.format(path=original_path))
+    content: list[UserContent] = []
+    remaining = question
+    for path in paths:
+        if not path.exists() or not path.is_file():
+            logger.warning(ls.MULTIMODAL_NOT_FOUND.format(path=path))
             continue
-
+        match_token = next(
+            (v for v in _path_variants(str(path)) if v in remaining), None
+        )
+        if match_token is None:
+            logger.warning(ls.PATH_NOT_IN_QUESTION.format(path=path))
+            continue
+        before, _, after = remaining.partition(match_token)
+        if before.strip():
+            content.append(before.rstrip())
         try:
-            new_path = tmp_dir / f"{uuid.uuid4()}-{original_path.name}"
-            shutil.copy(original_path, new_path)
-            new_relative = str(new_path.relative_to(project_root))
-            updated_question = _replace_path_in_question(
-                updated_question, str(original_path), new_relative
+            content.append(
+                BinaryContent(
+                    data=path.read_bytes(), media_type=_guess_media_type(path)
+                )
             )
-            logger.info(ls.IMAGE_COPIED.format(path=new_relative))
+            logger.info(ls.MULTIMODAL_ATTACHED.format(path=path))
         except Exception as e:
-            logger.error(ls.IMAGE_COPY_FAILED.format(error=e))
+            logger.error(ls.MULTIMODAL_READ_FAILED.format(path=path, error=e))
+            content.append(match_token)
+        remaining = after
 
-    return updated_question
+    if remaining.strip():
+        content.append(remaining.lstrip())
+
+    return content or question
 
 
 def _permission_mode_label() -> str:
@@ -574,7 +582,10 @@ def _token_color(pct: float) -> str:
 
 
 def _token_usage() -> tuple[int, int, float]:
-    used = app_context.session.context_tokens
+    try:
+        used = int(app_context.session.context_tokens)
+    except (TypeError, ValueError):
+        used = 0
     try:
         model_id = settings.active_orchestrator_config.model_id or ""
     except Exception:
@@ -832,19 +843,17 @@ async def _run_interactive_loop(
             log_session_event(f"{cs.SESSION_PREFIX_USER}{question}")
 
             if app_context.session.cancelled:
-                question_with_context = question + get_session_context()
+                question_text = question + get_session_context()
                 app_context.session.reset_cancelled()
             else:
-                question_with_context = question
+                question_text = question
 
-            question_with_context = _handle_chat_images(
-                question_with_context, project_root
-            )
+            user_prompt: str | list[UserContent] = _build_user_prompt(question_text)
 
             await _run_agent_response_loop(
                 rag_agent,
                 message_history,
-                question_with_context,
+                user_prompt,
                 config,
                 tool_names,
                 model_override,
@@ -1157,7 +1166,6 @@ def _initialize_services_and_agent(
         is_yolo=app_context.session.is_yolo,
     )
     directory_lister = DirectoryLister(project_root=repo_path)
-    document_analyzer = DocumentAnalyzer(project_root=repo_path)
 
     query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
     code_tool = create_code_retrieval_tool(code_retriever)
@@ -1166,7 +1174,6 @@ def _initialize_services_and_agent(
     file_editor_tool = create_file_editor_tool(file_editor)
     shell_command_tool = create_shell_command_tool(shell_commander)
     directory_lister_tool = create_directory_lister_tool(directory_lister)
-    document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
     semantic_search_tool = create_semantic_search_tool()
     function_source_tool = create_get_function_source_tool()
 
@@ -1185,7 +1192,6 @@ def _initialize_services_and_agent(
             file_editor_tool,
             shell_command_tool,
             directory_lister_tool,
-            document_analyzer_tool,
             semantic_search_tool,
             function_source_tool,
         ]

@@ -6,29 +6,11 @@ ERROR_WRAPPER = "Error: {message}"
 # (H) File operation errors
 FILE_NOT_FOUND = "File not found."
 FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"
-BINARY_FILE = "File '{path}' is a binary file. Use the 'analyze_document' tool for this file type."
+BINARY_FILE = "File '{path}' is a binary file. Ask the user to attach it inline if they want it analyzed."
 UNICODE_DECODE = (
     "File '{path}' could not be read as text. It may be a binary file. "
-    "If it is a document (e.g., PDF), use the 'analyze_document' tool."
+    "If it is a document (e.g., PDF), ask the user to attach it inline."
 )
-
-# (H) Document analyzer errors
-DOCUMENT_UNSUPPORTED = (
-    "Error: Document analysis is not supported for the current LLM provider."
-)
-DOC_FILE_NOT_FOUND = "Error: File not found at '{path}'."
-DOC_SECURITY_RISK = "Error: Security risk: file path {path} is outside the project root"
-DOC_ACCESS_OUTSIDE_ROOT = (
-    "Error: Security risk: Attempted to access file outside of project root: {path}"
-)
-DOC_API_VALIDATION = "Error: API validation failed: {error}"
-DOC_API_ERROR = "Error: API error: {error}"
-DOC_IMAGE_PROCESS = (
-    "Error: Unable to process the image file. "
-    "The image may be corrupted or in an unsupported format."
-)
-DOC_ANALYSIS_FAILED = "Error: An error occurred during analysis: {error}"
-DOC_DURING_ANALYSIS = "Error: Document analysis failed: {error}"
 
 # (H) Directory errors
 DIRECTORY_INVALID = "Error: '{path}' is not a valid directory."

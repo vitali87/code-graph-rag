@@ -636,7 +636,9 @@ METHOD_FIND_WITH_PREFIX = "find_with_prefix"
 METHOD_ITEMS = "items"
 
 # (H) Image file extensions for chat image handling
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
+MULTIMODAL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf")
+MIME_TYPE_PDF = "application/pdf"
+MIME_TYPE_FALLBACK = "application/octet-stream"
 
 # (H) CLI exit commands
 EXIT_COMMANDS = frozenset({"exit", "quit"})

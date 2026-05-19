@@ -68,8 +68,10 @@ EMBEDDING_CACHE_LOADED = "Loaded embedding cache with {count} entries from {path
 EMBEDDING_CACHE_SAVE_FAILED = "Failed to save embedding cache to {path}: {error}"
 EMBEDDING_CACHE_LOAD_FAILED = "Failed to load embedding cache from {path}: {error}"
 
-# (H) Image logs
-IMAGE_COPIED = "Copied image to temporary path: {path}"
+# (H) Multimodal attachment logs
+MULTIMODAL_ATTACHED = "Attached multimodal content: {path}"
+MULTIMODAL_NOT_FOUND = "Multimodal path referenced but not found: {path}"
+MULTIMODAL_READ_FAILED = "Failed to read multimodal file '{path}': {error}"
 
 # (H) Protobuf service logs
 PROTOBUF_INIT = "ProtobufFileIngestor initialized to write to: {path}"
@@ -280,7 +282,6 @@ TOOL_SHELL_ALREADY_TERMINATED = (
     "Process already terminated when timeout kill was attempted."
 )
 TOOL_SHELL_ERROR = "An error occurred while executing command: {error}"
-TOOL_DOC_ANALYZE = "[DocumentAnalyzer] Analyzing '{path}' with question: '{question}'"
 
 # (H) Shell timing log
 SHELL_TIMING = "'{func}' executed in {time:.2f}ms"
@@ -332,15 +333,6 @@ SEMANTIC_SOURCE_FAILED = "Failed to get source code for node {id}: {error}"
 SEMANTIC_TOOL_SEARCH = "[Tool:SemanticSearch] Searching for: '{query}'"
 SEMANTIC_TOOL_SOURCE = "[Tool:GetFunctionSource] Retrieving source for node ID: {id}"
 
-# (H) Document analyzer logs
-DOC_COPIED = "Copied external file to: {path}"
-DOC_SUCCESS = "Successfully received analysis for '{path}'."
-DOC_NO_TEXT = "No text found in response: {response}"
-DOC_API_ERROR = "Google GenAI API error for '{path}': {error}"
-DOC_FAILED = "Failed to analyze document '{path}': {error}"
-DOC_RESULT = "[analyze_document] Result type: {type}, content: {preview}..."
-DOC_EXCEPTION = "[analyze_document] Exception during analysis: {error}"
-
 # (H) Code retrieval logs
 CODE_RETRIEVER_INIT = "CodeRetriever initialized with root: {root}"
 CODE_RETRIEVER_SEARCH = "[CodeRetriever] Searching for: {name}"
@@ -351,14 +343,12 @@ CODE_TOOL_RETRIEVE = "[Tool:GetCode] Retrieving code for: {name}"
 FILE_EDITOR_INIT = "FileEditor initialized with root: {root}"
 FILE_READER_INIT = "FileReader initialized with root: {root}"
 SHELL_COMMANDER_INIT = "ShellCommander initialized with root: {root}"
-DOC_ANALYZER_INIT = "DocumentAnalyzer initialized with root: {root}"
 
 # (H) Tool error logs
 FILE_EDITOR_WARN = "[FileEditor] {msg}"
 FILE_EDITOR_ERR = "[FileEditor] {msg}"
 FILE_EDITOR_ERR_EDIT = "[FileEditor] Error editing file {path}: {error}"
 FILE_READER_ERR = "Error reading file {path}: {error}"
-DOC_ANALYZER_API_ERR = "[DocumentAnalyzer] API validation error: {error}"
 
 # (H) File writer logs
 FILE_WRITER_INIT = "FileWriter initialized with root: {root}"
@@ -371,10 +361,8 @@ EXPORT_ERROR = "Export error: {error}"
 STATS_ERROR = "Stats error: {error}"
 INDEXING_FAILED = "Indexing failed"
 PATH_NOT_IN_QUESTION = (
-    "Could not find original path in question for replacement: {path}"
+    "Could not locate path token in user message for attachment: {path}"
 )
-IMAGE_NOT_FOUND = "Image path found, but does not exist: {path}"
-IMAGE_COPY_FAILED = "Failed to copy image to temporary directory: {error}"
 FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of project root."
 
 # (H) Call processor logs

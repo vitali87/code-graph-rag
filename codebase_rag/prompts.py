@@ -26,7 +26,6 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
             "query_codebase_knowledge_graph", "query_codebase_knowledge_graph"
         ),
         read_file=tool_map.get("read_file_content", "read_file_content"),
-        analyze_document=tool_map.get("analyze_document", "analyze_document"),
         semantic_search=tool_map.get("semantic_code_search", "semantic_code_search"),
         create_file=tool_map.get("create_new_file", "create_new_file"),
         edit_file=tool_map.get("replace_code_surgically", "replace_code_surgically"),
@@ -98,10 +97,10 @@ def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
 3.  **HONESTY**: If a tool fails or returns no results, you MUST state that clearly and report any error messages. Do not invent answers.
 4.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
     - For source code files (.py, .ts, etc.), use `{t.read_file}`.
-    - For documents like PDFs, use the `{t.analyze_document}` tool. This is more effective than trying to read them as plain text.
+    - Images and PDFs the user references are attached inline to the message; read them directly from your own multimodal input.
 
 **Your General Approach:**
-1.  **Analyze Documents**: If the user asks a question about a document (like a PDF), you **MUST** use the `{t.analyze_document}` tool. Provide both the `file_path` and the user's `question` to the tool.
+1.  **Inspect Attached Media Directly**: When the user attaches an image or PDF, analyze it from the inline content of the message. Do not call a tool for it.
 2.  **Deep Dive into Code**: When you identify a relevant component (e.g., a folder), you must go beyond documentation.
     a. First, check if documentation files like `README.md` exist and read them for context. For configuration, look for files appropriate to the language (e.g., `pyproject.toml` for Python, `package.json` for Node.js).
     b. **Then, you MUST dive into the source code.** Explore the `src` directory (or equivalent). Identify and read key files (e.g., `main.py`, `index.ts`, `app.ts`) to understand the implementation details, logic, and functionality.
@@ -300,7 +299,7 @@ I want you to analyze my {language} codebase and propose specific optimizations 
 Please:
 1. Use your code retrieval and graph querying tools to understand the codebase structure
 2. Read relevant source files to identify optimization opportunities
-3. Use the analyze_document tool to reference best practices from {reference_document}
+3. Reference best practices from {reference_document} (attached inline)
 4. Reference established patterns and best practices for {language}
 5. Propose specific, actionable optimizations with file references
 6. IMPORTANT: Do not make any changes yet - just propose them and wait for approval

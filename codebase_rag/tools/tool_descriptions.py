@@ -11,16 +11,11 @@ class AgenticToolName(StrEnum):
     CREATE_FILE = "create_file"
     REPLACE_CODE = "replace_code"
     LIST_DIRECTORY = "list_directory"
-    ANALYZE_DOCUMENT = "analyze_document"
     EXECUTE_SHELL = "execute_shell"
     SEMANTIC_SEARCH = "semantic_search"
     GET_FUNCTION_SOURCE = "get_function_source"
     GET_CODE_SNIPPET = "get_code_snippet"
 
-
-ANALYZE_DOCUMENT = (
-    "Analyzes documents (PDFs, images) to answer questions about their content."
-)
 
 CODEBASE_QUERY = (
     "Query the codebase knowledge graph using natural language questions. "
@@ -60,7 +55,7 @@ GET_FUNCTION_SOURCE = (
 
 FILE_READER = (
     "Reads the content of text-based files. "
-    "For documents like PDFs or images, use the 'analyze_document' tool instead."
+    "Images and PDFs the user references are attached inline; read them directly."
 )
 
 FILE_EDITOR = (
@@ -176,7 +171,6 @@ AGENTIC_TOOLS: dict[AgenticToolName, str] = {
     AgenticToolName.CREATE_FILE: FILE_WRITER,
     AgenticToolName.REPLACE_CODE: FILE_EDITOR,
     AgenticToolName.LIST_DIRECTORY: DIRECTORY_LISTER,
-    AgenticToolName.ANALYZE_DOCUMENT: ANALYZE_DOCUMENT,
     AgenticToolName.EXECUTE_SHELL: SHELL_COMMAND,
     AgenticToolName.SEMANTIC_SEARCH: SEMANTIC_SEARCH,
     AgenticToolName.GET_FUNCTION_SOURCE: GET_FUNCTION_SOURCE,
