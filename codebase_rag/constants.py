@@ -639,6 +639,9 @@ METHOD_ITEMS = "items"
 MULTIMODAL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf")
 MIME_TYPE_PDF = "application/pdf"
 MIME_TYPE_FALLBACK = "application/octet-stream"
+YES_ANSWER = "y"
+YES_ANSWERS = frozenset({"y", "yes", ""})
+NO_ANSWERS = frozenset({"n", "no"})
 
 # (H) CLI exit commands
 EXIT_COMMANDS = frozenset({"exit", "quit"})

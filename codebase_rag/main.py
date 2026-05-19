@@ -34,7 +34,7 @@ from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Prompt
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -254,17 +254,75 @@ def _process_tool_approvals(
             deferred_results.approvals[call.tool_call_id] = True
             continue
 
-        if Confirm.ask(style(approval_prompt, cs.Color.CYAN)):
+        if _confirm_with_toggle(approval_prompt):
+            deferred_results.approvals[call.tool_call_id] = True
+        elif app_context.session.is_yolo():
             deferred_results.approvals[call.tool_call_id] = True
         else:
-            feedback = Prompt.ask(
-                cs.UI_FEEDBACK_PROMPT,
-                default="",
-            )
+            feedback = _prompt_with_toggle(cs.UI_FEEDBACK_PROMPT)
             denial_msg = feedback.strip() or denial_default
             deferred_results.approvals[call.tool_call_id] = ToolDenied(denial_msg)
 
     return deferred_results
+
+
+def _approval_keybindings() -> KeyBindings:
+    bindings = KeyBindings()
+
+    @bindings.add(cs.KeyBinding.SHIFT_TAB)
+    def _toggle(event: KeyPressEvent) -> None:
+        app_context.session.cycle_permission_mode()
+        if app_context.session.is_yolo():
+            event.app.exit(result=cs.YES_ANSWER)
+        else:
+            event.app.invalidate()
+
+    @bindings.add(cs.KeyBinding.CTRL_C)
+    def _interrupt(event: KeyPressEvent) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    return bindings
+
+
+def _confirm_with_toggle(question: str) -> bool:
+    bindings = _approval_keybindings()
+    prompt_text = HTML(
+        f'<style fg="ansicyan">{html_escape(question)}</style> [y/n] (Y): '
+    )
+    while True:
+        try:
+            answer = prompt(
+                prompt_text,
+                key_bindings=bindings,
+                style=ORANGE_STYLE,
+                bottom_toolbar=lambda: _status_bar_label(),
+                refresh_interval=0.5,
+            )
+        except (KeyboardInterrupt, EOFError):
+            return False
+        if app_context.session.is_yolo():
+            return True
+        normalized = (answer or "").strip().lower()
+        if normalized in cs.YES_ANSWERS:
+            return True
+        if normalized in cs.NO_ANSWERS:
+            return False
+
+
+def _prompt_with_toggle(question: str) -> str:
+    bindings = _approval_keybindings()
+    prompt_text = HTML(f"{html_escape(question)}: ")
+    try:
+        answer = prompt(
+            prompt_text,
+            key_bindings=bindings,
+            style=ORANGE_STYLE,
+            bottom_toolbar=lambda: _status_bar_label(),
+            refresh_interval=0.5,
+        )
+    except (KeyboardInterrupt, EOFError):
+        return ""
+    return answer or ""
 
 
 def _rich_log_sink(message: object) -> None:
