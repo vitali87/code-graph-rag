@@ -757,12 +757,15 @@ MULTILINE_INPUT_HINT = (
 PERMISSION_MODE_NORMAL_LABEL = "● Normal mode (asks before destructive)"
 PERMISSION_MODE_YOLO_LABEL = "● YOLO mode (auto-approve, allowlist off)"
 PERMISSION_MODE_TOGGLED = "Permission mode: {label}"
-STATUS_BAR_WITH_BRANCH_CLEAN = (
-    '{mode}  <style bg="ansigreen" fg="ansiblack"> ⎇ {branch} </style>'
+STATUS_BAR_BRANCH_CLEAN_HTML = (
+    '<style bg="ansigreen" fg="ansiblack"> ⎇ {branch} </style>'
 )
-STATUS_BAR_WITH_BRANCH_DIRTY = (
-    '{mode}  <style bg="ansiyellow" fg="ansiblack"> ⎇ {branch} ± </style>'
+STATUS_BAR_BRANCH_DIRTY_HTML = (
+    '<style bg="ansiyellow" fg="ansiblack"> ⎇ {branch} ± </style>'
 )
+STATUS_BAR_BRANCH_CLEAN_PLAIN = " ⎇ {branch} "
+STATUS_BAR_BRANCH_DIRTY_PLAIN = " ⎇ {branch} ± "
+STATUS_BAR_BRANCH_RICH_TEXT = " ⎇ {branch}{marker} "
 STATUS_BAR_CLEAN_STYLE = "black on green"
 STATUS_BAR_DIRTY_STYLE = "black on yellow"
 STATUS_BAR_DIRTY_MARKER = " ±"
@@ -770,6 +773,16 @@ STATUS_BAR_SPINNER = "dots"
 STATUS_BAR_SEPARATOR_CHAR = "─"
 STATUS_BAR_SEPARATOR_COLOR = "#666666"
 STATUS_BAR_TOKEN_HTML = '  <style fg="{color}">{used} / {max_ctx} ({pct})</style>'
+STATUS_BAR_CONFIG_COLOR = "#888888"
+STATUS_BAR_CONFIG_LABEL_COLOR = "#5fafd7"
+STATUS_BAR_CONFIG_SEPARATOR = "  │  "
+STATUS_BAR_CONFIG_LABEL_O = "O"
+STATUS_BAR_CONFIG_LABEL_C = "C"
+STATUS_BAR_CONFIG_LABEL_EDIT = "edit"
+STATUS_BAR_CONFIG_LABEL_INSTRUCTIONS = "instructions"
+STATUS_BAR_CONFIG_LABEL_REPO = "repo"
+STATUS_BAR_EDIT_ON = "on"
+STATUS_BAR_EDIT_OFF = "off"
 TOKEN_THRESHOLD_WARNING = 50
 TOKEN_THRESHOLD_CRITICAL = 80
 TOKEN_COLOR_OK = "green"

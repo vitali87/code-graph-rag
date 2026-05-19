@@ -388,6 +388,7 @@ def _setup_common_initialization(repo_path: str) -> Path:
             tmp_dir.unlink()
     tmp_dir.mkdir()
 
+    app_context.session.target_repo = project_root
     return project_root
 
 
@@ -648,6 +649,9 @@ def _permission_mode_label() -> str:
 
 
 def _git_state() -> tuple[str, bool] | None:
+    repo = app_context.session.target_repo
+    if repo is None or not repo.exists():
+        return None
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain", "--branch"],
@@ -655,6 +659,7 @@ def _git_state() -> tuple[str, bool] | None:
             text=True,
             timeout=1.0,
             check=True,
+            cwd=repo,
         )
     except (subprocess.SubprocessError, FileNotFoundError):
         return None
@@ -730,51 +735,190 @@ def _prime_context_token_counter(system_prompt: str) -> None:
     asyncio.create_task(_refresh_context_tokens(baseline_messages))
 
 
+def _short_model_id() -> tuple[str, str]:
+    try:
+        orch = settings.active_orchestrator_config.model_id or ""
+    except Exception:
+        orch = ""
+    try:
+        cyph = settings.active_cypher_config.model_id or ""
+    except Exception:
+        cyph = ""
+    return orch.split(":", 1)[-1], cyph.split(":", 1)[-1]
+
+
+def _abbreviated_repo(p: Path | None) -> str:
+    if p is None:
+        return ""
+    try:
+        home = Path.home()
+        return f"~/{p.relative_to(home)}" if p.is_relative_to(home) else str(p)
+    except (ValueError, OSError):
+        return str(p)
+
+
+def _config_segments() -> list[tuple[str, str]]:
+    orch, cyph = _short_model_id()
+    segments: list[tuple[str, str]] = []
+    if orch:
+        segments.append((cs.STATUS_BAR_CONFIG_LABEL_O, orch))
+    if cyph:
+        segments.append((cs.STATUS_BAR_CONFIG_LABEL_C, cyph))
+    segments.append(
+        (
+            cs.STATUS_BAR_CONFIG_LABEL_EDIT,
+            cs.STATUS_BAR_EDIT_ON
+            if app_context.session.confirm_edits
+            else cs.STATUS_BAR_EDIT_OFF,
+        )
+    )
+    segments.append(
+        (
+            cs.STATUS_BAR_CONFIG_LABEL_INSTRUCTIONS,
+            cs.STATUS_BAR_EDIT_ON
+            if app_context.session.load_cgr_instructions
+            else cs.STATUS_BAR_EDIT_OFF,
+        )
+    )
+    repo = _abbreviated_repo(app_context.session.target_repo)
+    if repo:
+        segments.append((cs.STATUS_BAR_CONFIG_LABEL_REPO, repo))
+    return segments
+
+
+def _config_status_html() -> str:
+    parts = [
+        f'<style fg="{cs.STATUS_BAR_CONFIG_LABEL_COLOR}">{html_escape(label)}:</style>'
+        f'<style fg="{cs.STATUS_BAR_CONFIG_COLOR}">{html_escape(value)}</style>'
+        for label, value in _config_segments()
+    ]
+    return cs.STATUS_BAR_CONFIG_SEPARATOR.join(parts)
+
+
+def _config_status_plain() -> str:
+    parts = [f"{label}:{value}" for label, value in _config_segments()]
+    return cs.STATUS_BAR_CONFIG_SEPARATOR.join(parts)
+
+
+def _config_status_rich() -> Text:
+    line = Text()
+    segments = _config_segments()
+    for i, (label, value) in enumerate(segments):
+        if i > 0:
+            line.append(cs.STATUS_BAR_CONFIG_SEPARATOR, style="dim")
+        line.append(f"{label}:", style=f"bold {cs.STATUS_BAR_CONFIG_LABEL_COLOR}")
+        line.append(value, style=cs.STATUS_BAR_CONFIG_COLOR)
+    return line
+
+
+def _branch_chip_html_and_plain(state: tuple[str, bool] | None) -> tuple[str, str]:
+    if state is None:
+        return "", ""
+    branch, is_dirty = state
+    html_template = (
+        cs.STATUS_BAR_BRANCH_DIRTY_HTML if is_dirty else cs.STATUS_BAR_BRANCH_CLEAN_HTML
+    )
+    plain_template = (
+        cs.STATUS_BAR_BRANCH_DIRTY_PLAIN
+        if is_dirty
+        else cs.STATUS_BAR_BRANCH_CLEAN_PLAIN
+    )
+    return (
+        html_template.format(branch=html_escape(branch)),
+        plain_template.format(branch=branch),
+    )
+
+
+def _branch_chip_rich(state: tuple[str, bool] | None) -> Text:
+    if state is None:
+        return Text()
+    branch, is_dirty = state
+    marker = cs.STATUS_BAR_DIRTY_MARKER if is_dirty else ""
+    chip_style = cs.STATUS_BAR_DIRTY_STYLE if is_dirty else cs.STATUS_BAR_CLEAN_STYLE
+    chip = Text()
+    chip.append(
+        cs.STATUS_BAR_BRANCH_RICH_TEXT.format(branch=branch, marker=marker),
+        style=chip_style,
+    )
+    return chip
+
+
 def _status_bar_label() -> HTML | str:
     mode = _permission_mode_label()
     state = _git_state()
+    columns = _terminal_columns()
     sep_html = (
         f'<style fg="{cs.STATUS_BAR_SEPARATOR_COLOR}">'
-        f"{cs.STATUS_BAR_SEPARATOR_CHAR * _terminal_columns()}"
+        f"{cs.STATUS_BAR_SEPARATOR_CHAR * columns}"
         f"</style>"
     )
-    if state is None:
-        body = html_escape(mode)
-    else:
-        branch, is_dirty = state
-        template = (
-            cs.STATUS_BAR_WITH_BRANCH_DIRTY
-            if is_dirty
-            else cs.STATUS_BAR_WITH_BRANCH_CLEAN
-        )
-        body = template.format(mode=html_escape(mode), branch=html_escape(branch))
+
     used, max_ctx, pct = _token_usage()
-    body += cs.STATUS_BAR_TOKEN_HTML.format(
+    used_str = _format_tokens(used)
+    max_str = _format_tokens(max_ctx)
+    pct_str = f"{pct:.1f}%"
+    token_html = cs.STATUS_BAR_TOKEN_HTML.format(
         color=_token_color(pct),
-        used=_format_tokens(used),
-        max_ctx=_format_tokens(max_ctx),
-        pct=f"{pct:.1f}%",
+        used=used_str,
+        max_ctx=max_str,
+        pct=pct_str,
     )
-    return HTML(f"{sep_html}\n{body}")
+    token_plain = f"  {used_str} / {max_str} ({pct_str})"
+    body_html = html_escape(mode) + token_html
+    body_plain = mode + token_plain
+
+    config_html = _config_status_html()
+    config_plain = _config_status_plain()
+    branch_html, branch_plain = _branch_chip_html_and_plain(state)
+
+    config_with_branch_html = config_html
+    config_with_branch_plain = config_plain
+    if branch_html:
+        if config_html:
+            config_with_branch_html = f"{config_html}  {branch_html}"
+            config_with_branch_plain = f"{config_plain}  {branch_plain}"
+        else:
+            config_with_branch_html = branch_html
+            config_with_branch_plain = branch_plain
+
+    if not config_with_branch_plain:
+        return HTML(f"{sep_html}\n{body_html}")
+    inline_sep = "  "
+    if len(body_plain) + len(inline_sep) + len(config_with_branch_plain) <= columns:
+        return HTML(f"{sep_html}\n{body_html}{inline_sep}{config_with_branch_html}")
+    return HTML(f"{sep_html}\n{config_with_branch_html}\n{body_html}")
 
 
 def _rich_status_bar() -> Text:
-    line = Text()
-    line.append(_permission_mode_label(), style="dim")
-    state = _git_state()
-    if state is not None:
-        branch, is_dirty = state
-        style = cs.STATUS_BAR_DIRTY_STYLE if is_dirty else cs.STATUS_BAR_CLEAN_STYLE
-        marker = cs.STATUS_BAR_DIRTY_MARKER if is_dirty else ""
-        line.append("  ")
-        line.append(f" ⎇ {branch}{marker} ", style=style)
+    body = Text()
+    body.append(_permission_mode_label(), style="dim")
     used, max_ctx, pct = _token_usage()
-    line.append("  ")
-    line.append(
+    body.append("  ")
+    body.append(
         f"{_format_tokens(used)} / {_format_tokens(max_ctx)} ({pct:.1f}%)",
         style=_token_color(pct),
     )
-    return line
+
+    config_line = _config_status_rich()
+    branch_chip = _branch_chip_rich(_git_state())
+    if config_line.plain and branch_chip.plain:
+        config_line.append("  ")
+        config_line.append_text(branch_chip)
+    elif branch_chip.plain:
+        config_line = branch_chip
+
+    if not config_line.plain:
+        return body
+
+    inline_sep = "  "
+    if (
+        len(body.plain) + len(inline_sep) + len(config_line.plain)
+        <= _terminal_columns()
+    ):
+        body.append(inline_sep)
+        body.append_text(config_line)
+        return body
+    return Text("\n").join([config_line, body])
 
 
 @contextmanager

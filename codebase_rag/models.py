@@ -20,6 +20,7 @@ class SessionState:
     cancelled: bool = False
     permission_mode: PermissionMode = PermissionMode.NORMAL
     context_tokens: int = 0
+    target_repo: Path | None = None
 
     def reset_cancelled(self) -> None:
         self.cancelled = False
