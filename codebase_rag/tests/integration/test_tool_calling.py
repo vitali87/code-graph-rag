@@ -134,7 +134,8 @@ def agent(tracking_tools: list[Tool]) -> Agent:
             "(unset or unresolved op:// reference); skipping live API integration."
         )
     try:
-        return create_rag_orchestrator(tracking_tools)
+        rag_agent, _ = create_rag_orchestrator(tracking_tools)
+        return rag_agent
     except Exception as e:
         pytest.skip(f"Orchestrator unavailable: {e}")
 
