@@ -520,17 +520,19 @@ async def _run_agent_response_loop(
     model_override: Model | None = None,
 ) -> None:
     deferred_results: DeferredToolResults | None = None
+    pending_prompt: str | list[UserContent] | None = question_with_context
 
     while True:
         with _thinking_with_status_bar(config.status_message):
             response = await run_with_cancellation(
                 rag_agent.run(
-                    question_with_context,
+                    pending_prompt,
                     message_history=message_history,
                     deferred_tool_results=deferred_results,
                     model=model_override,
                 ),
             )
+        pending_prompt = None
 
         if isinstance(response, CancelledResult):
             log_session_event(config.cancelled_log)
