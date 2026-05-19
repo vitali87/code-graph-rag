@@ -121,6 +121,50 @@ def get_session_context() -> str:
     return ""
 
 
+def _autowrap_diff_blocks(text: str) -> str:
+    if cs.DIFF_GIT_HEADER not in text:
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    in_fence = False
+    in_diff = False
+
+    def is_diff_continuation(line: str) -> bool:
+        if line == "":
+            return True
+        return line.startswith(cs.DIFF_CONTINUATION_PREFIXES)
+
+    for line in lines:
+        if line.startswith(cs.MARKDOWN_FENCE):
+            if in_diff:
+                out.append(cs.MARKDOWN_FENCE)
+                in_diff = False
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        if not in_diff and line.startswith(cs.DIFF_GIT_HEADER):
+            out.append(cs.MARKDOWN_FENCE_DIFF)
+            in_diff = True
+            out.append(line)
+            continue
+        if in_diff:
+            if is_diff_continuation(line):
+                out.append(line)
+            else:
+                out.append(cs.MARKDOWN_FENCE)
+                in_diff = False
+                out.append(line)
+            continue
+        out.append(line)
+
+    if in_diff:
+        out.append(cs.MARKDOWN_FENCE)
+    return "\n".join(out)
+
+
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:
     separator = dim(cs.HORIZONTAL_SEPARATOR)
     app_context.console.print(f"\n{cs.UI_DIFF_FILE_HEADER.format(path=path)}")
@@ -507,7 +551,7 @@ async def _run_agent_response_loop(
         output_text = response.output
         if not isinstance(output_text, str):
             continue
-        markdown_response = Markdown(output_text)
+        markdown_response = Markdown(_autowrap_diff_blocks(output_text))
         app_context.console.print(
             Panel(
                 markdown_response,

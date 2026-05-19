@@ -643,6 +643,28 @@ YES_ANSWER = "y"
 YES_ANSWERS = frozenset({"y", "yes", ""})
 NO_ANSWERS = frozenset({"n", "no"})
 SHIFT_TAB_ESCAPE = b"\x1b[Z"
+DIFF_GIT_HEADER = "diff --git "
+MARKDOWN_FENCE = "```"
+MARKDOWN_FENCE_DIFF = "```diff"
+DIFF_CONTINUATION_PREFIXES = (
+    "diff --git ",
+    "index ",
+    "--- ",
+    "+++ ",
+    "@@ ",
+    "+",
+    "-",
+    " ",
+    "\\ ",
+    "new file mode",
+    "deleted file mode",
+    "old mode",
+    "new mode",
+    "rename from ",
+    "rename to ",
+    "similarity index ",
+    "Binary files ",
+)
 
 # (H) CLI exit commands
 EXIT_COMMANDS = frozenset({"exit", "quit"})
