@@ -241,6 +241,15 @@ CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
+CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
+CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
+CLI_ERR_PROJECT_NOT_FOUND = (
+    "Project '{project_name}' not found. Available projects: {projects}"
+)
+CLI_ERR_PROJECT_NAME_REQUIRED = (
+    "Error: --name is required and must be a non-empty project name."
+)
+CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
 CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."

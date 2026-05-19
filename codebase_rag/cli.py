@@ -25,10 +25,12 @@ from .main import (
     update_model_settings,
 )
 from .parser_loader import load_parsers
+from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .types_defs import ResultRow
+from .vector_store import delete_project_embeddings
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
@@ -110,6 +112,19 @@ def _delete_hash_cache(repo_path: Path) -> None:
             )
         )
         cache_path.unlink(missing_ok=True)
+
+
+def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
+    rows = ingestor.fetch_all(
+        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+        {cs.KEY_PROJECT_NAME: project_name},
+    )
+    node_ids: list[int] = []
+    for row in rows:
+        node_id = row.get(cs.KEY_NODE_ID)
+        if isinstance(node_id, int):
+            node_ids.append(node_id)
+    delete_project_embeddings(project_name, node_ids)
 
 
 @app.command(help=ch.CMD_START)
@@ -561,7 +576,7 @@ def _build_stats_table(
     total = 0
     for row in rows:
         raw_count = row.get("count", 0)
-        count = int(raw_count) if isinstance(raw_count, (int, float)) else 0
+        count = int(raw_count) if isinstance(raw_count, int | float) else 0
         total += count
         table.add_row(get_label(row), f"{count:,}")
     table.add_section()
@@ -612,6 +627,76 @@ def stats() -> None:
         )
         logger.exception(ls.STATS_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+
+@app.command(name=ch.CLICommandName.DELETE_PROJECT, help=ch.CMD_DELETE_PROJECT)
+def delete_project(
+    name: str = typer.Option(
+        ...,
+        "--name",
+        "-n",
+        help=ch.HELP_DELETE_PROJECT_NAME,
+    ),
+    repo_path: str | None = typer.Option(
+        None,
+        "--repo-path",
+        help=ch.HELP_DELETE_PROJECT_REPO_PATH,
+    ),
+) -> None:
+    project_name = name.strip()
+    if not project_name:
+        app_context.console.print(style(cs.CLI_ERR_PROJECT_NAME_REQUIRED, cs.Color.RED))
+        raise typer.Exit(1)
+
+    effective_batch_size = settings.resolve_batch_size(None)
+
+    try:
+        with connect_memgraph(effective_batch_size) as ingestor:
+            projects = ingestor.list_projects()
+            if project_name not in projects:
+                app_context.console.print(
+                    style(
+                        cs.CLI_ERR_PROJECT_NOT_FOUND.format(
+                            project_name=project_name, projects=projects
+                        ),
+                        cs.Color.RED,
+                    )
+                )
+                raise typer.Exit(1)
+
+            _info(
+                style(
+                    cs.CLI_MSG_DELETING_PROJECT.format(project_name=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+            _cleanup_project_embeddings(ingestor, project_name)
+            ingestor.delete_project(project_name)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DELETE_PROJECT_FAILED.format(
+                    project_name=project_name, error=e
+                ),
+                cs.Color.RED,
+            )
+        )
+        logger.exception(
+            cs.CLI_ERR_DELETE_PROJECT_FAILED.format(project_name=project_name, error=e)
+        )
+        raise typer.Exit(1) from e
+
+    if repo_path:
+        _delete_hash_cache(Path(repo_path))
+
+    _info(
+        style(
+            cs.CLI_MSG_PROJECT_DELETED.format(project_name=project_name),
+            cs.Color.GREEN,
+        )
+    )
 
 
 if __name__ == "__main__":

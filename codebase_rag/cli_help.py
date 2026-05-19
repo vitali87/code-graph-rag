@@ -11,6 +11,7 @@ class CLICommandName(StrEnum):
     LANGUAGE = "language"
     DOCTOR = "doctor"
     STATS = "stats"
+    DELETE_PROJECT = "delete-project"
 
 
 APP_DESCRIPTION = (
@@ -28,6 +29,7 @@ CMD_GRAPH_LOADER = "Load and display summary of exported graph JSON"
 CMD_LANGUAGE = "Manage language grammars (add, remove, list)"
 CMD_DOCTOR = "Verify that all dependencies and configurations are properly set up"
 CMD_STATS = "Display node and relationship statistics for the indexed graph"
+CMD_DELETE_PROJECT = "Delete a single project from the shared graph database (keeps other projects intact)"
 
 CMD_LANGUAGE_GROUP = "CLI for managing language grammars"
 CMD_LANGUAGE_ADD = "Add a new language grammar to the project."
@@ -106,6 +108,13 @@ HELP_MCP_HTTP_PORT = (
     "Port to bind the HTTP server — only used when --transport http (default: 8080)"
 )
 
+HELP_DELETE_PROJECT_NAME = (
+    "Name of the project to delete (matches the Project node name in the graph)."
+)
+HELP_DELETE_PROJECT_REPO_PATH = (
+    "Optional path to the project's repo. If supplied, its hash cache is removed too."
+)
+
 CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.START: CMD_START,
     CLICommandName.INDEX: CMD_INDEX,
@@ -116,4 +125,5 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.STATS: CMD_STATS,
+    CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
 }
