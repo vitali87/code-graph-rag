@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from prompt_toolkit import prompt
+from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
@@ -272,7 +272,7 @@ def _display_tool_call_diff(
             )
 
 
-def _process_tool_approvals(
+async def _process_tool_approvals(
     requests: DeferredToolRequests,
     approval_prompt: str,
     denial_default: str,
@@ -298,12 +298,12 @@ def _process_tool_approvals(
             deferred_results.approvals[call.tool_call_id] = True
             continue
 
-        if _confirm_with_toggle(approval_prompt):
+        if await _confirm_with_toggle(approval_prompt):
             deferred_results.approvals[call.tool_call_id] = True
         elif app_context.session.is_yolo():
             deferred_results.approvals[call.tool_call_id] = True
         else:
-            feedback = _prompt_with_toggle(cs.UI_FEEDBACK_PROMPT)
+            feedback = await _prompt_with_toggle(cs.UI_FEEDBACK_PROMPT)
             denial_msg = feedback.strip() or denial_default
             deferred_results.approvals[call.tool_call_id] = ToolDenied(denial_msg)
 
@@ -328,14 +328,15 @@ def _approval_keybindings() -> KeyBindings:
     return bindings
 
 
-def _confirm_with_toggle(question: str) -> bool:
+async def _confirm_with_toggle(question: str) -> bool:
     bindings = _approval_keybindings()
     prompt_text = HTML(
         f'<style fg="ansicyan">{html_escape(question)}</style> [y/n] (Y): '
     )
+    session: PromptSession[str] = PromptSession()
     while True:
         try:
-            answer = prompt(
+            answer = await session.prompt_async(
                 prompt_text,
                 key_bindings=bindings,
                 style=ORANGE_STYLE,
@@ -353,11 +354,12 @@ def _confirm_with_toggle(question: str) -> bool:
             return False
 
 
-def _prompt_with_toggle(question: str) -> str:
+async def _prompt_with_toggle(question: str) -> str:
     bindings = _approval_keybindings()
     prompt_text = HTML(f"{html_escape(question)}: ")
+    session: PromptSession[str] = PromptSession()
     try:
-        answer = prompt(
+        answer = await session.prompt_async(
             prompt_text,
             key_bindings=bindings,
             style=ORANGE_STYLE,
@@ -538,7 +540,7 @@ async def _run_agent_response_loop(
         message_history.extend(response.new_messages())
 
         if isinstance(response.output, DeferredToolRequests):
-            deferred_results = _process_tool_approvals(
+            deferred_results = await _process_tool_approvals(
                 response.output,
                 config.approval_prompt,
                 config.denial_default,
