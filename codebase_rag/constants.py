@@ -642,6 +642,7 @@ MIME_TYPE_FALLBACK = "application/octet-stream"
 YES_ANSWER = "y"
 YES_ANSWERS = frozenset({"y", "yes", ""})
 NO_ANSWERS = frozenset({"n", "no"})
+SHIFT_TAB_ESCAPE = b"\x1b[Z"
 
 # (H) CLI exit commands
 EXIT_COMMANDS = frozenset({"exit", "quit"})

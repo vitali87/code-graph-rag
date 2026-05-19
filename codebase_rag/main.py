@@ -719,23 +719,92 @@ def _rich_status_bar() -> Text:
 
 
 @contextmanager
+def _shift_tab_listener():
+    if sys.platform == "win32" or not sys.stdin.isatty():
+        yield
+        return
+    try:
+        import termios
+    except ImportError:
+        yield
+        return
+    fd = sys.stdin.fileno()
+    try:
+        original = termios.tcgetattr(fd)
+    except (termios.error, OSError):
+        yield
+        return
+    try:
+        new_attrs = termios.tcgetattr(fd)
+        new_attrs[3] &= ~(termios.ICANON | termios.ECHO)
+        new_attrs[6][termios.VMIN] = 0
+        new_attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, new_attrs)
+        loop = asyncio.get_running_loop()
+        buffer = bytearray()
+
+        def on_input() -> None:
+            try:
+                data = os.read(fd, 1024)
+            except OSError:
+                return
+            if not data:
+                return
+            buffer.extend(data)
+            while cs.SHIFT_TAB_ESCAPE in buffer:
+                idx = buffer.index(cs.SHIFT_TAB_ESCAPE)
+                del buffer[idx : idx + len(cs.SHIFT_TAB_ESCAPE)]
+                app_context.session.cycle_permission_mode()
+
+        loop.add_reader(fd, on_input)
+        try:
+            yield
+        finally:
+            try:
+                loop.remove_reader(fd)
+            except Exception:
+                pass
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, original)
+        except (termios.error, OSError):
+            pass
+
+
+@contextmanager
 def _thinking_with_status_bar(message: str):
+    spinner = Spinner(cs.STATUS_BAR_SPINNER, text=Text.from_markup(message))
     separator = Text(
         cs.STATUS_BAR_SEPARATOR_CHAR * _terminal_columns(),
         style=cs.STATUS_BAR_SEPARATOR_COLOR,
     )
-    renderable = Group(
-        separator,
-        Spinner(cs.STATUS_BAR_SPINNER, text=Text.from_markup(message)),
-        _rich_status_bar(),
-    )
-    with Live(
-        renderable,
-        console=app_context.console,
-        refresh_per_second=4,
-        transient=True,
-    ) as live:
-        yield live
+
+    def render() -> Group:
+        return Group(separator, spinner, _rich_status_bar())
+
+    with (
+        Live(
+            render(),
+            console=app_context.console,
+            refresh_per_second=4,
+            transient=True,
+        ) as live,
+        _shift_tab_listener(),
+    ):
+
+        async def _refresh_bar() -> None:
+            while True:
+                try:
+                    live.update(render())
+                    await asyncio.sleep(0.25)
+                except asyncio.CancelledError:
+                    return
+
+        refresh_task = asyncio.get_running_loop().create_task(_refresh_bar())
+        try:
+            yield live
+        finally:
+            refresh_task.cancel()
 
 
 def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
