@@ -348,7 +348,9 @@ class MCPToolsRegistry:
             ]
             if self._semantic_search_tool is not None:
                 tools.append(self._semantic_search_tool)
-            self._rag_agent = create_rag_orchestrator(tools=tools)
+            self._rag_agent, _ = create_rag_orchestrator(
+                tools=tools, project_root=Path(self.project_root)
+            )
         return self._rag_agent
 
     # (H) Setter allows tests to inject a mock agent without triggering LLM init

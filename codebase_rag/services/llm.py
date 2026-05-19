@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -9,7 +10,7 @@ from pydantic_ai import Agent, DeferredToolRequests, Tool
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
-from ..config import ModelConfig, settings
+from ..config import ModelConfig, load_cgr_instructions, settings
 from ..prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
@@ -152,18 +153,30 @@ class CypherGenerator:
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
 
 
-def create_rag_orchestrator(tools: list[Tool]) -> Agent:
+def create_rag_orchestrator(
+    tools: list[Tool],
+    project_root: Path | None = None,
+    load_instructions: bool = True,
+) -> tuple[Agent, str]:
     try:
         config = settings.active_orchestrator_config
         llm = _create_provider_model(config)
 
-        return Agent(
+        project_instructions = (
+            load_cgr_instructions(project_root) if load_instructions else None
+        )
+        system_prompt = build_rag_orchestrator_prompt(
+            tools, project_instructions=project_instructions
+        )
+
+        agent = Agent(
             model=llm,
-            system_prompt=build_rag_orchestrator_prompt(tools),
+            system_prompt=system_prompt,
             tools=tools,
             retries=settings.AGENT_RETRIES,
             output_retries=settings.ORCHESTRATOR_OUTPUT_RETRIES,
             output_type=[str, DeferredToolRequests],
         )
+        return agent, system_prompt
     except Exception as e:
         raise ex.LLMGenerationError(ex.LLM_INIT_ORCHESTRATOR.format(error=e)) from e

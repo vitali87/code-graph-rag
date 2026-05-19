@@ -230,7 +230,7 @@ class TestRagAgentProperty:
 
         with patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create:
             mock_agent = MagicMock()
-            mock_create.return_value = mock_agent
+            mock_create.return_value = (mock_agent, "system prompt")
 
             agent = registry.rag_agent
 
@@ -261,7 +261,7 @@ class TestRagAgentProperty:
         ):
             mock_tool = MagicMock()
             mock_fst.return_value = mock_tool
-            mock_create.return_value = MagicMock()
+            mock_create.return_value = (MagicMock(), "system prompt")
 
             registry.rag_agent
 
@@ -296,7 +296,7 @@ class TestRagAgentProperty:
             patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
             patch("codebase_rag.tools.semantic_search.create_get_function_source_tool"),
         ):
-            mock_create.return_value = MagicMock()
+            mock_create.return_value = (MagicMock(), "system prompt")
             registry.rag_agent
 
             tools_arg = mock_create.call_args[1]["tools"]
@@ -320,7 +320,7 @@ class TestRagAgentProperty:
             patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
             patch("codebase_rag.tools.semantic_search.create_get_function_source_tool"),
         ):
-            mock_create.return_value = MagicMock()
+            mock_create.return_value = (MagicMock(), "system prompt")
 
             agent1 = registry.rag_agent
             agent2 = registry.rag_agent
@@ -345,7 +345,7 @@ class TestMainSingleQuery:
             patch("codebase_rag.main._setup_common_initialization"),
         ):
             mock_agent = MagicMock()
-            mock_init.return_value = (mock_agent, [])
+            mock_init.return_value = (mock_agent, [], "system prompt")
             mock_asyncio.run.return_value = mock_response
             mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_conn.return_value.__exit__ = MagicMock(return_value=False)
@@ -369,7 +369,7 @@ class TestMainSingleQuery:
             patch("codebase_rag.main.logger") as mock_logger,
         ):
             mock_agent = MagicMock()
-            mock_init.return_value = (mock_agent, [])
+            mock_init.return_value = (mock_agent, [], "system prompt")
             mock_asyncio.run.return_value = mock_response
             mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_conn.return_value.__exit__ = MagicMock(return_value=False)

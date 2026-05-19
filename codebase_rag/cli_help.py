@@ -49,6 +49,10 @@ HELP_CYPHER_MODEL = (
     "(e.g., ollama:codellama, google:gemini-3-flash-preview)"
 )
 HELP_NO_CONFIRM = "Disable confirmation prompts for edit operations (YOLO mode)"
+HELP_NO_INSTRUCTIONS = (
+    "Skip loading project instructions from ~/.cgr.md and <repo>/.cgr.md "
+    "(useful when the consolidated memories are bloating the system prompt)"
+)
 
 HELP_REPO_PATH_RETRIEVAL = "Path to the target repository for code retrieval"
 HELP_REPO_PATH_INDEX = "Path to the target repository to index."

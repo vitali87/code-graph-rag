@@ -392,3 +392,34 @@ def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
     except OSError as e:
         logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
         return EMPTY_CGRIGNORE
+
+
+CGR_INSTRUCTIONS_FILENAME = ".cgr.md"
+GLOBAL_CGR_INSTRUCTIONS_PATH = Path.home() / CGR_INSTRUCTIONS_FILENAME
+
+
+def _read_cgr_instructions_file(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        with path.open(encoding="utf-8") as f:
+            body = f.read().strip()
+    except OSError as e:
+        logger.warning(logs.CGR_INSTRUCTIONS_READ_FAILED.format(path=path, error=e))
+        return None
+    if not body:
+        return None
+    logger.info(logs.CGR_INSTRUCTIONS_LOADED.format(path=path, chars=len(body)))
+    return body
+
+
+def load_cgr_instructions(repo_path: Path | None) -> str | None:
+    global_body = _read_cgr_instructions_file(GLOBAL_CGR_INSTRUCTIONS_PATH)
+    repo_body = (
+        _read_cgr_instructions_file(repo_path / CGR_INSTRUCTIONS_FILENAME)
+        if repo_path is not None
+        else None
+    )
+    if global_body and repo_body:
+        return f"{global_body}\n\n---\n\n{repo_body}"
+    return global_body or repo_body

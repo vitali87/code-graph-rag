@@ -114,7 +114,11 @@ async def count_anthropic_context(
 ) -> int:
     system_prompt, anthropic_messages = _to_anthropic_payload(messages)
     if not anthropic_messages:
-        return 0
+        if not system_prompt:
+            return 0
+        anthropic_messages = [
+            {"role": "user", "content": [{"type": "text", "text": "."}]}
+        ]
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": anthropic_messages,

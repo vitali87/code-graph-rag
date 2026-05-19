@@ -163,6 +163,11 @@ def start(
         "--no-confirm",
         help=ch.HELP_NO_CONFIRM,
     ),
+    no_instructions: bool = typer.Option(
+        False,
+        "--no-instructions",
+        help=ch.HELP_NO_INSTRUCTIONS,
+    ),
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
@@ -192,6 +197,7 @@ def start(
     ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
+    app_context.session.load_cgr_instructions = not no_instructions
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 
@@ -406,6 +412,11 @@ def optimize(
         "--no-confirm",
         help=ch.HELP_NO_CONFIRM,
     ),
+    no_instructions: bool = typer.Option(
+        False,
+        "--no-instructions",
+        help=ch.HELP_NO_INSTRUCTIONS,
+    ),
     batch_size: int | None = typer.Option(
         None,
         "--batch-size",
@@ -414,6 +425,7 @@ def optimize(
     ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
+    app_context.session.load_cgr_instructions = not no_instructions
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
 

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 @dataclass
 class SessionState:
     confirm_edits: bool = True
+    load_cgr_instructions: bool = True
     log_file: Path | None = None
     cancelled: bool = False
     permission_mode: PermissionMode = PermissionMode.NORMAL

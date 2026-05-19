@@ -114,6 +114,9 @@ CGRIGNORE_LOADED = (
 )
 CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
+CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
+CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
+
 # (H) File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
 WATCHER_DEBOUNCE_ACTIVE = (

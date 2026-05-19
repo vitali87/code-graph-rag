@@ -87,9 +87,11 @@ The database contains information about a codebase, structured with the followin
 GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
 
 
-def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
+def build_rag_orchestrator_prompt(
+    tools: list["Tool"], project_instructions: str | None = None
+) -> str:
     t = extract_tool_names(tools)
-    return f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
+    base = f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
 
 **CRITICAL RULES:**
 1.  **TOOL-ONLY ANSWERS**: You must ONLY use information from the tools provided. Do not use external knowledge.
@@ -157,6 +159,17 @@ def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
     d. Prioritize most relevant findings over comprehensive coverage
 8.  **Synthesize Answer**: Analyze and explain the retrieved content. Cite your sources (file paths or qualified names). Report any errors gracefully.
 """
+    extra = (project_instructions or "").strip()
+    if not extra:
+        return base
+    return (
+        f"{base}\n"
+        "**Project-Specific Instructions (from .cgr.md):**\n"
+        "These instructions come from the repository being analyzed. Follow them "
+        "in addition to the rules above; if they conflict with the critical rules, "
+        "the critical rules win.\n\n"
+        f"{extra}\n"
+    )
 
 
 CYPHER_SYSTEM_PROMPT = f"""

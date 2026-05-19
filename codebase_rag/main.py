@@ -719,6 +719,17 @@ async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
         logger.debug(ls.CONTEXT_TOKEN_COUNT_FAILED.format(error=e))
 
 
+def _prime_context_token_counter(system_prompt: str) -> None:
+    if not system_prompt:
+        return
+    from pydantic_ai.messages import ModelRequest, SystemPromptPart
+
+    baseline_messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
+    ]
+    asyncio.create_task(_refresh_context_tokens(baseline_messages))
+
+
 def _status_bar_label() -> HTML | str:
     mode = _permission_mode_label()
     state = _git_state()
@@ -1325,7 +1336,7 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
 
 def _initialize_services_and_agent(
     repo_path: str, ingestor: QueryProtocol
-) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames]:
+) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
@@ -1359,7 +1370,7 @@ def _initialize_services_and_agent(
         shell_command=shell_command_tool.name,
     )
 
-    rag_agent = create_rag_orchestrator(
+    rag_agent, system_prompt = create_rag_orchestrator(
         tools=[
             query_tool,
             code_tool,
@@ -1370,9 +1381,11 @@ def _initialize_services_and_agent(
             directory_lister_tool,
             semantic_search_tool,
             function_source_tool,
-        ]
+        ],
+        project_root=Path(repo_path),
+        load_instructions=app_context.session.load_cgr_instructions,
     )
-    return rag_agent, confirmation_tool_names
+    return rag_agent, confirmation_tool_names, system_prompt
 
 
 def main_single_query(repo_path: str, batch_size: int, question: str) -> None:
@@ -1382,7 +1395,7 @@ def main_single_query(repo_path: str, batch_size: int, question: str) -> None:
     logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
 
     with connect_memgraph(batch_size) as ingestor:
-        rag_agent, _ = _initialize_services_and_agent(repo_path, ingestor)
+        rag_agent, _, _ = _initialize_services_and_agent(repo_path, ingestor)
         response = asyncio.run(rag_agent.run(question, message_history=[]))
         print(response.output)  # noqa: T201
 
@@ -1402,7 +1415,10 @@ async def main_async(repo_path: str, batch_size: int) -> None:
             )
         )
 
-        rag_agent, tool_names = _initialize_services_and_agent(repo_path, ingestor)
+        rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
+            repo_path, ingestor
+        )
+        _prime_context_token_counter(system_prompt)
         await run_chat_loop(rag_agent, [], project_root, tool_names)
 
 
@@ -1432,9 +1448,10 @@ async def main_optimize_async(
     async with connect_memgraph(effective_batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
 
-        rag_agent, tool_names = _initialize_services_and_agent(
+        rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
             target_repo_path, ingestor
         )
+        _prime_context_token_counter(system_prompt)
         await run_optimization_loop(
             rag_agent, [], project_root, language, tool_names, reference_document
         )

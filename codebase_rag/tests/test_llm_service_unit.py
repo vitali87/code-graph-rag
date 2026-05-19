@@ -231,12 +231,13 @@ class TestCreateRagOrchestrator:
         mock_agent.return_value = MagicMock()
 
         tools = [MagicMock(), MagicMock()]
-        result = create_rag_orchestrator(tools)
+        agent, system_prompt = create_rag_orchestrator(tools)
 
         mock_agent.assert_called_once()
         call_kwargs = mock_agent.call_args.kwargs
         assert call_kwargs["tools"] == tools
-        assert result is not None
+        assert agent is not None
+        assert system_prompt == "System prompt"
 
     @patch("codebase_rag.services.llm.settings")
     @patch("codebase_rag.services.llm.get_provider_from_config")
