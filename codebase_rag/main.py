@@ -492,7 +492,6 @@ async def _run_agent_response_loop(
             break
 
         message_history.extend(response.new_messages())
-        asyncio.create_task(_refresh_context_tokens(list(message_history)))
 
         if isinstance(response.output, DeferredToolRequests):
             deferred_results = _process_tool_approvals(
@@ -502,6 +501,8 @@ async def _run_agent_response_loop(
                 tool_names,
             )
             continue
+
+        asyncio.create_task(_refresh_context_tokens(list(message_history)))
 
         output_text = response.output
         if not isinstance(output_text, str):
