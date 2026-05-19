@@ -32,7 +32,6 @@ from pydantic_ai import (
 from pydantic_ai.messages import UserContent
 from rich.console import Group
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.spinner import Spinner
@@ -74,6 +73,7 @@ from .types_defs import (
     ShellCommandArgs,
     ToolArgs,
 )
+from .utils.rich_markdown import LeftAlignedMarkdown
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -556,7 +556,7 @@ async def _run_agent_response_loop(
         output_text = response.output
         if not isinstance(output_text, str):
             continue
-        markdown_response = Markdown(_autowrap_diff_blocks(output_text))
+        markdown_response = LeftAlignedMarkdown(_autowrap_diff_blocks(output_text))
         app_context.console.print(
             Panel(
                 markdown_response,
