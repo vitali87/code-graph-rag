@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import torch
+from unittest.mock import MagicMock
 
-from codebase_rag.unixcoder import Beam
+import torch
+from torch import nn
+
+from codebase_rag.unixcoder import Beam, UniXcoder
 
 
 class TestBeamInit:
@@ -168,6 +171,38 @@ class TestBeamBuildTargetTokens:
         ]
         result = beam.buildTargetTokens(preds)
         assert len(result[0]) == 3
+
+
+class TestForwardAttentionMask:
+    def _make_uninitialized(self, pad_id: int) -> UniXcoder:
+        instance = UniXcoder.__new__(UniXcoder)
+        nn.Module.__init__(instance)
+        instance.config = MagicMock()
+        instance.config.pad_token_id = pad_id
+        return instance
+
+    def test_attention_mask_is_4d(self) -> None:
+        instance = self._make_uninitialized(pad_id=1)
+        captured: dict[str, torch.Size] = {}
+
+        def fake_model(
+            source_ids: torch.Tensor, attention_mask: torch.Tensor
+        ) -> tuple[torch.Tensor]:
+            captured["shape"] = attention_mask.shape
+            batch, seq = source_ids.shape
+            return (torch.zeros(batch, seq, 8),)
+
+        instance.model = MagicMock(side_effect=fake_model)
+
+        source_ids = torch.tensor([[2, 3, 4, 5, 1], [2, 3, 1, 1, 1]])
+        instance.forward(source_ids)
+
+        assert "shape" in captured
+        assert len(captured["shape"]) == 4
+        assert captured["shape"][0] == 2
+        assert captured["shape"][1] == 1
+        assert captured["shape"][2] == 5
+        assert captured["shape"][3] == 5
 
 
 class TestBeamGetHyp:
