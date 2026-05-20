@@ -1049,6 +1049,10 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     def submit(event: KeyPressEvent) -> None:
         event.app.exit(result=event.app.current_buffer.text)
 
+    @bindings.add(cs.KeyBinding.CTRL_E)
+    def submit_ctrl_e(event: KeyPressEvent) -> None:
+        event.app.exit(result=event.app.current_buffer.text)
+
     @bindings.add(cs.KeyBinding.ENTER)
     def new_line(event: KeyPressEvent) -> None:
         event.current_buffer.insert_text("\n")

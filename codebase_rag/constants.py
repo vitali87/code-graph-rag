@@ -34,6 +34,7 @@ class Color(StrEnum):
 
 class KeyBinding(StrEnum):
     CTRL_J = "c-j"
+    CTRL_E = "c-e"
     ENTER = "enter"
     CTRL_C = "c-c"
     SHIFT_TAB = "s-tab"
@@ -751,7 +752,7 @@ OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
 PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
 MULTILINE_INPUT_HINT = (
-    "(Press Ctrl+J to submit, Enter for new line, Shift+Tab to toggle mode)"
+    "(Press Ctrl+J or Ctrl+E to submit, Enter for new line, Shift+Tab to toggle mode)"
 )
 PERMISSION_MODE_NORMAL_LABEL = "● Normal mode (asks before destructive)"
 PERMISSION_MODE_YOLO_LABEL = "● YOLO mode (auto-approve, allowlist off)"
