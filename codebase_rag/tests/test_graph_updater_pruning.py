@@ -189,6 +189,61 @@ class TestPruneOrphanNodes:
 
         assert mock_ingestor.execute_write.call_count == 3
 
+    def test_prune_skips_inline_module_synthetic_paths(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+        project_name = py_project.resolve().name
+        inline_path_tests = f"{cs.INLINE_MODULE_PATH_PREFIX}tests"
+        inline_path_macos = f"{cs.INLINE_MODULE_PATH_PREFIX}macos"
+        mock_ingestor.fetch_all.side_effect = [
+            [],
+            [
+                {
+                    "path": inline_path_tests,
+                    "qualified_name": f"{project_name}.src.app.tests",
+                },
+                {
+                    "path": inline_path_tests,
+                    "qualified_name": f"{project_name}.src.cli.tests",
+                },
+                {
+                    "path": inline_path_macos,
+                    "qualified_name": f"{project_name}.src.clipboard.macos",
+                },
+            ],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        delete_module_calls = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_MODULE
+        ]
+        assert delete_module_calls == []
+
+
+class TestCypherDeleteModuleQuery:
+    def test_query_does_not_traverse_calls_edges(self) -> None:
+        query = cs.CYPHER_DELETE_MODULE
+        assert "-[*0..]->" not in query
+        assert "-[*]->" not in query
+
+    def test_query_constrains_traversal_to_containment_edges(self) -> None:
+        query = cs.CYPHER_DELETE_MODULE
+        assert "DEFINES" in query
+        assert "CALLS" not in query
+        assert "IMPORTS" not in query
+        assert "INHERITS" not in query
+
 
 class TestDeletedFileInProcessFiles:
     def test_deleted_file_triggers_cypher_delete(

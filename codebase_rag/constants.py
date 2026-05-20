@@ -975,7 +975,11 @@ class EventType(StrEnum):
     DELETED = "deleted"
 
 
-CYPHER_DELETE_MODULE = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
+CYPHER_DELETE_MODULE = (
+    "MATCH (m:Module {path: $path}) "
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
+    "DETACH DELETE m, c"
+)
 CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"

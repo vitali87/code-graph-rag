@@ -666,6 +666,8 @@ class GraphUpdater:
                 path = r.get("path")
                 if not isinstance(path, str) or not path:
                     continue
+                if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+                    continue
                 abs_path = r.get("absolute_path")
                 qn = r.get("qualified_name", "")
                 if isinstance(abs_path, str) and not abs_path.startswith(repo_abs):
