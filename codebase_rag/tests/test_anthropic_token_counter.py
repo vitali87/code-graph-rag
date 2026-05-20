@@ -4,9 +4,18 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic_ai.messages import ModelRequest, SystemPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    SystemPromptPart,
+    ToolCallPart,
+)
 
-from codebase_rag.services.anthropic_token_counter import count_anthropic_context
+from codebase_rag.services.anthropic_token_counter import (
+    _to_anthropic_payload,
+    count_anthropic_context,
+)
 
 
 def _fake_post_returning(input_tokens: int) -> tuple[AsyncMock, MagicMock]:
@@ -52,3 +61,53 @@ async def test_injects_placeholder_when_only_system_prompt_present() -> None:
     assert payload["messages"][0]["role"] == "user"
     placeholder_text = payload["messages"][0]["content"][0]["text"]
     assert placeholder_text.strip(), "placeholder must be non-whitespace"
+
+
+def test_retry_prompt_with_tool_name_becomes_tool_result_error_block() -> None:
+    tool_call_id = "toolu_test123"
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="semantic_search",
+                    args={"query": "x"},
+                    tool_call_id=tool_call_id,
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content="bad args",
+                    tool_name="semantic_search",
+                    tool_call_id=tool_call_id,
+                )
+            ]
+        ),
+    ]
+
+    _, anthropic_messages = _to_anthropic_payload(messages)
+
+    assert len(anthropic_messages) == 2
+    assistant = anthropic_messages[0]
+    user = anthropic_messages[1]
+    assert assistant["role"] == "assistant"
+    assert assistant["content"][0]["type"] == "tool_use"
+    assert assistant["content"][0]["id"] == tool_call_id
+    assert user["role"] == "user"
+    assert user["content"][0]["type"] == "tool_result"
+    assert user["content"][0]["tool_use_id"] == tool_call_id
+    assert user["content"][0]["is_error"] is True
+
+
+def test_retry_prompt_without_tool_name_becomes_text_block() -> None:
+    messages = [
+        ModelRequest(parts=[RetryPromptPart(content="please retry")]),
+    ]
+
+    _, anthropic_messages = _to_anthropic_payload(messages)
+
+    assert len(anthropic_messages) == 1
+    assert anthropic_messages[0]["role"] == "user"
+    assert anthropic_messages[0]["content"][0]["type"] == "text"
+    assert "please retry" in anthropic_messages[0]["content"][0]["text"]

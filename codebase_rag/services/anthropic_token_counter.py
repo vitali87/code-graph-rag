@@ -9,6 +9,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -81,6 +82,20 @@ def _to_anthropic_payload(
                             "content": _tool_return_content(part.content),
                         }
                     )
+                elif isinstance(part, RetryPromptPart):
+                    if part.tool_name is None:
+                        user_content.append(
+                            {"type": "text", "text": part.model_response()}
+                        )
+                    else:
+                        user_content.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": part.tool_call_id,
+                                "content": part.model_response(),
+                                "is_error": True,
+                            }
+                        )
             if user_content:
                 out.append({"role": "user", "content": user_content})
         elif isinstance(m, ModelResponse):
