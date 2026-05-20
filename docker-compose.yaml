@@ -10,3 +10,13 @@ services:
       - "${LAB_PORT:-3000}:3000"
     environment:
       QUICK_CONNECT_MG_HOST: memgraph
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+volumes:
+  qdrant_storage:
