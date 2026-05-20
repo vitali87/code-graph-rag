@@ -356,7 +356,9 @@ async def _confirm_with_toggle(question: str) -> bool:
 
 async def _prompt_with_toggle(question: str) -> str:
     bindings = _approval_keybindings()
-    prompt_text = HTML(f"{html_escape(question)}: ")
+    prompt_text = HTML(
+        f'<style fg="ansiyellow"><b>{html_escape(question)}</b></style>: '
+    )
     session: PromptSession[str] = PromptSession()
     try:
         answer = await session.prompt_async(

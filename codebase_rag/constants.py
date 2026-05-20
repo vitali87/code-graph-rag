@@ -285,9 +285,7 @@ UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
-UI_FEEDBACK_PROMPT = (
-    "[bold yellow]Feedback (why rejected, or press Enter to skip)[/bold yellow]"
-)
+UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
 UI_OPTIMIZATION_START = (
     "[bold green]Starting {language} optimization session...[/bold green]"
 )
