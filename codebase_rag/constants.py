@@ -740,6 +740,7 @@ TABLE_ROW_TARGET_REPOSITORY = "Target Repository"
 MSG_CONNECTED_MEMGRAPH = "Successfully connected to Memgraph."
 MSG_THINKING_CANCELLED = "Thinking cancelled."
 MSG_TIMEOUT_FORMAT = "Operation timed out after {timeout} seconds."
+MSG_TOOL_CALL_CANCELLED = "Tool call cancelled by user."
 MSG_CHAT_INSTRUCTIONS = (
     "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
 )

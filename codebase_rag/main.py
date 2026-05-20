@@ -29,7 +29,13 @@ from pydantic_ai import (
     DeferredToolResults,
     ToolDenied,
 )
-from pydantic_ai.messages import UserContent
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserContent,
+)
 from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
@@ -514,6 +520,29 @@ async def run_with_cancellation[T](
         return CancelledResult(cancelled=True)
 
 
+def _cancel_orphaned_tool_calls(message_history: list[ModelMessage]) -> None:
+    if not message_history:
+        return
+    last = message_history[-1]
+    if not isinstance(last, ModelResponse):
+        return
+    tool_calls = [p for p in last.parts if isinstance(p, ToolCallPart)]
+    if not tool_calls:
+        return
+    message_history.append(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=p.tool_name,
+                    content=cs.MSG_TOOL_CALL_CANCELLED,
+                    tool_call_id=p.tool_call_id,
+                )
+                for p in tool_calls
+            ]
+        )
+    )
+
+
 async def _run_agent_response_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -540,6 +569,7 @@ async def _run_agent_response_loop(
         if isinstance(response, CancelledResult):
             log_session_event(config.cancelled_log)
             app_context.session.cancelled = True
+            _cancel_orphaned_tool_calls(message_history)
             break
 
         message_history.extend(response.new_messages())
