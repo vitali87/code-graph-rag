@@ -242,6 +242,19 @@ class TestAnthropicProvider:
         mock_anthropic_model.assert_called_once()
         assert result == mock_model
 
+    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
+    @patch("codebase_rag.providers.base.AnthropicModel")
+    def test_anthropic_model_enables_prompt_caching(
+        self, mock_anthropic_model: Any, mock_anthropic_provider: Any
+    ) -> None:
+        provider = AnthropicProvider(api_key="sk-ant-test-key")
+        provider.create_model("claude-opus-4-7")
+
+        settings_arg = mock_anthropic_model.call_args.kwargs["settings"]
+        assert settings_arg["anthropic_cache_instructions"] is True
+        assert settings_arg["anthropic_cache_tool_definitions"] is True
+        assert settings_arg["anthropic_cache_messages"] is True
+
     def test_anthropic_api_key_from_env(self) -> None:
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "env-key"}):
             provider = AnthropicProvider()

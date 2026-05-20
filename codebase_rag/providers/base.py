@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 
 import httpx
 from loguru import logger
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import (
@@ -208,7 +208,12 @@ class AnthropicProvider(ModelProvider):
         # (H) api_key is guaranteed to be set by validate_config
         assert self.api_key is not None
         provider = PydanticAnthropicProvider(api_key=self.api_key)
-        return AnthropicModel(model_id, provider=provider)
+        model_settings = AnthropicModelSettings(
+            anthropic_cache_instructions=True,
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_messages=True,
+        )
+        return AnthropicModel(model_id, provider=provider, settings=model_settings)
 
 
 class AzureOpenAIProvider(ModelProvider):
@@ -259,7 +264,7 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.AZURE: AzureOpenAIProvider,
 }
 
-# Import LiteLLM provider after base classes are defined to avoid circular import
+# (H) Import LiteLLM provider after base classes are defined to avoid circular import
 try:
     from .litellm import LiteLLMProvider
 
