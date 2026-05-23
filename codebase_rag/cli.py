@@ -30,6 +30,7 @@ from .services.protobuf_service import ProtobufFileIngestor
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .types_defs import ResultRow
+from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import delete_project_embeddings
 
 app = typer.Typer(
@@ -199,7 +200,9 @@ def start(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    resolved_repo = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
+    target_repo_path = str(resolved_repo)
+    resolved_project_name = project_name or derive_project_name(resolved_repo)
 
     if output and not update_graph:
         app_context.console.print(
@@ -254,7 +257,7 @@ def start(
                 queries=queries,
                 unignore_paths=unignore_paths,
                 exclude_paths=exclude_paths,
-                project_name=project_name,
+                project_name=resolved_project_name,
             )
             updater.run()
 
@@ -306,8 +309,7 @@ def index(
         help=ch.HELP_INTERACTIVE_SETUP,
     ),
 ) -> None:
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
-    repo_to_index = Path(target_repo_path)
+    repo_to_index = resolve_repo_path(repo_path, settings.TARGET_REPO_PATH)
     _info(style(cs.CLI_MSG_INDEXING_AT.format(path=repo_to_index), cs.Color.GREEN))
 
     _info(style(cs.CLI_MSG_OUTPUT_TO.format(path=output_proto_dir), cs.Color.CYAN))
@@ -427,7 +429,7 @@ def optimize(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
-    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    target_repo_path = str(resolve_repo_path(repo_path, settings.TARGET_REPO_PATH))
 
     _update_and_validate_models(orchestrator, cypher)
 

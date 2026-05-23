@@ -54,9 +54,15 @@ HELP_NO_INSTRUCTIONS = (
     "(useful when the consolidated memories are bloating the system prompt)"
 )
 
-HELP_REPO_PATH_RETRIEVAL = "Path to the target repository for code retrieval"
-HELP_REPO_PATH_INDEX = "Path to the target repository to index."
-HELP_REPO_PATH_OPTIMIZE = "Path to the repository to optimize"
+HELP_REPO_PATH_RETRIEVAL = (
+    "Path to the target repository for code retrieval (defaults to current directory)"
+)
+HELP_REPO_PATH_INDEX = (
+    "Path to the target repository to index (defaults to current directory)."
+)
+HELP_REPO_PATH_OPTIMIZE = (
+    "Path to the repository to optimize (defaults to current directory)"
+)
 HELP_REPO_PATH_WATCH = "Path to the repository to watch."
 HELP_VERSION = "Show the version and exit."
 
