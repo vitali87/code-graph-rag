@@ -430,6 +430,15 @@ MCPResultType = (
 MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
 
 
+class FastPathTimings(NamedTuple):
+    load_cache: float
+    walk: float
+    stat_hash: float
+    total: float
+    files_count: int
+    rehashed_count: int
+
+
 class NodeSchema(NamedTuple):
     label: NodeLabel
     properties: str

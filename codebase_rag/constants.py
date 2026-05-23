@@ -256,6 +256,11 @@ MSG_SYNCING_WORKSPACE = (
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
 CLI_MSG_FAST_PATH_BAIL = "Fast-path sync bail reason: {reason}"
+CLI_MSG_FAST_PATH_TIMINGS = (
+    "Fast-path timings: load_cache={load_cache:.2f}s, walk={walk:.2f}s, "
+    "stat_hash={stat_hash:.2f}s, total={total:.2f}s "
+    "(files={files_count}, rehashed={rehashed_count})"
+)
 FAST_PATH_BAIL_NO_CACHE_FILE = "no hash cache file at {path}"
 FAST_PATH_BAIL_EMPTY_CACHE = "hash cache file is empty or invalid: {path}"
 FAST_PATH_BAIL_NEW_FILE = "file present in repo but missing from cache: {file_key}"
