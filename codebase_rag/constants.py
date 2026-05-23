@@ -255,6 +255,14 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
+CLI_MSG_FAST_PATH_BAIL = "Fast-path sync bail reason: {reason}"
+FAST_PATH_BAIL_NO_CACHE_FILE = "no hash cache file at {path}"
+FAST_PATH_BAIL_EMPTY_CACHE = "hash cache file is empty or invalid: {path}"
+FAST_PATH_BAIL_NEW_FILE = "file present in repo but missing from cache: {file_key}"
+FAST_PATH_BAIL_HASH_MISMATCH = "file hash changed since last sync: {file_key}"
+FAST_PATH_BAIL_DELETED_FILES = (
+    "{count} file(s) in cache no longer present on disk (e.g. {sample})"
+)
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"

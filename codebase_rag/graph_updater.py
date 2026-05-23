@@ -330,6 +330,7 @@ class GraphUpdater:
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
         self.skipped_because_in_sync = False
+        self.fast_path_bail_reason: str | None = None
 
         self.factory = ProcessorFactory(
             ingestor=self.ingestor,
@@ -440,10 +441,16 @@ class GraphUpdater:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
+            self.fast_path_bail_reason = cs.FAST_PATH_BAIL_NO_CACHE_FILE.format(
+                path=cache_path
+            )
             return False
         cache_mtime = cache_path.stat().st_mtime
         old_hashes = _load_hash_cache(cache_path)
         if not old_hashes:
+            self.fast_path_bail_reason = cs.FAST_PATH_BAIL_EMPTY_CACHE.format(
+                path=cache_path
+            )
             return False
         eligible_files = self._collect_eligible_files()
 
@@ -456,16 +463,32 @@ class GraphUpdater:
                 continue
             if stat.st_mtime <= cache_mtime:
                 if file_key not in old_hashes:
+                    self.fast_path_bail_reason = cs.FAST_PATH_BAIL_NEW_FILE.format(
+                        file_key=file_key
+                    )
                     return False
                 seen_keys.add(file_key)
                 continue
             current_hash = _hash_file(filepath)
             old_hash = old_hashes.get(file_key)
             if old_hash is None or current_hash != old_hash:
+                self.fast_path_bail_reason = (
+                    cs.FAST_PATH_BAIL_NEW_FILE.format(file_key=file_key)
+                    if old_hash is None
+                    else cs.FAST_PATH_BAIL_HASH_MISMATCH.format(file_key=file_key)
+                )
                 return False
             seen_keys.add(file_key)
 
-        return seen_keys == set(old_hashes.keys())
+        missing_from_disk = set(old_hashes.keys()) - seen_keys
+        if missing_from_disk:
+            sample = next(iter(sorted(missing_from_disk)))
+            self.fast_path_bail_reason = cs.FAST_PATH_BAIL_DELETED_FILES.format(
+                count=len(missing_from_disk), sample=sample
+            )
+            return False
+        self.fast_path_bail_reason = None
+        return True
 
     def _collect_eligible_files(self) -> list[Path]:
         if self._single_file is not None:

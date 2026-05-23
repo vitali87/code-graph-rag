@@ -235,6 +235,15 @@ def _run_graph_sync(
             )
         )
     else:
+        if updater.fast_path_bail_reason is not None:
+            app_context.console.print(
+                style(
+                    cs.CLI_MSG_FAST_PATH_BAIL.format(
+                        reason=updater.fast_path_bail_reason
+                    ),
+                    cs.Color.YELLOW,
+                )
+            )
         app_context.console.print(
             style(
                 cs.CLI_MSG_SYNC_DONE.format(project=project_name, elapsed=elapsed),
