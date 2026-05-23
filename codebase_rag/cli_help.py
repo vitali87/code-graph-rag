@@ -12,6 +12,7 @@ class CLICommandName(StrEnum):
     DOCTOR = "doctor"
     STATS = "stats"
     DELETE_PROJECT = "delete-project"
+    DAEMON = "daemon"
 
 
 APP_DESCRIPTION = (
@@ -36,6 +37,22 @@ CMD_LANGUAGE_ADD = "Add a new language grammar to the project."
 CMD_LANGUAGE_LIST = "List all currently configured languages."
 CMD_LANGUAGE_REMOVE = "Remove a language from the project."
 CMD_LANGUAGE_CLEANUP = "Clean up orphaned git modules that weren't properly removed."
+
+CMD_DAEMON = "Manage the shared cgr docker stack (memgraph + qdrant)"
+CMD_DAEMON_GROUP = "Manage the shared cgr docker stack (memgraph + qdrant)"
+CMD_DAEMON_UP = "Start the docker stack and wait until healthy."
+CMD_DAEMON_DOWN = "Stop the docker stack (preserves data volumes)."
+CMD_DAEMON_STATUS = "Show whether memgraph and qdrant are reachable."
+CMD_DAEMON_LOGS = "Tail docker compose logs for the stack."
+CMD_DAEMON_RESTART = "Restart the docker stack."
+
+HELP_DAEMON_LOGS_FOLLOW = "Stream logs continuously (Ctrl+C to stop)."
+HELP_DAEMON_LOGS_SERVICE = (
+    "Limit logs to a specific service (memgraph, qdrant, lab). Default: all."
+)
+HELP_NO_START_STACK = (
+    "Skip auto-starting the docker stack. Useful when memgraph/qdrant run elsewhere."
+)
 
 HELP_BATCH_SIZE = "Number of buffered nodes/relationships before flushing to Memgraph"
 HELP_MEMGRAPH_HOST = "Memgraph host"
@@ -136,4 +153,5 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.STATS: CMD_STATS,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
+    CLICommandName.DAEMON: CMD_DAEMON,
 }

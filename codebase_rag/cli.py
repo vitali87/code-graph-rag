@@ -27,6 +27,10 @@ from .main import (
 from .parser_loader import load_parsers
 from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
+from .stack import StackManager
+from .stack.cli import cli as daemon_cli
+from .stack.constants import StackState
+from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .types_defs import ResultRow
@@ -101,6 +105,17 @@ def _global_options(
 def _info(msg: str) -> None:
     if not settings.QUIET:
         app_context.console.print(msg)
+
+
+def _maybe_start_stack() -> None:
+    mgr = StackManager()
+    if mgr.status().state == StackState.RUNNING:
+        return
+    try:
+        mgr.ensure_running()
+    except StackError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
 
 
 def _delete_hash_cache(repo_path: Path) -> None:
@@ -196,6 +211,11 @@ def start(
         "--ask-agent",
         help=ch.HELP_ASK_AGENT,
     ),
+    no_start_stack: bool = typer.Option(
+        False,
+        "--no-start-stack",
+        help=ch.HELP_NO_START_STACK,
+    ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
@@ -209,6 +229,9 @@ def start(
             style(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE, cs.Color.RED)
         )
         raise typer.Exit(1)
+
+    if not no_start_stack:
+        _maybe_start_stack()
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -523,6 +546,15 @@ def graph_loader_command(
 )
 def language_command(ctx: typer.Context) -> None:
     language_cli(ctx.args, standalone_mode=False)
+
+
+@app.command(
+    name=ch.CLICommandName.DAEMON,
+    help=ch.CMD_DAEMON,
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+)
+def daemon_command(ctx: typer.Context) -> None:
+    daemon_cli(ctx.args, standalone_mode=False)
 
 
 @app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)
