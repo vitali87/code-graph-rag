@@ -13,6 +13,9 @@ PASS_2_FILES = (
 )
 PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
 PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
+GRAPH_ALREADY_IN_SYNC = (
+    "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
+)
 
 # (H) Analysis logs
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"

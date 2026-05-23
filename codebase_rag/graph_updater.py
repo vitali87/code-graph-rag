@@ -360,6 +360,11 @@ class GraphUpdater:
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
+        if not force and self._is_already_in_sync():
+            logger.info(ls.GRAPH_ALREADY_IN_SYNC)
+            self.ingestor.flush_all()
+            return
+
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
@@ -427,6 +432,28 @@ class GraphUpdater:
                 for u in self.unignore_paths
             )
         )
+
+    def _is_already_in_sync(self) -> bool:
+        if self._single_file is not None:
+            return False
+        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        if not cache_path.is_file():
+            return False
+        old_hashes = _load_hash_cache(cache_path)
+        if not old_hashes:
+            return False
+        eligible_files = self._collect_eligible_files()
+        if len(eligible_files) != len(old_hashes):
+            return False
+        for filepath in eligible_files:
+            file_key = str(cached_relative_path(filepath, self.repo_path))
+            old_hash = old_hashes.get(file_key)
+            if old_hash is None:
+                return False
+            current_hash = _hash_file(filepath)
+            if current_hash != old_hash:
+                return False
+        return True
 
     def _collect_eligible_files(self) -> list[Path]:
         if self._single_file is not None:
