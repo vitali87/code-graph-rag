@@ -240,6 +240,13 @@ CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
+CLI_MSG_WORKSPACE_SYNCING = "Syncing workspace '{name}' ({count} repos)..."
+CLI_MSG_WORKSPACE_SYNC_REPO = (
+    "[{idx}/{total}] Syncing {path} as project '{project_name}'"
+)
+CLI_MSG_WORKSPACE_EMPTY = (
+    "Workspace '{name}' has no repos (use cgr workspace add-repo)."
+)
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"

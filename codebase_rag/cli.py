@@ -36,6 +36,8 @@ from .tools.language import cli as language_cli
 from .types_defs import ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import delete_project_embeddings
+from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
+from .workspaces.cli import cli as workspace_cli
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
@@ -105,6 +107,55 @@ def _global_options(
 def _info(msg: str) -> None:
     if not settings.QUIET:
         app_context.console.print(msg)
+
+
+def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
+    if workspace is None:
+        return None
+    try:
+        return load_workspace(workspace)
+    except WorkspaceError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
+
+
+def _sync_workspace(
+    config: WorkspaceConfig,
+    batch_size: int,
+    exclude: list[str] | None,
+) -> None:
+    total = len(config.repos)
+    if total == 0:
+        _info(
+            style(cs.CLI_MSG_WORKSPACE_EMPTY.format(name=config.name), cs.Color.YELLOW)
+        )
+        return
+    _info(
+        style(
+            cs.CLI_MSG_WORKSPACE_SYNCING.format(name=config.name, count=total),
+            cs.Color.CYAN,
+        )
+    )
+    for idx, repo in enumerate(config.repos, start=1):
+        repo_path = repo.repo_path()
+        _info(
+            style(
+                cs.CLI_MSG_WORKSPACE_SYNC_REPO.format(
+                    idx=idx,
+                    total=total,
+                    path=repo_path,
+                    project_name=repo.project_name,
+                ),
+                cs.Color.CYAN,
+            )
+        )
+        _run_graph_sync(
+            repo=repo_path,
+            project_name=repo.project_name,
+            batch_size=batch_size,
+            exclude=exclude,
+            interactive_setup=False,
+        )
 
 
 def _resolve_active_projects(projects: str | None, default_project: str) -> list[str]:
@@ -279,6 +330,11 @@ def start(
         "--projects",
         help=ch.HELP_PROJECTS,
     ),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        help=ch.HELP_WORKSPACE,
+    ),
 ) -> None:
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
@@ -328,17 +384,31 @@ def start(
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
 
-    if not no_sync:
-        _info(style(cs.CLI_MSG_SYNCING_GRAPH.format(path=resolved_repo), cs.Color.CYAN))
-        _run_graph_sync(
-            repo=resolved_repo,
-            project_name=resolved_project_name,
-            batch_size=effective_batch_size,
-            exclude=exclude,
-            interactive_setup=interactive_setup,
-        )
+    workspace_config = _load_workspace_or_exit(workspace)
 
-    active_projects = _resolve_active_projects(projects, resolved_project_name)
+    if not no_sync:
+        if workspace_config is not None:
+            _sync_workspace(workspace_config, effective_batch_size, exclude)
+        else:
+            _info(
+                style(
+                    cs.CLI_MSG_SYNCING_GRAPH.format(path=resolved_repo), cs.Color.CYAN
+                )
+            )
+            _run_graph_sync(
+                repo=resolved_repo,
+                project_name=resolved_project_name,
+                batch_size=effective_batch_size,
+                exclude=exclude,
+                interactive_setup=interactive_setup,
+            )
+
+    if workspace_config is not None:
+        active_projects = workspace_config.project_names()
+        if projects:
+            active_projects = _resolve_active_projects(projects, active_projects[0])
+    else:
+        active_projects = _resolve_active_projects(projects, resolved_project_name)
 
     try:
         if ask_agent:
@@ -614,6 +684,15 @@ def language_command(ctx: typer.Context) -> None:
 )
 def daemon_command(ctx: typer.Context) -> None:
     daemon_cli(ctx.args, standalone_mode=False)
+
+
+@app.command(
+    name=ch.CLICommandName.WORKSPACE,
+    help=ch.CMD_WORKSPACE,
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+)
+def workspace_command(ctx: typer.Context) -> None:
+    workspace_cli(ctx.args, standalone_mode=False)
 
 
 @app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)

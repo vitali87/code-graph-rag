@@ -13,6 +13,7 @@ class CLICommandName(StrEnum):
     STATS = "stats"
     DELETE_PROJECT = "delete-project"
     DAEMON = "daemon"
+    WORKSPACE = "workspace"
 
 
 APP_DESCRIPTION = (
@@ -45,6 +46,23 @@ CMD_DAEMON_DOWN = "Stop the docker stack (preserves data volumes)."
 CMD_DAEMON_STATUS = "Show whether memgraph and qdrant are reachable."
 CMD_DAEMON_LOGS = "Tail docker compose logs for the stack."
 CMD_DAEMON_RESTART = "Restart the docker stack."
+
+CMD_WORKSPACE = "Manage cgr workspaces (named bundles of repos)"
+CMD_WORKSPACE_GROUP = "Manage cgr workspaces (named bundles of repos)"
+CMD_WORKSPACE_LIST = "List all workspaces."
+CMD_WORKSPACE_CREATE = "Create a new empty workspace."
+CMD_WORKSPACE_DELETE = "Delete a workspace TOML (does not touch indexed graph data)."
+CMD_WORKSPACE_SHOW = "Show a workspace's repos and project names."
+CMD_WORKSPACE_ADD_REPO = "Add a repo to a workspace."
+CMD_WORKSPACE_REMOVE_REPO = "Remove a repo from a workspace by path."
+
+HELP_WORKSPACE_DESCRIPTION = "Optional human-readable description."
+HELP_WORKSPACE_FORCE = "Overwrite an existing workspace with the same name."
+HELP_WORKSPACE_REPO_PROJECT_NAME = (
+    "Project name to associate with this repo (defaults to derive_project_name(repo))."
+)
+
+MSG_NO_WORKSPACES = "(no workspaces; create one with 'cgr workspace create <name>')"
 
 HELP_DAEMON_LOGS_FOLLOW = "Stream logs continuously (Ctrl+C to stop)."
 HELP_DAEMON_LOGS_SERVICE = (
@@ -165,4 +183,5 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.STATS: CMD_STATS,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
     CLICommandName.DAEMON: CMD_DAEMON,
+    CLICommandName.WORKSPACE: CMD_WORKSPACE,
 }
